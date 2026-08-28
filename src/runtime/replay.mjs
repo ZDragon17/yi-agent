@@ -1,4 +1,4 @@
-import { learn, step, verify } from '../kernel/index.mjs';
+import { learn, step, stepWithPreference, verify } from '../kernel/index.mjs';
 import {
   SCHEMA_VERSION,
   canonicalDigest,
@@ -15,6 +15,7 @@ const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
 const REQUIRED_BOUNDARY_KEYS = ['schemaVersion', 'valueSpec'];
 const MAX_SCENARIO_IDS = 256;
 const MAX_SCENARIO_ID_LENGTH = 4096;
+const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 
 export class ReplayError extends Error {
   constructor(code, message, context = {}) {
@@ -41,7 +42,7 @@ function replayRunInternal(input) {
   const events = cloneReplayValue(source.events, 'events');
   const end = cloneReplayValue(source.end, 'run end');
   const worldFactories = source.worldFactories;
-  const kernel = source.kernel ?? { step, verify, learn };
+  const kernel = source.kernel ?? { step, stepWithPreference, verify, learn };
 
   validateManifest(manifest);
   validateStart(start, manifest);
@@ -131,6 +132,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
     corrupt('STEP external evidence attestation is invalid.', { sequence: event.sequence });
   }
   const valueSpec = cloneJson(payload.boundary.valueSpec);
+  if (payload.policyEvidence !== undefined) validatePolicyEvidence(payload.policyEvidence, event.sequence);
   let capabilities;
   let beforeObservation;
   try {
@@ -149,13 +151,20 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
 
   let intent;
   try {
-    intent = kernel.step({
+    const decision = payload.policyEvidence;
+    if (decision !== undefined && typeof kernel.stepWithPreference !== 'function') {
+      corrupt('Replay kernel cannot reapply the recorded model preference.', { sequence: event.sequence });
+    }
+    const stepInput = {
       observation: beforeObservation,
       memory: state.memory,
       valueSpec,
       capabilities,
       rngState: state.rngState,
-    });
+    };
+    intent = decision === undefined
+      ? kernel.step(stepInput)
+      : kernel.stepWithPreference(stepInput, decision.applied ? { schemaVersion: SCHEMA_VERSION, token: decision.token } : null);
   } catch (error) {
     corrupt('Replay kernel.step failed.', { sequence: event.sequence, cause: errorName(error) });
   }
@@ -216,6 +225,18 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       ?? compareValue(payload.afterState, nextState, 'payload.afterState', event.sequence);
   }
   return difference ? { difference } : { nextState };
+}
+
+function validatePolicyEvidence(value, sequence) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== SCHEMA_VERSION || value.source !== 'model' ||
+      typeof value.model !== 'string' || value.model.length === 0 || value.model.length > 4096 ||
+      (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
+      typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
+      typeof value.applied !== 'boolean' ||
+      (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
+    corrupt('STEP model policy evidence is invalid.', { sequence });
+  }
 }
 
 function validateManifest(manifest) {

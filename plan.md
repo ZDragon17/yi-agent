@@ -6,6 +6,7 @@
 CLI Parser
    -> Application Services (init/run/inspect/replay/challenge/recover)
       -> AgentKernel <-> WorldPort adapters
+      -> optional ModelAdvisor -> OpenAI-compatible API
       -> EffectBroker -> dry-run / future real executor
       -> LabStore (manifest/events/snapshot/lock)
       -> Decision Replay Engine + Ledger Reducer
@@ -34,7 +35,8 @@ Kernel 只处理纯数据和注入接口；Runtime 掌管进程间连续性；CL
 | `src/runtime` | LabStore、锁、事件、快照、恢复、重放 | Node fs/crypto | FR-1,3,4 |
 | `src/challenges` | 假设、装置、判别器、结果 | kernel/runtime/worlds | FR-5 |
 | `src/application` | 六个用例服务；默认注册两个内置 WorldPort，允许进程内显式注入 registry 及受控 external adapter | 上述模块 | FR-1..7 |
-| `src/cli.mjs` | 参数、输出、退出码 | application | FR-1..7 |
+| `src/agent` | 模型提议结构化解析与上下文裁剪；不拥有状态或副作用 | API client、runtime schema | FR-2,6,7 |
+| `src/cli.mjs` | 参数、输出、退出码 | application、agent、API client | FR-1..7 |
 
 ## 风险与对策
 

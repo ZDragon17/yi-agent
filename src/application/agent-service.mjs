@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { LabStore, LabStoreError } from '../runtime/lab-store.mjs';
 import { canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../runtime/schema.mjs';
-import { learn, step, verify } from '../kernel/index.mjs';
+import { learn, stepWithPreference, verify } from '../kernel/index.mjs';
 import { replayRun } from '../runtime/replay.mjs';
 import {
   builtInWorldRegistry,
@@ -40,6 +40,9 @@ export async function initLab(input) {
 
 export async function runLab(input) {
   const source = requireRecord(input, 'run input');
+  if (source.advisor !== undefined && typeof source.advisor !== 'function') {
+    throw new LabStoreError('INVALID_INPUT', 'advisor must be a function.', { field: 'advisor' });
+  }
   const labPath = requireText(source.labPath, 'labPath');
   const steps = requireSteps(source.steps);
   const runId = source.runId ?? randomUUID();
@@ -80,13 +83,23 @@ export async function runLab(input) {
     spec = registry.valueSpec(manifest.worldId);
     for (let index = 0; index < steps; index += 1) {
     const beforeObservation = projectObservation(world.observe(state.worldState));
-    const intent = step({
+    const modelDecision = source.advisor !== undefined && capabilities.some((capability) => capability.allowed && capability.safe)
+      ? await source.advisor({
+          observation: beforeObservation,
+          memory: state.memory,
+          valueSpec: spec,
+          capabilities,
+          manifest,
+          step: state.kernelStep,
+        })
+      : null;
+    const intent = stepWithPreference({
       observation: beforeObservation,
       memory: state.memory,
       valueSpec: spec,
       capabilities,
       rngState: state.rngState,
-    });
+    }, preferenceFor(modelDecision));
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
       terminalRequested = true;
@@ -157,6 +170,7 @@ export async function runLab(input) {
         rngAfter: nextState.rngState,
         externalInputs,
         afterState: nextState,
+        ...(modelDecision === null ? {} : { policyEvidence: policyEvidence(modelDecision, intent, capabilities) }),
       },
     });
     const shouldSnapshot = (executed + 1) % SNAPSHOT_INTERVAL === 0 ||
@@ -202,6 +216,26 @@ export async function runLab(input) {
   } finally {
     await run.closeLedgerHandle();
   }
+}
+
+function preferenceFor(modelDecision) {
+  return modelDecision?.token === null || modelDecision?.token === undefined
+    ? null
+    : { schemaVersion: SCHEMA_VERSION, token: modelDecision.token };
+}
+
+function policyEvidence(modelDecision, intent, capabilities) {
+  const safe = capabilities.some((capability) => capability.token === modelDecision.token && capability.allowed && capability.safe);
+  const applied = safe && intent.status === 'READY' && intent.choice.token === modelDecision.token;
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    source: 'model',
+    model: modelDecision.model,
+    token: modelDecision.token,
+    responseDigest: modelDecision.responseDigest,
+    applied,
+    reason: applied ? null : (modelDecision.reason ?? (safe ? 'KERNEL_SELECTION_REJECTED' : 'TOKEN_NOT_SAFE')),
+  };
 }
 
 export async function inspectLab(input) {

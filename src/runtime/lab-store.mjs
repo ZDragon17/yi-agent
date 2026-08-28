@@ -32,6 +32,7 @@ const MAX_JSON_BYTES = 1024 * 1024;
 const MAX_LEDGER_BYTES = 16 * 1024 * 1024;
 const MAX_EVENT_LINE_BYTES = 1024 * 1024;
 const MAX_RECENT_COMMITTED_STEPS = 32;
+const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const LEGACY_WORLD_SCENARIOS = {
   temperature: new Set(['steady', 'regime-shift', 'external-during-step', 'execution-rejected', 'all-unsafe']),
   'virtual-desktop': new Set(['steady', 'new-files', 'external-during-step', 'execution-rejected', 'all-unsafe']),
@@ -1174,6 +1175,23 @@ function validateStepPayload(value, field, corruptOnFailure = false, runStart, m
   ) fail('STEP after-state evidence is inconsistent.');
   for (const external of value.externalInputs) {
     validateExternalInput(external, field, corruptOnFailure, runStart, manifest?.adapter);
+  }
+  if (value.policyEvidence !== undefined) validatePolicyEvidence(value.policyEvidence, field, corruptOnFailure);
+}
+
+function validatePolicyEvidence(value, field, corruptOnFailure) {
+  const fail = (message) => {
+    if (corruptOnFailure) corrupt(message, { field });
+    throw new LabStoreError('INVALID_INPUT', message, { field });
+  };
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== SCHEMA_VERSION || value.source !== 'model' ||
+      typeof value.model !== 'string' || value.model.length === 0 || value.model.length > 4096 ||
+      (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
+      typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
+      typeof value.applied !== 'boolean' ||
+      (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
+    fail('STEP model policy evidence is invalid.');
   }
 }
 

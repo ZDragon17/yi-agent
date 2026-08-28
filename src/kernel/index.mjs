@@ -94,7 +94,14 @@ const RECEIPT_KEYS = [
 ];
 
 export function step(input) {
+  return stepWithPreference(input, null);
+}
+
+// A model may suggest a token, but it cannot change the kernel's prediction,
+// safety checks, verification contract, or learning rules.
+export function stepWithPreference(input, preference = null) {
   const normalized = normalizeStepInput(input);
+  const normalizedPreference = normalizePreference(preference);
   const predictions = buildPredictions(normalized);
   const safePredictions = predictions.filter(
     (item) => item.choice.allowed && item.choice.safe,
@@ -117,7 +124,10 @@ export function step(input) {
   );
   const selectionPool =
     untriedPredictions.length > 0 ? untriedPredictions : safePredictions;
-  const selected = selectionPool[choosePredictionIndex(selectionPool, rng.unit)];
+  const preferred = normalizedPreference === null
+    ? null
+    : safePredictions.find((item) => item.choice.token === normalizedPreference.token);
+  const selected = preferred ?? selectionPool[choosePredictionIndex(selectionPool, rng.unit)];
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -125,6 +135,15 @@ export function step(input) {
     expectation: cloneExpectation(selected.expectation),
     choice: cloneChoice(selected.choice),
     nextRngState: rng.nextState,
+  };
+}
+
+function normalizePreference(value) {
+  if (value === null || value === undefined) return null;
+  const source = assertPlainRecord(value, 'stepPreference', ['schemaVersion', 'token']);
+  return {
+    schemaVersion: requireSchemaVersion(source, 'stepPreference'),
+    token: assertOpaqueToken(source.token, 'stepPreference.token'),
   };
 }
 

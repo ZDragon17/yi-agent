@@ -26,10 +26,13 @@ $env:YI_AGENT_MODEL = "你的模型名"
 ```powershell
 yi-agent api test --json
 yi-agent ask --prompt "请用一句话解释什么是闭环" --json
+yi-agent agent run --lab E:\labs\temperature --steps 3 --goal "保持系统稳定" --json
 Get-Content .\prompt.txt -Raw | yi-agent ask --prompt - --json
 yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 ```
 
 `api test` 只报告连通状态和模型数量，不会输出 API Key。`ask` 的成功结果和失败结果都使用单行 JSON envelope，便于 PowerShell 或脚本继续处理。
+
+`agent run` 会在每一步把当前观测和可用能力交给模型提出一个 token，再由 Kernel 独立计算预期、复核安全性、执行、验证和学习。模型不能直接执行动作；每一步只保存结构化提议摘要，`replay` 不会再次调用模型。
 
 当前 CLI 不会替你保存密钥，也不会自动调用真实供应商；真实连通性需要你在本机配置上述环境变量后执行 `yi-agent api test`。

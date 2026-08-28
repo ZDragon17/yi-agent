@@ -7,6 +7,7 @@ import { restoreEffectBroker } from './effects/effect-broker.mjs';
 import { EffectJournal } from './effects/effect-journal.mjs';
 import { assertSandboxRoot, createSandboxFileExecutor } from './effects/sandbox-file-executor.mjs';
 import { createOpenAICompatibleClient, loadApiConfig } from './api/openai-compatible-client.mjs';
+import { createModelAdvisor } from './agent/model-advisor.mjs';
 
 export async function main(argv, io = defaultIo()) {
   const json = argv.includes('--json');
@@ -29,6 +30,7 @@ export async function main(argv, io = defaultIo()) {
 }
 
 async function dispatch(command, options) {
+  if (command === 'agent') return dispatchAgent(options);
   if (command === 'api') return dispatchApi(options);
   if (command === 'ask') return askApi(options);
   if (command === 'effect') return dispatchEffect(options);
@@ -81,6 +83,26 @@ async function dispatch(command, options) {
     });
   }
   throw cliError('INVALID_INPUT', `Unsupported command: ${command ?? '(missing)'}`, {}, 64);
+}
+
+async function dispatchAgent(options) {
+  const config = loadApiConfig();
+  const advisor = createModelAdvisor({
+    client: createOpenAICompatibleClient(config),
+    model: config.model,
+    goal: options.goal ?? null,
+  });
+  if (options.agentOperation !== 'run') {
+    throw cliError('INVALID_INPUT', `Unsupported agent operation: ${options.agentOperation ?? '(missing)'}`, {}, 64);
+  }
+  return runLab({
+    labPath: required(options, 'lab'),
+    steps: parseSteps(required(options, 'steps')),
+    runId: options['run-id'],
+    scenario: options.scenario,
+    registry: loadRegistry(options),
+    advisor,
+  });
 }
 
 async function dispatchApi(options) {
@@ -144,6 +166,13 @@ function parseArguments(argv) {
     }
     options.apiOperation = operation;
   }
+  if (command === 'agent') {
+    const operation = args.shift();
+    if (operation !== 'run') {
+      throw cliError('INVALID_INPUT', `Unsupported agent operation: ${operation ?? '(missing)'}`, {}, 64);
+    }
+    options.agentOperation = operation;
+  }
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === '--json') continue;
@@ -161,6 +190,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
+    agent: ['agentOperation', 'lab', 'steps', 'run-id', 'scenario', 'adapter', 'goal'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
@@ -317,6 +347,7 @@ function helpText() {
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
+    '  yi-agent agent run --lab PATH --steps N [--goal TEXT] [--json]',
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',

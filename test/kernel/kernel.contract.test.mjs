@@ -76,8 +76,22 @@ test('kernel public entry exposes step and verify as the kernel contract seams',
   const kernel = await loadKernel();
 
   assert.equal(typeof kernel.step, 'function');
+  assert.equal(typeof kernel.stepWithPreference, 'function');
   assert.equal(typeof kernel.verify, 'function');
   assert.equal(typeof kernel.learn, 'function');
+});
+
+test('model preference can select only a safe capability and cannot bypass the kernel boundary', async () => {
+  const { stepWithPreference } = await loadKernel();
+  const input = makeStepInput();
+  const preferred = stepWithPreference(input, { schemaVersion: 1, token: TOKEN_B });
+  assert.equal(preferred.status, 'READY');
+  assert.equal(preferred.choice.token, TOKEN_B);
+  assert.deepEqual(preferred.expectation.expectedDelta, [0.1, 0.1]);
+  const unsafe = makeStepInput({ capabilities: [capability(TOKEN_A), capability(TOKEN_B, { safe: false })] });
+  const rejected = stepWithPreference(unsafe, { schemaVersion: 1, token: TOKEN_B });
+  assert.notEqual(rejected.choice.token, TOKEN_B);
+  assert.equal(unsafe.capabilities[1].safe, false);
 });
 
 test('step makes a pure decision from only observation, memory, valueSpec, capabilities, and rngState', async () => {

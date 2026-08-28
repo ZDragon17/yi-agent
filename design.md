@@ -8,6 +8,7 @@
 - Application 通过显式 `WorldRegistry` 注入 `worldDefinition/createManifestParts/createWorld/valueSpec/scenarioExternalInputs`；默认 registry 只注册两个内置世界，测试或宿主可在进程内注入第三方适配器，CLI 不开放动态代码发现。
 - CLI 负责：参数解析、调用应用服务、结构化/人类可读输出和退出码，不直接修改内核状态。
 - API client 负责：读取环境变量、调用 OpenAI-compatible `/models` 与 `/chat/completions`；它是显式工具，不进入 Kernel 的确定性决策链。
+- ModelAdvisor 负责：把有限的观测、目标和值域上下文转换为一个不可信的 token 提议；它不能写状态、调用 WorldPort 或更新 Memory。
 - v0.1 默认含 `temperature` 与 `virtual-desktop` 两个内置模拟世界；另提供显式外部 WorldPort adapter 协议，但不提供动态发现、任意 in-process import 或真实副作用保证。
 - 信任边界：CLI 参数与磁盘数据都按畸形/损坏输入校验；无密钥 SHA-256 链只检测偶然损坏或未重算篡改，不提供对主动攻击者的真实性证明。
 
@@ -26,12 +27,13 @@
 | `effect plan|confirm|execute|reconcile|compensate|reconcile-compensation|inspect --journal PATH [--sandbox-root PATH] [--intent PATH] [--nonce N] [--json]` | EffectIntent、durable journal、显式标记 sandbox | EffectBroker 状态快照或全部 effect 状态 | 参数 64；损坏 3；不存在 66；I/O 74；状态错误 70 | 每次进程从 journal 恢复；execute/compensate 只允许标记 sandbox root |
 | `api test [--json]` | 环境变量中的 API 配置 | 连通状态与模型数量 | 参数 64；API 74；协议 70 | 无本地状态副作用 |
 | `ask --prompt TEXT|--prompt-file PATH [--json]` | 环境变量中的 API 配置与用户提示 | 模型、回答、可选 usage | 参数 64；API 74；协议 70 | 单次非流式请求；提示文件只读 |
+| `agent run --lab PATH --steps N [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--json]` | 已初始化实验空间、API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 每步一次模型提议；replay 不访问 API |
 
 标准错误对象：`{code, message, context?, recoverable}`。`--json` 时成功或失败都只在 stdout 输出一个 JSON envelope，stderr 保持空；仅 CLI 启动前的致命错误可写 stderr。人类模式的错误写 stderr。
 
 JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{schemaVersion:1,ok:false,error:{code,message,context?,recoverable}}`，不得同时出现 data/error。
 
-全局退出码：`0=成功`，`2=安全停机或 challenge FALSIFIED`，`3=完整性失败或 INCONCLUSIVE`，`64=参数`，`65=初始化/版本冲突`，`66=资源不存在`，`70=内部世界/程序错误`，`74=文件 I/O`，`75=writer 冲突或 run 未终态`。所有命令使用同一映射。
+全局退出码：`0=成功`，`2=安全停机或 challenge FALSIFIED`，`3=完整性失败或 INCONCLUSIVE`，`64=参数`，`65=初始化/版本冲突`，`66=资源不存在`，`70=内部世界/程序错误或 API 协议错误`，`74=文件 I/O 或 API 请求失败`，`75=writer 冲突或 run 未终态`。所有命令使用同一映射。
 
 内置 world/scenario：`temperature` 支持 `steady`、`regime-shift`、`external-during-step`、`execution-rejected`、`all-unsafe`；`virtual-desktop` 支持 `steady`、`new-files`、`external-during-step`、`execution-rejected`、`all-unsafe`。Foundational case id 固定为：`unknown-action-exploration`、`regime-shift`、`execution-rejected`、`external-during-step`、`all-unsafe`、`snapshot-write-failure`、`replay-tamper`、`inspect-readonly`。
 
@@ -71,6 +73,8 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 外部 adapter 的 `hello`、`initialState`、`actions`、`observe`、`externalInputs`、`transition` 均以单次 JSONL 请求响应完成；运行期由宿主把外部输入视为潜在混杂，强制 accepted action 标记为 `AMBIGUOUS` 且不可学习。协议 v1 要求 accepted receipt 的 `effectDigest` 等于 `canonicalDigest(nextWorldState)`，rejected receipt 等于 `canonicalDigest(state)`，从而把回执绑定到连续性状态。外部 Run 的 Replay 使用 STEP 中冻结的 capabilities、观测、回执和 afterState 证据磁带，inspect/replay 只校验本地 adapter 启动摘要，不启动 adapter 子进程，不读取实时环境。
 
 EffectBroker 是 WorldPort 与真实副作用之间的第二道边界。Kernel 只能产生行动选择，应用层把它封装为带 `effectId/actionToken/target/precondition/risk/requiresConfirmation/reversible/compensation/executionNonce/planDigest` 的 EffectIntent。Broker 先登记计划和授权，再执行；执行器返回 `APPLIED/REJECTED/UNKNOWN`，其中 `UNKNOWN` 进入 `RECONCILE_REQUIRED`，禁止用新 nonce 重试。`APPLIED` 只有在存在声明式补偿方案时才允许进入补偿流程；补偿未知进入独立 `COMPENSATION_UNKNOWN`。持久化模式下，`EffectJournal` 先以 `handle.sync()` 刷新状态快照，`EXECUTION_STARTED` 或 `COMPENSATION_STARTED` 落盘后才允许调用对应 executor；恢复看到未完成边界时只能进入对账。当前 `src/effects/dry-run-executor.mjs` 只在内存中模拟状态变化，不能被解释为真实文件或设备安全。
+
+ModelAdvisor 的结果是外部非确定输入，不进入连续性状态。每个带模型的 STEP 可选记录 `policyEvidence={schemaVersion,source,model,token,responseDigest,applied,reason}`；其中 `responseDigest` 只绑定模型回答摘要，不是供应商真实性证明。Replay 使用该证据中的已接受 token重新调用纯 `Kernel.stepWithPreference`，因此不会访问网络，也不会把模型再次生成的不同结果混入历史。
 
 为验证真实执行器仍可被同一底座约束，`src/effects/sandbox-file-executor.mjs` 提供了临时目录级文件移动：它拒绝路径穿越和符号链接，只在带用户显式创建 `.yi-agent-sandbox` 标记的沙箱根内操作，并复用 Broker 的确认、executionNonce、durable journal、reconcile 与 compensation。CLI 的 `effect` 命令跨进程恢复这个 Broker，支持安全实验；它不是用户桌面授权层。
 
