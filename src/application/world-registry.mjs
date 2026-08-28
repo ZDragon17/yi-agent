@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 import { canonicalDigest, SCHEMA_VERSION } from '../runtime/schema.mjs';
+import { createGridWorld } from '../worlds/grid.mjs';
+import { createInventoryWorld } from '../worlds/inventory.mjs';
+import { createQueueWorld } from '../worlds/queue.mjs';
 import { createTemperatureWorld } from '../worlds/temperature.mjs';
 import { createVirtualDesktopWorld } from '../worlds/virtual-desktop.mjs';
 
@@ -15,6 +18,24 @@ const WORLD_DEFINITIONS = {
     capabilities: ['desktop.move-report', 'desktop.move-protected'],
     scenarioIds: ['steady', 'new-files', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 5, weights: [1, 1, 1, 1, 1], target: [0, 0, 9, 9, 2] },
+  },
+  inventory: {
+    factory: createInventoryWorld,
+    capabilities: ['inventory.restock-a', 'inventory.restock-b', 'inventory.fulfill'],
+    scenarioIds: ['steady', 'supply-shock', 'external-during-step', 'execution-rejected', 'all-unsafe'],
+    valueSpec: { observationDimensions: 3, weights: [1, 1, 1], target: [8, 8, 0] },
+  },
+  grid: {
+    factory: createGridWorld,
+    capabilities: ['grid.move-south', 'grid.move-east', 'grid.move-north', 'grid.move-west', 'grid.teleport'],
+    scenarioIds: ['steady', 'blocked-route', 'external-during-step', 'execution-rejected', 'all-unsafe'],
+    valueSpec: { observationDimensions: 4, weights: [1, 1, 1, 1], target: [2, 2, 2, 2] },
+  },
+  queue: {
+    factory: createQueueWorld,
+    capabilities: ['queue.serve', 'queue.admit', 'queue.clear'],
+    scenarioIds: ['steady', 'burst', 'external-during-step', 'execution-rejected', 'all-unsafe'],
+    valueSpec: { observationDimensions: 3, weights: [1, 1, 1], target: [0, 5, 5] },
   },
 };
 

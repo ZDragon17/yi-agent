@@ -97,7 +97,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 ## 当前已经实现什么
 
 - 纯 Kernel：数值观测、ValueSpec、不透明 Action Token、确定性随机状态；
-- `WorldPort`：内置温度世界和虚拟桌面世界；
+- `WorldPort`：五个内置世界覆盖连续控制、受保护对象、多资源库存、离散网格和排队系统；
 - 可插拔外部世界：通过受控 JSONL 子进程协议接入；
 - 可审计运行时：事件账本、快照、锁、恢复和哈希链；
 - 证据闭环：行动前预期、行动回执、复观、验证、学习；
@@ -106,6 +106,20 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 确定性 Replay：回放使用已记录的模型提议摘要，不重新请求模型；
 - Effect Broker：对明确声明的副作用提供计划、确认、执行、对账和补偿流程；
 - Windows PowerShell CLI：所有核心实验可以脚本化运行。
+
+### 内置世界的测试面
+
+这些世界不是业务产品，而是用来攻击底座假设的测试面：
+
+| 世界 | 观测向量 | 行动/边界 | 用来检验什么 |
+| --- | --- | --- | --- |
+| `temperature` | 1 维连续值 | 升温/降温、上下限 | 连续控制、数值预测和安全边界 |
+| `virtual-desktop` | 5 维状态投影 | 普通对象/受保护对象 | 结构化状态、保护规则和只读对象 |
+| `inventory` | 3 维资源状态 | 两种补货/履约、库存上限 | 多资源耦合、资源消耗和容量拒绝 |
+| `grid` | 4 维位置/目标 | 四方向移动/禁止瞬移 | 离散空间、障碍物和动作集合变化 |
+| `queue` | 3 维队列状态 | 服务/接入/禁止清空 | 排队动态、容量边界和外部到达 |
+
+共同点不是领域名称，而是它们都只通过同一组 `WorldPort` 方法接入：`initialState`、`observe`、`actions`、`transition`。如果新增世界必须修改 Kernel 才能工作，就说明底座仍然夹带了领域假设。
 
 ## 用一个外部世界验证通用性
 
@@ -202,6 +216,17 @@ $env:YI_AGENT_MODEL = "你的模型名"
 
 也可以用 `YI_AGENT_API_TIMEOUT_MS` 覆盖超时，范围为 1000–300000 毫秒，默认 60000 毫秒。
 
+如果使用智谱 GLM Coding Plan，使用它的专用 Coding 端点：
+
+```powershell
+$env:YI_AGENT_PROVIDER = "zhipu-code"
+$env:ZAI_API_KEY = "你的智谱 Coding Plan Key"
+$env:YI_AGENT_MODEL = "glm-5.2"
+yi-agent api test --json
+```
+
+`zhipu-code` 会自动使用 `https://open.bigmodel.cn/api/coding/paas/v4`；若同时设置 `YI_AGENT_API_KEY` 或 `YI_AGENT_API_BASE_URL`，显式设置优先。模型名以智谱账户当前可用模型为准。Coding Plan 的 OpenAI Chat Completion 端点与普通智谱 API 端点不同。
+
 ## 调用 API
 
 ```powershell
@@ -216,4 +241,4 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 
 `agent run` 会在每一步把当前观测和可用能力交给模型提出一个 token，再由 Kernel 独立计算预期、复核安全性、执行、验证和学习。模型不能直接执行动作；每一步只保存结构化提议摘要，`replay` 不会再次调用模型。
 
-当前 CLI 不会替你保存密钥，也不会自动调用真实供应商；真实连通性需要你在本机配置上述环境变量后执行 `yi-agent api test`。
+当前 CLI 不会替你保存密钥；真实连通性需要你在本机配置上述环境变量后执行 `yi-agent api test`。模型调用只负责提出候选 Token，仍由 WorldPort、Kernel、verify、learn 和 replay 闭环裁决。

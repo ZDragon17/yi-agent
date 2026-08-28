@@ -17,6 +17,7 @@ const CASES = [
   'snapshot-write-failure',
   'replay-tamper',
   'inspect-readonly',
+  'world-diversity',
 ];
 
 export async function challenge(input) {
@@ -149,6 +150,41 @@ const CASE_RUNNERS = {
     const after = await filesSnapshot(lab);
     if (JSON.stringify(before) !== JSON.stringify(after)) throw challengeFailure('INSPECT_WROTE_STATE');
     return { runId: 'run-1', readonly: true };
+  },
+
+  async 'world-diversity'(root) {
+    const cases = [
+      { worldId: 'inventory', scenario: 'supply-shock', dimensions: 3 },
+      { worldId: 'grid', scenario: 'blocked-route', dimensions: 4 },
+      { worldId: 'queue', scenario: 'external-during-step', dimensions: 3 },
+    ];
+    const evidence = [];
+    for (const [index, item] of cases.entries()) {
+      const lab = await prepare(root, item.worldId, `diverse-${index}`);
+      const result = await runLab({
+        labPath: lab,
+        runId: 'run-1',
+        steps: 1,
+        scenario: item.scenario,
+      });
+      const stored = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+      const step = stored.events.find((event) => event.kind === 'STEP');
+      if (step === undefined || step.payload.beforeObservation.vector.length !== item.dimensions) {
+        throw challengeFailure(`WORLD_DIVERSITY_${item.worldId.toUpperCase()}_OBSERVATION`);
+      }
+      const replay = await replayLab({ labPath: lab, runId: 'run-1' });
+      if (replay.verdict !== 'CONSISTENT') {
+        throw challengeFailure(`WORLD_DIVERSITY_${item.worldId.toUpperCase()}_REPLAY`);
+      }
+      evidence.push({
+        worldId: item.worldId,
+        scenario: item.scenario,
+        status: result.status,
+        observationDimensions: item.dimensions,
+        attribution: step.payload.verification.attribution,
+      });
+    }
+    return { worlds: evidence };
   },
 };
 

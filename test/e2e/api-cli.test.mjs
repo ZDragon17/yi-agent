@@ -34,7 +34,8 @@ test('PowerShell-facing CLI reaches an OpenAI-compatible API over HTTP', async (
   try {
     const env = {
       ...process.env,
-      YI_AGENT_API_KEY: 'local-secret',
+      YI_AGENT_PROVIDER: 'zhipu-code',
+      ZAI_API_KEY: 'local-secret',
       YI_AGENT_API_BASE_URL: baseUrl,
       YI_AGENT_MODEL: 'local-model',
     };
@@ -54,9 +55,11 @@ test('PowerShell-facing CLI reaches an OpenAI-compatible API over HTTP', async (
 
 test('CLI rejects an API call before network access when configuration is missing', async () => {
   const env = { ...process.env };
+  delete env.YI_AGENT_PROVIDER;
   delete env.YI_AGENT_API_KEY;
   delete env.YI_AGENT_API_BASE_URL;
   delete env.YI_AGENT_MODEL;
+  delete env.ZAI_API_KEY;
   const result = await invoke(['api', 'test', '--json'], env);
   assert.equal(result.code, 64);
   assert.equal(result.stdout[0].error.code, 'INVALID_INPUT');

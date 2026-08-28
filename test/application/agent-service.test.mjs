@@ -137,6 +137,33 @@ test('application service runs and replays two steps through a third-party gener
   });
 });
 
+test('application service runs diverse built-in worlds through one runtime and replay contract', async () => {
+  await withLab(async (root) => {
+    const cases = [
+      ['inventory', 3],
+      ['grid', 4],
+      ['queue', 3],
+    ];
+
+    for (const [worldId, observationDimensions] of cases) {
+      const lab = path.join(root, worldId);
+      await initLab({ labPath: lab, labId: `${worldId}-lab`, worldId, seed: `${worldId}-seed` });
+      const result = await runLab({ labPath: lab, runId: 'run-1', steps: 2 });
+      const inspection = await inspectLab({ labPath: lab });
+      const storedRun = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+      const firstStep = storedRun.events.find((event) => event.kind === 'STEP');
+
+      assert.ok(['COMPLETED', 'HALTED'].includes(result.status));
+      assert.ok(result.metrics.executed >= 1, `${worldId} should record at least one step`);
+      assert.equal(inspection.inspectView.lab.worldId, worldId);
+      assert.equal(inspection.inspectView.recent !== null, true);
+      assert.equal(inspection.inspectView.recent.token.startsWith('tok_'), true);
+      assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+      assert.equal(firstStep.payload.beforeObservation.vector.length, observationDimensions);
+    }
+  });
+});
+
 async function withLab(callback) {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-service-'));
   try {

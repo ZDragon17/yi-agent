@@ -14,6 +14,21 @@ test('API configuration reads environment variables without requiring a config f
     model: 'model-1',
     baseUrl: 'https://example.test/v1',
     timeoutMs: 12000,
+    provider: 'openai-compatible',
+  });
+});
+
+test('API configuration provides the official Zhipu Coding endpoint preset', () => {
+  assert.deepEqual(loadApiConfig({
+    YI_AGENT_PROVIDER: 'zhipu-code',
+    ZAI_API_KEY: ' zai-key ',
+    YI_AGENT_MODEL: 'glm-5.2',
+  }), {
+    apiKey: 'zai-key',
+    model: 'glm-5.2',
+    baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+    timeoutMs: 60000,
+    provider: 'zhipu-code',
   });
 });
 

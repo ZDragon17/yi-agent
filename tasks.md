@@ -19,13 +19,14 @@
 - Acceptance：全 unsafe 时 act=0；未知行动不能被选；每个 executed 动作证据字段完整；Kernel 不接收领域标识、不导入 worlds，在跨 lab 随机 token/维度置换下性质等价。
 - 收敛层：功能
 
-## T-2 两个内置 WorldPort（覆盖 FR-2/5/7）
+## T-2 五个内置 WorldPort（覆盖 FR-2/5/7）
 
 - 依赖：T-1
 - Tester 改动：`test/worlds/**`；实现改动：`src/worlds/**`
-- 实现：温控、虚拟桌面的纯 transition、白名单 AuthorityPolicy、规律突变/外部事件/执行失败注入。
+- 实现：温控、虚拟桌面、库存、网格、队列五个不同面向的纯 transition、白名单 AuthorityPolicy、规律突变/外部事件/执行失败注入。
 - Tester 命令：`node scripts/test-gate.mjs test/worlds`
 - Acceptance：虚拟桌面含 1 个 protected 项，所有 transition 后其位置不变；温控从 34.9℃请求升温时拒绝且原 state 不变；未知/越权 token、陈旧 stateVersion/policyVersion 均拒绝并 HALT；transition 调用前后输入对象不变。
+- 代表性变化轴：库存用 3 维资源与容量边界；网格用 4 维离散位置、障碍物和 5 个动作（含静态不安全动作）；队列用服务/接入/清空约束及外部到达；三者均必须通过相同 Kernel、Runtime 和 Replay 契约。
 - 收敛层：功能
 
 ## T-3 事件账本、快照与锁（覆盖 FR-1/3）

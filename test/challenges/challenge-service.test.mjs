@@ -13,7 +13,7 @@ test('challenge suite runs all registered cases in isolated labs', async () => {
     const before = await readFile(path.join(mainLab, 'state/current.json'), 'utf8');
     const result = await challenge({ labPath: mainLab });
     assert.equal(result.verdict, 'PASS');
-    assert.equal(result.cases.length, 8);
+    assert.equal(result.cases.length, 9);
     assert.ok(result.cases.every((item) => item.verdict === 'PASS'));
     assert.equal(await readFile(path.join(mainLab, 'state/current.json'), 'utf8'), before);
   });

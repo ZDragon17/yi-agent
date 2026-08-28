@@ -5,11 +5,11 @@
 - 内核负责：闭环时序、候选预测、安全筛选、探索、执行回执处理、验证归因、学习和停止。它只看到数值向量、ValueSpec 和不透明 action token。
 - Runtime 负责：实验空间、单 writer 锁、事件追加、快照、恢复和重放。
 - WorldPort 负责：领域观测向量、实验空间初始化时随机生成且在该空间内稳定的 action token、纯状态 transition、独立 AuthorityPolicy 安全兜底和场景扰动。v0.1 没有真实外部副作用。
-- Application 通过显式 `WorldRegistry` 注入 `worldDefinition/createManifestParts/createWorld/valueSpec/scenarioExternalInputs`；默认 registry 只注册两个内置世界，测试或宿主可在进程内注入第三方适配器，CLI 不开放动态代码发现。
+- Application 通过显式 `WorldRegistry` 注入 `worldDefinition/createManifestParts/createWorld/valueSpec/scenarioExternalInputs`；默认 registry 注册五个内置世界，测试或宿主可在进程内注入第三方适配器，CLI 不开放动态代码发现。
 - CLI 负责：参数解析、调用应用服务、结构化/人类可读输出和退出码，不直接修改内核状态。
 - API client 负责：读取环境变量、调用 OpenAI-compatible `/models` 与 `/chat/completions`；它是显式工具，不进入 Kernel 的确定性决策链。
 - ModelAdvisor 负责：把有限的观测、目标和值域上下文转换为一个不可信的 token 提议；它不能写状态、调用 WorldPort 或更新 Memory。
-- v0.1 默认含 `temperature` 与 `virtual-desktop` 两个内置模拟世界；另提供显式外部 WorldPort adapter 协议，但不提供动态发现、任意 in-process import 或真实副作用保证。
+- v0.1 默认含 `temperature`、`virtual-desktop`、`inventory`、`grid` 与 `queue` 五个内置模拟世界；另提供显式外部 WorldPort adapter 协议，但不提供动态发现、任意 in-process import 或真实副作用保证。
 - 信任边界：CLI 参数与磁盘数据都按畸形/损坏输入校验；无密钥 SHA-256 链只检测偶然损坏或未重算篡改，不提供对主动攻击者的真实性证明。
 
 依赖方向：`cli -> application -> kernel <- world ports`，`application -> runtime`，`cli -> api client`。Kernel 不依赖文件系统、终端、网络、具体世界或时钟。
@@ -35,7 +35,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 
 全局退出码：`0=成功`，`2=安全停机或 challenge FALSIFIED`，`3=完整性失败或 INCONCLUSIVE`，`64=参数`，`65=初始化/版本冲突`，`66=资源不存在`，`70=内部世界/程序错误或 API 协议错误`，`74=文件 I/O 或 API 请求失败`，`75=writer 冲突或 run 未终态`。所有命令使用同一映射。
 
-内置 world/scenario：`temperature` 支持 `steady`、`regime-shift`、`external-during-step`、`execution-rejected`、`all-unsafe`；`virtual-desktop` 支持 `steady`、`new-files`、`external-during-step`、`execution-rejected`、`all-unsafe`。Foundational case id 固定为：`unknown-action-exploration`、`regime-shift`、`execution-rejected`、`external-during-step`、`all-unsafe`、`snapshot-write-failure`、`replay-tamper`、`inspect-readonly`。
+内置 world/scenario：`temperature` 支持 `steady`、`regime-shift`、`external-during-step`、`execution-rejected`、`all-unsafe`；`virtual-desktop` 支持 `steady`、`new-files`、`external-during-step`、`execution-rejected`、`all-unsafe`；`inventory` 支持 `steady`、`supply-shock`、`external-during-step`、`execution-rejected`、`all-unsafe`；`grid` 支持 `steady`、`blocked-route`、`external-during-step`、`execution-rejected`、`all-unsafe`；`queue` 支持 `steady`、`burst`、`external-during-step`、`execution-rejected`、`all-unsafe`。Foundational case id 固定为：`unknown-action-exploration`、`regime-shift`、`execution-rejected`、`external-during-step`、`all-unsafe`、`snapshot-write-failure`、`replay-tamper`、`inspect-readonly`、`world-diversity`。
 
 | 运行项 | 正确实现的期望语义 | exit | JSON data 必填 |
 |---|---|---|---|

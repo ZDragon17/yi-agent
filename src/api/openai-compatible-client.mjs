@@ -1,4 +1,5 @@
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+const ZHIPU_CODE_BASE_URL = 'https://open.bigmodel.cn/api/coding/paas/v4';
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
@@ -12,12 +13,21 @@ export class ApiClientError extends Error {
 }
 
 export function loadApiConfig(env = process.env) {
-  const apiKey = nonEmptyEnv(env.YI_AGENT_API_KEY, 'YI_AGENT_API_KEY');
+  const provider = env.YI_AGENT_PROVIDER ?? 'openai-compatible';
+  if (!['openai-compatible', 'zhipu-code'].includes(provider)) {
+    throw new ApiClientError('INVALID_INPUT', 'YI_AGENT_PROVIDER must be openai-compatible or zhipu-code.', { field: 'YI_AGENT_PROVIDER' });
+  }
+  const apiKey = nonEmptyEnv(
+    env.YI_AGENT_API_KEY ?? (provider === 'zhipu-code' ? env.ZAI_API_KEY : undefined),
+    provider === 'zhipu-code' ? 'YI_AGENT_API_KEY or ZAI_API_KEY' : 'YI_AGENT_API_KEY',
+  );
   const model = nonEmptyEnv(env.YI_AGENT_MODEL, 'YI_AGENT_MODEL');
-  const baseUrl = normalizeBaseUrl(env.YI_AGENT_API_BASE_URL ?? DEFAULT_BASE_URL);
+  const baseUrl = normalizeBaseUrl(
+    env.YI_AGENT_API_BASE_URL ?? (provider === 'zhipu-code' ? ZHIPU_CODE_BASE_URL : DEFAULT_BASE_URL),
+  );
   const timeoutMs = parseTimeout(env.YI_AGENT_API_TIMEOUT_MS ?? String(DEFAULT_TIMEOUT_MS));
 
-  return { apiKey, baseUrl, model, timeoutMs };
+  return { apiKey, baseUrl, model, timeoutMs, provider };
 }
 
 export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs, fetchImpl = globalThis.fetch } = {}) {

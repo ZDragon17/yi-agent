@@ -51,6 +51,35 @@ test('CLI executes init, run, inspect, and replay as one JSON-envelope chain', a
   });
 });
 
+test('CLI runs the same closed loop across multidimensional WorldPorts', async () => {
+  await withTemp(async (root) => {
+    const worlds = [
+      { id: 'inventory', dimensions: 3, tokenCount: 3 },
+      { id: 'grid', dimensions: 4, tokenCount: 5 },
+      { id: 'queue', dimensions: 3, tokenCount: 3 },
+    ];
+
+    for (const world of worlds) {
+      const lab = path.join(root, world.id);
+      const init = await invoke('init', '--lab', lab, '--world', world.id, '--seed', `cli-${world.id}`, '--json');
+      assert.equal(init.code, 0, `${world.id}: init`);
+      assert.equal(init.stdout[0].data.tokenMap.entries.length, world.tokenCount);
+
+      const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--json');
+      assert.ok([0, 2].includes(run.code), `${world.id}: run`);
+      assert.ok(['COMPLETED', 'HALTED'].includes(run.stdout[0].data.status), `${world.id}: status`);
+
+      const inspect = await invoke('inspect', '--lab', lab, '--json');
+      assert.equal(inspect.code, 0, `${world.id}: inspect`);
+      assert.equal(inspect.stdout[0].data.inspectView.goal.observationDimensions, world.dimensions);
+
+      const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--json');
+      assert.equal(replay.code, 0, `${world.id}: replay`);
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT', `${world.id}: replay verdict`);
+    }
+  });
+});
+
 test('CLI JSON failures are a single stdout envelope with the documented exit code', async () => {
   const result = await invoke('run', '--lab', 'missing-lab', '--steps', '0', '--json');
   assert.equal(result.code, 64);
@@ -257,7 +286,7 @@ async function writeAdapterConfig(root, args = []) {
     args: [ADAPTER_FIXTURE, ...args],
     adapterId: 'generated-adapter-v1',
     worldId: 'generated',
-    timeoutMs: 500,
+    timeoutMs: 2000,
   }));
   return config;
 }

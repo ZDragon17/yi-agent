@@ -20,6 +20,30 @@ const WORLD_FACTORIES = [
     protectedCapability: 'desktop.move-protected',
     specialScenario: 'new-files',
   },
+  {
+    id: 'inventory',
+    module: new URL('../../src/worlds/inventory.mjs', import.meta.url),
+    exportName: 'createInventoryWorld',
+    capabilities: ['inventory.restock-a', 'inventory.restock-b', 'inventory.fulfill'],
+    primaryCapability: 'inventory.restock-a',
+    specialScenario: 'supply-shock',
+  },
+  {
+    id: 'grid',
+    module: new URL('../../src/worlds/grid.mjs', import.meta.url),
+    exportName: 'createGridWorld',
+    capabilities: ['grid.move-south', 'grid.move-east', 'grid.move-north', 'grid.move-west', 'grid.teleport'],
+    primaryCapability: 'grid.move-south',
+    specialScenario: 'blocked-route',
+  },
+  {
+    id: 'queue',
+    module: new URL('../../src/worlds/queue.mjs', import.meta.url),
+    exportName: 'createQueueWorld',
+    capabilities: ['queue.serve', 'queue.admit', 'queue.clear'],
+    primaryCapability: 'queue.serve',
+    specialScenario: 'burst',
+  },
 ];
 
 const TOKENS = [
@@ -71,7 +95,7 @@ const RECEIPT_KEYS = [
 
 for (const definition of WORLD_FACTORIES) {
   test(`${definition.id} exposes the common WorldPort surface and opaque capabilities`, async () => {
-    const manifest = makeManifest(definition, TOKENS.slice(0, 2));
+    const manifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
     const { port, state } = await makePort(definition, { manifest });
     const manifestBefore = snapshot(manifest);
     const stateBefore = snapshot(state);
@@ -107,7 +131,7 @@ for (const definition of WORLD_FACTORIES) {
   });
 
   test(`${definition.id} transition is deterministic, strict, and non-mutating`, async () => {
-    const manifest = makeManifest(definition, TOKENS.slice(0, 2));
+    const manifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
     const { port, state } = await makePort(definition, { manifest });
     const request = makeRequest(manifest, definition.primaryCapability, state, {
       executionNonce: 'nonce:accepted-1',
@@ -140,7 +164,7 @@ for (const definition of WORLD_FACTORIES) {
   });
 
   test(`${definition.id} execution layer fail-closes every denied request without state change`, async () => {
-    const baseManifest = makeManifest(definition, TOKENS.slice(0, 2));
+    const baseManifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
     const { port, state } = await makePort(definition, { manifest: baseManifest });
     const baselineRequest = makeRequest(baseManifest, definition.primaryCapability, state);
     const accepted = port.transition(
@@ -178,13 +202,13 @@ for (const definition of WORLD_FACTORIES) {
       },
       {
         label: 'allowed=false',
-        manifest: makeManifest(definition, TOKENS.slice(0, 2), {
+        manifest: makeManifest(definition, TOKENS.slice(0, definition.capabilities.length), {
           [definition.primaryCapability]: { allowed: false, safe: true },
         }),
       },
       {
         label: 'safe=false',
-        manifest: makeManifest(definition, TOKENS.slice(0, 2), {
+        manifest: makeManifest(definition, TOKENS.slice(0, definition.capabilities.length), {
           [definition.primaryCapability]: { allowed: true, safe: false },
         }),
       },
@@ -218,7 +242,7 @@ for (const definition of WORLD_FACTORIES) {
     const scenarios = ['steady', definition.specialScenario, 'external-during-step', 'execution-rejected', 'all-unsafe'];
 
     for (const scenario of scenarios) {
-      const manifest = makeManifest(definition, TOKENS.slice(0, 2));
+      const manifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
       const { port, state } = await makePort(definition, { manifest, scenario });
       const capabilities = port.actions(manifest);
       const request = makeRequest(manifest, definition.primaryCapability, state, {
@@ -266,8 +290,8 @@ for (const definition of WORLD_FACTORIES) {
   });
 
   test(`${definition.id} preserves behavior when the manifest permutes opaque tokens`, async () => {
-    const firstManifest = makeManifest(definition, TOKENS.slice(0, 2));
-    const secondManifest = makeManifest(definition, TOKENS.slice(0, 2).reverse());
+    const firstManifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
+    const secondManifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length).reverse());
     const first = await makePort(definition, { manifest: firstManifest });
     const second = await makePort(definition, { manifest: secondManifest });
 
@@ -294,7 +318,7 @@ for (const definition of WORLD_FACTORIES) {
 
 test('temperature rejects an increase at 34.9C even when the selection layer is bypassed', async () => {
   const definition = WORLD_FACTORIES[0];
-  const manifest = makeManifest(definition, TOKENS.slice(0, 2));
+  const manifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
   const { port, state } = await makePort(definition, { manifest });
   const boundaryState = { ...state, temperatureC: 34.9 };
   const request = makeRequest(manifest, 'temperature.increase', boundaryState, {
@@ -308,7 +332,7 @@ test('temperature rejects an increase at 34.9C even when the selection layer is 
 
 test('virtual-desktop never moves its protected item when a guarded token bypasses selection', async () => {
   const definition = WORLD_FACTORIES[1];
-  const manifest = makeManifest(definition, TOKENS.slice(0, 2));
+  const manifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
   const { port, state } = await makePort(definition, { manifest });
   const request = makeRequest(manifest, 'desktop.move-protected', state, {
     executionNonce: 'nonce:protected-item',
@@ -317,6 +341,63 @@ test('virtual-desktop never moves its protected item when a guarded token bypass
   const result = port.transition(state, request);
 
   assertRejectedUnchanged(port, state, result, 'protected desktop item');
+});
+
+test('inventory preserves resource bounds when a direct caller bypasses selection', async () => {
+  const definition = WORLD_FACTORIES.find((item) => item.id === 'inventory');
+  const manifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
+  const { port, state } = await makePort(definition, { manifest });
+  const boundaryState = { ...state, stockA: 100 };
+  const result = port.transition(
+    boundaryState,
+    makeRequest(manifest, 'inventory.restock-a', boundaryState, {
+      executionNonce: 'nonce:inventory-capacity',
+    }),
+  );
+
+  assertRejectedUnchanged(port, boundaryState, result, 'inventory stock bound');
+  assert.equal(result.receipt.rejectionReason, 'INVENTORY_STOCK_A_CAPACITY');
+});
+
+test('grid rejects a forbidden discrete action at the execution boundary', async () => {
+  const definition = WORLD_FACTORIES.find((item) => item.id === 'grid');
+  const manifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
+  const { port, state } = await makePort(definition, { manifest });
+  const result = port.transition(
+    state,
+    makeRequest(manifest, 'grid.teleport', state, { executionNonce: 'nonce:grid-teleport' }),
+  );
+
+  assertRejectedUnchanged(port, state, result, 'grid forbidden action');
+  assert.equal(result.receipt.rejectionReason, 'ACTION_UNSAFE');
+});
+
+test('queue rejects serving an empty system without changing its multidimensional state', async () => {
+  const definition = WORLD_FACTORIES.find((item) => item.id === 'queue');
+  const manifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
+  const { port, state } = await makePort(definition, { manifest });
+  const emptyState = { ...state, queueLength: 0 };
+  const result = port.transition(
+    emptyState,
+    makeRequest(manifest, 'queue.serve', emptyState, { executionNonce: 'nonce:queue-empty' }),
+  );
+
+  assertRejectedUnchanged(port, emptyState, result, 'queue empty boundary');
+  assert.equal(result.receipt.rejectionReason, 'QUEUE_EMPTY');
+});
+
+test('queue rejects serving beyond the bounded served counter', async () => {
+  const definition = WORLD_FACTORIES.find((item) => item.id === 'queue');
+  const manifest = makeManifest(definition, TOKENS.slice(0, definition.capabilities.length));
+  const { port, state } = await makePort(definition, { manifest });
+  const boundaryState = { ...state, queueLength: 1, servedCount: 1_000_000 };
+  const result = port.transition(
+    boundaryState,
+    makeRequest(manifest, 'queue.serve', boundaryState, { executionNonce: 'nonce:queue-served-capacity' }),
+  );
+
+  assertRejectedUnchanged(port, boundaryState, result, 'queue served counter boundary');
+  assert.equal(result.receipt.rejectionReason, 'QUEUE_SERVED_COUNT_CAPACITY');
 });
 
 async function makePort(definition, { manifest, scenario = 'steady' }) {

@@ -31,10 +31,10 @@ Kernel 只处理纯数据和注入接口；Runtime 掌管进程间连续性；CL
 | 模块 | 职责 | 依赖 | FR |
 |---|---|---|---|
 | `src/kernel` | `step -> verify -> learn` 纯闭环、预测、选择、归因、学习 | 无 I/O | FR-2,3,7 |
-| `src/worlds` | 两个内置模拟 WorldPort 和故障注入；通用适配器遵循同一窄契约 | kernel contract | FR-2,5,7 |
+| `src/worlds` | 五个不同状态/动作语义的内置模拟 WorldPort 和故障注入；通用适配器遵循同一窄契约 | kernel contract | FR-2,5,7 |
 | `src/runtime` | LabStore、锁、事件、快照、恢复、重放 | Node fs/crypto | FR-1,3,4 |
 | `src/challenges` | 假设、装置、判别器、结果 | kernel/runtime/worlds | FR-5 |
-| `src/application` | 六个用例服务；默认注册两个内置 WorldPort，允许进程内显式注入 registry 及受控 external adapter | 上述模块 | FR-1..7 |
+| `src/application` | 六个用例服务；默认注册五个内置 WorldPort，允许进程内显式注入 registry 及受控 external adapter | 上述模块 | FR-1..7 |
 | `src/agent` | 模型提议结构化解析与上下文裁剪；不拥有状态或副作用 | API client、runtime schema | FR-2,6,7 |
 | `src/cli.mjs` | 参数、输出、退出码 | application、agent、API client | FR-1..7 |
 
@@ -54,5 +54,5 @@ Kernel 只处理纯数据和注入接口；Runtime 掌管进程间连续性；CL
 1. M1：纯 Kernel + WorldPort 契约，功能收敛。
 2. M2：LabStore + 跨进程恢复 + replay，模块收敛。
 3. M3：CLI + challenge suite，真实 E2E 和系统收敛。
-4. M4：连续反例实验与显式第三方 WorldPort 闭环，决定下一次底座演化，不直接进入真实桌面写操作。
+4. M4：多维、多行动、资源、空间和队列等不同面向的连续反例实验与显式第三方 WorldPort 闭环，决定下一次底座演化，不直接进入真实桌面写操作。
 5. M5：EffectBroker dry-run 契约、durable journal 与标记 sandbox CLI 收敛；只有通过人工 Future-Gate，才可实现真实桌面/设备 executor。

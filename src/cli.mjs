@@ -353,6 +353,6 @@ function helpText() {
     '  yi-agent init|run|inspect|replay|recover|challenge ...',
     '  yi-agent effect plan|confirm|execute|reconcile|compensate|inspect ...',
     '',
-    'API 环境变量: YI_AGENT_API_KEY, YI_AGENT_API_BASE_URL, YI_AGENT_MODEL, YI_AGENT_API_TIMEOUT_MS',
+    'API 环境变量: YI_AGENT_PROVIDER, YI_AGENT_API_KEY/ZAI_API_KEY, YI_AGENT_API_BASE_URL, YI_AGENT_MODEL, YI_AGENT_API_TIMEOUT_MS',
   ].join('\n') + '\n';
 }
