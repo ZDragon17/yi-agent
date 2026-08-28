@@ -107,6 +107,59 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - Effect Broker：对明确声明的副作用提供计划、确认、执行、对账和补偿流程；
 - Windows PowerShell CLI：所有核心实验可以脚本化运行。
 
+## 用一个外部世界验证通用性
+
+仓库提供了一个不依赖 `src/**` 的最小外部世界示例：`examples/counter-world/adapter.mjs`。它只有一个世界状态 `value` 和一个行动 `counter.increment`，通过 `yi-world-cli` JSONL 协议接入。这个例子故意不认识 Kernel 的实现，只负责回答 `hello`、`initialState`、`actions`、`observe`、`externalInputs` 和 `transition` 请求。
+
+在 Windows PowerShell 中运行：
+
+```powershell
+$exampleRoot = Join-Path $PWD 'counter-run'
+powershell -ExecutionPolicy Bypass `
+  -File .\examples\counter-world\run-example.ps1 `
+  -RootPath $exampleRoot
+```
+
+上面的脚本会自动生成 adapter 配置，并真实启动多个 CLI 子进程完成 `init→run→inspect→replay`。如果希望逐条执行，也可以这样做：
+
+```powershell
+$adapterConfig = Join-Path $PWD 'counter-adapter.json'
+powershell -ExecutionPolicy Bypass `
+  -File .\examples\counter-world\make-adapter-config.ps1 `
+  -OutputPath $adapterConfig
+$adapterConfig = (Resolve-Path $adapterConfig).Path
+
+yi-agent init `
+  --lab E:\labs\counter `
+  --world counter `
+  --seed counter-seed `
+  --adapter $adapterConfig `
+  --json
+
+yi-agent run `
+  --lab E:\labs\counter `
+  --steps 3 `
+  --scenario steady `
+  --adapter $adapterConfig `
+  --json
+
+yi-agent inspect --lab E:\labs\counter --adapter $adapterConfig --json
+yi-agent replay --lab E:\labs\counter --run <runId> --adapter $adapterConfig --json
+```
+
+如果已经配置了 API，还可以把同一个外部世界交给模型提议层：
+
+```powershell
+yi-agent agent run `
+  --lab E:\labs\counter `
+  --steps 3 `
+  --goal '让计数器稳定增长' `
+  --adapter $adapterConfig `
+  --json
+```
+
+这段示例的意义不是计数器本身，而是说明领域变化发生在 `WorldPort`，不是发生在 Kernel：换掉 `adapter.mjs` 的状态和行动，只要仍满足协议，CLI、账本、验证、学习和 Replay 可以保持不变。
+
 ## 当前明确不是什么
 
 当前版本还不是通用自主智能，也不会自动操作真实桌面、任意 Shell 或用户文件。它没有证明“智能已经出现”，只提供一个可以持续做实验、记录证据、制造反例和检查回放一致性的底座。

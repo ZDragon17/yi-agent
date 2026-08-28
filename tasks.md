@@ -161,3 +161,9 @@
 - 证据：每个模型 STEP 记录有限的 `policyEvidence`，不保存原始回答；Replay 使用冻结提议重放，不重新访问 API。
 - 验证：本地 HTTP 模拟服务完成 `init→agent run→policyEvidence→replay`，模型返回非法/unsafe token 时只能走显式 Kernel fallback，不能绕过安全边界。
 - 边界：这仍是受控模型辅助闭环，不构成通用智能证明；真实供应商、真实 WorldPort 和真实副作用需要后续独立实验与人工闸门。
+
+## F-7 可复制的外部 WorldPort 示例
+
+- 实现：增加 `examples/counter-world/adapter.mjs`、Windows PowerShell 配置生成脚本和一键运行脚本；示例不依赖项目内部 Kernel，实现最小 `yi-world-cli` 外部世界协议。
+- 验证：使用该示例完成真实子进程 `init→run→inspect→replay`，并在已有本地模型模拟服务下验证 `agent run` 可以复用同一外部世界。
+- 边界：示例只证明协议接入和证据闭环，不代表任意第三方 adapter 都安全；真实副作用仍需单独的 EffectBroker、隔离和人工确认。
