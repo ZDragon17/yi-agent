@@ -23,6 +23,7 @@
 - CLI 负责：参数解析、调用应用服务、结构化/人类可读输出和退出码，不直接修改内核状态。
 - API client 负责：读取环境变量、调用 OpenAI-compatible `/models` 与 `/chat/completions`；它是显式工具，不进入 Kernel 的确定性决策链。
 - ModelAdvisor 负责：把有限的观测、目标和值域上下文转换为一个不可信的 token 提议；它不能写状态、调用 WorldPort 或更新 Memory。
+- ChangeSupervisor 负责：在不认识领域名称的前提下，根据 `ValueSpec` 计算目标距离，区分确认变化与歧义/拒绝，累计停滞，要求重规划，并在目标达成或预算耗尽时停止；它不能执行 WorldPort、调用模型或自行改变目标。
 - v0.1 默认含 `temperature`、`virtual-desktop`、`inventory`、`grid` 与 `queue` 五个内置模拟世界；另提供显式外部 WorldPort adapter 协议，但不提供动态发现、任意 in-process import 或真实副作用保证。
 - 信任边界：CLI 参数与磁盘数据都按畸形/损坏输入校验；无密钥 SHA-256 链只检测偶然损坏或未重算篡改，不提供对主动攻击者的真实性证明。
 
@@ -79,6 +80,8 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `Kernel.step(input)` | `KernelObservation{vector,stateVersion,intervalId}`、memory、ValueSpec、capabilities、显式 rngState | `StepIntent{status,expectation,choice,nextRngState}` 或 `Halt` | Application 从 WorldPort Observation 剥离 evidence 后投影；纯函数；禁止读取时钟/环境元数据；未知安全行动先于已学习行动探索 |
 | `Kernel.verify(input)` | `step` 原样返回的 StepIntent、receipt、投影后的 KernelObservation | `Verification{error,attribution,confidence,learnable}` | 纯函数；预测/选择/回执 token 必须一致；策略版本、约束摘要和 nonce 由 WorldPort/Application 绑定；证据不足为 AMBIGUOUS 且不学习 |
 | `Kernel.learn(input)` | memory、StepIntent、receipt、postObservation、Verification | `{status,token,nextMemory}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，只有 `ACTION && learnable` 才更新行动模型，其余返回未改变的 memory |
+| `ChangeSupervisor.advance(state,input)` | 当前监督状态、完整 `Verification`、前后含 `stateVersion/intervalId` 的观察 | 新监督状态，或 `REPLAN_REQUIRED`/终止状态 | 纯函数；只承认 `ACTION && learnable` 的即时目标距离下降为确认进步；不接触领域标签、模型、WorldPort 或 I/O |
+| `ChangeSupervisor.acknowledgeReplan(state,reason)` | `REPLAN_REQUIRED` 状态、有限原因 | 恢复为 `ACTIVE` 的监督状态 | 只重置停滞计数并记录重规划原因；不改变目标、权重或历史周期 |
 | `LabStore.append(event)` | 完整事件、预期 run sequence/digest | 已 flush 的 sequence/digest | 单 writer；冲突拒绝；只追加 |
 | `LabStore.commit(snapshot)` | 与已追加事件同 sequence 的快照 | 原子替换结果 | 可重复；快照只能追平账本，不能领先 |
 | `Replay.decision(run)` | immutable start、事件、外部输入 | 首差异或一致 | 只读；按 start 的 world/scenario 重建纯 World+Kernel+RNG；每个 STEP 的 `boundary.valueSpec` 是不可变决策输入 |

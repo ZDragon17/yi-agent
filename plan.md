@@ -56,3 +56,4 @@ Kernel 只处理纯数据和注入接口；Runtime 掌管进程间连续性；CL
 3. M3：CLI + challenge suite，真实 E2E 和系统收敛。
 4. M4：多维、多行动、资源、空间和队列等不同面向的连续反例实验与显式第三方 WorldPort 闭环，决定下一次底座演化，不直接进入真实桌面写操作。
 5. M5：EffectBroker dry-run 契约、durable journal 与标记 sandbox CLI 收敛；只有通过人工 Future-Gate，才可实现真实桌面/设备 executor。
+6. M6：将领域中立 ChangeSupervisor 接入 LabStore、Replay 和连续 CLI；用跨 WorldPort 的目标距离、归因、停滞与重规划反例决定下一轮底座演化。
