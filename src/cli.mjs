@@ -102,6 +102,7 @@ async function dispatchAgent(options) {
     scenario: options.scenario,
     registry: loadRegistry(options),
     advisor,
+    goal: options.goal,
   });
 }
 

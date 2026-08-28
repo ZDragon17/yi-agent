@@ -23,7 +23,7 @@
 - CLI 负责：参数解析、调用应用服务、结构化/人类可读输出和退出码，不直接修改内核状态。
 - API client 负责：读取环境变量、调用 OpenAI-compatible `/models` 与 `/chat/completions`；它是显式工具，不进入 Kernel 的确定性决策链。
 - ModelAdvisor 负责：把有限的观测、目标和值域上下文转换为一个不可信的 token 提议；它不能写状态、调用 WorldPort 或更新 Memory。
-- ChangeSupervisor 负责：在不认识领域名称的前提下，根据 `ValueSpec` 计算目标距离，区分确认变化与歧义/拒绝，累计停滞，要求重规划，并在目标达成或预算耗尽时停止；它不能执行 WorldPort、调用模型或自行改变目标。
+- ChangeSupervisor 负责：在不认识领域名称的前提下，根据 `ValueSpec` 计算目标距离，区分确认变化与歧义/拒绝，累计停滞，要求重规划，并在目标达成或预算耗尽时给出停止判定；它不能执行 WorldPort、调用模型或自行改变目标。运行时把该判定作为一个可持久化的变化周期边界，记录原因后可开启下一周期，避免跨 Run/进程丢失连续性。
 - v0.1 默认含 `temperature`、`virtual-desktop`、`inventory`、`grid` 与 `queue` 五个内置模拟世界；另提供显式外部 WorldPort adapter 协议，但不提供动态发现、任意 in-process import 或真实副作用保证。
 - 信任边界：CLI 参数与磁盘数据都按畸形/损坏输入校验；无密钥 SHA-256 链只检测偶然损坏或未重算篡改，不提供对主动攻击者的真实性证明。
 
@@ -81,6 +81,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `Kernel.verify(input)` | `step` 原样返回的 StepIntent、receipt、投影后的 KernelObservation | `Verification{error,attribution,confidence,learnable}` | 纯函数；预测/选择/回执 token 必须一致；策略版本、约束摘要和 nonce 由 WorldPort/Application 绑定；证据不足为 AMBIGUOUS 且不学习 |
 | `Kernel.learn(input)` | memory、StepIntent、receipt、postObservation、Verification | `{status,token,nextMemory}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，只有 `ACTION && learnable` 才更新行动模型，其余返回未改变的 memory |
 | `ChangeSupervisor.advance(state,input)` | 当前监督状态、完整 `Verification`、前后含 `stateVersion/intervalId` 的观察 | 新监督状态，或 `REPLAN_REQUIRED`/终止状态 | 纯函数；只承认 `ACTION && learnable` 的即时目标距离下降为确认进步；不接触领域标签、模型、WorldPort 或 I/O |
+| `ChangeSupervisor.resume(state)` | 上一周期的持久化状态 | 下一变化周期的 `ACTIVE` 状态 | 记录 `runtime-continuation` 原因并清零当前停滞；若上一周期要求重规划则增加 `replanCount`；不重置目标、周期计数、最佳距离或历史变化证据 |
 | `ChangeSupervisor.acknowledgeReplan(state,reason)` | `REPLAN_REQUIRED` 状态、有限原因 | 恢复为 `ACTIVE` 的监督状态 | 只重置停滞计数并记录重规划原因；不改变目标、权重或历史周期 |
 | `LabStore.append(event)` | 完整事件、预期 run sequence/digest | 已 flush 的 sequence/digest | 单 writer；冲突拒绝；只追加 |
 | `LabStore.commit(snapshot)` | 与已追加事件同 sequence 的快照 | 原子替换结果 | 可重复；快照只能追平账本，不能领先 |
@@ -187,11 +188,11 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 ## 6. 数据与持久化契约
 
 - `manifest.json`：初始化后不可变，含 schemaVersion、labId、worldId、seed、createdAt、canonicalRoot、声明式 `scenarioIds`、稳定 tokenMap 及 digest；外部 adapter 另含 `{schemaVersion:1,protocol:"yi-world-cli",version:1,adapterId,worldVersion,valueSpec,evidencePublicKey,descriptorDigest,launchDigest}`，将协议/描述/启动材料和外部证据公钥绑定到实验空间。tokenMap 为 `{schemaVersion:1,entries:[{token,capabilityId}],digest}`，应用层使用由 `SHA256(seed,labId,"capability-map",capabilityId)` 派生的独立 token 域，不消耗 world/policy RNG；即使 seed 相同，不同 labId 也产生不同映射。Runtime 只依据 manifest 的场景契约校验场景标识，不内置新的 WorldPort 领域名单。
-- `state/current.json`：worldState、memory、rngState、kernelStep、lastRunId、lastRunSequence、status、eventsDigest；可由账本重建。
+- `state/current.json`：worldState、memory、rngState、kernelStep、changeSupervisor、lastRunId、lastRunSequence、status、eventsDigest；可由账本重建。
 - `runs/<runId>/start.json`：每 Run 不可变起点，记录 worldId 与规范化 scenario，引用 manifest 的稳定 tokenMapDigest，含规范化连续性投影和起始摘要；tokenMap 与 scenario 均不进入 Kernel 输入。
 - `runs/<runId>/events.jsonl`：Run 内 sequence 从 1 连续递增；每行含 schemaVersion、runId、sequence、kind、payload、prevDigest、digest。
 - 应用服务的长跑模式将 STEP 的完整 `payload` 无损 deflate 后以 base64 字符串写入 JSONL；Runtime 读取时还原为同一语义对象，再执行原有 schema、摘要链和重放校验。`RUN_STARTED`、终态事件和公开 `LabStore` 默认仍使用普通 JSON 对象；外层 sequence/prevDigest/digest 始终明文。每次追加都执行 data-sync 后才返回，压缩不改变证据完整性或恢复边界。
-- STEP payload 必填：`recordedAt,boundary,beforeObservation,memoryEvidenceProjection,beforeDigest,expectation,choice,receipt,postObservation,verification{schemaVersion,error,attribution,confidence,learnable},update,afterDigest,rngBefore,rngAfter,externalInputs,afterState`。其中 `boundary` 至少含 `{schemaVersion:1,valueSpec}`，外部 Run 还必须含 `externalInputsDigest`；它把该步 Kernel 决策所需的目标/权重和整组外部输入固定进账本；Replay 不接受调用者默认值。`afterState` 是该步完整连续性投影 `{worldState,memory,rngState,kernelStep}`，用于账本已落盘而 current 尚未发布时的确定性恢复；`memoryEvidenceProjection` 记录本次预测实际使用的样本数、均值和不确定度摘要；时间只审计，不进决策摘要。
+- STEP payload 必填：`recordedAt,boundary,beforeObservation,memoryEvidenceProjection,beforeDigest,expectation,choice,receipt,postObservation,verification{schemaVersion,error,attribution,confidence,learnable},update,afterDigest,rngBefore,rngAfter,externalInputs,afterState`。其中 `boundary` 至少含 `{schemaVersion:1,valueSpec}`，外部 Run 还必须含 `externalInputsDigest`；它把该步 Kernel 决策所需的目标/权重和整组外部输入固定进账本；Replay 不接受调用者默认值。`afterState` 是该步完整连续性投影 `{worldState,memory,rngState,kernelStep,changeSupervisor}`，用于账本已落盘而 current 尚未发布时的确定性恢复；`changeSupervisor` 仍只由同一套观察向量、ValueSpec、归因和变化证据推进；若某个变化周期完成、停滞或耗尽预算，运行时会记录原因并开启下一变化周期，保持长期运行而不丢失历史证据；`memoryEvidenceProjection` 记录本次预测实际使用的样本数、均值和不确定度摘要；时间只审计，不进决策摘要。
 - `externalInputs` 每项固定为 `{schemaVersion:1,source:"scenario",kind,payload,appliedBeforeVersion,digest,attestation}`；`digest` 覆盖除 `digest`/`attestation` 外的输入字段，`attestation` 是适配器以 manifest 绑定的 Ed25519 私钥对“规范化输入 + digest”的签名。未知版本、摘要或签名错误为 CORRUPT。已注册内置 scenario 使用其 schema 校验；声明式通用 WorldPort 场景只受 Runtime 的结构与摘要契约约束，不接受任意代码。
 - `runs/<runId>/end.json`：终态、finalSequence、finalEventDigest、finalStateDigest 和自摘要；Run 终态后不可修改。完整前缀截断会与 finalSequence/digest 不符。
 - manifest/current/start/end 均含 schemaVersion 和 canonical selfDigest；current 还校验引用的 run/sequence/eventDigest。tokenMap 属于 manifest 自摘要。未知 schema、任一对象摘要错、引用错、终态事件与 end 不符均为 CORRUPT。

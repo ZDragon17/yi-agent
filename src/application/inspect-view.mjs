@@ -31,6 +31,7 @@ export function buildInspectView({ manifest, current, run = null, actions, value
       worldState: viewRunId === null ? null : cloneJson(viewState.worldState),
       kernelStep: viewState.kernelStep,
       memoryDigest: canonicalDigest(viewState.memory),
+      changeSupervisor: viewRunId === null ? null : cloneJson(viewState.changeSupervisor ?? null),
     },
     hypotheses: Object.fromEntries(
       actions.map((action) => [action.token, {

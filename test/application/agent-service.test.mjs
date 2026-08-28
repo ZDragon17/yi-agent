@@ -192,6 +192,7 @@ function project(current) {
     memory: current.memory,
     rngState: current.rngState,
     kernelStep: current.kernelStep,
+    changeSupervisor: current.changeSupervisor,
   };
 }
 

@@ -10,6 +10,7 @@ import {
   isValidEvidencePublicKey,
   verifyExternalInputAttestation,
 } from './external-evidence.mjs';
+import { advanceChangeSupervisor, normalizeChangeSupervisorState, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
 const REQUIRED_BOUNDARY_KEYS = ['schemaVersion', 'valueSpec'];
@@ -220,6 +221,17 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
     rngState: intent.nextRngState,
     kernelStep: state.kernelStep + 1,
   };
+  if (state.changeSupervisor !== undefined) {
+    try {
+      nextState.changeSupervisor = advanceChangeSupervisor(resumeChangeSupervisor(state.changeSupervisor), {
+        beforeObservation,
+        postObservation,
+        verification,
+      });
+    } catch (error) {
+      corrupt('Replay change supervisor failed.', { sequence: event.sequence, cause: errorName(error) });
+    }
+  }
   if (!difference) {
     difference = compareValue(payload.afterDigest, canonicalDigest(nextState), 'payload.afterDigest', event.sequence)
       ?? compareValue(payload.afterState, nextState, 'payload.afterState', event.sequence);
@@ -267,6 +279,13 @@ function validateStart(start, manifest) {
       !isRecord(start.initialState.rngState) || !Number.isSafeInteger(start.initialState.kernelStep) ||
       start.initialState.kernelStep < 0) {
     corrupt('Immutable run start continuity state is invalid.', { runId: start.runId });
+  }
+  if (start.initialState.changeSupervisor !== undefined) {
+    try {
+      normalizeChangeSupervisorState(start.initialState.changeSupervisor);
+    } catch (error) {
+      corrupt('Immutable run start change supervisor is invalid.', { runId: start.runId, cause: errorName(error) });
+    }
   }
 }
 

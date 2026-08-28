@@ -4,6 +4,7 @@ import {
   acknowledgeReplan,
   advanceChangeSupervisor,
   createChangeSupervisor,
+  resumeChangeSupervisor,
   weightedDistance,
 } from '../../src/agent/change-supervisor.mjs';
 
@@ -109,6 +110,20 @@ test('maximum cycles halt even when actions remain safe', () => {
   });
   assert.equal(next.status, 'HALTED');
   assert.equal(next.lastChange.stopReason, 'MAX_CYCLES');
+});
+
+test('a completed supervision cycle can be resumed as the next continuous cycle', () => {
+  const supervisor = createChangeSupervisor({ goal: '达到目标', valueSpec, maxCycles: 1 });
+  const completed = advanceChangeSupervisor(supervisor, {
+    beforeObservation: observation('state:0', [10, 10]),
+    postObservation: observation('state:1', [10, 10]),
+    verification: verification('ACTION', true),
+  });
+  const resumed = resumeChangeSupervisor(completed);
+  assert.equal(completed.status, 'COMPLETED');
+  assert.equal(resumed.status, 'ACTIVE');
+  assert.equal(resumed.cycle, completed.cycle);
+  assert.equal(resumed.lastChange.replanReason, 'runtime-continuation');
 });
 
 test('negative tolerance is rejected instead of making the objective unreachable by definition', () => {

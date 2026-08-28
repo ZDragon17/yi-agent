@@ -26,6 +26,7 @@ import {
   isValidEvidencePublicKey,
   verifyExternalInputAttestation,
 } from './external-evidence.mjs';
+import { normalizeChangeSupervisorState } from '../agent/change-supervisor.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
 const MAX_JSON_BYTES = 1024 * 1024;
@@ -369,7 +370,7 @@ export class LabStore {
       if (previousCurrent.status === 'CORRUPT') corrupt('A corrupt lab cannot start a run.', {});
       if (
         previousCurrent.lastRunId !== null &&
-        canonicalJson(stateProjection(previousCurrent, previousCurrent)) !== canonicalJson(initialState)
+        !sameContinuityState(stateProjection(previousCurrent, previousCurrent), initialState)
       ) {
         conflict('Run initialState differs from current continuity state.', { runId });
       }
@@ -519,6 +520,7 @@ class ActiveRun {
       memory: source.memory,
       rngState: source.rngState,
       kernelStep: source.kernelStep,
+      ...(source.changeSupervisor === undefined ? {} : { changeSupervisor: source.changeSupervisor }),
     }, 'snapshot');
     if (
       source.lastRunId !== this.start.runId ||
@@ -530,7 +532,7 @@ class ActiveRun {
         ledgerSequence: this.lastEvent.sequence,
       });
     }
-    const allowed = new Set(['worldState', 'memory', 'rngState', 'kernelStep', 'lastRunId', 'lastRunSequence', 'eventsDigest', 'status']);
+    const allowed = new Set(['worldState', 'memory', 'rngState', 'kernelStep', 'changeSupervisor', 'lastRunId', 'lastRunSequence', 'eventsDigest', 'status']);
     if (source.status !== 'RUNNING' || Object.keys(source).some((key) => !allowed.has(key))) {
       throw new LabStoreError('INVALID_INPUT', 'Snapshot shape or status is invalid.', { field: 'snapshot' });
     }
@@ -1095,6 +1097,7 @@ function currentFromState(state, watermark) {
     memory: source.memory,
     rngState: source.rngState,
     kernelStep: source.kernelStep,
+    ...(source.changeSupervisor === undefined ? {} : { changeSupervisor: source.changeSupervisor }),
     ...watermark,
   });
 }
@@ -1112,9 +1115,16 @@ function validateContinuityState(value, field, corruptOnFailure = false) {
     value.memory === null || typeof value.memory !== 'object' || Array.isArray(value.memory) ||
     value.rngState === null || typeof value.rngState !== 'object' || Array.isArray(value.rngState) ||
     !Number.isSafeInteger(value.kernelStep) || value.kernelStep < 0 ||
-    Object.keys(value).some((key) => !['worldState', 'memory', 'rngState', 'kernelStep'].includes(key))
+    Object.keys(value).some((key) => !['worldState', 'memory', 'rngState', 'kernelStep', 'changeSupervisor'].includes(key))
   ) {
     fail('Continuity state is invalid.');
+  }
+  if (value.changeSupervisor !== undefined) {
+    try {
+      normalizeChangeSupervisorState(value.changeSupervisor);
+    } catch (error) {
+      fail(`Continuity change supervisor is invalid: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 }
 
@@ -1295,9 +1305,20 @@ function stateProjection(current, fallback) {
       memory: cloneJson(current.memory),
       rngState: cloneJson(current.rngState),
       kernelStep: current.kernelStep,
+      ...(current.changeSupervisor === undefined ? {} : { changeSupervisor: cloneJson(current.changeSupervisor) }),
     };
   }
   return cloneJson(fallback);
+}
+
+function sameContinuityState(previous, next) {
+  if (canonicalJson(previous) === canonicalJson(next)) return true;
+  if (previous.changeSupervisor === undefined && next.changeSupervisor !== undefined) {
+    const withoutSupervisor = { ...next };
+    delete withoutSupervisor.changeSupervisor;
+    return canonicalJson(previous) === canonicalJson(withoutSupervisor);
+  }
+  return false;
 }
 
 function recoveryStateProjection(current, start, events) {

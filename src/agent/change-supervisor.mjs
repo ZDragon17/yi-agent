@@ -164,6 +164,25 @@ export function acknowledgeReplan(state, reason = 'strategy-change') {
   };
 }
 
+export function normalizeChangeSupervisorState(value) {
+  return normalizeState(value);
+}
+
+export function resumeChangeSupervisor(state, reason = 'runtime-continuation') {
+  const current = normalizeState(state);
+  if (current.status === 'ACTIVE') return current;
+  const normalizedReason = requireGoal(reason);
+  return {
+    ...current,
+    status: 'ACTIVE',
+    stagnation: 0,
+    replanCount: current.status === 'REPLAN_REQUIRED' ? current.replanCount + 1 : current.replanCount,
+    lastChange: current.lastChange === null
+      ? null
+      : { ...current.lastChange, replanReason: normalizedReason },
+  };
+}
+
 export function weightedDistance(vector, objective) {
   const normalizedObjective = normalizeObjective(objective);
   const source = normalizeVector(

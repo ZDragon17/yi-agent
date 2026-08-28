@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { LabStore, LabStoreError } from '../runtime/lab-store.mjs';
 import { canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { learn, stepWithPreference, verify } from '../kernel/index.mjs';
+import { advanceChangeSupervisor, createChangeSupervisor, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
 import {
   builtInWorldRegistry,
@@ -52,6 +53,7 @@ export async function runLab(input) {
   const store = await LabStore.open({ labPath });
   const manifest = store.manifest;
   registry.assertManifest(manifest);
+  const spec = registry.valueSpec(manifest.worldId);
   const world = registry.createWorld(manifest, scenario);
   const current = (await store.inspect()).current;
   const initialState = current.lastRunId === null
@@ -60,8 +62,12 @@ export async function runLab(input) {
         memory: { schemaVersion: SCHEMA_VERSION, actionModels: {} },
         rngState: initialRng(manifest.seed),
         kernelStep: 0,
+        changeSupervisor: createChangeSupervisor({
+          goal: source.goal ?? '逼近 ValueSpec 目标',
+          valueSpec: spec,
+        }),
       }
-    : projectCurrent(current);
+    : ensureSupervisor(projectCurrent(current), spec, source.goal);
   const run = await store.startRun({
     runId,
     worldId: manifest.worldId,
@@ -71,7 +77,6 @@ export async function runLab(input) {
     ...(failpoint === undefined ? {} : { failpoint }),
   });
   let capabilities;
-  let spec;
   let state = initialState;
   let executed = 0;
   let accepted = 0;
@@ -80,7 +85,6 @@ export async function runLab(input) {
 
   try {
     capabilities = world.actions(worldManifest(manifest));
-    spec = registry.valueSpec(manifest.worldId);
     for (let index = 0; index < steps; index += 1) {
     const beforeObservation = projectObservation(world.observe(state.worldState));
     const modelDecision = source.advisor !== undefined && capabilities.some((capability) => capability.allowed && capability.safe)
@@ -91,6 +95,7 @@ export async function runLab(input) {
           capabilities,
           manifest,
           step: state.kernelStep,
+          goal: state.changeSupervisor.goal,
         })
       : null;
     const intent = stepWithPreference({
@@ -137,11 +142,17 @@ export async function runLab(input) {
       postObservation,
       verification,
     });
+    const nextChangeSupervisor = advanceChangeSupervisor(resumeChangeSupervisor(state.changeSupervisor), {
+      beforeObservation,
+      postObservation,
+      verification,
+    });
     const nextState = {
       worldState: transition.nextWorldState,
       memory: update.nextMemory,
       rngState: intent.nextRngState,
       kernelStep: state.kernelStep + 1,
+      changeSupervisor: nextChangeSupervisor,
     };
     const event = await run.append({
       kind: 'STEP',
@@ -202,7 +213,12 @@ export async function runLab(input) {
 
     terminalRequested = true;
     await run.finish({ terminalStatus: 'COMPLETED', finalState: state });
-    return runSummary(runId, 'COMPLETED', stopReason, executed, { executed, accepted, rejected: 0 });
+    return runSummary(runId, 'COMPLETED', stopReason, executed, {
+      executed,
+      accepted,
+      rejected: 0,
+      supervision: state.changeSupervisor,
+    });
   } catch (error) {
     if (!terminalRequested && !run.terminalEvidence && !run.needsLedgerReconcile &&
         canonicalJson(run.expectedState) === canonicalJson(state)) {
@@ -375,6 +391,18 @@ function projectCurrent(current) {
     memory: current.memory,
     rngState: current.rngState,
     kernelStep: current.kernelStep,
+    ...(current.changeSupervisor === undefined ? {} : { changeSupervisor: current.changeSupervisor }),
+  };
+}
+
+function ensureSupervisor(state, valueSpec, goal) {
+  if (state.changeSupervisor !== undefined) return state;
+  return {
+    ...state,
+    changeSupervisor: createChangeSupervisor({
+      goal: goal ?? '逼近 ValueSpec 目标',
+      valueSpec,
+    }),
   };
 }
 

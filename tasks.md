@@ -172,6 +172,6 @@
 ## F-8 领域中立的变化监督器
 
 - 原理：所有领域都投影为观察向量、目标和值域；监督器只计算同一套加权目标距离，并把“行动造成的可归因改善”“歧义/拒绝”“停滞”“重规划”“目标达成”和“预算耗尽”表达为统一状态变化。
-- 实现：`src/agent/change-supervisor.mjs` 提供纯 `create/advance/acknowledgeReplan` 契约；确认进步必须同时满足 `attribution=ACTION` 与 `learnable=true`，退步不能被历史最佳距离误判为改善。
-- 验证：覆盖确认进步、歧义不学习、确认退步、目标达成、停滞重规划、重规划恢复、最大周期和参数边界；下一阶段把状态写入 LabStore/Replay，再接入 CLI 长期运行。
-- 边界：这是底座的可证伪监督层，不等于通用自主智能；它不能从不存在的观测、归因或执行回执中创造智能。
+- 实现：`src/agent/change-supervisor.mjs` 提供纯 `create/advance/acknowledgeReplan/resume` 契约；确认进步必须同时满足 `attribution=ACTION` 与 `learnable=true`，退步不能被历史最佳距离误判为改善；`changeSupervisor` 进入 start/current/STEP afterState/快照/终态，旧实验室可在下一 Run 平滑升级。
+- 验证：覆盖确认进步、歧义不学习、确认退步、目标达成、停滞重规划、重规划恢复、最大周期和参数边界；应用层验证 15+15 与 30 步的监督状态相等；CLI 通过多进程接力、STEP 落盘后进程崩溃、显式 recover、后续 Run 和 Replay 验证重启恢复及跨 WorldPort 一致。
+- 边界：这是底座的可证伪监督层，不等于通用自主智能；当前 `resume` 只开启下一变化周期，不声称已经完成有证据的策略重规划；它不能从不存在的观测、归因或执行回执中创造智能。

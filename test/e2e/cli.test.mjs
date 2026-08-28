@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { canonicalDigest, canonicalJson, withSelfDigest } from '../../src/runtime/schema.mjs';
@@ -72,11 +73,41 @@ test('CLI runs the same closed loop across multidimensional WorldPorts', async (
       const inspect = await invoke('inspect', '--lab', lab, '--json');
       assert.equal(inspect.code, 0, `${world.id}: inspect`);
       assert.equal(inspect.stdout[0].data.inspectView.goal.observationDimensions, world.dimensions);
+      assert.equal(inspect.stdout[0].data.inspectView.facts.changeSupervisor.objective.observationDimensions, world.dimensions);
 
       const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--json');
       assert.equal(replay.code, 0, `${world.id}: replay`);
       assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT', `${world.id}: replay verdict`);
     }
+  });
+});
+
+test('CLI continues across process restarts and recovers a crashed run before the next run', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'restart-lab');
+    assert.equal((await invoke('init', '--lab', lab, '--world', 'temperature', '--seed', 'restart-seed', '--json')).code, 0);
+    assert.equal((await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--json')).code, 0);
+    assert.equal((await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '2', '--json')).code, 0);
+
+    const beforeCrash = await invoke('inspect', '--lab', lab, '--json');
+    assert.equal(beforeCrash.stdout[0].data.current.kernelStep, 4);
+    assert.equal(beforeCrash.stdout[0].data.inspectView.facts.changeSupervisor.cycle, 4);
+
+    const crashed = await crashAfterStep(lab);
+    assert.equal(crashed, 17);
+    const recovered = await invoke('recover', '--lab', lab, '--confirm-lock-owner-dead', '--json');
+    assert.equal(recovered.code, 0);
+    assert.equal(recovered.stdout[0].data.reason, 'CRASH_HALTED');
+    assert.equal(recovered.stdout[0].data.current.kernelStep, 5);
+
+    const continued = await invoke('run', '--lab', lab, '--run-id', 'run-3', '--steps', '1', '--json');
+    assert.equal(continued.code, 0);
+    const afterRestart = await invoke('inspect', '--lab', lab, '--json');
+    assert.equal(afterRestart.stdout[0].data.current.kernelStep, 6);
+    assert.equal(afterRestart.stdout[0].data.inspectView.facts.changeSupervisor.cycle, 6);
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-3', '--json');
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
   });
 });
 
@@ -274,6 +305,25 @@ async function invoke(...args) {
       clearTimeout(timer);
       settled = true;
       resolve({ code, timedOut: false, stdout: parseOutput(stdout), stderr });
+    });
+  });
+}
+
+async function crashAfterStep(lab) {
+  const agentService = pathToFileURL(path.resolve('src/application/agent-service.mjs')).href;
+  const script = [
+    `import { runLab } from ${JSON.stringify(agentService)};`,
+    `runLab({ labPath: ${JSON.stringify(lab)}, runId: 'crashed-run', steps: 1, failpoint: (point) => point === 'STEP:appended' })`,
+    '.then(() => process.exit(0), () => process.exit(17));',
+  ].join('\n');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { windowsHide: true });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === null) reject(new Error(`crash runner did not exit cleanly: ${stderr}`));
+      else resolve(code);
     });
   });
 }
