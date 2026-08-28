@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EffectBroker 状态机原型</title>
+  <style>
+    :root { color-scheme: light; --ink:#1e293b; --muted:#64748b; --line:#dbe4ee; --accent:#0f766e; --warn:#b45309; --bad:#b91c1c; --paper:#fff; --wash:#f1f5f9; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--wash); color:var(--ink); font:16px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+    main { max-width:1080px; margin:0 auto; padding:42px 22px 72px; }
+    h1 { margin:0 0 8px; letter-spacing:-.03em; }
+    h2 { margin:0 0 14px; font-size:1.15rem; }
+    p { margin:0 0 14px; }
+    .intro,.panel { background:var(--paper); border:1px solid var(--line); border-radius:18px; padding:22px; box-shadow:0 8px 24px #0f172a0a; }
+    .intro { border-left:5px solid var(--accent); margin-bottom:18px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    .state { display:grid; grid-template-columns:130px 1fr; gap:8px 16px; margin:0; }
+    dt { color:var(--muted); } dd { margin:0; font-weight:600; overflow-wrap:anywhere; }
+    .phase { color:var(--accent); }
+    .buttons { display:flex; flex-wrap:wrap; gap:9px; }
+    button { border:1px solid #99b8b2; border-radius:10px; padding:9px 13px; background:#ecfdf5; color:#115e59; cursor:pointer; font:inherit; }
+    button:hover { background:#ccfbf1; }
+    button:disabled { opacity:.4; cursor:not-allowed; }
+    .danger { border-color:#f0b38a; background:#fff7ed; color:#9a3412; }
+    .hint { color:var(--muted); font-size:.92rem; }
+    .event { border-top:1px solid var(--line); padding:12px 0; }
+    .event:first-child { border-top:0; padding-top:0; }
+    .event strong { color:var(--accent); }
+    code { background:#e2e8f0; border-radius:5px; padding:1px 5px; }
+    pre { white-space:pre-wrap; word-break:break-word; margin:0; background:#0f172a; color:#dbeafe; border-radius:12px; padding:14px; font-size:.82rem; }
+    .tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+    .tabs button.active { background:var(--accent); border-color:var(--accent); color:white; }
+    .walkthrough { border-top:1px solid var(--line); padding-top:14px; }
+    @media (max-width:760px) { .grid { grid-template-columns:1fr; } .state { grid-template-columns:105px 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <section class="intro">
+    <h1>EffectBroker 状态机原型</h1>
+    <p><strong>要验证的问题：</strong>Agent 产生的“行动意图”与真实世界副作用之间，最小需要哪些状态，才能处理确认、崩溃、重复执行、回执和撤销？</p>
+    <p class="hint">这是 throwaway 原型。它只在内存里模拟一个文件移动，不读取或修改真实文件。重点观察：执行结果未知时，系统必须先对账，不能盲目重试。</p>
+  </section>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>当前事实</h2>
+      <dl class="state" id="state"></dl>
+      <p class="hint" id="explanation"></p>
+      <div class="buttons" id="actions"></div>
+    </section>
+    <section class="panel">
+      <h2>事件账本（内存）</h2>
+      <div id="events"></div>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:18px">
+    <h2>引导场景</h2>
+    <div class="tabs" id="tabs"></div>
+    <div class="walkthrough" id="walkthrough"></div>
+  </section>
+
+  <section class="panel" style="margin-top:18px">
+    <h2>完整状态（便于检查边界）</h2>
+    <pre id="raw"></pre>
+  </section>
+</main>
+<script>
+// Pure, liftable reducer. The HTML shell below is not production code.
+const initial = () => ({
+  phase: 'IDLE',
+  world: { reportLocation: '桌面/待整理', protectedLocation: '桌面/系统区' },
+  intent: null,
+  receipt: null,
+  events: [],
+});
+
+const scenarioDefinitions = {
+  normal: {
+    title: '正常整理',
+    text: '先形成计划，再确认，最后得到明确回执。注意：计划不是事实，只有回执才改变世界事实。',
+    steps: ['PLAN_SAFE', 'CONFIRM', 'EXECUTE_OK'],
+  },
+  crash: {
+    title: '执行后崩溃',
+    text: '模拟动作可能已经发生，但回执尚未写入。此时不能再次执行，必须用同一个 nonce 查询结果。',
+    steps: ['PLAN_SAFE', 'CONFIRM', 'EXECUTE_UNKNOWN', 'QUERY_FOUND'],
+  },
+  duplicate: {
+    title: '重复请求',
+    text: '同一个意图重复到达时，Broker 应返回原回执，而不是产生第二次副作用。',
+    steps: ['PLAN_SAFE', 'CONFIRM', 'EXECUTE_OK', 'RETRY_SAME_NONCE'],
+  },
+  irreversible: {
+    title: '不可逆动作',
+    text: '没有补偿方案的动作不能伪装成可撤销。尝试撤销时，系统必须明确拒绝并保留事实。',
+    steps: ['PLAN_IRREVERSIBLE', 'CONFIRM', 'EXECUTE_OK', 'COMPENSATE'],
+  },
+};
+
+function reduce(state, action) {
+  const s = structuredClone(state);
+  const record = (kind, detail) => s.events.push({ sequence: s.events.length + 1, kind, detail });
+  if (action.type === 'RESET') return initial();
+  if (action.type === 'PLAN_SAFE' || action.type === 'PLAN_IRREVERSIBLE') {
+    if (s.phase !== 'IDLE' && s.phase !== 'REJECTED' && s.phase !== 'REVERSED') return reject(s, '当前已有未结束的意图');
+    const reversible = action.type === 'PLAN_SAFE';
+    s.intent = { effectId: 'effect:report:move', nonce: 'nonce:report:1', from: s.world.reportLocation, to: '桌面/已整理', risk: reversible ? 'LOW' : 'HIGH', reversible, compensation: reversible ? 'move-back' : null };
+    s.receipt = null; s.phase = 'PLANNED'; record('INTENT_PLANNED', s.intent); return s;
+  }
+  if (action.type === 'CONFIRM') {
+    if (s.phase !== 'PLANNED') return reject(s, '只有已形成的计划才能确认');
+    s.phase = 'CONFIRMED'; record('HUMAN_CONFIRMED', { nonce: s.intent.nonce }); return s;
+  }
+  if (action.type === 'EXECUTE_OK') {
+    if (s.phase !== 'CONFIRMED') return reject(s, '只有确认后的计划才能执行');
+    s.world.reportLocation = s.intent.to; s.receipt = { nonce: s.intent.nonce, status: 'APPLIED', effectDigest: digest(s.world) }; s.phase = 'APPLIED'; record('EFFECT_APPLIED', s.receipt); return s;
+  }
+  if (action.type === 'EXECUTE_UNKNOWN') {
+    if (s.phase !== 'CONFIRMED') return reject(s, '只有确认后的计划才能执行');
+    s.phase = 'RECONCILE_REQUIRED'; s.receipt = { nonce: s.intent.nonce, status: 'UNKNOWN' }; record('EXECUTION_RESULT_UNKNOWN', s.receipt); return s;
+  }
+  if (action.type === 'QUERY_FOUND') {
+    if (s.phase !== 'RECONCILE_REQUIRED') return reject(s, '没有待对账的执行');
+    s.world.reportLocation = s.intent.to; s.receipt = { nonce: s.intent.nonce, status: 'APPLIED', effectDigest: digest(s.world), source: 'QUERY' }; s.phase = 'APPLIED'; record('RECONCILED_APPLIED', s.receipt); return s;
+  }
+  if (action.type === 'RETRY_SAME_NONCE') {
+    if (s.phase !== 'APPLIED') return reject(s, '只有已完成的执行才能演示幂等重试');
+    record('IDEMPOTENT_RETRY', { nonce: s.intent.nonce, returnedReceipt: s.receipt }); return s;
+  }
+  if (action.type === 'COMPENSATE') {
+    if (s.phase !== 'APPLIED') return reject(s, '当前没有可补偿的已执行动作');
+    if (!s.intent.reversible) return reject(s, '该动作没有可信补偿方案，不能伪造撤销');
+    s.world.reportLocation = s.intent.from; s.phase = 'REVERSED'; record('COMPENSATED', { nonce: s.intent.nonce, location: s.world.reportLocation }); return s;
+  }
+  return reject(s, '未知操作');
+}
+
+function reject(state, reason) { state.phase = 'REJECTED'; state.receipt = { status: 'REJECTED', reason }; state.events.push({ sequence: state.events.length + 1, kind: 'BROKER_REJECTED', detail: state.receipt }); return state; }
+function digest(value) { return 'sha256:' + JSON.stringify(value).split('').reduce((h, c) => ((h * 33 + c.charCodeAt(0)) >>> 0), 5381).toString(16).padStart(8, '0'); }
+
+let state = initial();
+let activeScenario = 'normal';
+function dispatch(action) { state = reduce(state, action); render(); }
+function actionLabel(type) { return ({ PLAN_SAFE:'形成可撤销计划', PLAN_IRREVERSIBLE:'形成不可逆计划', CONFIRM:'人工确认', EXECUTE_OK:'模拟执行成功', EXECUTE_UNKNOWN:'模拟执行后失联', QUERY_FOUND:'按 nonce 查询到已执行', RETRY_SAME_NONCE:'重复同一请求', COMPENSATE:'尝试撤销', RESET:'重置' })[type] || type; }
+function availableActions() { return ['PLAN_SAFE','PLAN_IRREVERSIBLE','CONFIRM','EXECUTE_OK','EXECUTE_UNKNOWN','QUERY_FOUND','RETRY_SAME_NONCE','COMPENSATE','RESET']; }
+function render() {
+  const fields = [['阶段','phase'],['报告位置','world.reportLocation'],['保护项位置','world.protectedLocation'],['意图','intent'],['回执','receipt']];
+  document.querySelector('#state').innerHTML = fields.map(([label, key]) => `<dt>${label}</dt><dd class="${key === 'phase' ? 'phase' : ''}">${format(read(state, key))}</dd>`).join('');
+  document.querySelector('#explanation').textContent = explanation(state);
+  document.querySelector('#actions').innerHTML = availableActions().map((type) => `<button class="${type === 'COMPENSATE' ? 'danger' : ''}" data-action="${type}">${actionLabel(type)}</button>`).join('');
+  document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => dispatch({ type: button.dataset.action })));
+  document.querySelector('#events').innerHTML = state.events.length ? state.events.slice().reverse().map((event) => `<div class="event"><strong>#${event.sequence} ${event.kind}</strong><br><span class="hint">${format(event.detail)}</span></div>`).join('') : '<p class="hint">还没有事实事件。</p>';
+  document.querySelector('#raw').textContent = JSON.stringify(state, null, 2);
+  document.querySelector('#tabs').innerHTML = Object.entries(scenarioDefinitions).map(([key, item]) => `<button class="${key === activeScenario ? 'active' : ''}" data-scenario="${key}">${item.title}</button>`).join('');
+  document.querySelectorAll('[data-scenario]').forEach((button) => button.addEventListener('click', () => { activeScenario = button.dataset.scenario; render(); }));
+  const scenario = scenarioDefinitions[activeScenario];
+  document.querySelector('#walkthrough').innerHTML = `<p>${scenario.text}</p><div class="buttons">${scenario.steps.map((type, index) => `<button data-step="${type}">${index + 1}. ${actionLabel(type)}</button>`).join('')}<button class="danger" data-step="RESET">重新开始</button></div>`;
+  document.querySelectorAll('[data-step]').forEach((button) => button.addEventListener('click', () => dispatch({ type: button.dataset.step })));
+}
+function read(value, path) { return path.split('.').reduce((current, key) => current?.[key], value); }
+function format(value) { return value === null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value); }
+function explanation(value) { if (value.phase === 'RECONCILE_REQUIRED') return '执行事实未知：先查询同一个 nonce，对账完成前不能重试。'; if (value.phase === 'APPLIED') return '已取得明确回执；相同 nonce 再来只返回原回执。'; if (value.phase === 'REJECTED') return 'Broker 拒绝了非法状态流转，拒绝本身也进入事实账本。'; if (value.phase === 'REVERSED') return '只有存在可信补偿方案的动作才能回到之前的状态。'; return '当前状态只展示已确认事实，不把模型建议当成世界事实。'; }
+render();
+</script>
+</body>
+</html>

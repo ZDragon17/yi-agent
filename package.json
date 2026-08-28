@@ -1,0 +1,20 @@
+{
+  "name": "yi-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CLI v0.1 experiment runner",
+  "bin": {
+    "yi-agent": "./bin/yi-agent.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node scripts/test-gate.mjs test",
+    "test:gate": "node scripts/test-gate.mjs",
+    "test:e2e": "node scripts/test-gate.mjs test/e2e",
+    "source:manifest": "node scripts/source-manifest.mjs",
+    "cli": "node bin/yi-agent.mjs"
+  }
+}
