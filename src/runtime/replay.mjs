@@ -212,13 +212,23 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   let update;
   try {
     verification = kernel.verify({ intent, receipt, postObservation });
-    update = kernel.learn({
+    const learned = kernel.learn({
       memory: state.memory,
       intent,
       receipt,
       postObservation,
       verification,
     });
+    update = payload.boundary.kernelLearningVersion === undefined &&
+      payload.update?.status === 'SKIPPED' &&
+      verification.attribution === 'EXECUTION_REJECTED'
+      ? {
+          schemaVersion: SCHEMA_VERSION,
+          status: 'SKIPPED',
+          token: intent.choice.token,
+          nextMemory: cloneJson(state.memory),
+        }
+      : learned;
   } catch (error) {
     corrupt('Replay kernel verification or learning failed.', { sequence: event.sequence, cause: errorName(error) });
   }

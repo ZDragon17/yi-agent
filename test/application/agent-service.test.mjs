@@ -14,7 +14,7 @@ import {
   createWorldPort,
   normalizeWorldFactoryOptions,
 } from '../../src/worlds/world-port-base.mjs';
-import { canonicalDigest } from '../../src/runtime/schema.mjs';
+import { canonicalDigest, canonicalJson } from '../../src/runtime/schema.mjs';
 
 test('application service runs a real closed loop and replays it without changing the lab', async () => {
   await withLab(async (lab) => {
@@ -242,6 +242,63 @@ test('application persists rejection feedback and selects another action after a
     assert.equal(secondRun.events.find((event) => event.kind === 'STEP').payload.choice.token, registry.alternativeToken);
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
     assert.equal((await replayLab({ labPath: lab, runId: 'run-2', registry })).verdict, 'CONSISTENT');
+  });
+});
+
+test('replay preserves a pre-rejection-memory ledger without rewriting its historical update', async () => {
+  await withLab(async (lab) => {
+    const registry = createRejectionRegistry();
+    await initLab({ labPath: lab, labId: 'legacy-rejection-lab', worldId: 'feedback', seed: 'legacy-rejection-seed', registry });
+    await runLab({ labPath: lab, runId: 'run-1', steps: 1, scenario: 'feedback', registry });
+
+    const store = await LabStore.open({ labPath: lab });
+    const run = await store.readRun('run-1');
+    const stepIndex = run.events.findIndex((event) => event.kind === 'STEP');
+    const step = run.events[stepIndex];
+    const legacyAfterState = { ...step.payload.afterState, memory: run.start.initialState.memory };
+    const { kernelLearningVersion: _ignored, ...legacyBoundary } = step.payload.boundary;
+    const legacyStep = {
+      ...step,
+      payload: {
+        ...step.payload,
+        boundary: legacyBoundary,
+        update: {
+          schemaVersion: 1,
+          status: 'SKIPPED',
+          token: step.payload.choice.token,
+          nextMemory: run.start.initialState.memory,
+        },
+        afterState: legacyAfterState,
+        afterDigest: canonicalDigest(legacyAfterState),
+      },
+    };
+    const legacyTerminal = {
+      ...run.events.at(-1),
+      payload: {
+        ...run.events.at(-1).payload,
+        finalState: legacyAfterState,
+        finalStateDigest: canonicalDigest(legacyAfterState),
+      },
+    };
+    const rewrittenEvents = run.events.map((event, index) => index === stepIndex ? legacyStep : index === run.events.length - 1 ? legacyTerminal : event);
+    let previousDigest = null;
+    const chainedEvents = rewrittenEvents.map((event) => {
+      const unsigned = { ...event, prevDigest: previousDigest };
+      delete unsigned.digest;
+      const chained = { ...unsigned, digest: canonicalDigest(unsigned) };
+      previousDigest = chained.digest;
+      return chained;
+    });
+    await writeFile(path.join(lab, 'runs', 'run-1', 'events.jsonl'), `${chainedEvents.map(canonicalJson).join('\n')}\n`);
+    const endBase = {
+      ...run.end,
+      finalEventDigest: previousDigest,
+      finalStateDigest: canonicalDigest(legacyAfterState),
+    };
+    delete endBase.selfDigest;
+    await writeFile(path.join(lab, 'runs', 'run-1', 'end.json'), `${canonicalJson({ ...endBase, selfDigest: canonicalDigest(endBase) })}\n`);
+
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
   });
 });
 

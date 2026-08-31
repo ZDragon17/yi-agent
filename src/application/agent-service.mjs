@@ -305,6 +305,7 @@ export async function runLab(input) {
         recordedAt: new Date().toISOString(),
         boundary: {
           schemaVersion: SCHEMA_VERSION,
+          kernelLearningVersion: 2,
           valueSpec: stepValueSpec,
           capabilities,
           ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),

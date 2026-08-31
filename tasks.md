@@ -195,7 +195,7 @@
 ## F-12 关系条件长期记忆
 
 - 原理：单一 Token 的全局平均会把不同上下文中的变化混在一起；用观测向量相对当前 ValueSpec 的三态关系签名作为共同上下文轴，形成 `Token×RelationSignature` 条件模型，不引入领域标签。
-- 实现：Kernel 在 StepIntent 中记录可选关系签名；经 `ACTION && learnable` 验证后，同时更新总体 `actionModels` 和条件 `relationModels`；执行拒绝则更新不含领域文本的 `rejectionModels`，仅绑定 Token、最近关系签名、拒绝次数和当前拒绝状态。Application 为新实验启用关系记忆，旧账本缺失这些字段时保持兼容；InspectView 暴露关系模型和拒绝模型数量及每个 action 的条件证据。
+- 实现：Kernel 在 StepIntent 中记录可选关系签名；经 `ACTION && learnable` 验证后，同时更新总体 `actionModels` 和条件 `relationModels`；执行拒绝则更新不含领域文本的 `rejectionModels`，仅绑定 Token、最近关系签名、拒绝次数和当前拒绝状态。新 STEP 以 `kernelLearningVersion: 2` 标记拒绝学习语义；Replay 对缺少标记且已记录 `SKIPPED` 的旧拒绝 STEP 保持兼容。Application 为新实验启用关系记忆，旧账本缺失这些字段时保持兼容；InspectView 暴露关系模型和拒绝模型数量及每个 action 的条件证据。
 - 验证：相同 Token 在两个关系签名下采用不同已验证模型；关系模型只在可归因变化时增长，拒绝会跨 Run 持久化并使同关系下的动作降出探索池，关系变化后仍可重新验证；跨 Run、重启、Replay、五个 WorldPort 和外部 WorldPort 保持同一关系签名和预测结果。
 - 边界：关系签名和拒绝证据是数值层的有限抽象，不等于自然语言语义、因果模型或跨世界 Token 对齐；拒绝不会自动证明永久约束，下一步仍需验证多次拒绝、动态约束变化和多目标迁移中的实际收益。
 
@@ -203,7 +203,7 @@
 
 - 原理：停滞不是简单切换策略，而是对当前未完成变化假设的反证；允许有限 Planner 提出新路径，但已完成阶段和根目标必须保持不变。
 - 实现：`reviseGoalPlan` 只接受 `REPLAN_REQUIRED` 状态，保留已完成阶段前缀，修订未完成后缀并递增 `plan.revision`；Planner 是否可在后续 Run 触发由持久化的 `plannerEnabled` 决定；`boundary.goalReplan` 保存修订计划和 `planEvidence`。
-- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；当前全量门禁 219/219。
+- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；当前全量门禁 220/220。
 - 边界：计划修订仍是有限向量搜索，不代表模型理解了自然语言目标、获得了现实因果能力或实现了开放式自我改进。
 
 ## F-14 非平稳动力学下的有界变化记忆
