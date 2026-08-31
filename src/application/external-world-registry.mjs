@@ -348,7 +348,12 @@ function normalizeExternalState(value, worldId, field) {
 }
 
 function normalizeExternalObservation(value, worldId, field, expectedStateVersion, expectedDimensions) {
-  const source = assertExactKeys(value, ['schemaVersion', 'vector', 'stateVersion', 'intervalId', 'evidence'], field);
+  const source = assertExactKeys(
+    value,
+    ['schemaVersion', 'vector', 'stateVersion', 'intervalId', 'evidence', 'feedback'],
+    field,
+    ['schemaVersion', 'vector', 'stateVersion', 'intervalId', 'evidence'],
+  );
   assertSchemaVersion(source.schemaVersion, field);
   if (!Array.isArray(source.vector) ||
       source.vector.length === 0 ||
@@ -362,7 +367,33 @@ function normalizeExternalObservation(value, worldId, field, expectedStateVersio
   if (!Array.isArray(source.evidence) || source.evidence.length > MAX_EVIDENCE_ITEMS) {
     throw new ExternalWorldProtocolError('External WorldPort observation evidence is invalid.', { field });
   }
+  if (source.feedback !== undefined) validateExternalFeedback(source.feedback, field, expectedDimensions);
   return structuredClone(source);
+}
+
+function validateExternalFeedback(value, field, expectedDimensions) {
+  if (!Array.isArray(value) || value.length > MAX_EVIDENCE_ITEMS) {
+    throw new ExternalWorldProtocolError('External WorldPort observation feedback is invalid.', { field });
+  }
+  const seen = new Set();
+  value.forEach((item, index) => {
+    const itemField = `${field}.feedback[${index}]`;
+    const source = assertExactKeys(item, [
+      'schemaVersion', 'executionNonce', 'stateVersion', 'intervalId', 'vector', 'confounderCount',
+    ], itemField);
+    if (source.schemaVersion !== SCHEMA_VERSION ||
+        typeof source.executionNonce !== 'string' || source.executionNonce.length === 0 || source.executionNonce.length > 256 ||
+        seen.has(source.executionNonce) ||
+        typeof source.stateVersion !== 'string' || source.stateVersion.length === 0 ||
+        typeof source.intervalId !== 'string' || source.intervalId.length === 0 ||
+        !Array.isArray(source.vector) || source.vector.length === 0 ||
+        (expectedDimensions !== undefined && source.vector.length !== expectedDimensions) ||
+        source.vector.some((number) => !Number.isFinite(number)) ||
+        !Number.isSafeInteger(source.confounderCount) || source.confounderCount < 0) {
+      throw new ExternalWorldProtocolError('External WorldPort observation feedback is invalid.', { field: itemField });
+    }
+    seen.add(source.executionNonce);
+  });
 }
 
 function normalizeExternalActions(value, manifest, descriptor) {

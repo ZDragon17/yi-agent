@@ -9,6 +9,9 @@ const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
 const ADAPTATION_WINDOW = 8;
 const MAX_PLANNING_HORIZON = 8;
 const MAX_PLANNING_CANDIDATES = 64;
+const MAX_PENDING_CREDITS = 64;
+const MAX_FEEDBACK_ITEMS = 64;
+const MAX_EXECUTION_NONCE_LENGTH = 256;
 
 const STEP_INPUT_KEYS = [
   'observation',
@@ -40,6 +43,7 @@ const OBSERVATION_KEYS = [
   'vector',
   'stateVersion',
   'intervalId',
+  'feedback',
 ];
 const VALUE_SPEC_KEYS = [
   'schemaVersion',
@@ -50,7 +54,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -106,9 +110,64 @@ const RECEIPT_KEYS = [
   'attributionWindowComplete',
   'confounderCount',
 ];
+const FEEDBACK_KEYS = [
+  'schemaVersion',
+  'executionNonce',
+  'stateVersion',
+  'intervalId',
+  'vector',
+  'confounderCount',
+];
+const PENDING_CREDIT_KEYS = [
+  'schemaVersion',
+  'executionNonce',
+  'token',
+  'beforeStateVersion',
+  'beforeIntervalId',
+  'beforeVector',
+  'expectedDelta',
+  'relationKey',
+];
 
 export function step(input) {
   return stepWithPreference(input, null);
+}
+
+export function mergeObservationFeedback(before, after) {
+  const first = normalizeObservation(before, 'beforeObservation');
+  const second = normalizeObservation(after, 'postObservation');
+  if (first.vector.length !== second.vector.length) {
+    contractViolation('kernel feedback observations have different dimensions', {
+      field: 'postObservation.vector',
+    });
+  }
+  const feedback = [...(first.feedback ?? [])];
+  for (const item of second.feedback ?? []) {
+    const existing = feedback.find((candidate) => candidate.executionNonce === item.executionNonce);
+    if (existing === undefined) {
+      feedback.push(item);
+    } else if (!feedbackEqual(existing, item)) {
+      contractViolation('kernel feedback for an execution nonce is contradictory', {
+        field: 'postObservation.feedback',
+        executionNonce: item.executionNonce,
+      });
+    }
+  }
+  return {
+    ...cloneObservation(second),
+    ...(feedback.length === 0 ? {} : { feedback: feedback.map(cloneFeedback) }),
+  };
+}
+
+export function validateObservationFeedback(memoryValue, observationValue) {
+  const observation = normalizeObservation(observationValue, 'observation');
+  const memory = normalizeMemory(memoryValue, 'memory', observation.vector.length);
+  settlePendingCredits(
+    cloneMemory(memory),
+    observation,
+    observation.vector.length,
+    'observation.feedback',
+  );
 }
 
 // A model may suggest a token, but it cannot change the kernel's prediction,
@@ -241,18 +300,30 @@ export function learn(input) {
     'learnInput.verification',
     dimensions,
   );
+  const postObservation = normalizeObservation(
+    source.postObservation,
+    'learnInput.postObservation',
+  );
   const verification = verify({
     intent: source.intent,
     receipt: source.receipt,
-    postObservation: source.postObservation,
+    postObservation,
   });
   assertVerificationMatches(claimedVerification, verification);
   assertIntentIsExecutable(intent, 'learnInput.intent.choice');
 
+  const nextMemory = cloneMemory(memory);
+  const settlement = settlePendingCredits(
+    nextMemory,
+    postObservation,
+    dimensions,
+    'learnInput.postObservation.feedback',
+  );
+  const settled = settlement.entries;
+
   if (!verification.learnable || verification.attribution !== 'ACTION') {
     if (verification.attribution === 'EXECUTION_REJECTED' && source.receipt.status === 'REJECTED') {
       const token = intent.choice.token;
-      const nextMemory = cloneMemory(memory);
       const rejectionModels = nextMemory.rejectionModels ?? {};
       if (rejectionModels[token] === undefined && Object.keys(rejectionModels).length >= MAX_ACTION_MODELS) {
         contractViolation('kernel learning would exceed the rejection-model limit', {
@@ -271,23 +342,56 @@ export function learn(input) {
         status: 'REJECTION_RECORDED',
         token,
         nextMemory,
+        ...(settled.length === 0 ? {} : { settled }),
+      };
+    }
+    if (source.receipt.status === 'ACCEPTED' &&
+        source.receipt.attributionWindowComplete === false &&
+        source.receipt.confounderCount === 0) {
+      addPendingCredit(
+        nextMemory,
+        intent,
+        source.receipt.executionNonce,
+        pendingBaselineObservation(intent, settlement.cleanDeltas),
+        'learnOutput.nextMemory.pendingCredits',
+      );
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        status: 'DEFERRED',
+        token: intent.choice.token,
+        nextMemory,
+        ...(settled.length === 0 ? {} : { settled }),
+      };
+    }
+    if (settled.length > 0) {
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        status: 'SKIPPED',
+        token: intent.choice.token,
+        nextMemory,
+        settled,
       };
     }
     return {
       schemaVersion: SCHEMA_VERSION,
       status: 'SKIPPED',
       token: intent.choice.token,
-      nextMemory: cloneMemory(memory),
+      nextMemory,
+      ...(settled.length === 0 ? {} : { settled }),
+    };
+  }
+
+  if (settled.length > 0) {
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      status: 'SKIPPED',
+      token: intent.choice.token,
+      nextMemory,
+      settled,
     };
   }
 
   const token = intent.choice.token;
-  const existing = memory.actionModels[token];
-  if (!existing && Object.keys(memory.actionModels).length >= MAX_ACTION_MODELS) {
-    contractViolation('kernel learning would exceed the action-model limit', {
-      field: 'learnInput.memory.actionModels',
-    });
-  }
   const actualDelta = addVectors(
     intent.expectation.expectedDelta,
     verification.error,
@@ -301,51 +405,142 @@ export function learn(input) {
     );
   }
   const errorMagnitude = totalError / dimensions;
-  const nextMemory = cloneMemory(memory);
-  if (memory.rejectionModels?.[token] !== undefined) {
-    nextMemory.rejectionModels[token] = updateRejectionModel(
-      memory.rejectionModels[token],
-      false,
-      intent.expectation.relationKey,
-      `learnOutput.nextMemory.rejectionModels.${token}`,
-    );
-  }
-  nextMemory.actionModels[token] = updateActionModel(
-    existing ?? defaultActionModel(dimensions),
+  recordActionEvidence(nextMemory, {
+    token,
+    relationKey: intent.expectation.relationKey,
     actualDelta,
     errorMagnitude,
     dimensions,
-    `learnOutput.nextMemory.actionModels.${token}`,
-  );
-  const relationKey = intent.expectation.relationKey;
-  if (relationKey !== undefined) {
-    const relationModels = nextMemory.relationModels ?? {};
-    const tokenRelations = { ...(relationModels[token] ?? {}) };
-    const existingRelation = tokenRelations[relationKey];
-    if (existingRelation === undefined && countRelationModels(relationModels) >= MAX_RELATION_MODELS) {
-      contractViolation('kernel learning would exceed the relation-model limit', {
-        field: `learnInput.memory.relationModels.${token}.${relationKey}`,
-      });
-    }
-    tokenRelations[relationKey] = updateActionModel(
-      existingRelation ?? defaultActionModel(dimensions),
-      actualDelta,
-      errorMagnitude,
-      dimensions,
-      `learnOutput.nextMemory.relationModels.${token}.${relationKey}`,
-    );
-    nextMemory.relationModels = {
-      ...relationModels,
-      [token]: tokenRelations,
-    };
-  }
+    field: 'learnOutput.nextMemory',
+  });
 
   return {
     schemaVersion: SCHEMA_VERSION,
     status: 'UPDATED',
     token,
     nextMemory,
+    ...(settled.length === 0 ? {} : { settled }),
   };
+}
+
+function settlePendingCredits(memory, postObservation, dimensions, field) {
+  const feedback = postObservation.feedback ?? [];
+  const pendingCredits = memory.pendingCredits ?? [];
+  const pendingByNonce = new Map(pendingCredits.map((credit) => [credit.executionNonce, credit]));
+  const settled = [];
+  const cleanDeltas = [];
+  const remaining = [];
+  const settledNonces = new Set();
+
+  for (const credit of pendingCredits) {
+    if (!feedback.some((item) => item.executionNonce === credit.executionNonce)) remaining.push(credit);
+  }
+
+  for (const item of feedback) {
+    const pending = pendingByNonce.get(item.executionNonce);
+    if (pending === undefined) {
+      contractViolation('kernel feedback references no pending action', { field, executionNonce: item.executionNonce });
+    }
+    if (settledNonces.has(item.executionNonce)) {
+      contractViolation('kernel feedback contains a duplicate execution nonce', { field, executionNonce: item.executionNonce });
+    }
+    settledNonces.add(item.executionNonce);
+    if (item.stateVersion === pending.beforeStateVersion || item.intervalId === pending.beforeIntervalId) {
+      contractViolation('kernel feedback is stale for its pending action', {
+        field,
+        executionNonce: item.executionNonce,
+      });
+    }
+    if (item.confounderCount > 0) {
+      settled.push({
+        schemaVersion: SCHEMA_VERSION,
+        executionNonce: item.executionNonce,
+        token: pending.token,
+        attribution: 'AMBIGUOUS',
+        confidence: 0,
+        learnable: false,
+        error: subtractVectors(item.vector, addVectors(pending.beforeVector, pending.expectedDelta, `${field}.${item.executionNonce}.predictedVector`), `${field}.${item.executionNonce}.error`),
+      });
+      continue;
+    }
+    const actualDelta = subtractVectors(
+      item.vector,
+      pending.beforeVector,
+      `${field}.${item.executionNonce}.actualDelta`,
+    );
+    const error = subtractVectors(
+      actualDelta,
+      pending.expectedDelta,
+      `${field}.${item.executionNonce}.error`,
+    );
+    let totalError = 0;
+    for (const value of error) totalError = assertComputedFiniteNumber(totalError + Math.abs(value), `${field}.${item.executionNonce}.errorMagnitude`);
+    const errorMagnitude = totalError / dimensions;
+    recordActionEvidence(memory, {
+      token: pending.token,
+      relationKey: pending.relationKey,
+      actualDelta,
+      errorMagnitude,
+      dimensions,
+      field: `learnOutput.nextMemory.settled.${item.executionNonce}`,
+    });
+    cleanDeltas.push(actualDelta);
+    settled.push({
+      schemaVersion: SCHEMA_VERSION,
+      executionNonce: item.executionNonce,
+      token: pending.token,
+      attribution: 'ACTION',
+      confidence: confidenceFromError(error),
+      learnable: true,
+      error,
+    });
+  }
+
+  if (memory.pendingCredits !== undefined || feedback.length > 0) memory.pendingCredits = remaining;
+  return { entries: settled, cleanDeltas };
+}
+
+function pendingBaselineObservation(intent, cleanDeltas) {
+  const predicted = intent.expectation.predictedObservation;
+  let vector = subtractVectors(
+    predicted.vector,
+    intent.expectation.expectedDelta,
+    'learnOutput.nextMemory.pendingCredits.beforeVector',
+  );
+  for (const delta of cleanDeltas) {
+    vector = addVectors(
+      vector,
+      delta,
+      'learnOutput.nextMemory.pendingCredits.beforeVector',
+    );
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    vector,
+    stateVersion: predicted.stateVersion,
+    intervalId: predicted.intervalId,
+  };
+}
+
+function addPendingCredit(memory, intent, executionNonce, baselineObservation, field) {
+  const pendingCredits = memory.pendingCredits ?? [];
+  if (pendingCredits.some((item) => item.executionNonce === executionNonce)) {
+    contractViolation('kernel pending credits contain a reused execution nonce', { field });
+  }
+  if (pendingCredits.length >= MAX_PENDING_CREDITS) {
+    contractViolation('kernel pending-credit limit exceeded', { field });
+  }
+  memory.pendingCredits = pendingCredits;
+  pendingCredits.push({
+    schemaVersion: SCHEMA_VERSION,
+    executionNonce,
+    token: intent.choice.token,
+    beforeStateVersion: baselineObservation.stateVersion,
+    beforeIntervalId: baselineObservation.intervalId,
+    beforeVector: cloneVector(baselineObservation.vector),
+    expectedDelta: cloneVector(intent.expectation.expectedDelta),
+    ...(intent.expectation.relationKey === undefined ? {} : { relationKey: intent.expectation.relationKey }),
+  });
 }
 
 function assertVerificationMatches(claimed, recomputed) {
@@ -440,14 +635,74 @@ function normalizeStrategy(value, field) {
 }
 
 function normalizeObservation(value, field) {
-  const source = assertPlainRecord(value, field, OBSERVATION_KEYS);
+  const source = assertPlainRecord(
+    value,
+    field,
+    OBSERVATION_KEYS,
+    OBSERVATION_KEYS.filter((key) => key !== 'feedback'),
+  );
   const vector = assertFiniteVector(source.vector, `${field}.vector`);
+  const stateVersion = assertNonEmptyString(source.stateVersion, `${field}.stateVersion`);
+  const intervalId = assertNonEmptyString(source.intervalId, `${field}.intervalId`);
+  const feedback = source.feedback === undefined
+    ? undefined
+    : normalizeFeedback(source.feedback, `${field}.feedback`, vector.length);
 
   return {
     schemaVersion: requireSchemaVersion(source, field),
     vector,
-    stateVersion: assertNonEmptyString(source.stateVersion, `${field}.stateVersion`),
-    intervalId: assertNonEmptyString(source.intervalId, `${field}.intervalId`),
+    stateVersion,
+    intervalId,
+    ...(feedback === undefined ? {} : { feedback }),
+  };
+}
+
+function normalizeFeedback(value, field, dimensions) {
+  const items = assertArray(value, field);
+  assertCollectionLimit(items.length, MAX_FEEDBACK_ITEMS, field);
+  const seen = new Set();
+  return items.map((item, index) => {
+    const source = assertPlainRecord(item, `${field}[${index}]`, FEEDBACK_KEYS);
+    const executionNonce = assertBoundedString(
+      source.executionNonce,
+      `${field}[${index}].executionNonce`,
+      MAX_EXECUTION_NONCE_LENGTH,
+    );
+    if (seen.has(executionNonce)) {
+      contractViolation('kernel feedback contains a duplicate execution nonce', {
+        field: `${field}[${index}].executionNonce`,
+      });
+    }
+    seen.add(executionNonce);
+    return {
+      schemaVersion: requireSchemaVersion(source, `${field}[${index}]`),
+      executionNonce,
+      stateVersion: assertNonEmptyString(source.stateVersion, `${field}[${index}].stateVersion`),
+      intervalId: assertNonEmptyString(source.intervalId, `${field}[${index}].intervalId`),
+      vector: assertFiniteVector(source.vector, `${field}[${index}].vector`, dimensions),
+      confounderCount: assertNonNegativeInteger(source.confounderCount, `${field}[${index}].confounderCount`),
+    };
+  });
+}
+
+function feedbackEqual(left, right) {
+  return left.schemaVersion === right.schemaVersion &&
+    left.executionNonce === right.executionNonce &&
+    left.stateVersion === right.stateVersion &&
+    left.intervalId === right.intervalId &&
+    left.confounderCount === right.confounderCount &&
+    left.vector.length === right.vector.length &&
+    left.vector.every((value, index) => Object.is(value, right.vector[index]));
+}
+
+function cloneFeedback(value) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    executionNonce: value.executionNonce,
+    stateVersion: value.stateVersion,
+    intervalId: value.intervalId,
+    vector: cloneVector(value.vector),
+    confounderCount: value.confounderCount,
   };
 }
 
@@ -511,12 +766,49 @@ function normalizeMemory(value, field, dimensions) {
   const normalizedRejections = source.rejectionModels === undefined
     ? undefined
     : normalizeRejectionModels(source.rejectionModels, `${field}.rejectionModels`, dimensions);
+  const normalizedPendingCredits = source.pendingCredits === undefined
+    ? undefined
+    : normalizePendingCredits(source.pendingCredits, `${field}.pendingCredits`, dimensions);
   return {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
     ...(normalizedRelations === undefined ? {} : { relationModels: normalizedRelations }),
     ...(normalizedRejections === undefined ? {} : { rejectionModels: normalizedRejections }),
+    ...(normalizedPendingCredits === undefined ? {} : { pendingCredits: normalizedPendingCredits }),
   };
+}
+
+function normalizePendingCredits(value, field, dimensions) {
+  const items = assertArray(value, field);
+  assertCollectionLimit(items.length, MAX_PENDING_CREDITS, field);
+  const seen = new Set();
+  return items.map((item, index) => {
+    const itemField = `${field}[${index}]`;
+    const source = assertPlainRecord(
+      item,
+      itemField,
+      PENDING_CREDIT_KEYS,
+      PENDING_CREDIT_KEYS.filter((key) => key !== 'relationKey'),
+    );
+    const executionNonce = assertBoundedString(source.executionNonce, `${itemField}.executionNonce`, MAX_EXECUTION_NONCE_LENGTH);
+    if (seen.has(executionNonce)) {
+      contractViolation('kernel pending credits contain a duplicate execution nonce', { field: itemField });
+    }
+    seen.add(executionNonce);
+    const relationKey = source.relationKey === undefined
+      ? undefined
+      : assertRelationKey(source.relationKey, `${itemField}.relationKey`, dimensions);
+    return {
+      schemaVersion: requireSchemaVersion(source, itemField),
+      executionNonce,
+      token: assertOpaqueToken(source.token, `${itemField}.token`),
+      beforeStateVersion: assertNonEmptyString(source.beforeStateVersion, `${itemField}.beforeStateVersion`),
+      beforeIntervalId: assertNonEmptyString(source.beforeIntervalId, `${itemField}.beforeIntervalId`),
+      beforeVector: assertFiniteVector(source.beforeVector, `${itemField}.beforeVector`, dimensions),
+      expectedDelta: assertFiniteVector(source.expectedDelta, `${itemField}.expectedDelta`, dimensions),
+      ...(relationKey === undefined ? {} : { relationKey }),
+    };
+  });
 }
 
 function normalizeRejectionModels(value, field, dimensions) {
@@ -625,6 +917,58 @@ function countRelationModels(value) {
     (sum, relations) => sum + Object.keys(relations).length,
     0,
   );
+}
+
+function recordActionEvidence(memory, {
+  token,
+  relationKey,
+  actualDelta,
+  errorMagnitude,
+  dimensions,
+  field,
+}) {
+  const existing = memory.actionModels[token];
+  if (!existing && Object.keys(memory.actionModels).length >= MAX_ACTION_MODELS) {
+    contractViolation('kernel learning would exceed the action-model limit', {
+      field: `${field}.actionModels`,
+    });
+  }
+  if (memory.rejectionModels?.[token] !== undefined) {
+    memory.rejectionModels[token] = updateRejectionModel(
+      memory.rejectionModels[token],
+      false,
+      relationKey,
+      `${field}.rejectionModels.${token}`,
+    );
+  }
+  memory.actionModels[token] = updateActionModel(
+    existing ?? defaultActionModel(dimensions),
+    actualDelta,
+    errorMagnitude,
+    dimensions,
+    `${field}.actionModels.${token}`,
+  );
+  if (relationKey === undefined) return;
+
+  const relationModels = memory.relationModels ?? {};
+  const tokenRelations = { ...(relationModels[token] ?? {}) };
+  const existingRelation = tokenRelations[relationKey];
+  if (existingRelation === undefined && countRelationModels(relationModels) >= MAX_RELATION_MODELS) {
+    contractViolation('kernel learning would exceed the relation-model limit', {
+      field: `${field}.relationModels.${token}.${relationKey}`,
+    });
+  }
+  tokenRelations[relationKey] = updateActionModel(
+    existingRelation ?? defaultActionModel(dimensions),
+    actualDelta,
+    errorMagnitude,
+    dimensions,
+    `${field}.relationModels.${token}.${relationKey}`,
+  );
+  memory.relationModels = {
+    ...relationModels,
+    [token]: tokenRelations,
+  };
 }
 
 function normalizeCapabilities(value, field) {
@@ -782,9 +1126,10 @@ function normalizeReceipt(value, field) {
       source.constraintsDigest,
       `${field}.constraintsDigest`,
     ),
-    executionNonce: assertNonEmptyString(
+    executionNonce: assertBoundedString(
       source.executionNonce,
       `${field}.executionNonce`,
+      MAX_EXECUTION_NONCE_LENGTH,
     ),
     effectDigest: assertNonEmptyString(source.effectDigest, `${field}.effectDigest`),
     rejectionReason: normalizeRejectionReason(
@@ -1194,16 +1539,39 @@ function cloneMemory(value) {
       }]),
     );
   }
+  if (value.pendingCredits !== undefined) {
+    cloned.pendingCredits = value.pendingCredits.map((credit) => ({
+      schemaVersion: SCHEMA_VERSION,
+      executionNonce: credit.executionNonce,
+      token: credit.token,
+      beforeStateVersion: credit.beforeStateVersion,
+      beforeIntervalId: credit.beforeIntervalId,
+      beforeVector: cloneVector(credit.beforeVector),
+      expectedDelta: cloneVector(credit.expectedDelta),
+      ...(credit.relationKey === undefined ? {} : { relationKey: credit.relationKey }),
+    }));
+  }
   return cloned;
 }
 
 function cloneObservation(value) {
-  return {
+  const cloned = {
     schemaVersion: SCHEMA_VERSION,
     vector: cloneVector(value.vector),
     stateVersion: value.stateVersion,
     intervalId: value.intervalId,
   };
+  if (value.feedback !== undefined) {
+    cloned.feedback = value.feedback.map((item) => ({
+      schemaVersion: SCHEMA_VERSION,
+      executionNonce: item.executionNonce,
+      stateVersion: item.stateVersion,
+      intervalId: item.intervalId,
+      vector: cloneVector(item.vector),
+      confounderCount: item.confounderCount,
+    }));
+  }
+  return cloned;
 }
 
 function cloneExpectation(value) {
@@ -1503,6 +1871,18 @@ function assertNonEmptyString(value, field) {
     contractViolation('kernel input field must be a non-empty string', {
       field,
       actual: value,
+    });
+  }
+
+  return value;
+}
+
+function assertBoundedString(value, field, maximum) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > maximum) {
+    contractViolation('kernel input field must be a bounded non-empty string', {
+      field,
+      actual: value,
+      maximum,
     });
   }
 

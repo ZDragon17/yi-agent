@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { INTERNAL_RUN_APPEND, LabStore, LabStoreError } from '../runtime/lab-store.mjs';
 import { canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../runtime/schema.mjs';
-import { learn, stepWithPreference, verify } from '../kernel/index.mjs';
+import { learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
 import {
@@ -129,7 +129,7 @@ export async function runLab(input) {
   let initialState = current.lastRunId === null
     ? {
         worldState: world.initialState(),
-        memory: { schemaVersion: SCHEMA_VERSION, actionModels: {}, relationModels: {} },
+        memory: { schemaVersion: SCHEMA_VERSION, actionModels: {}, relationModels: {}, pendingCredits: [] },
         rngState: initialRng(manifest.seed),
         kernelStep: 0,
         changeSupervisor: createChangeSupervisor({
@@ -189,6 +189,7 @@ export async function runLab(input) {
     for (let index = 0; index < steps; index += 1) {
     const observedBefore = world.observe(state.worldState);
     const beforeObservation = projectObservation(observedBefore);
+    validateObservationFeedback(state.memory, beforeObservation);
     const beforeModelObservation = projectModelObservation(observedBefore);
     const capabilities = world.actions(worldManifest(manifest), state.worldState);
     // The state has already crossed the store/kernel validation boundary on
@@ -320,7 +321,10 @@ export async function runLab(input) {
           attributionWindowComplete: false,
           confounderCount: Math.max(1, transition.receipt.confounderCount),
         };
-    const postObservation = projectObservation(transition.postObservation);
+    const postObservation = mergeObservationFeedback(
+      beforeObservation,
+      projectObservation(transition.postObservation),
+    );
     const postModelObservation = projectModelObservation(transition.postObservation);
     const verification = verify({ intent, receipt, postObservation });
     const update = learn({
@@ -947,12 +951,23 @@ function worldManifest(manifest) {
 }
 
 function projectObservation(observation) {
-  return {
+  const projected = {
     schemaVersion: observation.schemaVersion,
     vector: [...observation.vector],
     stateVersion: observation.stateVersion,
     intervalId: observation.intervalId,
   };
+  if (observation.feedback !== undefined) {
+    projected.feedback = observation.feedback.map((item) => ({
+      schemaVersion: item.schemaVersion,
+      executionNonce: item.executionNonce,
+      stateVersion: item.stateVersion,
+      intervalId: item.intervalId,
+      vector: [...item.vector],
+      confounderCount: item.confounderCount,
+    }));
+  }
+  return projected;
 }
 
 function validDigest(value) {

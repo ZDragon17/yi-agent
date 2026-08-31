@@ -1,4 +1,4 @@
-import { learn, step, stepWithPreference, verify } from '../kernel/index.mjs';
+import { learn, mergeObservationFeedback, step, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import {
   SCHEMA_VERSION,
   canonicalDigest,
@@ -145,6 +145,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   try {
     capabilities = world.actions(manifest, state.worldState);
     beforeObservation = projectObservation(world.observe(state.worldState));
+    validateObservationFeedback(state.memory, beforeObservation);
   } catch (error) {
     corrupt('Replay could not observe the world before a STEP.', { sequence: event.sequence, cause: errorName(error) });
   }
@@ -197,7 +198,10 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   } catch (error) {
     corrupt('Replay world transition failed.', { sequence: event.sequence, cause: errorName(error) });
   }
-  const postObservation = projectObservation(transition.postObservation);
+  const postObservation = mergeObservationFeedback(
+    beforeObservation,
+    projectObservation(transition.postObservation),
+  );
   const receipt = payload.externalInputs.length === 0
     ? transition.receipt
     : {
@@ -491,12 +495,14 @@ function inconsistent(runId, firstDifference, state) {
 
 function projectObservation(observation) {
   if (!isRecord(observation)) corrupt('World observation is not a record.');
-  return {
+  const projected = {
     schemaVersion: observation.schemaVersion,
     vector: cloneJson(observation.vector),
     stateVersion: observation.stateVersion,
     intervalId: observation.intervalId,
   };
+  if (observation.feedback !== undefined) projected.feedback = cloneJson(observation.feedback);
+  return projected;
 }
 
 function digestWithoutSelf(value) {

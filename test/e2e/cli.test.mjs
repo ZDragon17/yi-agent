@@ -13,6 +13,7 @@ const CLI = path.resolve('bin/yi-agent.mjs');
 const ADAPTER_FIXTURE = path.resolve('test/fixtures/generated-world-adapter.mjs');
 const STATEFUL_ADAPTER_FIXTURE = path.resolve('test/fixtures/stateful-capabilities-world-adapter.mjs');
 const IDEMPOTENT_ADAPTER_FIXTURE = path.resolve('test/fixtures/idempotent-transition-world-adapter.mjs');
+const DELAYED_FEEDBACK_ADAPTER_FIXTURE = path.resolve('test/fixtures/delayed-feedback-world-adapter.mjs');
 
 test('generated adapter exposes a fixed Ed25519 key for its hello descriptor', async () => {
   const response = await invokeAdapter([], { protocol: 'yi-world-cli', version: 1, id: '1', op: 'hello', payload: {} });
@@ -160,6 +161,60 @@ test('CLI runs and replays an unknown generated world through an external adapte
 
     const steps = await countLedgerSteps(lab, 'run-1');
     assert.equal(steps, 2);
+  });
+});
+
+test('CLI carries delayed feedback across WorldPort processes and run restarts', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'delayed-feedback-lab');
+    const adapter = await writeDelayedFeedbackAdapterConfig(root);
+    const init = await invoke('init', '--lab', lab, '--world', 'delayed-feedback', '--seed', 'delayed-feedback-seed', '--lab-id', 'delayed-feedback-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const firstRun = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'delayed', '--adapter', adapter, '--json');
+    assert.equal(firstRun.code, 0);
+    assert.equal(firstRun.stdout[0].data.status, 'COMPLETED');
+    const firstStep = decodeStoredEvent(
+      (await readFile(path.join(lab, 'runs', 'run-1', 'events.jsonl'), 'utf8'))
+        .trim().split(/\r?\n/u).map(JSON.parse).find((event) => event.kind === 'STEP'),
+    );
+    assert.equal(firstStep.payload.update.status, 'DEFERRED');
+    assert.equal(firstStep.payload.afterState.memory.pendingCredits.length, 1);
+    assert.deepEqual(firstStep.payload.afterState.memory.actionModels, {});
+    const firstNonce = firstStep.payload.receipt.executionNonce;
+    const firstReplay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(firstReplay.code, 0);
+    assert.equal(firstReplay.stdout[0].data.verdict, 'CONSISTENT');
+
+    const secondRun = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'delayed', '--adapter', adapter, '--json');
+    assert.equal(secondRun.code, 0);
+    assert.equal(secondRun.stdout[0].data.status, 'COMPLETED');
+    const secondStep = decodeStoredEvent(
+      (await readFile(path.join(lab, 'runs', 'run-2', 'events.jsonl'), 'utf8'))
+        .trim().split(/\r?\n/u).map(JSON.parse).find((event) => event.kind === 'STEP'),
+    );
+    assert.equal(secondStep.payload.postObservation.feedback[0].executionNonce, firstNonce);
+    assert.equal(secondStep.payload.update.settled[0].attribution, 'ACTION');
+    assert.equal(secondStep.payload.update.settled[0].learnable, true);
+    assert.equal(secondStep.payload.update.nextMemory.pendingCredits.length, 1);
+    assert.equal(Object.values(secondStep.payload.update.nextMemory.actionModels)[0].sampleCount, 1);
+
+    const current = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
+    assert.equal(current.code, 0);
+    assert.equal(current.stdout[0].data.inspectView.facts.worldState.value, 1);
+    const secondReplay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
+    assert.equal(secondReplay.code, 0);
+    assert.equal(secondReplay.stdout[0].data.verdict, 'CONSISTENT');
+
+    for (const runId of ['run-3', 'run-4']) {
+      const continued = await invoke('run', '--lab', lab, '--run-id', runId, '--steps', '1', '--scenario', 'delayed', '--adapter', adapter, '--json');
+      assert.equal(continued.code, 0);
+    }
+    const persisted = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+    const learned = Object.values(persisted.memory.actionModels)[0];
+    assert.equal(persisted.worldState.value, 3);
+    assert.equal(learned.sampleCount, 3);
+    assert.equal(learned.meanDelta[0], 1);
   });
 });
 
@@ -661,6 +716,18 @@ async function writeAdapterConfig(root, args = []) {
     args: [ADAPTER_FIXTURE, ...args],
     adapterId: 'generated-adapter-v1',
     worldId: 'generated',
+    timeoutMs: 2000,
+  }));
+  return config;
+}
+
+async function writeDelayedFeedbackAdapterConfig(root) {
+  const config = path.join(root, 'delayed-feedback-adapter.json');
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [DELAYED_FEEDBACK_ADAPTER_FIXTURE],
+    adapterId: 'delayed-feedback-adapter-v1',
+    worldId: 'delayed-feedback',
     timeoutMs: 2000,
   }));
   return config;

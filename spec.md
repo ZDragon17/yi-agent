@@ -41,17 +41,19 @@ HTML 原型证明了“预期—行动—验证—修正”能够运行，但状
 - 输入：已绑定世界的实验空间、步数、可选兼容场景和可选模型提议器；步数为 1～10000 的整数。CLI 的 `--kernel-only` 模式不要求 API 配置，直接使用共同 Kernel 闭环；新运行的 ValueSpec 使用领域无关的 `distance-v2` 带权绝对距离和 `tolerance` 目标可接受带。
 - 输出：每步完整记录界、感、存、预、择、动、验、化，以及最终状态和退出原因。
 - 可选推演：`planning.horizon` 为 1～8 的有界模型推演步数，默认 1；仅使用 Kernel 已持久化的经验模型，不把推演状态送入 WorldPort，且必须随 STEP boundary 固化以供 Replay 重建。候选与未来模拟能力受固定窗口限制，避免能力面扩大导致平方级展开。
+- 延迟反馈：WorldPort 可在后续 observation 的 `feedback[]` 中，按 `executionNonce` 返回此前动作的结果快照；Kernel 对已接受但 `attributionWindowComplete=false` 且无已知混杂的动作暂存有界 pending credit，基线从动作前观测推导；同一步先结算旧 feedback 时，当前新动作的 pending 基线只叠加已明确归属于旧 nonce 的变化，不把当前动作的部分即时变化算进旧 credit。收到匹配反馈后才学习，混杂反馈只结算为 `AMBIGUOUS` 而不学习；若当前动作与旧反馈同一步产生证据，当前动作保守跳过学习。反馈必须经过 stateVersion、intervalId、向量维度、nonce 唯一性和数量上限校验，并随 STEP/Replay 重建。
 - 边界：没有安全行动或模拟 transition 拒绝时记录 HALTED；世界代码异常为内部错误，持久层异常为 I/O 错误，均立即停止且不得记为一次已执行行动。
 - 验收：每个已执行动作都能找到先验预测、执行回执、后验观测、误差归因和学习结果；越过目标的动作不能仅因带符号方向而被判定为更优，旧账本仍可按其固化的兼容语义 Replay。
 
 ### FR-3 跨进程持续学习
 
 - 输入：同一实验空间上的后续 run。
-- 输出：在版本兼容且证据完整时复用已有认知；世界实例状态和 Agent 认知分别恢复。
+- 输出：在版本兼容且证据完整时复用已有认知；世界实例状态和 Agent 认知分别恢复，未完成的 pending credit 也跨 Run/进程保留。
 - 边界：状态损坏、版本不兼容、事件序列断裂时进入 CORRUPT/HALTED，禁止继续行动。
 - 验收：从同一已初始化 lab 的相同语义起点/tokenMap 做两个隔离分支：一支跨进程运行 15+15，另一支参考执行 30 步；同外部输入下 `{worldState,memory,rngState,kernelStep}` 规范化投影完全相等。runId、时间、run 边界和摘要链不参与比较。
 - 连续配置：`agent loop` 的推演步数随 continuation 持久化；恢复时不得通过新的 CLI 参数静默改变，必须沿原 continuation 继续。
 - 外部恢复：adapter transition 前的 in-flight marker 必须固化同一推演配置；响应丢失后的幂等重试在未显式指定时恢复 marker 配置，显式冲突必须拒绝。
+- 反馈恢复：反馈只能结算同一实验空间内已持久化的 execution nonce；未知、重复或相互矛盾的反馈必须 fail-closed，不得追加 STEP 或污染 Memory。
 
 ### FR-4 确定性重放
 

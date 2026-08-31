@@ -645,6 +645,253 @@ test('learn is the only memory transition and updates only verified learnable ev
   );
 });
 
+test('accepted incomplete feedback is retained and later settled by its execution nonce', async () => {
+  const { step, verify, learn } = await loadKernel();
+  const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });
+  const firstIntent = step(input);
+  const firstRequest = actionRequest({ token: TOKEN_A });
+  const firstReceipt = receiptForRequest(firstRequest, {
+    attributionWindowComplete: false,
+    confounderCount: 0,
+  });
+  const firstPostObservation = observation([1.5, 0.75], 'state-2');
+  const firstVerification = verify({
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPostObservation,
+  });
+  const deferred = learn({
+    memory: input.memory,
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPostObservation,
+    verification: firstVerification,
+  });
+
+  assert.equal(deferred.status, 'DEFERRED');
+  assert.equal(deferred.nextMemory.pendingCredits.length, 1);
+  assert.equal(deferred.nextMemory.pendingCredits[0].executionNonce, firstRequest.executionNonce);
+
+  const secondInput = {
+    ...input,
+    observation: observation([2, 0.75], 'state-3'),
+    memory: deferred.nextMemory,
+    rngState: firstIntent.nextRngState,
+  };
+  const secondIntent = step(secondInput);
+  const secondRequest = actionRequest({
+    token: TOKEN_A,
+    basedOnVersion: 'state-3',
+    executionNonce: 'nonce:00000002',
+  });
+  const secondReceipt = receiptForRequest(secondRequest);
+  const secondPostObservation = {
+    ...observation([2, 0.75], 'state-4'),
+    feedback: [{
+      schemaVersion: 1,
+      executionNonce: firstRequest.executionNonce,
+      stateVersion: 'state-3',
+      intervalId: 'interval:state-3',
+      vector: [2, 0.75],
+      confounderCount: 0,
+    }],
+  };
+  const secondVerification = verify({
+    intent: secondIntent,
+    receipt: secondReceipt,
+    postObservation: secondPostObservation,
+  });
+  const settled = learn({
+    memory: deferred.nextMemory,
+    intent: secondIntent,
+    receipt: secondReceipt,
+    postObservation: secondPostObservation,
+    verification: secondVerification,
+  });
+
+  assert.equal(settled.status, 'SKIPPED');
+  assert.deepEqual(settled.nextMemory.pendingCredits, []);
+  assert.equal(settled.settled.length, 1);
+  assert.equal(settled.settled[0].executionNonce, firstRequest.executionNonce);
+  assert.equal(settled.settled[0].attribution, 'ACTION');
+  assert.equal(settled.nextMemory.actionModels[TOKEN_A].sampleCount, 4);
+});
+
+test('delayed credit uses the action-before vector even when the first post-observation is partial', async () => {
+  const { step, verify, learn } = await loadKernel();
+  const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });
+  const firstIntent = step(input);
+  const firstRequest = actionRequest({ token: TOKEN_A });
+  const firstReceipt = receiptForRequest(firstRequest, {
+    attributionWindowComplete: false,
+    confounderCount: 0,
+  });
+  const firstPostObservation = observation([1.25, 0.875], 'state-2');
+  const firstVerification = verify({ intent: firstIntent, receipt: firstReceipt, postObservation: firstPostObservation });
+  const deferred = learn({
+    memory: { schemaVersion: 1, actionModels: {}, pendingCredits: [] },
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPostObservation,
+    verification: firstVerification,
+  });
+
+  const secondRequest = actionRequest({ basedOnVersion: 'state-2', executionNonce: 'nonce:00000002' });
+  const secondIntent = intentForRequest(secondRequest);
+  const secondReceipt = receiptForRequest(secondRequest);
+  const secondPostObservation = {
+    ...observation([2, 0.75], 'state-3'),
+    feedback: [{
+      schemaVersion: 1,
+      executionNonce: firstRequest.executionNonce,
+      stateVersion: 'state-3',
+      intervalId: 'interval:state-3',
+      vector: [2, 0.75],
+      confounderCount: 0,
+    }],
+  };
+  const secondVerification = verify({ intent: secondIntent, receipt: secondReceipt, postObservation: secondPostObservation });
+  const settled = learn({
+    memory: deferred.nextMemory,
+    intent: secondIntent,
+    receipt: secondReceipt,
+    postObservation: secondPostObservation,
+    verification: secondVerification,
+  });
+
+  assert.equal(settled.settled[0].attribution, 'ACTION');
+  assert.deepEqual(settled.nextMemory.actionModels[TOKEN_A].meanDelta, [1, -0.25]);
+});
+
+test('confounded delayed feedback is settled as ambiguous without contaminating its action model', async () => {
+  const { step, verify, learn } = await loadKernel();
+  const input = makeStepInput({ capabilities: [capability(TOKEN_A), capability(TOKEN_B)] });
+  const firstIntent = step(input);
+  const firstRequest = actionRequest({ token: TOKEN_A });
+  const firstReceipt = receiptForRequest(firstRequest, {
+    attributionWindowComplete: false,
+    confounderCount: 0,
+  });
+  const firstPostObservation = observation([1.5, 0.75], 'state-2');
+  const firstVerification = verify({ intent: firstIntent, receipt: firstReceipt, postObservation: firstPostObservation });
+  const deferred = learn({
+    memory: { schemaVersion: 1, actionModels: {}, pendingCredits: [] },
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPostObservation,
+    verification: firstVerification,
+  });
+
+  const secondRequest = actionRequest({
+    token: TOKEN_B,
+    basedOnVersion: 'state-2',
+    executionNonce: 'nonce:00000002',
+  });
+  const secondIntent = intentForRequest(secondRequest);
+  const secondReceipt = receiptForRequest(secondRequest);
+  const secondPostObservation = {
+    ...observation([1.5, 0.75], 'state-3'),
+    feedback: [{
+      schemaVersion: 1,
+      executionNonce: firstRequest.executionNonce,
+      stateVersion: 'state-3',
+      intervalId: 'interval:state-3',
+      vector: [2, 0.75],
+      confounderCount: 1,
+    }],
+  };
+  const secondVerification = verify({ intent: secondIntent, receipt: secondReceipt, postObservation: secondPostObservation });
+  const settled = learn({
+    memory: deferred.nextMemory,
+    intent: secondIntent,
+    receipt: secondReceipt,
+    postObservation: secondPostObservation,
+    verification: secondVerification,
+  });
+
+  assert.equal(settled.settled[0].attribution, 'AMBIGUOUS');
+  assert.equal(settled.settled[0].learnable, false);
+  assert.equal(settled.nextMemory.actionModels[TOKEN_A], undefined);
+  assert.equal(settled.status, 'SKIPPED');
+  assert.equal(settled.nextMemory.actionModels[TOKEN_B], undefined);
+});
+
+test('delayed feedback cannot settle an execution nonce that is absent from memory', async () => {
+  const { learn, verify } = await loadKernel();
+  const request = actionRequest();
+  const intent = intentForRequest(request);
+  const receipt = receiptForRequest(request);
+  const postObservation = {
+    ...observation([1.5, 0.75], 'state-2'),
+    feedback: [{
+      schemaVersion: 1,
+      executionNonce: 'nonce:missing',
+      stateVersion: 'state-1',
+      intervalId: 'interval:state-1',
+      vector: [1.5, 0.75],
+      confounderCount: 0,
+    }],
+  };
+  const verification = verify({ intent, receipt, postObservation });
+
+  assertContractViolation(
+    () => learn({
+      memory: { schemaVersion: 1, actionModels: {}, pendingCredits: [] },
+      intent,
+      receipt,
+      postObservation,
+      verification,
+    }),
+    'unknown delayed feedback nonce',
+  );
+});
+
+test('delayed feedback rejects a snapshot from the pending action boundary', async () => {
+  const { step, verify, learn } = await loadKernel();
+  const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });
+  const firstIntent = step(input);
+  const firstRequest = actionRequest();
+  const firstReceipt = receiptForRequest(firstRequest, {
+    attributionWindowComplete: false,
+    confounderCount: 0,
+  });
+  const firstPostObservation = observation([1.5, 0.75], 'state-2');
+  const firstVerification = verify({ intent: firstIntent, receipt: firstReceipt, postObservation: firstPostObservation });
+  const deferred = learn({
+    memory: { schemaVersion: 1, actionModels: {}, pendingCredits: [] },
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPostObservation,
+    verification: firstVerification,
+  });
+  const secondRequest = actionRequest({ basedOnVersion: 'state-2', executionNonce: 'nonce:00000002' });
+  const secondIntent = intentForRequest(secondRequest);
+  const secondReceipt = receiptForRequest(secondRequest);
+  const stalePostObservation = {
+    ...observation([1.5, 0.75], 'state-3'),
+    feedback: [{
+      schemaVersion: 1,
+      executionNonce: firstRequest.executionNonce,
+      stateVersion: 'state-1',
+      intervalId: 'interval:state-1',
+      vector: [1.5, 0.75],
+      confounderCount: 0,
+    }],
+  };
+  const secondVerification = verify({ intent: secondIntent, receipt: secondReceipt, postObservation: stalePostObservation });
+
+  assertContractViolation(
+    () => learn({
+      memory: deferred.nextMemory,
+      intent: secondIntent,
+      receipt: secondReceipt,
+      postObservation: stalePostObservation,
+      verification: secondVerification,
+    }),
+    'stale delayed feedback snapshot',
+  );
+});
+
 test('verified learning records the same change under its relation context', async () => {
   const { learn, verify } = await loadKernel();
   const request = actionRequest();

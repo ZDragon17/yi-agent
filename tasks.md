@@ -288,3 +288,10 @@
 - 实现：Kernel 增加可选 `planning.horizon`（1～8，默认 1）。当没有未尝试安全动作时，对当前 `actionModels`/`relationModels` 做有界滚动预测，以终点 ValueSpec 价值扣除累计成本和不确定度后选择首个动作；真实执行仍只提交首个动作，下一步重新观测并重新筛选。规划候选和未来候选共享固定窗口，避免 WorldPort 能力数增长为每个候选重复展开全量平方计算。Application 将配置写入 STEP boundary，连续 loop 写入 continuation；外部 transition 的 in-flight marker 也固化同一配置，重启重试时自动复用。Replay 复用冻结配置。
 - 验证：单步贪心会失败的“暂时远离、下一步到达”反例由 Kernel 选出绕行动作；规划/非规划仍共享 RNG、安全和 Token 边界；CLI、跨 Run、重启恢复、五个内置 WorldPort 和 Replay 保持一致。
 - 边界：这是固定候选窗口内的有界模型滚动，不是全局搜索、可达性证明、因果识别或现实世界长期自主性；未来模型错误时仍以实际 WorldPort 观测和 verify/learn 反馈纠正，未知约束不得由推演越权。
+
+## F-25 延迟反馈与有界信用归因
+
+- 原理：真实变化的结果不一定在同一个 transition 内可见；如果把“当前没有完整证据”永久等同于“什么也没有发生”，底座无法处理跨时间反馈。反馈仍属于同一套状态—关系—约束—变化—反馈逻辑，必须用稳定 executionNonce 重新闭合而不是依赖调用顺序猜测。
+- 实现：Observation 可携带有界 `feedback[]`，每项绑定 executionNonce、后验状态版本、区间、向量和 confounderCount。Kernel 对 accepted、归因窗口未完成且无已知混杂的动作保存 pending credit，基线从动作前观测推导；若同一步结算旧 clean feedback，只把该旧 nonce 的实际变化叠加到新 pending 基线，不把当前动作的部分即时变化重复归因；同一步出现 settled feedback 时当前动作保守跳过学习。后续匹配反馈更新总体/关系模型并返回 `settled`，混杂反馈只记录 AMBIGUOUS；未知、重复、矛盾 nonce 以及超限数据 fail-closed。Application、外部 WorldPort 协议、STEP 账本和 Replay 保持同一投影。
+- 验证：Kernel 覆盖延迟闭合、混杂不学习和未知 nonce；独立外部 adapter 让第一 Run 产生 pending，第二 Run 在新的 adapter 进程返回反馈并产生下一 pending，两个 Run 都可 Replay 为 CONSISTENT，状态和 Memory 跨进程恢复。
+- 边界：这只是显式后验快照的有界信用归因，不是部分可观测环境的信念状态、完整因果识别、跨世界语义对齐或长期自主性；后续反例需要检验反馈丢失、反馈乱序、重复投递、隐藏状态和多动作同时生效。

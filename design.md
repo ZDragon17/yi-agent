@@ -18,7 +18,7 @@
 
 - 内核负责：闭环时序、候选预测、安全筛选、探索、执行回执处理、验证归因、学习和停止。它只看到数值向量、ValueSpec 和不透明 action token；学习同时维护 Token 总体变化模型与 `Token×RelationSignature` 条件变化模型。ValueSpec 的 `distance-v2` 语义以带权绝对距离评价候选，并允许 `tolerance` 表达目标可接受带；缺少 `valueMode` 的旧输入仍按 `signed-v1` 回放。
 - Runtime 负责：实验空间、单 writer 锁、事件追加、快照、恢复和重放。
-- WorldPort 负责：领域观测向量、实验空间初始化时随机生成且在该空间内稳定的 action token、纯状态 transition、独立 AuthorityPolicy 安全兜底和场景扰动。v0.1 没有真实外部副作用。
+- WorldPort 负责：领域观测向量、实验空间初始化时随机生成且在该空间内稳定的 action token、纯状态 transition、独立 AuthorityPolicy 安全兜底、场景扰动和可延迟的反馈快照。v0.1 的内置世界没有真实外部副作用。
 - Application 通过显式 `WorldRegistry` 注入 `worldDefinition/createManifestParts/createWorld/valueSpec/scenarioExternalInputs`；默认 registry 注册五个内置世界，测试或宿主可在进程内注入第三方适配器，CLI 不开放动态代码发现。
 - CLI 负责：参数解析、调用应用服务、结构化/人类可读输出和退出码，不直接修改内核状态。
 - API client 负责：读取环境变量、调用 OpenAI-compatible `/models` 与 `/chat/completions`；它是显式工具，不进入 Kernel 的确定性决策链。
@@ -77,12 +77,12 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `createWorldPort(config)` | immutable manifest、显式 scenario | 同构的 WorldPort 实例 | config 是纯 transition 的完整环境输入；Application 必须把 scenario 写入 immutable Run start，Replay 只能据此重建，禁止依赖进程默认值 |
 | `WorldRegistry` | world id、manifest、scenario 和 state version | WorldPort、ValueSpec、声明式 externalInputs | Application 的适配边界；未知世界只能通过显式 registry 注入，外部输入必须成为可摘要、可重放的证据 |
 | `ExternalWorldPort` | 显式 adapter config、JSONL request | JSONL response 或协议错误 | 宿主使用 `shell:false`、固定 executable/args、超时和输出上限；nonce、manifest policy 和连续性由宿主绑定；真实 transition 必须由 adapter 声明是否支持同 nonce 幂等恢复 |
-| `WorldPort.observe(state)` | immutable worldState | `Observation{vector:number[],stateVersion:string,intervalId:string,evidence[]}` | 纯函数，不消耗策略 RNG |
+| `WorldPort.observe(state)` | immutable worldState | `Observation{vector:number[],stateVersion:string,intervalId:string,evidence[],feedback?}` | 纯函数，不消耗策略 RNG；`feedback[]` 以 `executionNonce` 绑定此前动作的后验快照，数量、nonce、版本、区间、维度和混杂计数均受限 |
 | `WorldPort.actions(manifest,state?)` | 实验空间 manifest，可选当前 immutable worldState | `Capability{token:string,cost:number,allowed:boolean,safe:boolean}[]` | token 在同一 lab 跨 Run 稳定、跨 lab 可置换；allowed/safe 是 WorldPort/AuthorityPolicy 基于当前边界生成的领域盲安全投影，不含领域标签；外部 adapter 只有 `hello.supportsStateDependentActions:true` 才收到 state，省略该声明的旧 v1 adapter 保持兼容 |
 | `WorldPort.transition(state,request)` | immutable worldState、`ActionRequest{token,basedOnVersion,policyVersion,constraintsDigest,executionNonce}` | `{nextWorldState,receipt,postObservation}` 或拒绝 receipt | 内置 WorldPort 是纯函数；外部 WorldPort 可产生现实变化，但必须以 executionNonce 作为持久幂等键，版本比较、AuthorityPolicy、效果和版本递增仍构成单一 transition |
 | `Kernel.step(input)` | `KernelObservation{vector,stateVersion,intervalId}`、memory、ValueSpec、capabilities、显式 rngState | `StepIntent{status,expectation,choice,nextRngState}` 或 `Halt` | Application 从 WorldPort Observation 剥离 evidence 后投影；纯函数；`distance-v2` 用带权绝对距离和可接受带，禁止越过目标被误判为改善；缺少版本标记的旧账本保持 `signed-v1` Replay；未知安全行动先于已学习行动探索 |
-| `Kernel.verify(input)` | `step` 原样返回的 StepIntent、receipt、投影后的 KernelObservation | `Verification{error,attribution,confidence,learnable}` | 纯函数；预测/选择/回执 token 必须一致；策略版本、约束摘要和 nonce 由 WorldPort/Application 绑定；证据不足为 AMBIGUOUS 且不学习 |
-| `Kernel.learn(input)` | memory、StepIntent、receipt、postObservation、Verification | `{status,token,nextMemory}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，`ACTION && learnable` 更新总体模型及其关系条件模型，`EXECUTION_REJECTED` 更新不含领域文本的最近关系拒绝证据；模型更新使用固定有界变化窗口，使近期证据可修正非平稳动力学。新 STEP 用 `kernelLearningVersion: 2` 标记该语义；Replay 对缺少标记且已记录 `SKIPPED` 的旧拒绝 STEP 保持兼容 |
+| `Kernel.verify(input)` | `step` 原样返回的 StepIntent、receipt、投影后的 KernelObservation | `Verification{error,attribution,confidence,learnable}` | 纯函数；预测/选择/回执 token 必须一致；策略版本、约束摘要和 nonce 由 WorldPort/Application 绑定；当前动作证据不足为 AMBIGUOUS，延迟结果由 `learn` 按 pending credit 单独结算 |
+| `Kernel.learn(input)` | 已验证当前动作、后验 observation 和持久 Memory | `{status,token,nextMemory,settled?}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，`ACTION && learnable` 更新总体模型及其关系条件模型，`EXECUTION_REJECTED` 更新不含领域文本的最近关系拒绝证据；窗口未完成且无已知混杂时保存有界 pending credit，基线由动作前观测推导，并叠加同一步已明确归属于旧 nonce 的 clean feedback，排除当前动作的部分即时变化；后续匹配 feedback 才更新对应 Token/关系模型，混杂 feedback 只产生不可学习的 AMBIGUOUS settled 记录，同一步存在 settled feedback 时当前动作保守不学习。模型更新使用固定有界变化窗口，使近期证据可修正非平稳动力学。新 STEP 用 `kernelLearningVersion: 2` 标记该语义；Replay 对缺少标记且已记录 `SKIPPED` 的旧拒绝 STEP 保持兼容 |
 | `ChangeSupervisor.advance(state,input)` | 当前监督状态、完整 `Verification`、前后含 `stateVersion/intervalId` 的观察 | 新监督状态，或 `REPLAN_REQUIRED`/终止状态 | 纯函数；只承认 `ACTION && learnable` 的即时目标距离下降为确认进步；不接触领域标签、模型、WorldPort 或 I/O |
 | `ChangeSupervisor.resume(state)` | 上一周期的持久化状态 | 下一变化周期的 `ACTIVE` 状态 | 记录 `runtime-continuation` 原因并清零当前停滞；不重置目标、周期计数、最佳距离或历史变化证据 |
 | `ChangeSupervisor.acknowledgeReplan(state,reason)` | `REPLAN_REQUIRED` 状态、有限原因 | 恢复为 `ACTIVE` 的监督状态 | 清零停滞、增加 `replanCount`，并在 `strategy` 中以版本化方式切换 `BALANCED/EXPLORATORY`；不改变目标、权重或历史周期 |
@@ -124,7 +124,7 @@ Advisor 的异常和非法结果也按同一证据边界处理：宿主不把异
 2. 对每步依次执行：界→感→存→预→择→动→验→化；“验”内部包含行动后的复观，不增加第九阶段。
 3. `择` 只从 allowed 且 safe 的候选中选择；无候选立即记录 HALTED，不调用 `act`。
 4. 应用服务把当前 immutable worldState 与请求交给 `transition`；内置 WorldPort 在一个纯函数结果内比较 stateVersion/policyVersion、复核 AuthorityPolicy、计算效果并递增版本，外部 WorldPort 则由 adapter 以 executionNonce 保证同一现实行动的幂等性。拒绝即记录 HALTED，不自动重试。场景外部输入在 transition 前作为独立事件应用，行动中混杂由 scenario 显式包含在 transition 结果。
-5. 结果在已知 externalEvents 为空且干预窗口完整时可更新“经验效应”；已知混杂则 AMBIGUOUS 不学习。由于不可观测混杂原则上不可识别，v0.1 不把单步归因称为严格因果；独立 Tester 用随机化配对干预/对照实验检验统计效应。
+5. 结果在已知 externalEvents 为空且干预窗口完整时可更新“经验效应”；窗口未完成且无已知混杂时先保存 pending credit，后续 feedback 按 executionNonce 结算；已知混杂则 AMBIGUOUS 不学习。由于不可观测混杂原则上不可识别，v0.1 不把单步归因称为严格因果；独立 Tester 用随机化配对干预/对照实验检验统计效应。
 6. 内置 `transition` 不改变外部状态；先把完整 STEP（含 afterState、receipt.executionNonce、postObservation）追加并 flush，成功后该模拟行动才算发生，再原子替换与 STEP.afterState 逐字段相同的 current。外部 `transition` 可能先改变现实状态，因此 accepted response 丢失时只能依赖 adapter 的持久 executionNonce 幂等记录；宿主对未声明幂等能力的 adapter 写入 `EXTERNAL_TRANSITION_UNKNOWN` 并阻断续跑，不能假设外部状态未变。首 STEP 的 beforeDigest/rngBefore 必须绑定 start.initialState，后续 STEP 必须绑定上一 afterState；同 executionNonce 的同证据重试返回原事件，不同证据拒绝。snapshot/finalState 不得另行陈述一套连续性状态；事件已落盘但 current 失败时退出 74，下次由事件恢复，不得标 CORRUPT。
 7. Run 提交顺序固定：创建 start→追加 RUN_STARTED→current=RUNNING→逐 STEP→追加终态事件→创建 immutable end→current=READY/HALTED→释放锁。
 8. 崩溃恢复矩阵：start 无事件=orphan，追加 crash-HALTED 后补 end/current；有非终态事件且无外部 in-flight marker=从 start 重放后追加 crash-HALTED；外部 marker 未对应已提交 STEP=追加 `EXTERNAL_TRANSITION_UNKNOWN`；有终态事件无 end=补 end；有 end 而 current 落后=以 end 修 current；任何摘要/断序错误=CORRUPT。未决外部 transition 的续跑还必须绑定原 run 的 scenario；只有同场景且 adapter 声明 durable nonce 幂等时才允许自动重试。

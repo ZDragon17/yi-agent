@@ -11,7 +11,7 @@ const OBJECTIVE_KEYS = [
   'target',
   'tolerance',
 ];
-const OBSERVATION_KEYS = ['schemaVersion', 'stateVersion', 'intervalId', 'vector'];
+const OBSERVATION_KEYS = ['schemaVersion', 'stateVersion', 'intervalId', 'vector', 'feedback'];
 const VERIFICATION_KEYS = [
   'schemaVersion',
   'error',
@@ -568,7 +568,12 @@ function normalizeObjective(value, tolerance) {
 }
 
 function normalizeObservation(value, field, dimensions) {
-  const source = snapshotRecord(value, OBSERVATION_KEYS, OBSERVATION_KEYS, field);
+  const source = snapshotRecord(
+    value,
+    OBSERVATION_KEYS,
+    OBSERVATION_KEYS.filter((key) => key !== 'feedback'),
+    field,
+  );
   if (source.schemaVersion !== SCHEMA_VERSION ||
       typeof source.stateVersion !== 'string' || source.stateVersion.length === 0 ||
       typeof source.intervalId !== 'string' || source.intervalId.length === 0) {
