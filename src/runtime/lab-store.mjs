@@ -330,6 +330,41 @@ export class LabStore {
     };
   }
 
+  async readLoopContinuation() {
+    const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
+    validateCurrentShape(current);
+    if (current.status === 'RUNNING') {
+      throw new LabStoreError('BUSY', 'The current run requires recovery before a loop can resume.', {
+        runId: current.lastRunId,
+      });
+    }
+    const groups = new Map();
+    for (const runId of await listRunIds(this.root)) {
+      const run = await this.readRun(runId);
+      if (run.start.continuation === undefined) continue;
+      const continuation = validateLoopContinuation(run.start.continuation, 'run continuation', true);
+      const group = groups.get(continuation.loopId) ?? { continuation, runs: [] };
+      if (canonicalJson(loopContract(group.continuation)) !== canonicalJson(loopContract(continuation))) {
+        corrupt('Loop continuation contract differs across runs.', { loopId: continuation.loopId });
+      }
+      group.runs.push(run);
+      groups.set(continuation.loopId, group);
+    }
+    if (groups.size === 0) {
+      throw new LabStoreError('NOT_FOUND', 'No persisted loop continuation exists.', {});
+    }
+    const candidates = [...groups.values()].map((group) => summarizeLoopContinuation(group));
+    const active = candidates.filter((candidate) => candidate.status === 'ACTIVE');
+    if (active.length > 1) {
+      throw new LabStoreError('CONFLICT', 'Multiple active loop continuations exist; they cannot be resumed implicitly.', {
+        loopIds: active.map((candidate) => candidate.loopId),
+      });
+    }
+    return cloneJson((active[0] ?? candidates.sort((left, right) => (
+      right.lastStartedAt.localeCompare(left.lastStartedAt) || right.loopId.localeCompare(left.loopId)
+    )).at(0)));
+  }
+
   async findUnresolvedExternalTransition() {
     const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
     validateCurrentShape(current);
@@ -439,8 +474,14 @@ export class LabStore {
         tokenMapDigest: this.manifest.tokenMap.digest,
         manifestDigest: this.manifest.selfDigest,
         initialState,
+        ...(source.continuation === undefined
+          ? {}
+          : { continuation: validateLoopContinuation(source.continuation, 'continuation') }),
         startedAt: now(),
       });
+      if (start.continuation !== undefined && start.continuation.scenario !== scenario) {
+        conflict('Run continuation scenario differs from the run scenario.', { runId, scenario });
+      }
       await publishImmutableJson(this.root, childPath(this.root, 'runs', runId, 'start.json'), start, 'run start');
       durable = true;
       inject(failpoint, 'start:published');
@@ -1324,7 +1365,90 @@ function validateStart(start, manifest, runId) {
   ) {
     corrupt('Immutable run start is invalid.', { runId });
   }
+  if (start.continuation !== undefined) validateLoopContinuation(start.continuation, 'run continuation', true);
   validateContinuityState(start.initialState, 'run start initialState', true);
+}
+
+function validateLoopContinuation(value, field, corruptOnFailure = false) {
+  const fail = (message) => {
+    if (corruptOnFailure) corrupt(message, { field });
+    throw new LabStoreError('INVALID_INPUT', message, { field });
+  };
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== SCHEMA_VERSION ||
+      typeof value.loopId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value.loopId) ||
+      typeof value.scenario !== 'string' || value.scenario.length === 0 || value.scenario.length > 4096 ||
+      !Number.isSafeInteger(value.runIndex) || value.runIndex < 0 ||
+      !Number.isSafeInteger(value.stepsPerRun) || value.stepsPerRun < 1 || value.stepsPerRun > 10_000 ||
+      (value.mode !== 'finite' && value.mode !== 'forever') ||
+      (value.mode === 'finite' && (!Number.isSafeInteger(value.maxRuns) || value.maxRuns < 1 || value.maxRuns > 10_000 || value.runIndex >= value.maxRuns)) ||
+      (value.mode === 'forever' && value.maxRuns !== undefined)) {
+    fail('Loop continuation metadata is invalid.');
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    loopId: value.loopId,
+    scenario: value.scenario,
+    runIndex: value.runIndex,
+    stepsPerRun: value.stepsPerRun,
+    mode: value.mode,
+    ...(value.maxRuns === undefined ? {} : { maxRuns: value.maxRuns }),
+  };
+}
+
+function loopContract(continuation) {
+  return {
+    schemaVersion: continuation.schemaVersion,
+    loopId: continuation.loopId,
+    scenario: continuation.scenario,
+    stepsPerRun: continuation.stepsPerRun,
+    mode: continuation.mode,
+    ...(continuation.maxRuns === undefined ? {} : { maxRuns: continuation.maxRuns }),
+  };
+}
+
+function summarizeLoopContinuation(group) {
+  const attempts = new Map();
+  const ordered = [...group.runs].sort((left, right) => (
+    left.start.continuation.runIndex - right.start.continuation.runIndex ||
+    left.start.startedAt.localeCompare(right.start.startedAt) ||
+    left.start.runId.localeCompare(right.start.runId)
+  ));
+  for (const run of ordered) {
+    const index = run.start.continuation.runIndex;
+    const previous = attempts.get(index)?.at(-1);
+    if (previous !== undefined && !isRecoverableLoopAttempt(previous)) {
+      corrupt('A loop run index was started again after a non-recoverable terminal state.', { loopId: group.continuation.loopId, runIndex: index });
+    }
+    attempts.set(index, [...(attempts.get(index) ?? []), run]);
+  }
+  const indexes = [...attempts.keys()].sort((left, right) => left - right);
+  for (let position = 0; position < indexes.length; position += 1) {
+    if (indexes[position] !== position) {
+      corrupt('Loop continuation run indexes are not contiguous.', { loopId: group.continuation.loopId });
+    }
+  }
+  const runs = indexes.map((index) => attempts.get(index).at(-1));
+  const last = runs.at(-1);
+  const terminal = last.events.at(-1);
+  const reason = terminal.payload.reason ?? null;
+  const objectiveReached = reason === 'OBJECTIVE_REACHED';
+  const recoverable = isRecoverableLoopAttempt(last);
+  const stopped = terminal.payload.terminalStatus === 'HALTED' &&
+    !recoverable;
+  const completed = objectiveReached || (!recoverable && group.continuation.mode === 'finite' && last.start.continuation.runIndex + 1 >= group.continuation.maxRuns);
+  return {
+    ...loopContract(group.continuation),
+    nextRunIndex: recoverable ? last.start.continuation.runIndex : last.start.continuation.runIndex + 1,
+    status: stopped ? 'STOPPED' : (completed ? 'COMPLETED' : 'ACTIVE'),
+    lastRunId: last.start.runId,
+    lastStartedAt: last.start.startedAt,
+    lastStopReason: reason,
+  };
+}
+
+function isRecoverableLoopAttempt(run) {
+  return ['CRASH_HALTED', 'EXTERNAL_TRANSITION_UNKNOWN'].includes(run.events.at(-1)?.payload?.reason);
 }
 
 function validateEnd(end, runId, events) {

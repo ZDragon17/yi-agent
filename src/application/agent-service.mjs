@@ -149,6 +149,7 @@ export async function runLab(input) {
     worldId: manifest.worldId,
     scenario,
     initialState,
+    ...(source.continuation === undefined ? {} : { continuation: source.continuation }),
     reuseLedgerHandle: true,
     durability,
     ...(failpoint === undefined ? {} : { failpoint }),
@@ -242,7 +243,7 @@ export async function runLab(input) {
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
       terminalRequested = true;
-      await run.finish({ terminalStatus: 'HALTED', finalState: state });
+      await run.finish({ terminalStatus: 'HALTED', reason: stopReason, finalState: state });
       return runSummary(runId, 'HALTED', stopReason, index, { executed, accepted, rejected: 0 });
     }
 
@@ -410,7 +411,7 @@ export async function runLab(input) {
     if (receipt.status === 'REJECTED') {
       stopReason = 'EXECUTION_REJECTED';
       terminalRequested = true;
-      await run.finish({ terminalStatus: 'HALTED', finalState: state });
+      await run.finish({ terminalStatus: 'HALTED', reason: stopReason, finalState: state });
       return runSummary(runId, 'HALTED', stopReason, executed, {
         executed,
         accepted,
@@ -420,7 +421,7 @@ export async function runLab(input) {
     }
     if (supervisor?.enabled === true && nextChangeSupervisor?.status === 'COMPLETED') {
       terminalRequested = true;
-      await run.finish({ terminalStatus: 'COMPLETED', finalState: state });
+      await run.finish({ terminalStatus: 'COMPLETED', reason: 'OBJECTIVE_REACHED', finalState: state });
       return runSummary(runId, 'COMPLETED', 'OBJECTIVE_REACHED', executed, {
         executed,
         accepted: accepted + 1,
@@ -430,7 +431,7 @@ export async function runLab(input) {
     }
     if (supervisor?.enabled === true && nextChangeSupervisor?.status === 'HALTED') {
       terminalRequested = true;
-      await run.finish({ terminalStatus: 'HALTED', finalState: state });
+      await run.finish({ terminalStatus: 'HALTED', reason: 'MAX_CYCLES', finalState: state });
       return runSummary(runId, 'HALTED', 'MAX_CYCLES', executed, {
         executed,
         accepted: accepted + 1,
@@ -442,7 +443,7 @@ export async function runLab(input) {
     }
 
     terminalRequested = true;
-    await run.finish({ terminalStatus: 'COMPLETED', finalState: state });
+    await run.finish({ terminalStatus: 'COMPLETED', reason: stopReason, finalState: state });
     return runSummary(runId, 'COMPLETED', stopReason, executed, {
       executed,
       accepted,
@@ -474,14 +475,58 @@ export async function runContinuous(input) {
     throw new LabStoreError('INVALID_INPUT', 'shouldStop must be a function.', { field: 'shouldStop' });
   }
   const forever = source.forever === true;
+  if (source.resume !== undefined && typeof source.resume !== 'boolean') {
+    throw new LabStoreError('INVALID_INPUT', 'resume must be a boolean.', { field: 'resume' });
+  }
+  if (source.resume === true && (
+    source.runs !== undefined || source.forever !== undefined || source.stepsPerRun !== undefined || source.steps !== undefined ||
+    source.runId !== undefined || source.scenario !== undefined || source.goal !== undefined || source.goalPlan !== undefined ||
+    source.autoPlan === true || source.maxCycles !== undefined || source.stagnationLimit !== undefined
+  )) {
+    throw new LabStoreError('INVALID_INPUT', 'resume cannot be combined with loop configuration.', {
+      fields: ['resume', 'loop configuration'],
+    });
+  }
   if (source.forever !== undefined && typeof source.forever !== 'boolean') {
     throw new LabStoreError('INVALID_INPUT', 'forever must be a boolean.', { field: 'forever' });
   }
   if (forever && source.runs !== undefined) {
     throw new LabStoreError('INVALID_INPUT', 'forever and runs are mutually exclusive.', { fields: ['forever', 'runs'] });
   }
-  const runs = requireBoundedOptional(source.runs, 1, 10_000, 'runs') ?? 1;
-  const stepsPerRun = requireSteps(source.stepsPerRun ?? source.steps);
+  const requestedRuns = requireBoundedOptional(source.runs, 1, 10_000, 'runs') ?? 1;
+  let continuation;
+  if (source.resume === true) {
+    const store = await LabStore.open({ labPath: requireText(source.labPath, 'labPath') });
+    continuation = await store.readLoopContinuation();
+    if (continuation.status !== 'ACTIVE') {
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        status: continuation.status === 'STOPPED' ? 'HALTED' : 'COMPLETED',
+        stopReason: continuation.lastStopReason ?? 'COMPLETED',
+        continuationId: continuation.loopId,
+        runs: 0,
+        metrics: { executed: 0, accepted: 0, rejected: 0 },
+        results: [],
+      };
+    }
+  } else {
+    const stepsPerRun = requireSteps(source.stepsPerRun ?? source.steps);
+    continuation = {
+      schemaVersion: SCHEMA_VERSION,
+      loopId: randomUUID(),
+      scenario: source.scenario ?? 'steady',
+      runIndex: 0,
+      stepsPerRun,
+      mode: forever ? 'forever' : 'finite',
+      ...(forever ? {} : { maxRuns: requestedRuns }),
+    };
+  }
+  const stepsPerRun = continuation.stepsPerRun;
+  const runLimit = continuation.mode === 'finite'
+    ? continuation.maxRuns
+    : Number.POSITIVE_INFINITY;
+  const startIndex = source.resume === true ? continuation.nextRunIndex : 0;
+  const scenario = continuation.scenario;
   const durability = source.durability ?? 'checkpoint';
   if (durability !== 'strict' && durability !== 'checkpoint') {
     throw new LabStoreError('INVALID_INPUT', 'durability must be strict or checkpoint.', { field: 'durability' });
@@ -490,7 +535,7 @@ export async function runContinuous(input) {
   let interrupted = false;
   const shouldStop = () => source.shouldStop?.() === true;
 
-  for (let index = 0; forever || index < runs; index += 1) {
+  for (let index = startIndex; index < runLimit; index += 1) {
     if (shouldStop()) {
       interrupted = true;
       break;
@@ -501,6 +546,8 @@ export async function runContinuous(input) {
     const result = await runLab({
       ...source,
       runId,
+      scenario,
+      continuation: { ...continuation, runIndex: index },
       steps: stepsPerRun,
       stepsPerRun: undefined,
       runs: undefined,
@@ -519,6 +566,7 @@ export async function runContinuous(input) {
     schemaVersion: SCHEMA_VERSION,
     status: last?.status ?? 'COMPLETED',
     stopReason: interrupted ? 'INTERRUPTED' : (last?.stopReason ?? 'COMPLETED'),
+    continuationId: continuation.loopId,
     runs: results.length,
     metrics: {
       executed: results.reduce((sum, result) => sum + (result.metrics?.executed ?? 0), 0),

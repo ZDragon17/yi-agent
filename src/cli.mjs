@@ -107,6 +107,16 @@ async function dispatchAgent(options) {
     : await readGoalPlanFile(options['goal-plan']);
   const planner = createModelPlanner({ client, model: config.model });
   if (options.agentOperation === 'loop') {
+    if (options.resume === true && (
+      options.steps !== undefined || options.runs !== undefined || options.forever === true ||
+      options.scenario !== undefined || options.goal !== undefined || options['goal-plan'] !== undefined ||
+      options['auto-plan'] === true || options['run-id'] !== undefined ||
+      options['max-cycles'] !== undefined || options['stagnation-limit'] !== undefined
+    )) {
+      throw cliError('INVALID_INPUT', '--resume cannot be combined with loop configuration options.', {
+        field: 'resume',
+      }, 64);
+    }
     let interrupted = false;
     const onSignal = () => { interrupted = true; };
     process.once('SIGINT', onSignal);
@@ -114,9 +124,10 @@ async function dispatchAgent(options) {
     try {
       return await runContinuous({
         labPath: required(options, 'lab'),
-        stepsPerRun: parseSteps(required(options, 'steps')),
-        runs: options.runs === undefined ? undefined : parseBoundedInt(options.runs, 1, 10_000, 'runs'),
-        forever: options.forever === true,
+        ...(options.steps === undefined ? {} : { stepsPerRun: parseSteps(options.steps) }),
+        ...(options.runs === undefined ? {} : { runs: parseBoundedInt(options.runs, 1, 10_000, 'runs') }),
+        ...(options.forever === true ? { forever: true } : {}),
+        resume: options.resume === true,
         shouldStop: () => interrupted,
         runId: options['run-id'],
         scenario: options.scenario,
@@ -137,6 +148,9 @@ async function dispatchAgent(options) {
   }
   if (options.agentOperation !== 'run') {
     throw cliError('INVALID_INPUT', `Unsupported agent operation: ${options.agentOperation ?? '(missing)'}`, {}, 64);
+  }
+  if (options.resume === true) {
+    throw cliError('INVALID_INPUT', '--resume is only supported by agent loop.', { field: 'resume' }, 64);
   }
   if (options.forever === true) {
     throw cliError('INVALID_INPUT', '--forever is only supported by agent loop.', { field: 'forever' }, 64);
@@ -230,7 +244,7 @@ function parseArguments(argv) {
     if (argument === '--json') continue;
     if (!argument.startsWith('--')) throw cliError('INVALID_INPUT', `Unexpected argument: ${argument}`, {}, 64);
     const name = argument.slice(2);
-    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan') {
+    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan' || name === 'resume') {
       options[name] = true;
       continue;
     }
@@ -242,7 +256,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'auto-plan', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-plan', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
@@ -424,6 +438,7 @@ function helpText() {
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
     '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
+    '  yi-agent agent loop --lab PATH --resume [--adapter CONFIG] [--json]',
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',

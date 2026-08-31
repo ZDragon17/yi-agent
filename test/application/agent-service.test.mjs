@@ -348,6 +348,29 @@ test('continuous runner preserves one state across multiple committed run bounda
   });
 });
 
+test('continuous resume honors an objective reached before the persisted run budget', async () => {
+  await withLab(async (lab) => {
+    const registry = createGeneratedRegistry();
+    await initLab({ labPath: lab, labId: 'objective-loop-lab', worldId: 'generated', seed: 'objective-loop-seed', registry });
+    const first = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      runs: 5,
+      scenario: 'generated',
+      goal: '推进生成计数器',
+      registry,
+    });
+    assert.equal(first.runs, 2);
+    assert.equal(first.results.at(-1).stopReason, 'OBJECTIVE_REACHED');
+
+    const resumed = await runContinuous({ labPath: lab, resume: true, registry });
+    assert.equal(resumed.status, 'COMPLETED');
+    assert.equal(resumed.stopReason, 'OBJECTIVE_REACHED');
+    assert.equal(resumed.runs, 0);
+    assert.equal((await inspectLab({ labPath: lab, registry })).current.kernelStep, 2);
+  });
+});
+
 test('explicit goal activation persists across a later run that omits the goal', async () => {
   await withLab(async (root) => {
     const lab = path.join(root, 'goal-continuity-lab');

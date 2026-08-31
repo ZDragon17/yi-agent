@@ -44,7 +44,8 @@
 | `api test [--json]` | 环境变量中的 API 配置 | 连通状态与模型数量 | 参数 64；API 74；协议 70 | 无本地状态副作用 |
 | `ask --prompt TEXT|--prompt-file PATH [--json]` | 环境变量中的 API 配置与用户提示 | 模型、回答、可选 usage | 参数 64；API 74；协议 70 | 单次非流式请求；提示文件只读 |
 | `agent run --lab PATH --steps N [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 每步一次模型提议；`--auto-plan` 激活持久化 Planner 策略；停滞时只修订未完成计划；replay 不访问 API |
-| `agent loop --lab PATH --steps N [--runs N|--forever] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；SIGINT/SIGTERM 只在 Run 边界停止；重启从 current 继续；Planner 策略、计划修订和关系记忆均从 current 恢复 |
+| `agent loop --lab PATH --steps N [--runs N|--forever] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；SIGINT/SIGTERM 只在 Run 边界停止；loop 身份和预算写入每个 Run start，重启可从 current 继续 |
+| `agent loop --lab PATH --resume [--adapter CONFIG] [--json]` | 已存在的未完成 loop continuation；API 配置 | 从账本重建的剩余 Run 摘要 | 参数 64；不存在 66；冲突 65；API 74；协议 70 | 不重新接受 steps/runs/goal 等控制参数；按 immutable Run start 的 loopId/runIndex/scenario/budget 恢复，已提交 Run 不重复 |
 
 标准错误对象：`{code, message, context?, recoverable}`。`--json` 时成功或失败都只在 stdout 输出一个 JSON envelope，stderr 保持空；仅 CLI 启动前的致命错误可写 stderr。人类模式的错误写 stderr。
 
@@ -86,7 +87,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `ChangeSupervisor.resume(state)` | 上一周期的持久化状态 | 下一变化周期的 `ACTIVE` 状态 | 记录 `runtime-continuation` 原因并清零当前停滞；不重置目标、周期计数、最佳距离或历史变化证据 |
 | `ChangeSupervisor.acknowledgeReplan(state,reason)` | `REPLAN_REQUIRED` 状态、有限原因 | 恢复为 `ACTIVE` 的监督状态 | 清零停滞、增加 `replanCount`，并在 `strategy` 中以版本化方式切换 `BALANCED/EXPLORATORY`；不改变目标、权重或历史周期 |
 | `Kernel.step(...,strategy)` | 观察、记忆、ValueSpec、能力、RNG 和可选策略 | 确定性 `StepIntent` | `BALANCED` 延续价值排序；`EXPLORATORY` 只按样本数/不确定度选择安全候选，不能绕过 allowed/safe |
-| `runContinuous(input)` | lab、每 Run 步数、Run 数上限 | 多个已提交 Run 的汇总 | 每个 Run 是独立恢复边界；任何终止原因都停止串联，不把失败伪装成持续成功 |
+| `runContinuous(input)` | lab、每 Run 步数、Run 数上限或 persisted continuation | 多个已提交 Run 的汇总 | 每个 Run 的 loopId/runIndex/scenario/budget 固化在 immutable start；resume 从完整账本重建 nextRunIndex；当前调用遇到终止原因即停止串联，目标达成完成 continuation，崩溃和可幂等外部不确定保留恢复入口，不把失败伪装成持续成功 |
 | `LabStore.append(event)` | 完整事件、预期 run sequence/digest | 已 flush 的 sequence/digest | 单 writer；冲突拒绝；只追加 |
 | `LabStore.commit(snapshot)` | 与已追加事件同 sequence 的快照 | 原子替换结果 | 可重复；快照只能追平账本，不能领先 |
 | `Replay.decision(run)` | immutable start、事件、外部输入 | 首差异或一致 | 只读；按 start 的 world/scenario 重建纯 World+Kernel+RNG；每个 STEP 的 `boundary.valueSpec` 是不可变决策输入 |
@@ -192,8 +193,8 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 ## 6. 数据与持久化契约
 
 - `manifest.json`：初始化后不可变，含 schemaVersion、labId、worldId、seed、createdAt、canonicalRoot、声明式 `scenarioIds`、稳定 tokenMap 及 digest；外部 adapter 另含 `{schemaVersion:1,protocol:"yi-world-cli",version:1,adapterId,worldVersion,valueSpec,evidencePublicKey,descriptorDigest,launchDigest,supportsIdempotentTransitions?}`，将协议/描述/启动材料、幂等恢复声明和外部证据公钥绑定到实验空间。tokenMap 为 `{schemaVersion:1,entries:[{token,capabilityId}],digest}`，应用层使用由 `SHA256(seed,labId,"capability-map",capabilityId)` 派生的独立 token 域，不消耗 world/policy RNG；即使 seed 相同，不同 labId 也产生不同映射。Runtime 只依据 manifest 的场景契约校验场景标识，不内置新的 WorldPort 领域名单。
-- `state/current.json`：worldState、memory、rngState、kernelStep、changeSupervisor、lastRunId、lastRunSequence、status、eventsDigest；可由账本重建。
-- `runs/<runId>/start.json`：每 Run 不可变起点，记录 worldId 与规范化 scenario，引用 manifest 的稳定 tokenMapDigest，含规范化连续性投影和起始摘要；tokenMap 与 scenario 均不进入 Kernel 输入。
+- `state/current.json`：worldState、memory、rngState、kernelStep、changeSupervisor、lastRunId、lastRunSequence、status、eventsDigest；可由账本重建。连续 loop 的调度意图不写入 Kernel 连续性状态，而由各子 Run 的 immutable `start.json.continuation` 重建。
+- `runs/<runId>/start.json`：每 Run 不可变起点，记录 worldId 与规范化 scenario，引用 manifest 的稳定 tokenMapDigest，含规范化连续性投影和起始摘要；连续 loop 还固定 `{schemaVersion,loopId,scenario,runIndex,stepsPerRun,mode,maxRuns?}`，用于进程重启后按账本重建剩余预算和同一 WorldPort 场景；tokenMap、scenario 和 continuation 均不进入 Kernel 输入。
 - `runs/<runId>/events.jsonl`：Run 内 sequence 从 1 连续递增；每行含 schemaVersion、runId、sequence、kind、payload、prevDigest、digest。
 - 应用服务的长跑模式将 STEP 的完整 `payload` 无损 deflate 后以 base64 字符串写入 JSONL；Runtime 读取时还原为同一语义对象，再执行原有 schema、摘要链和重放校验。`RUN_STARTED`、终态事件和公开 `LabStore` 默认仍使用普通 JSON 对象；外层 sequence/prevDigest/digest 始终明文。默认 `strict` 模式每次追加都执行 data-sync 后才返回；显式 `checkpoint` 模式则在 128 步检查点和终态前同步，未改变证据内容，但把长跑的物理持久化窗口明确化。
 - STEP payload 必填：`recordedAt,boundary,beforeObservation,memoryEvidenceProjection,beforeDigest,expectation,choice,receipt,postObservation,verification{schemaVersion,error,attribution,confidence,learnable},update,afterDigest,rngBefore,rngAfter,externalInputs,afterState`。其中 `boundary` 至少含 `{schemaVersion:1,valueSpec}`，外部 Run 还必须含 `externalInputsDigest`；它把该步 Kernel 决策所需的目标/权重和整组外部输入固定进账本；可选的 `boundary.goalActivation` 固定初次目标/计划/Planner 策略，可选的 `boundary.goalReplan` 固定停滞后的计划修订及其证据，Replay 不接受调用者默认值或重新请求 Planner。`afterState` 是该步完整连续性投影 `{worldState,memory,rngState,kernelStep,changeSupervisor}`，用于账本已落盘而 current 尚未发布时的确定性恢复；`changeSupervisor` 仍只由同一套观察向量、ValueSpec、归因和变化证据推进；若某个变化周期完成、停滞或耗尽预算，运行时会记录原因并开启下一变化周期，保持长期运行而不丢失历史证据；`memoryEvidenceProjection` 记录本次预测实际使用的样本数、均值和不确定度摘要；时间只审计，不进决策摘要。
