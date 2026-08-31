@@ -455,6 +455,22 @@ test('automatic replanning revises only the unfinished plan and is frozen for Re
   });
 });
 
+test('bounded dynamics memory adapts across scenario boundaries and remains replayable', async () => {
+  await withLab(async (lab) => {
+    const registry = createGeneratedRegistry({ adaptive: true });
+    await initLab({ labPath: lab, labId: 'adaptive-lab', worldId: 'generated', seed: 'adaptive-seed', registry });
+    await runLab({ labPath: lab, runId: 'baseline', steps: 12, scenario: 'baseline', registry });
+    await runLab({ labPath: lab, runId: 'shifted', steps: 1, scenario: 'shifted', registry });
+
+    const current = (await inspectLab({ labPath: lab, registry })).current;
+    const model = current.memory.actionModels.tok_GENERATED01;
+    assert.equal(model.sampleCount, 13);
+    assert.deepEqual(model.meanDelta, [2.125]);
+    assert.equal((await replayLab({ labPath: lab, runId: 'baseline', registry })).verdict, 'CONSISTENT');
+    assert.equal((await replayLab({ labPath: lab, runId: 'shifted', registry })).verdict, 'CONSISTENT');
+  });
+});
+
 test('continuous runner can stop a forever policy only between committed runs', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'forever-lab', worldId: 'temperature', seed: 'forever-seed' });
@@ -533,13 +549,13 @@ function project(current) {
   };
 }
 
-function createGeneratedRegistry() {
+function createGeneratedRegistry({ adaptive = false } = {}) {
   const worldId = 'generated';
-  const scenarioIds = ['generated'];
+  const scenarioIds = adaptive ? ['baseline', 'shifted'] : ['generated'];
   const capabilityId = 'generated.advance';
   const valueSpec = { observationDimensions: 1, weights: [1], target: [2] };
 
-  function createWorld(manifest, scenario = 'generated') {
+  function createWorld(manifest, scenario = scenarioIds[0]) {
     const options = normalizeWorldFactoryOptions({ manifest, scenario }, worldId, scenarioIds);
     return createWorldPort({
       worldId,
@@ -568,7 +584,10 @@ function createGeneratedRegistry() {
       observeVector: (state) => [state.value],
       scenarioEvidence: () => [],
       projectCapability: ({ authority }) => ({ allowed: authority.allowed, safe: authority.safe }),
-      applyEffect: ({ state }) => ({ accepted: true, patch: { value: state.value + 1 } }),
+      applyEffect: ({ state, scenario: activeScenario }) => ({
+        accepted: true,
+        patch: { value: state.value + (adaptive && activeScenario === 'shifted' ? 10 : 1) },
+      }),
     });
   }
 
@@ -602,7 +621,7 @@ function createGeneratedRegistry() {
       return { schemaVersion: 1, ...valueSpec };
     },
     scenarioExternalInputs(requestedWorldId, scenario, stateVersion) {
-      if (requestedWorldId !== worldId || scenario !== 'generated') return [];
+      if (adaptive || requestedWorldId !== worldId || scenario !== 'generated') return [];
       const payload = { generated: true, stepVersion: stateVersion };
       const input = { schemaVersion: 1, source: 'scenario', kind: scenario, payload, appliedBeforeVersion: stateVersion };
       return [{ ...input, digest: canonicalDigest(input) }];

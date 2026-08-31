@@ -138,6 +138,35 @@ test('step is deterministic with an explicit rngState and does not require polic
   assert.notDeepEqual(first.nextRngState, input.rngState);
 });
 
+test('learn gives recent contradictory evidence bounded influence over stale history', async () => {
+  const { step, verify, learn } = await loadKernel();
+  const input = makeStepInput({
+    capabilities: [capability(TOKEN_A)],
+    memory: memoryWithModels([
+      [TOKEN_A, { sampleCount: 64, meanDelta: [1, 0], uncertainty: 0 }],
+    ]),
+  });
+  const intent = step(input);
+  const request = actionRequest({ token: TOKEN_A });
+  const receipt = receiptForRequest(request);
+  const postObservation = observation([0, 1], 'state-2');
+  const verification = verify({ intent, receipt, postObservation });
+  const updated = learn({
+    memory: input.memory,
+    intent,
+    receipt,
+    postObservation,
+    verification,
+  });
+
+  assert.equal(updated.nextMemory.actionModels[TOKEN_A].sampleCount, 65);
+  assert.deepEqual(updated.nextMemory.actionModels[TOKEN_A].meanDelta, [0.75, 0]);
+  assert.deepEqual(
+    step({ ...input, memory: updated.nextMemory }).expectation.expectedDelta,
+    [0.75, 0],
+  );
+});
+
 test('step conditions an action prediction on a domain-neutral relation to the current target', async () => {
   const { step } = await loadKernel();
   const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });

@@ -6,6 +6,7 @@ const MAX_CAPABILITIES = 4096;
 const MAX_ACTION_MODELS = 8192;
 const MAX_RELATION_MODELS = 8192;
 const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
+const ADAPTATION_WINDOW = 8;
 
 const STEP_INPUT_KEYS = [
   'observation',
@@ -483,15 +484,17 @@ function updateActionModel(current, actualDelta, errorMagnitude, dimensions, fie
     });
   }
   const nextSampleCount = current.sampleCount + 1;
+  // A changing world must be able to outweigh stale evidence. The window is
+  // a domain-neutral memory bound, not a world-specific rule.
+  const effectiveSampleCount = Math.min(nextSampleCount, ADAPTATION_WINDOW);
   const nextMean = current.meanDelta.map((mean, index) =>
     assertComputedFiniteNumber(
-      mean + (actualDelta[index] - mean) / nextSampleCount,
+      mean + (actualDelta[index] - mean) / effectiveSampleCount,
       `${field}.meanDelta[${index}]`,
     ),
   );
   const nextUncertainty = assertComputedFiniteNumber(
-    (current.uncertainty * current.sampleCount + errorMagnitude) /
-      nextSampleCount,
+    current.uncertainty + (errorMagnitude - current.uncertainty) / effectiveSampleCount,
     `${field}.uncertainty`,
   );
   return {

@@ -8,7 +8,7 @@
 
 - 电平高低、二进制、数值向量、不透明 Token 和领域对象属于不同表达层；不能把某一表达层误认为智能本身；
 - 所有领域必须通过同一套观察—行动—验证—学习闭环接入；金融、医疗、组织、设备和软件的差异只能由 WorldPort 的状态、观测、能力和约束表达；
-- Kernel、Memory、Replay 和智能判据必须保持领域中立；新增领域特判、孤立维度或单独一套底层逻辑，均视为架构偏移；Memory 可以按观测相对 ValueSpec 的关系签名条件化，但不能按领域标签条件化；
+- Kernel、Memory、Replay 和智能判据必须保持领域中立；新增领域特判、孤立维度或单独一套底层逻辑，均视为架构偏移；Memory 可以按观测相对 ValueSpec 的关系签名条件化，但不能按领域标签条件化；变化模型必须允许有界近期证据修正过时历史，不能把世界假定为永久静态；
 - 每一项扩展必须回答：它对应哪条共同变化规律、如何被反例检验、如何在另一个领域复用；不能只用模型提示词或演示结果宣称成立；
 - 易经思想是架构公理和可证伪的工程方向，不把卦象、数字或哲学判断直接冒充为科学定律。
 
@@ -81,7 +81,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `WorldPort.transition(state,request)` | immutable worldState、`ActionRequest{token,basedOnVersion,policyVersion,constraintsDigest,executionNonce}` | `{nextWorldState,receipt,postObservation}` 或拒绝 receipt | 纯函数；版本比较、AuthorityPolicy、效果和版本递增构成单一 transition |
 | `Kernel.step(input)` | `KernelObservation{vector,stateVersion,intervalId}`、memory、ValueSpec、capabilities、显式 rngState | `StepIntent{status,expectation,choice,nextRngState}` 或 `Halt` | Application 从 WorldPort Observation 剥离 evidence 后投影；纯函数；禁止读取时钟/环境元数据；未知安全行动先于已学习行动探索 |
 | `Kernel.verify(input)` | `step` 原样返回的 StepIntent、receipt、投影后的 KernelObservation | `Verification{error,attribution,confidence,learnable}` | 纯函数；预测/选择/回执 token 必须一致；策略版本、约束摘要和 nonce 由 WorldPort/Application 绑定；证据不足为 AMBIGUOUS 且不学习 |
-| `Kernel.learn(input)` | memory、StepIntent、receipt、postObservation、Verification | `{status,token,nextMemory}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，只有 `ACTION && learnable` 才更新总体模型及其关系条件模型，其余返回未改变的 memory |
+| `Kernel.learn(input)` | memory、StepIntent、receipt、postObservation、Verification | `{status,token,nextMemory}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，只有 `ACTION && learnable` 才更新总体模型及其关系条件模型；模型更新使用固定有界变化窗口，使近期证据可修正非平稳动力学，其余返回未改变的 memory |
 | `ChangeSupervisor.advance(state,input)` | 当前监督状态、完整 `Verification`、前后含 `stateVersion/intervalId` 的观察 | 新监督状态，或 `REPLAN_REQUIRED`/终止状态 | 纯函数；只承认 `ACTION && learnable` 的即时目标距离下降为确认进步；不接触领域标签、模型、WorldPort 或 I/O |
 | `ChangeSupervisor.resume(state)` | 上一周期的持久化状态 | 下一变化周期的 `ACTIVE` 状态 | 记录 `runtime-continuation` 原因并清零当前停滞；不重置目标、周期计数、最佳距离或历史变化证据 |
 | `ChangeSupervisor.acknowledgeReplan(state,reason)` | `REPLAN_REQUIRED` 状态、有限原因 | 恢复为 `ACTIVE` 的监督状态 | 清零停滞、增加 `replanCount`，并在 `strategy` 中以版本化方式切换 `BALANCED/EXPLORATORY`；不改变目标、权重或历史周期 |
