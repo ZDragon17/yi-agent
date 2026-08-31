@@ -717,6 +717,96 @@ test('accepted incomplete feedback is retained and later settled by its executio
   assert.equal(settled.nextMemory.actionModels[TOKEN_A].sampleCount, 4);
 });
 
+test('feedback settlement is canonical across transport order when multiple pending actions are returned together', async () => {
+  const { step, verify, learn } = await loadKernel();
+  const input = makeStepInput({
+    observation: observation([0, 0], 'state-0'),
+    valueSpec: valueSpec([1, 1]),
+    memory: { schemaVersion: 1, actionModels: {} },
+  });
+  input.memory.pendingCredits = [];
+  input.memory.settledFeedback = [];
+  input.memory.pendingCreditPolicy = { schemaVersion: 1, maxAge: 8 };
+  input.memory.beliefModels = {};
+  const firstIntent = step(input);
+  const firstRequest = actionRequest({
+    token: firstIntent.choice.token,
+    basedOnVersion: 'state-0',
+    executionNonce: 'nonce:00000001',
+  });
+  const firstReceipt = receiptForRequest(firstRequest, { attributionWindowComplete: false });
+  const firstPostObservation = observation([0, 0], 'state-1');
+  const firstVerification = verify({ intent: firstIntent, receipt: firstReceipt, postObservation: firstPostObservation });
+  const firstDeferred = learn({
+    memory: input.memory,
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPostObservation,
+    verification: firstVerification,
+  });
+
+  const secondInput = {
+    ...input,
+    observation: observation([0, 0], 'state-1'),
+    memory: firstDeferred.nextMemory,
+    rngState: firstIntent.nextRngState,
+  };
+  const secondIntent = step(secondInput);
+  const secondRequest = actionRequest({
+    token: secondIntent.choice.token,
+    basedOnVersion: 'state-1',
+    executionNonce: 'nonce:00000002',
+  });
+  const secondReceipt = receiptForRequest(secondRequest, { attributionWindowComplete: false });
+  const secondPostObservation = observation([0, 0], 'state-2');
+  const secondVerification = verify({ intent: secondIntent, receipt: secondReceipt, postObservation: secondPostObservation });
+  const pending = learn({
+    memory: firstDeferred.nextMemory,
+    intent: secondIntent,
+    receipt: secondReceipt,
+    postObservation: secondPostObservation,
+    verification: secondVerification,
+  }).nextMemory;
+  const completedReceipt = receiptForRequest(secondRequest);
+  const feedback = (executionNonce, vector) => ({
+    schemaVersion: 1,
+    executionNonce,
+    stateVersion: 'state-2',
+    intervalId: 'interval:state-2',
+    vector,
+    confounderCount: 0,
+  });
+  const settle = (items, feedbackOrder) => {
+    const postObservation = { ...secondPostObservation, feedback: items };
+    const verification = verify({ intent: secondIntent, receipt: completedReceipt, postObservation });
+    return learn({
+      memory: pending,
+      intent: secondIntent,
+      receipt: completedReceipt,
+      postObservation,
+      verification,
+      ...(feedbackOrder === undefined ? {} : { feedbackOrder }),
+    });
+  };
+
+  const forward = settle([
+    feedback(firstRequest.executionNonce, [1, 0]),
+    feedback(secondRequest.executionNonce, [0, 2]),
+  ]);
+  const reverse = settle([
+    feedback(secondRequest.executionNonce, [0, 2]),
+    feedback(firstRequest.executionNonce, [1, 0]),
+  ]);
+
+  assert.deepEqual(reverse.settled, forward.settled);
+  assert.deepEqual(reverse.nextMemory, forward.nextMemory);
+  const legacyReverse = settle([
+    feedback(secondRequest.executionNonce, [0, 2]),
+    feedback(firstRequest.executionNonce, [1, 0]),
+  ], 'arrival-v1');
+  assert.notDeepEqual(legacyReverse.nextMemory, forward.nextMemory);
+});
+
 test('missing feedback expires at a bounded window without learning and rejects late evidence', async () => {
   const { step, verify, learn } = await loadKernel();
   const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });

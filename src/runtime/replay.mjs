@@ -20,6 +20,7 @@ const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const SETTLED_FEEDBACK_LEARNING_VERSION = 3;
 const PENDING_CREDIT_EXPIRY_LEARNING_VERSION = 4;
 const BELIEF_LEARNING_VERSION = 5;
+const CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION = 6;
 
 export class ReplayError extends Error {
   constructor(code, message, context = {}) {
@@ -220,14 +221,17 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   let update;
   try {
     verification = kernel.verify({ intent, receipt, postObservation });
+    const learningVersion = payload.boundary.kernelLearningVersion ?? 1;
     const learned = kernel.learn({
       memory: state.memory,
       intent,
       receipt,
       postObservation,
       verification,
+      feedbackOrder: learningVersion >= CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION
+        ? 'pending-v2'
+        : 'arrival-v1',
     });
-    const learningVersion = payload.boundary.kernelLearningVersion ?? 1;
     const replayLearned = projectLearningForVersion(learned, learningVersion);
     update = payload.boundary.kernelLearningVersion === undefined &&
       payload.update?.status === 'SKIPPED' &&

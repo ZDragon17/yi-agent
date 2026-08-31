@@ -308,4 +308,11 @@
 - 原理：同一数值观测可能对应多个未显露的真实状态；底座不能把后验均值冒充唯一变化，也不能读取领域内部字段来强行辨识。共同能力应保存可观察后验的有限分支，并将分支离散度反馈到不确定性。
 - 实现：新 Lab 的 Kernel memory 携带可选 `beliefModels`，按 `Token×RelationSignature` 保存最近最多 8 个已验证后验变化样本；样本只由 `ACTION && learnable` 的当前动作或已闭合的 clean feedback 写入。Kernel 用样本相对当前预测均值的平均绝对离散度提升不确定性，安全筛选、WorldPort 回执和模型权限不变；旧 Lab 不注入该字段，Replay 以 `kernelLearningVersion=5` 保持历史 Memory 形状。
 - 验证：同一 manifest、token、数值观测和 RNG 下，两个隐藏动力学分别产生 `+1/-1`，WorldPort 观测输入相同但后验不同；Kernel 必须保留两条样本、提升后续不确定性。样本上限、跨 Run、重启和 Replay 保持一致，既有五个内置 WorldPort、外部 adapter 和晚绑定 Oracle 继续通过。
-- 边界：这是预测结果的有界信念，不是隐藏状态识别、概率校准、全局 POMDP 求解、严格因果模型或长期自主性；同一观测且没有额外证据时只能保持不确定，后续需用反馈乱序、多动作并发和真实部分可观测 WorldPort 继续证伪。
+- 边界：这是预测结果的有界信念，不是隐藏状态识别、概率校准、全局 POMDP 求解、严格因果模型或长期自主性；同一观测且没有额外证据时只能保持不确定，后续需用多动作并发和真实部分可观测 WorldPort 继续证伪。反馈乱序已在 Kernel 公共边界收窄为规范化结算：同一批合法 nonce-bound 反馈的传输顺序不能改变持久 Memory 或 `settled` 输出；这不提供多动作信用分配，重叠效果仍需显式混杂证据。
+
+## F-29 反馈集合的规范化结算
+
+- 原理：反馈是按 `executionNonce` 绑定的一组后验事实，不是按到达顺序构成的事实流；如果传输顺序进入持久 Memory，重启、不同 WorldPort 和 Replay 会对同一变化产生不同认知。
+- 实现：v6 Kernel 在结算前按 pending credit 的持久顺序排序合法 feedback；该顺序同时稳定 `settled`、`settledFeedback` 和 `beliefModels` 的样本写入。Replay 对 v5 及以前显式保留历史到达顺序，避免重算旧账本时改变结果。未知 nonce、矛盾 feedback、重复 nonce 和超限数据仍 fail-closed，不通过排序掩盖契约错误。
+- 验证：两个 pending action 收到同一组反馈的正序与逆序时，`settled` 与完整 Memory 规范化相等；已有延迟反馈、重复投递、窗口关闭、重启和 Replay 回归继续通过。
+- 边界：规范化消除的是传输时序差异，不是多动作信用分配；一个观测无法区分多个动作的重叠效果时，WorldPort 必须提供 `confounderCount>0`，Kernel 只记录 `AMBIGUOUS` 而不学习。

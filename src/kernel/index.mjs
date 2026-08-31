@@ -17,6 +17,7 @@ const MAX_PENDING_CREDIT_AGE = 8;
 const MAX_BELIEF_MODELS = 8192;
 const MAX_BELIEF_SAMPLES = 8;
 const OVERALL_BELIEF_CONTEXT = 'overall';
+const FEEDBACK_ORDER_MODES = ['arrival-v1', 'pending-v2'];
 
 const STEP_INPUT_KEYS = [
   'observation',
@@ -35,7 +36,9 @@ const LEARN_INPUT_KEYS = [
   'receipt',
   'postObservation',
   'verification',
+  'feedbackOrder',
 ];
+const LEARN_INPUT_REQUIRED_KEYS = LEARN_INPUT_KEYS.filter((key) => key !== 'feedbackOrder');
 const VERIFICATION_KEYS = [
   'schemaVersion',
   'error',
@@ -299,7 +302,10 @@ export function verify(input) {
 }
 
 export function learn(input) {
-  const source = assertPlainRecord(input, 'learnInput', LEARN_INPUT_KEYS);
+  const source = assertPlainRecord(input, 'learnInput', LEARN_INPUT_KEYS, LEARN_INPUT_REQUIRED_KEYS);
+  const feedbackOrder = source.feedbackOrder === undefined
+    ? 'pending-v2'
+    : assertOneOf(source.feedbackOrder, FEEDBACK_ORDER_MODES, 'learnInput.feedbackOrder');
   const intent = normalizeIntent(source.intent, 'learnInput.intent');
   const dimensions = intent.expectation.expectedDelta.length;
   const memory = normalizeMemory(source.memory, 'learnInput.memory', dimensions);
@@ -326,6 +332,7 @@ export function learn(input) {
     postObservation,
     dimensions,
     'learnInput.postObservation.feedback',
+    feedbackOrder,
   );
   const settled = settlement.entries;
 
@@ -431,7 +438,7 @@ export function learn(input) {
   };
 }
 
-function settlePendingCredits(memory, postObservation, dimensions, field) {
+function settlePendingCredits(memory, postObservation, dimensions, field, feedbackOrder = 'pending-v2') {
   const feedback = postObservation.feedback ?? [];
   const pendingCredits = memory.pendingCredits ?? [];
   const pendingByNonce = new Map(pendingCredits.map((credit) => [credit.executionNonce, credit]));
@@ -442,6 +449,15 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
   const remaining = [];
   const settledNonces = new Set();
   const feedbackNonces = new Set(feedback.map((item) => item.executionNonce));
+  // Feedback is a set of nonce-bound facts; current transport order must not leak into memory.
+  const pendingOrder = new Map(pendingCredits.map((credit, index) => [credit.executionNonce, index]));
+  const orderedFeedback = feedbackOrder === 'arrival-v1'
+    ? feedback
+    : [...feedback].sort((left, right) => {
+      const leftOrder = pendingOrder.get(left.executionNonce) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = pendingOrder.get(right.executionNonce) ?? Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder || left.executionNonce.localeCompare(right.executionNonce);
+    });
   let hasFeedbackSettlement = false;
 
   for (const credit of pendingCredits) {
@@ -467,7 +483,7 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
     remaining.push({ ...credit, age });
   }
 
-  for (const item of feedback) {
+  for (const item of orderedFeedback) {
     const pending = pendingByNonce.get(item.executionNonce);
     const prior = settledFeedbackByNonce.get(item.executionNonce);
     if (pending === undefined) {
