@@ -34,6 +34,7 @@ const MAX_LEDGER_BYTES = 32 * 1024 * 1024;
 const MAX_EVENT_LINE_BYTES = 1024 * 1024;
 const MAX_RECENT_COMMITTED_STEPS = 32;
 const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
+const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
 
 export const INTERNAL_RUN_APPEND = Symbol('yi-agent.internal-run-append');
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
@@ -329,6 +330,44 @@ export class LabStore {
     };
   }
 
+  async findUnresolvedExternalTransition() {
+    const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
+    validateCurrentShape(current);
+    const runIds = await listRunIds(this.root);
+    const runs = [];
+    for (const runId of runIds) {
+      if (runId === current.lastRunId && current.status === 'RUNNING') continue;
+      runs.push(await this.readRun(runId));
+    }
+    const committed = runs.flatMap((run) => run.events
+      .filter((event) => event.kind === 'STEP')
+      .map((event) => ({ run, event })));
+    const unknowns = runs.flatMap((run) => {
+      const terminal = run.events.at(-1);
+      if (terminal?.payload?.reason !== 'EXTERNAL_TRANSITION_UNKNOWN') return [];
+      const evidence = terminal.payload.externalTransition;
+      if (evidence === undefined) return [{ legacy: true, runId: run.start.runId, scenario: run.start.scenario }];
+      validateExternalTransitionEvidence(evidence, run.start.runId, run.start.scenario);
+      return [{ legacy: false, runId: run.start.runId, scenario: run.start.scenario, evidence }];
+    });
+    const unresolved = unknowns.filter((candidate) => candidate.legacy || !committed.some(({ run, event }) =>
+      run.start.scenario === candidate.scenario && candidate.evidence !== undefined &&
+      event.payload.receipt.executionNonce === candidate.evidence.executionNonce &&
+      event.payload.receipt.token === candidate.evidence.token &&
+      event.payload.receipt.basedOnVersion === candidate.evidence.basedOnVersion &&
+      event.payload.beforeDigest === candidate.evidence.beforeDigest));
+    if (unresolved.length === 0) return null;
+    const first = unresolved[0];
+    if (unresolved.some((candidate) => (
+      candidate.legacy !== first.legacy ||
+      candidate.scenario !== first.scenario ||
+      canonicalJson(externalTransitionIdentity(candidate.evidence)) !== canonicalJson(externalTransitionIdentity(first.evidence))
+    ))) {
+      corrupt('Multiple unresolved external transitions conflict.', { phase: 'external-transition-scan' });
+    }
+    return cloneJson(first);
+  }
+
   async startRun(input) {
     const source = requireObject(input, 'run input');
     const runId = requireSafeSegment(source.runId, 'runId');
@@ -610,6 +649,13 @@ class ActiveRun {
     }
     const failpoint = typeof source.failpoint === 'function' ? source.failpoint : this.failpoint;
     const finalStateDigest = canonicalDigest(finalState);
+    const reason = source.reason === undefined ? undefined : requireTerminalReason(source.reason);
+    const externalTransition = reason === 'EXTERNAL_TRANSITION_UNKNOWN'
+      ? await readExternalTransitionEvidence(this.store.root, this.start, this.lastEvent)
+      : null;
+    if (reason === 'EXTERNAL_TRANSITION_UNKNOWN' && externalTransition === null) {
+      throw new LabStoreError('CORRUPT', 'An unresolved external transition is missing its durable marker.', { runId: this.start.runId });
+    }
     let terminalEvent;
     try {
       terminalEvent = await appendLedgerEvent(
@@ -619,7 +665,13 @@ class ActiveRun {
         this.lastEvent.digest,
         {
           kind: terminalStatus === 'COMPLETED' ? 'RUN_COMPLETED' : 'RUN_HALTED',
-          payload: { terminalStatus, finalState, finalStateDigest },
+          payload: {
+            terminalStatus,
+            ...(reason === undefined ? {} : { reason }),
+            ...(externalTransition === null ? {} : { externalTransition }),
+            finalState,
+            finalStateDigest,
+          },
         },
         failpoint,
         this.reuseLedgerHandle ? await this.ensureLedgerHandle() : null,
@@ -659,9 +711,65 @@ class ActiveRun {
     });
     await atomicWriteJson(this.store.root, childPath(this.store.root, 'state', 'current.json'), current);
     inject(failpoint, 'current:terminal');
+    await this.clearExternalTransitionExclusive();
     await removeOwnedLock(this.store.root, this.writerLock);
     this.terminal = true;
     return cloneJson(end);
+  }
+
+  markExternalTransition(input) {
+    return this.runExclusive(() => this.markExternalTransitionExclusive(input));
+  }
+
+  async markExternalTransitionExclusive(input) {
+    await assertOwnedLock(this.store.root, this.writerLockIdentity);
+    const source = requireObject(input, 'external transition marker');
+    const executionNonce = requireText(source.executionNonce, 'executionNonce');
+    const token = requireText(source.token, 'token');
+    const basedOnVersion = requireText(source.basedOnVersion, 'basedOnVersion');
+    const beforeState = cloneInputJson(requireObject(source.beforeState, 'beforeState'), 'beforeState');
+    validateContinuityState(beforeState, 'beforeState');
+    if (source.policyEvidence !== undefined) {
+      validateExternalPolicyEvidence(source.policyEvidence, this.start.runId);
+    }
+    const marker = withSelfDigest({
+      schemaVersion: SCHEMA_VERSION,
+      runId: this.start.runId,
+      sequence: this.lastEvent.sequence + 1,
+      scenario: this.start.scenario,
+      executionNonce,
+      token,
+      basedOnVersion,
+      beforeDigest: canonicalDigest(beforeState),
+      markedAt: now(),
+      ...(source.policyEvidence === undefined ? {} : { policyEvidence: cloneJson(source.policyEvidence) }),
+    });
+    const result = await publishImmutableJson(
+      this.store.root,
+      childPath(this.store.root, 'runs', this.start.runId, EXTERNAL_TRANSITION_MARKER),
+      marker,
+      'external transition marker',
+    );
+    inject(this.failpoint, 'external-transition:marked');
+    return result;
+  }
+
+  clearExternalTransition() {
+    return this.runExclusive(() => this.clearExternalTransitionExclusive());
+  }
+
+  flushLedger() {
+    return this.runExclusive(() => this.flushLedgerExclusive());
+  }
+
+  async flushLedgerExclusive() {
+    await assertOwnedLock(this.store.root, this.writerLockIdentity);
+    await this.flushLedgerHandle();
+  }
+
+  async clearExternalTransitionExclusive() {
+    await assertOwnedLock(this.store.root, this.writerLockIdentity);
+    await rm(childPath(this.store.root, 'runs', this.start.runId, EXTERNAL_TRANSITION_MARKER), { force: true });
   }
 
   complete(input) {
@@ -814,6 +922,32 @@ async function recoverRun(root, manifest) {
   if (end !== null) validateEnd(end, runId, events);
 
   let last = events.at(-1) ?? null;
+  const markerPath = childPath(root, 'runs', runId, EXTERNAL_TRANSITION_MARKER);
+  let externalMarker = await readOptionalVerifiedObject(markerPath, 'external transition marker');
+  if (externalMarker !== null) {
+    validateExternalTransitionMarker(externalMarker, runId, start, events, current);
+    const committed = events.find((event) => (
+      event.kind === 'STEP' &&
+      event.sequence === externalMarker.sequence &&
+      event.payload.receipt.executionNonce === externalMarker.executionNonce
+    ));
+    if (committed !== undefined) {
+      if (committed.payload.receipt.token !== externalMarker.token ||
+          committed.payload.beforeDigest !== externalMarker.beforeDigest ||
+          committed.payload.receipt.basedOnVersion !== externalMarker.basedOnVersion) {
+        corrupt('External transition marker does not match its committed STEP.', { runId });
+      }
+      await rm(markerPath);
+      externalMarker = null;
+    } else if (TERMINAL_KINDS.has(last?.kind)) {
+      if (last.payload.reason !== 'EXTERNAL_TRANSITION_UNKNOWN') {
+        corrupt('External transition marker remains after an unrelated terminal event.', { runId });
+      }
+      await rm(markerPath);
+      externalMarker = null;
+    }
+  }
+  const externalTransition = externalMarker === null ? null : externalTransitionEvidence(externalMarker, start);
   let reason;
   if (end === null && !TERMINAL_KINDS.has(last?.kind)) {
     if (events.length === 0) {
@@ -828,13 +962,14 @@ async function recoverRun(root, manifest) {
       kind: 'RUN_HALTED',
       payload: {
         terminalStatus: 'HALTED',
-        reason: 'CRASH_HALTED',
+        reason: externalMarker === null ? 'CRASH_HALTED' : 'EXTERNAL_TRANSITION_UNKNOWN',
+        ...(externalTransition === null ? {} : { externalTransition }),
         finalState,
         finalStateDigest: canonicalDigest(finalState),
       },
     });
     events.push(last);
-    reason = 'CRASH_HALTED';
+    reason = externalMarker === null ? 'CRASH_HALTED' : 'EXTERNAL_TRANSITION_UNKNOWN';
   }
 
   if (end === null) {
@@ -850,7 +985,9 @@ async function recoverRun(root, manifest) {
       endedAt: now(),
     });
     await publishImmutableJson(root, endPath, end, 'run end');
-    reason ??= 'TERMINAL_COMPLETED';
+    reason ??= events.at(-1)?.payload?.reason === 'EXTERNAL_TRANSITION_UNKNOWN'
+      ? 'EXTERNAL_TRANSITION_UNKNOWN'
+      : 'TERMINAL_COMPLETED';
   }
 
   const terminal = events.at(-1);
@@ -864,7 +1001,12 @@ async function recoverRun(root, manifest) {
   if (current.selfDigest !== finalCurrent.selfDigest) {
     await atomicWriteJson(root, currentPath, finalCurrent);
   }
-  reason ??= terminal.payload.reason === 'CRASH_HALTED' ? 'CRASH_HALTED' : 'ALREADY_TERMINAL';
+  if (externalMarker !== null) await rm(markerPath);
+  reason ??= terminal.payload.reason === 'EXTERNAL_TRANSITION_UNKNOWN'
+    ? 'EXTERNAL_TRANSITION_UNKNOWN'
+    : terminal.payload.reason === 'CRASH_HALTED'
+      ? 'CRASH_HALTED'
+      : 'ALREADY_TERMINAL';
   return { reason, current: finalCurrent };
 }
 
@@ -1070,7 +1212,104 @@ function validateTerminalEvent(event) {
   ) {
     corrupt('Terminal event payload is invalid.', { runId: event.runId, sequence: event.sequence });
   }
+  if (event.payload.reason !== undefined) {
+    try {
+      requireTerminalReason(event.payload.reason);
+    } catch {
+      corrupt('Terminal event reason is invalid.', { runId: event.runId, sequence: event.sequence });
+    }
+  }
+  if (event.payload.externalTransition !== undefined) {
+    validateExternalTransitionEvidence(event.payload.externalTransition, event.runId);
+  }
   validateContinuityState(event.payload.finalState, 'terminal finalState', true);
+}
+
+function externalTransitionEvidence(marker, start) {
+  validateExternalTransitionEvidence(marker, start.runId, start.scenario);
+  return {
+    runId: marker.runId,
+    sequence: marker.sequence,
+    scenario: marker.scenario,
+    executionNonce: marker.executionNonce,
+    token: marker.token,
+    basedOnVersion: marker.basedOnVersion,
+    beforeDigest: marker.beforeDigest,
+    ...(marker.policyEvidence === undefined ? {} : { policyEvidence: cloneJson(marker.policyEvidence) }),
+  };
+}
+
+async function readExternalTransitionEvidence(root, start) {
+  const marker = await readOptionalVerifiedObject(
+    childPath(root, 'runs', start.runId, EXTERNAL_TRANSITION_MARKER),
+    'external transition marker',
+  );
+  return marker === null ? null : externalTransitionEvidence(marker, start);
+}
+
+function validateExternalTransitionEvidence(value, runId, scenario = undefined) {
+  if (
+    value === null || typeof value !== 'object' || Array.isArray(value) ||
+    value.runId !== runId ||
+    (scenario !== undefined && value.scenario !== scenario) ||
+    !Number.isSafeInteger(value.sequence) || value.sequence < 2 ||
+    typeof value.scenario !== 'string' || value.scenario.length === 0 || value.scenario.length > 4096 ||
+    typeof value.executionNonce !== 'string' || value.executionNonce.length === 0 || value.executionNonce.length > 4096 ||
+    typeof value.token !== 'string' || value.token.length === 0 || value.token.length > 4096 ||
+    typeof value.basedOnVersion !== 'string' || value.basedOnVersion.length === 0 || value.basedOnVersion.length > 4096 ||
+    typeof value.beforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.beforeDigest)
+  ) {
+    corrupt('External transition evidence is invalid.', { runId });
+  }
+  if (value.policyEvidence !== undefined) validateExternalPolicyEvidence(value.policyEvidence, runId);
+}
+
+function validateExternalPolicyEvidence(value, runId) {
+  if (
+    value === null || typeof value !== 'object' || Array.isArray(value) ||
+    value.schemaVersion !== SCHEMA_VERSION || value.source !== 'model' ||
+    typeof value.model !== 'string' || value.model.length === 0 || value.model.length > 4096 ||
+    (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
+    typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
+    typeof value.applied !== 'boolean' ||
+    (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))
+  ) {
+    corrupt('External transition policy evidence is invalid.', { runId });
+  }
+}
+
+function externalTransitionIdentity(value) {
+  if (value === undefined) return null;
+  return {
+    scenario: value.scenario,
+    executionNonce: value.executionNonce,
+    token: value.token,
+    basedOnVersion: value.basedOnVersion,
+    beforeDigest: value.beforeDigest,
+  };
+}
+
+function validateExternalTransitionMarker(marker, runId, start, events, current) {
+  if (
+    marker.runId !== runId ||
+    !Number.isSafeInteger(marker.sequence) || marker.sequence < 2 ||
+    marker.scenario !== start.scenario ||
+    typeof marker.executionNonce !== 'string' || marker.executionNonce.length === 0 ||
+    typeof marker.token !== 'string' || marker.token.length === 0 ||
+    typeof marker.basedOnVersion !== 'string' || marker.basedOnVersion.length === 0 ||
+    typeof marker.beforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(marker.beforeDigest) ||
+    typeof marker.markedAt !== 'string' ||
+    !events.some((event) => event.kind === 'RUN_STARTED' && event.payload.startDigest === start.selfDigest)
+  ) {
+    corrupt('External transition marker is invalid.', { runId });
+  }
+  const lastSequence = events.at(-1)?.sequence ?? 0;
+  if (marker.sequence !== lastSequence && marker.sequence !== lastSequence + 1) {
+    corrupt('External transition marker is not adjacent to the ledger watermark.', { runId });
+  }
+  if (marker.sequence === lastSequence + 1 && marker.beforeDigest !== canonicalDigest(recoveryStateProjection(current, start, events))) {
+    corrupt('External transition marker does not bind the current continuity state.', { runId });
+  }
 }
 
 function validateStart(start, manifest, runId) {
@@ -1353,6 +1592,9 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
     typeof value.descriptorDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) ||
     typeof value.launchDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.launchDigest)
   ) fail('Adapter metadata is invalid.');
+  if (value.supportsIdempotentTransitions !== undefined && typeof value.supportsIdempotentTransitions !== 'boolean') {
+    fail('Adapter metadata idempotency declaration is invalid.');
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
     protocol: 'yi-world-cli',
@@ -1363,6 +1605,9 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
     evidencePublicKey: value.evidencePublicKey,
     descriptorDigest: value.descriptorDigest,
     launchDigest: value.launchDigest,
+    ...(value.supportsIdempotentTransitions === undefined
+      ? {}
+      : { supportsIdempotentTransitions: value.supportsIdempotentTransitions }),
   };
 }
 
@@ -2063,6 +2308,13 @@ function requireObject(value, field) {
 function requireText(value, field) {
   if (typeof value !== 'string' || value.length === 0 || value.length > 4096) {
     throw new LabStoreError('INVALID_INPUT', `${field} must be a non-empty string.`, { field });
+  }
+  return value;
+}
+
+function requireTerminalReason(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 512) {
+    throw new LabStoreError('INVALID_INPUT', 'reason must be a non-empty string of at most 512 characters.', { field: 'reason' });
   }
   return value;
 }

@@ -77,6 +77,33 @@ export async function runLab(input) {
   const spec = registry.valueSpec(manifest.worldId);
   const world = registry.createWorld(manifest, scenario);
   const current = (await store.inspect()).current;
+  let unresolvedExternalTransition = manifest.adapter === undefined
+    ? null
+    : await store.findUnresolvedExternalTransition();
+  if (unresolvedExternalTransition !== null) {
+    const unresolved = unresolvedExternalTransition;
+    if (unresolved.legacy) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'An unresolved external transition lacks durable retry evidence and requires manual reconciliation.',
+        { runId: unresolved.runId },
+      );
+    }
+    if (unresolved.scenario !== scenario) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'An unresolved external transition can only be resumed with the original scenario.',
+        { runId: unresolved.runId, previousScenario: unresolved.scenario, scenario },
+      );
+    }
+    if (world.supportsIdempotentTransitions !== true) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'The previous external transition is unresolved and its adapter does not declare idempotent transitions.',
+        { runId: unresolved.runId, executionNonce: unresolved.evidence.executionNonce },
+      );
+    }
+  }
   const goalRequested = (source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined;
   let initialState = current.lastRunId === null
     ? {
@@ -131,6 +158,7 @@ export async function runLab(input) {
   let accepted = 0;
   let stopReason = 'COMPLETED';
   let terminalRequested = false;
+  let externalTransitionUncertain = false;
   const snapshotInterval = durability === 'checkpoint'
     ? CHECKPOINT_SNAPSHOT_INTERVAL
     : SNAPSHOT_INTERVAL;
@@ -189,7 +217,10 @@ export async function runLab(input) {
         }
       : null;
     const stepValueSpec = kernelValueSpec(supervisor?.objective ?? spec);
-    const modelDecision = source.advisor !== undefined && capabilities.some((capability) => capability.allowed && capability.safe)
+    const retryPolicyEvidence = unresolvedExternalTransition?.evidence.policyEvidence ?? null;
+    const retryPreference = retryPolicyEvidence?.applied === true ? retryPolicyEvidence : null;
+    const modelDecision = retryPolicyEvidence === null &&
+      source.advisor !== undefined && capabilities.some((capability) => capability.allowed && capability.safe)
       ? await source.advisor({
           observation: beforeObservation,
           memory: state.memory,
@@ -207,7 +238,7 @@ export async function runLab(input) {
       capabilities,
       rngState: state.rngState,
       ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
-    }, preferenceFor(modelDecision));
+    }, preferenceFor(retryPreference ?? modelDecision));
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
       terminalRequested = true;
@@ -223,12 +254,33 @@ export async function runLab(input) {
       constraintsDigest: manifest.authorityPolicy.constraintsDigest,
       executionNonce: `execution:step:${state.kernelStep + 1}`,
     };
+    if (unresolvedExternalTransition !== null) {
+      assertExternalTransitionRetry(unresolvedExternalTransition, receiptRequest, state);
+    }
     const externalInputs = registry.scenarioExternalInputs(
       manifest.worldId,
       scenario,
       beforeObservation.stateVersion,
     );
+    if (manifest.adapter !== undefined) {
+      await run.markExternalTransition({
+        executionNonce: receiptRequest.executionNonce,
+        token: receiptRequest.token,
+        basedOnVersion: receiptRequest.basedOnVersion,
+        beforeState: state,
+        ...(retryPolicyEvidence === null && modelDecision === null
+          ? {}
+          : { policyEvidence: retryPolicyEvidence ?? policyEvidence(modelDecision, intent, capabilities) }),
+      });
+    }
+    externalTransitionUncertain = manifest.adapter !== undefined;
     const transition = world.transition(state.worldState, receiptRequest);
+    externalTransitionUncertain = externalTransitionUncertain && transition.receipt.status === 'ACCEPTED';
+    if (typeof failpoint === 'function' && failpoint('external-transition:returned')) {
+      throw new LabStoreError('INJECTED_FAILURE', 'Injected failure at external-transition:returned.', {
+        point: 'external-transition:returned',
+      });
+    }
     const afterCapabilities = world.actions(worldManifest(manifest), transition.nextWorldState);
     const receipt = externalInputs.length === 0
       ? transition.receipt
@@ -331,9 +383,17 @@ export async function runLab(input) {
         rngAfter: nextState.rngState,
         externalInputs,
         afterState: nextState,
-        ...(modelDecision === null ? {} : { policyEvidence: policyEvidence(modelDecision, intent, capabilities) }),
+        ...(retryPolicyEvidence === null && modelDecision === null
+          ? {}
+          : { policyEvidence: retryPolicyEvidence ?? policyEvidence(modelDecision, intent, capabilities) }),
       },
     }, { returnReference: true, [INTERNAL_RUN_APPEND]: true });
+    if (manifest.adapter !== undefined) {
+      if (durability === 'checkpoint') await run.flushLedger();
+      await run.clearExternalTransition();
+      unresolvedExternalTransition = null;
+      externalTransitionUncertain = false;
+    }
     const shouldSnapshot = (executed + 1) % snapshotInterval === 0 ||
       receipt.status === 'REJECTED' || index === steps - 1;
     if (shouldSnapshot) {
@@ -393,7 +453,11 @@ export async function runLab(input) {
     if (!terminalRequested && !run.terminalEvidence && !run.needsLedgerReconcile &&
         canonicalJson(run.expectedState) === canonicalJson(state)) {
       try {
-        await run.finish({ terminalStatus: 'HALTED', finalState: state });
+        await run.finish({
+          terminalStatus: 'HALTED',
+          finalState: state,
+          ...(externalTransitionUncertain ? { reason: 'EXTERNAL_TRANSITION_UNKNOWN' } : {}),
+        });
       } catch {
         // Preserve the original world or persistence error; recovery owns the unresolved run.
       }
@@ -469,6 +533,22 @@ function preferenceFor(modelDecision) {
   return modelDecision?.token === null || modelDecision?.token === undefined
     ? null
     : { schemaVersion: SCHEMA_VERSION, token: modelDecision.token };
+}
+
+function assertExternalTransitionRetry(unresolved, request, state) {
+  const evidence = unresolved.evidence;
+  const mismatches = [];
+  if (request.executionNonce !== evidence.executionNonce) mismatches.push('executionNonce');
+  if (request.token !== evidence.token) mismatches.push('token');
+  if (request.basedOnVersion !== evidence.basedOnVersion) mismatches.push('basedOnVersion');
+  if (canonicalDigest(state) !== evidence.beforeDigest) mismatches.push('beforeDigest');
+  if (mismatches.length > 0) {
+    throw new LabStoreError(
+      'CONFLICT',
+      'An idempotent retry must reproduce the original external transition request exactly.',
+      { runId: unresolved.runId, fields: mismatches, executionNonce: evidence.executionNonce },
+    );
+  }
 }
 
 async function requestPlan({ planner, goal, observation, valueSpec, memory, manifest, plan = null, reason = null, step }) {

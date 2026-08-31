@@ -63,6 +63,9 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
     evidencePublicKey: descriptor.evidencePublicKey,
     descriptorDigest: descriptor.descriptorDigest,
     launchDigest: normalizedConfig.launchDigest,
+    ...(descriptor.supportsIdempotentTransitions === undefined
+      ? {}
+      : { supportsIdempotentTransitions: descriptor.supportsIdempotentTransitions }),
   };
 
   const definition = {
@@ -269,6 +272,7 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
   const capturedManifest = canonicalJson(worldManifest);
 
   return {
+    supportsIdempotentTransitions: descriptor.supportsIdempotentTransitions === true,
     initialState() {
       const response = client.request('initialState', {
         worldId: descriptor.worldId,
@@ -442,7 +446,7 @@ function normalizeExternalReceipt(value, request, field) {
 function validateDescriptor(value, config) {
   const source = assertExactKeys(value, [
     'adapterId', 'worldId', 'worldVersion', 'capabilityIds', 'scenarioIds', 'valueSpec', 'evidencePublicKey',
-    'supportsStateDependentActions', 'descriptorDigest',
+    'supportsStateDependentActions', 'supportsIdempotentTransitions', 'descriptorDigest',
   ], 'hello.result', [
     'adapterId', 'worldId', 'worldVersion', 'capabilityIds', 'scenarioIds', 'valueSpec', 'evidencePublicKey', 'descriptorDigest',
   ]);
@@ -451,6 +455,7 @@ function validateDescriptor(value, config) {
       !validStringList(source.capabilityIds, 'capabilityIds') || !validStringList(source.scenarioIds, 'scenarioIds') ||
       !isValueSpec(source.valueSpec) || !isValidEvidencePublicKey(source.evidencePublicKey) ||
       (source.supportsStateDependentActions !== undefined && typeof source.supportsStateDependentActions !== 'boolean') ||
+      (source.supportsIdempotentTransitions !== undefined && typeof source.supportsIdempotentTransitions !== 'boolean') ||
       source.descriptorDigest !== canonicalDigest({
         adapterId: source.adapterId,
         worldId: source.worldId,
@@ -462,6 +467,9 @@ function validateDescriptor(value, config) {
         ...(source.supportsStateDependentActions === undefined
           ? {}
           : { supportsStateDependentActions: source.supportsStateDependentActions }),
+        ...(source.supportsIdempotentTransitions === undefined
+          ? {}
+          : { supportsIdempotentTransitions: source.supportsIdempotentTransitions }),
       })) {
     throw new ExternalWorldProtocolError('External WorldPort hello descriptor is invalid.', { op: 'hello' });
   }

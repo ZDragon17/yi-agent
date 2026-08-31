@@ -12,6 +12,7 @@ import { ED25519_PUBLIC_KEY, verifyAttestation } from '../fixtures/ed25519-proof
 const CLI = path.resolve('bin/yi-agent.mjs');
 const ADAPTER_FIXTURE = path.resolve('test/fixtures/generated-world-adapter.mjs');
 const STATEFUL_ADAPTER_FIXTURE = path.resolve('test/fixtures/stateful-capabilities-world-adapter.mjs');
+const IDEMPOTENT_ADAPTER_FIXTURE = path.resolve('test/fixtures/idempotent-transition-world-adapter.mjs');
 
 test('generated adapter exposes a fixed Ed25519 key for its hello descriptor', async () => {
   const response = await invokeAdapter([], { protocol: 'yi-world-cli', version: 1, id: '1', op: 'hello', payload: {} });
@@ -202,6 +203,214 @@ test('CLI preserves state-dependent external capabilities across restarts, repla
   });
 });
 
+test('CLI resumes a response-lost external transition through the same execution nonce', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'idempotent-lab');
+    const effectFile = path.join(root, 'external-effect.json');
+    const adapter = await writeIdempotentAdapterConfig(root, effectFile);
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'idempotent-seed', '--lab-id', 'idempotent-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const lost = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(lost.code, 0);
+    assert.equal(await countLedgerSteps(lab, 'run-1'), 0);
+    const afterLoss = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
+    assert.equal(afterLoss.code, 0);
+    assert.equal(afterLoss.stdout[0].data.current.status, 'HALTED');
+    assert.equal(afterLoss.stdout[0].data.current.worldState.value, 0);
+
+    const resumed = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(resumed.code, 0);
+    assert.equal(resumed.stdout[0].data.status, 'COMPLETED');
+
+    const current = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
+    assert.equal(current.code, 0);
+    assert.equal(current.stdout[0].data.current.worldState.value, 1);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+  });
+});
+
+test('CLI reuses the persisted advisor selection when an external transition is retried', async () => {
+  await withTemp(async (root) => {
+    const baselineLab = path.join(root, 'advisor-baseline-lab');
+    const baselineEffect = path.join(root, 'advisor-baseline-effect.json');
+    const adapter = await writeTransitionAdapterConfig(root, baselineEffect, ['--two-actions', '--both-safe'], false);
+    const baselineInit = await invoke('init', '--lab', baselineLab, '--world', 'idempotent-transition', '--seed', 'advisor-seed', '--lab-id', 'advisor-baseline-lab', '--adapter', adapter, '--json');
+    assert.equal(baselineInit.code, 0);
+    const baselineRun = await invoke('run', '--lab', baselineLab, '--run-id', 'baseline-run', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(baselineRun.code, 0);
+    const defaultToken = await firstStepToken(baselineLab, 'baseline-run');
+    const manifest = JSON.parse(await readFile(path.join(baselineLab, 'manifest.json'), 'utf8'));
+    const advisorToken = manifest.tokenMap.entries.find((entry) => entry.token !== defaultToken).token;
+
+    const lab = path.join(root, 'advisor-retry-lab');
+    const effectFile = path.join(root, 'advisor-retry-effect.json');
+    await writeTransitionAdapterConfig(root, effectFile, ['--two-actions', '--both-safe'], false);
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'advisor-seed', '--lab-id', 'advisor-baseline-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+    const crashed = await crashAfterExternalTransitionReturnWithAdvisor(lab, adapter, advisorToken);
+    assert.equal(crashed, 17);
+
+    const recovered = await invoke('recover', '--lab', lab, '--confirm-lock-owner-dead', '--json');
+    assert.equal(recovered.code, 0);
+    const resumed = await invoke('run', '--lab', lab, '--run-id', 'advisor-retry-run', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(resumed.code, 0);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+  });
+});
+
+test('CLI rejects an idempotent retry under a different scenario', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'idempotent-scenario-lab');
+    const effectFile = path.join(root, 'idempotent-scenario-effect.json');
+    const adapter = await writeIdempotentAdapterConfig(root, effectFile);
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'idempotent-scenario-seed', '--lab-id', 'idempotent-scenario-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const lost = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(lost.code, 0);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const mismatched = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'alternate', '--adapter', adapter, '--json');
+    assert.notEqual(mismatched.code, 0);
+    assert.equal(mismatched.stdout[0].error.code, 'CONFLICT');
+    assert.match(mismatched.stdout[0].error.message, /original scenario/);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    assert.equal(await countLedgerSteps(lab, 'run-2'), 0);
+  });
+});
+
+test('CLI binds an idempotent retry to the original external action identity', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'idempotent-action-lab');
+    const effectFile = path.join(root, 'idempotent-action-effect.json');
+    const adapter = await writeTransitionAdapterConfig(root, effectFile, ['--two-actions']);
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'idempotent-action-seed', '--lab-id', 'idempotent-action-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const lost = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(lost.code, 0);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const mismatched = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(mismatched.code, 0);
+    assert.equal(mismatched.stdout[0].error.code, 'CONFLICT');
+    assert.match(mismatched.stdout[0].error.message, /original external transition request/);
+    assert.deepEqual(mismatched.stdout[0].error.context.fields, ['token']);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    assert.equal(await countLedgerSteps(lab, 'run-2'), 0);
+  });
+});
+
+test('CLI keeps the original external uncertainty after a retry crashes again', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'persistent-uncertainty-lab');
+    const effectFile = path.join(root, 'persistent-uncertainty-effect.json');
+    const adapter = await writeIdempotentAdapterConfig(root, effectFile);
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'persistent-uncertainty-seed', '--lab-id', 'persistent-uncertainty-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const lost = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(lost.code, 0);
+    const crashed = await crashAfterExternalTransitionReturn(lab, adapter);
+    assert.equal(crashed, 17);
+    const recovered = await invoke('recover', '--lab', lab, '--confirm-lock-owner-dead', '--json');
+    assert.equal(recovered.code, 0);
+    assert.equal(recovered.stdout[0].data.reason, 'EXTERNAL_TRANSITION_UNKNOWN');
+
+    const blocked = await invoke('run', '--lab', lab, '--run-id', 'run-3', '--steps', '1', '--scenario', 'alternate', '--adapter', adapter, '--json');
+    assert.notEqual(blocked.code, 0);
+    assert.equal(blocked.stdout[0].error.code, 'CONFLICT');
+    assert.match(blocked.stdout[0].error.message, /original scenario/);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+  });
+});
+
+test('CLI preserves the unknown reason when recovery follows a terminal-append crash', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'terminal-append-unknown-lab');
+    const effectFile = path.join(root, 'terminal-append-unknown-effect.json');
+    const adapter = await writeIdempotentAdapterConfig(root, effectFile);
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'terminal-append-unknown-seed', '--lab-id', 'terminal-append-unknown-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const crashed = await crashAfterUnknownTerminalAppend(lab, adapter);
+    assert.equal(crashed, 17);
+    const recovered = await invoke('recover', '--lab', lab, '--confirm-lock-owner-dead', '--json');
+    assert.equal(recovered.code, 0);
+    assert.equal(recovered.stdout[0].data.reason, 'EXTERNAL_TRANSITION_UNKNOWN');
+  });
+});
+
+test('CLI blocks retry after an uncertain external transition without an idempotency declaration', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'non-idempotent-lab');
+    const effectFile = path.join(root, 'non-idempotent-effect.json');
+    const adapter = await writeNonIdempotentAdapterConfig(root, effectFile);
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'non-idempotent-seed', '--lab-id', 'non-idempotent-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const lost = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(lost.code, 0);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const blocked = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(blocked.code, 0);
+    assert.equal(blocked.stdout[0].error.code, 'CONFLICT');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    assert.equal(await countLedgerSteps(lab, 'run-2'), 0);
+  });
+});
+
+test('CLI recovers a host crash after an external transition without duplicating the effect', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'host-crash-lab');
+    const effectFile = path.join(root, 'host-crash-effect.json');
+    const adapter = await writeTransitionAdapterConfig(root, effectFile, [], false);
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'host-crash-seed', '--lab-id', 'host-crash-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const crashed = await crashAfterExternalTransitionReturn(lab, adapter);
+    assert.equal(crashed, 17);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    const recovered = await invoke('recover', '--lab', lab, '--confirm-lock-owner-dead', '--json');
+    assert.equal(recovered.code, 0);
+    assert.equal(recovered.stdout[0].data.reason, 'EXTERNAL_TRANSITION_UNKNOWN');
+
+    const resumed = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(resumed.code, 0);
+    assert.equal(resumed.stdout[0].data.status, 'COMPLETED');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+  });
+});
+
+test('CLI blocks a host-crash retry when the external adapter is not idempotent', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'host-crash-non-idempotent-lab');
+    const effectFile = path.join(root, 'host-crash-non-idempotent-effect.json');
+    const adapter = await writeTransitionAdapterConfig(root, effectFile, ['--non-idempotent'], false);
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'host-crash-non-idempotent-seed', '--lab-id', 'host-crash-non-idempotent-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const crashed = await crashAfterExternalTransitionReturn(lab, adapter);
+    assert.equal(crashed, 17);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    const recovered = await invoke('recover', '--lab', lab, '--confirm-lock-owner-dead', '--json');
+    assert.equal(recovered.code, 0);
+    assert.equal(recovered.stdout[0].data.reason, 'EXTERNAL_TRANSITION_UNKNOWN');
+
+    const blocked = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(blocked.code, 0);
+    assert.equal(blocked.stdout[0].error.code, 'CONFLICT');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+  });
+});
+
 test('CLI drives a marked sandbox file effect across separate processes', async () => {
   await withTemp(async (root) => {
     const sandbox = path.join(root, 'sandbox');
@@ -369,6 +578,73 @@ async function crashAfterStep(lab) {
   });
 }
 
+async function crashAfterExternalTransitionReturn(lab, adapter) {
+  const agentService = pathToFileURL(path.resolve('src/application/agent-service.mjs')).href;
+  const externalRegistry = pathToFileURL(path.resolve('src/application/external-world-registry.mjs')).href;
+  const script = [
+    `import { runLab } from ${JSON.stringify(agentService)};`,
+    `import { loadExternalWorldRegistry } from ${JSON.stringify(externalRegistry)};`,
+    `const registry = loadExternalWorldRegistry(${JSON.stringify(adapter)});`,
+    `runLab({ labPath: ${JSON.stringify(lab)}, runId: 'crashed-external-run', steps: 1, scenario: 'idempotent', registry, failpoint: (point) => point === 'external-transition:returned' ? process.exit(17) : false })`,
+    '.then(() => process.exit(0), () => process.exit(17));',
+  ].join('\n');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { windowsHide: true });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === null) reject(new Error(`external crash runner did not exit cleanly: ${stderr}`));
+      else resolve(code);
+    });
+  });
+}
+
+async function crashAfterExternalTransitionReturnWithAdvisor(lab, adapter, token) {
+  const agentService = pathToFileURL(path.resolve('src/application/agent-service.mjs')).href;
+  const externalRegistry = pathToFileURL(path.resolve('src/application/external-world-registry.mjs')).href;
+  const script = [
+    `import { runLab } from ${JSON.stringify(agentService)};`,
+    `import { loadExternalWorldRegistry } from ${JSON.stringify(externalRegistry)};`,
+    `const registry = loadExternalWorldRegistry(${JSON.stringify(adapter)});`,
+    `const advisor = async () => ({ model: 'stable-test-advisor', token: ${JSON.stringify(token)}, responseDigest: 'sha256:${'a'.repeat(64)}', reason: null });`,
+    `runLab({ labPath: ${JSON.stringify(lab)}, runId: 'advisor-crashed-run', steps: 1, scenario: 'idempotent', registry, advisor, failpoint: (point) => point === 'external-transition:returned' ? process.exit(17) : false })`,
+    '.then(() => process.exit(0), () => process.exit(17));',
+  ].join('\n');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { windowsHide: true });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === null) reject(new Error(`advisor crash runner did not exit cleanly: ${stderr}`));
+      else resolve(code);
+    });
+  });
+}
+
+async function crashAfterUnknownTerminalAppend(lab, adapter) {
+  const agentService = pathToFileURL(path.resolve('src/application/agent-service.mjs')).href;
+  const externalRegistry = pathToFileURL(path.resolve('src/application/external-world-registry.mjs')).href;
+  const script = [
+    `import { runLab } from ${JSON.stringify(agentService)};`,
+    `import { loadExternalWorldRegistry } from ${JSON.stringify(externalRegistry)};`,
+    `const registry = loadExternalWorldRegistry(${JSON.stringify(adapter)});`,
+    `runLab({ labPath: ${JSON.stringify(lab)}, runId: 'terminal-append-unknown-run', steps: 1, scenario: 'idempotent', registry, failpoint: (point) => point === 'external-transition:returned' || point === 'terminal:appended' })`,
+    '.then(() => process.exit(0), () => process.exit(17));',
+  ].join('\n');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { windowsHide: true });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === null) reject(new Error(`unknown-terminal runner did not exit cleanly: ${stderr}`));
+      else resolve(code);
+    });
+  });
+}
+
 async function writeAdapterConfig(root, args = []) {
   const suffix = (args.join('-') || 'valid').replace(/[^a-z0-9_-]/giu, '_');
   const config = path.join(root, `adapter-${suffix}.json`);
@@ -389,6 +665,26 @@ async function writeStatefulAdapterConfig(root, memoryFile) {
     args: [STATEFUL_ADAPTER_FIXTURE, '--memory-file', memoryFile],
     adapterId: 'stateful-capabilities-adapter-v1',
     worldId: 'stateful-capabilities',
+    timeoutMs: 2000,
+  }));
+  return config;
+}
+
+async function writeIdempotentAdapterConfig(root, effectFile) {
+  return writeTransitionAdapterConfig(root, effectFile, []);
+}
+
+async function writeNonIdempotentAdapterConfig(root, effectFile) {
+  return writeTransitionAdapterConfig(root, effectFile, ['--non-idempotent']);
+}
+
+async function writeTransitionAdapterConfig(root, effectFile, modeArgs, dropResponse = true) {
+  const config = path.join(root, 'idempotent-adapter.json');
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, ...(dropResponse ? ['--drop-response'] : []), ...modeArgs],
+    adapterId: 'idempotent-transition-adapter-v1',
+    worldId: 'idempotent-transition',
     timeoutMs: 2000,
   }));
   return config;
@@ -470,6 +766,12 @@ async function countLedgerSteps(lab, runId) {
     if (error?.code === 'ENOENT') return 0;
     throw error;
   }
+}
+
+async function firstStepToken(lab, runId) {
+  const raw = await readFile(path.join(lab, 'runs', runId, 'events.jsonl'), 'utf8');
+  const step = raw.trim().split(/\r?\n/u).map(JSON.parse).find((event) => event.kind === 'STEP');
+  return decodeStoredEvent(step).payload.choice.token;
 }
 
 function parseOutput(value) {

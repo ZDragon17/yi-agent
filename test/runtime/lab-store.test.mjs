@@ -104,6 +104,19 @@ test('events are run-local, flushed before append resolves, and form a prevDiges
   await run.finish({ terminalStatus: 'HALTED', finalState: finalState() });
 }));
 
+test('terminal reasons are bounded before they reach the ledger', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  await assert.rejects(
+    run.finish({ terminalStatus: 'HALTED', finalState: runInput().initialState, reason: 'x'.repeat(513) }),
+    (error) => assertCode(error, 'INVALID_INPUT'),
+  );
+  await run.finish({ terminalStatus: 'HALTED', finalState: runInput().initialState, reason: 'bounded' });
+  const reopened = await LabStore.open({ labPath: lab });
+  assert.equal((await reopened.inspect()).current.status, 'HALTED');
+}));
+
 test('a snapshot cannot lead the ledger and failed publication leaves the previous current atomically intact', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

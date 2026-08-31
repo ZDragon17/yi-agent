@@ -203,7 +203,7 @@
 
 - 原理：停滞不是简单切换策略，而是对当前未完成变化假设的反证；允许有限 Planner 提出新路径，但已完成阶段和根目标必须保持不变。
 - 实现：`reviseGoalPlan` 只接受 `REPLAN_REQUIRED` 状态，保留已完成阶段前缀，修订未完成后缀并递增 `plan.revision`；Planner 是否可在后续 Run 触发由持久化的 `plannerEnabled` 决定；`boundary.goalReplan` 保存修订计划和 `planEvidence`。
-- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；当前全量门禁 222/222。
+- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；当前全量门禁 232/232。
 - 边界：计划修订仍是有限向量搜索，不代表模型理解了自然语言目标、获得了现实因果能力或实现了开放式自我改进。
 
 ## F-14 非平稳动力学下的有界变化记忆
@@ -240,6 +240,13 @@
 - 实现：WorldPort 的 `actions(manifest,state?)` 支持基于当前 immutable worldState 生成能力安全投影；Application 与 Replay 在每个 STEP 前刷新能力，Application 同时把动作后投影写入 `boundary.afterCapabilities` 供历史最终状态观察；外部 adapter 只有在 `hello` 显式声明 `supportsStateDependentActions:true` 时才接收当前 state，旧 v1 adapter 继续收到原 payload。
 - 验证：最小动态约束世界在第一动作后切换安全动作，跨独立 CLI 进程、重启、历史 inspect 与 Replay 仍使用同一 Kernel 契约；既有外部 adapter 回归验证可选 state 字段不破坏协议，五个内置 WorldPort 继续通过原有契约；旧实现反例为能力快照过期后停机或历史最终状态显示静态约束。
 - 边界：能力刷新不能预测未被 WorldPort 暴露的约束，也不能替代执行边界的二次校验；真实设备约束变化仍需通过 adapter 回执和人工安全门确认。
+
+## F-19 外部 transition 响应丢失与幂等恢复
+
+- 原理：外部世界和本地账本无法共享一个原子提交；`transition` 已改变现实但响应丢失时，本地未追加 STEP 不能证明动作未发生。跨边界连续性必须依赖同一 `executionNonce` 的持久幂等结果，未知状态则宁可阻断也不能重复执行。
+- 实现：`hello` 可声明 `supportsIdempotentTransitions:true`，宿主把 `executionNonce` 作为跨 Run 重试键；外部 transition 前先持久化宿主侧 in-flight marker，checkpoint 模式在对应 STEP 完成 data-sync 后才清 marker；续跑必须复现原始 token、basedOnVersion、beforeDigest 和 nonce，且约束只消费一次；未声明幂等能力的 accepted transition 不确定错误以终态 `EXTERNAL_TRANSITION_UNKNOWN` 落盘，未决动作身份绑定在终态证据并跨历史 Run 保留，直到同 scenario、同 nonce、同 before-state 的 STEP 真正提交；旧 adapter 不改变正常运行与 Replay 兼容性。
+- 验证：独立外部子进程在 transition 持久化一次现实结果后丢弃响应，或让宿主死在外部 transition 返回与 STEP 追加之间；幂等 adapter 的下一 Run 用同 nonce 恢复且 effect 计数仍为 1，Replay 不启动 adapter；模型选择过的原始 token 由 marker 复用，不依赖重启后的 advisor；未声明 adapter 的下一 Run 被 `CONFLICT` 阻断且 effect 计数仍为 1；幂等续跑再次崩溃后仍禁止跨 scenario；当前全量门禁 232/232。
+- 边界：宿主无法凭空修复外部 adapter 的 durable store、网络分区或现实世界对账；真实设备仍需 adapter 自己提供 nonce 查询/结果回放及人工安全门，不能把本地 HALTED 当作外部未执行证明。
 
 ## F-9 连续 Run Runner
 

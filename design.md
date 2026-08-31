@@ -75,10 +75,10 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 |---|---|---|---|
 | `createWorldPort(config)` | immutable manifest、显式 scenario | 同构的 WorldPort 实例 | config 是纯 transition 的完整环境输入；Application 必须把 scenario 写入 immutable Run start，Replay 只能据此重建，禁止依赖进程默认值 |
 | `WorldRegistry` | world id、manifest、scenario 和 state version | WorldPort、ValueSpec、声明式 externalInputs | Application 的适配边界；未知世界只能通过显式 registry 注入，外部输入必须成为可摘要、可重放的证据 |
-| `ExternalWorldPort` | 显式 adapter config、JSONL request | JSONL response 或协议错误 | 宿主使用 `shell:false`、固定 executable/args、超时和输出上限；nonce、manifest policy 和连续性由宿主绑定 |
+| `ExternalWorldPort` | 显式 adapter config、JSONL request | JSONL response 或协议错误 | 宿主使用 `shell:false`、固定 executable/args、超时和输出上限；nonce、manifest policy 和连续性由宿主绑定；真实 transition 必须由 adapter 声明是否支持同 nonce 幂等恢复 |
 | `WorldPort.observe(state)` | immutable worldState | `Observation{vector:number[],stateVersion:string,intervalId:string,evidence[]}` | 纯函数，不消耗策略 RNG |
 | `WorldPort.actions(manifest,state?)` | 实验空间 manifest，可选当前 immutable worldState | `Capability{token:string,cost:number,allowed:boolean,safe:boolean}[]` | token 在同一 lab 跨 Run 稳定、跨 lab 可置换；allowed/safe 是 WorldPort/AuthorityPolicy 基于当前边界生成的领域盲安全投影，不含领域标签；外部 adapter 只有 `hello.supportsStateDependentActions:true` 才收到 state，省略该声明的旧 v1 adapter 保持兼容 |
-| `WorldPort.transition(state,request)` | immutable worldState、`ActionRequest{token,basedOnVersion,policyVersion,constraintsDigest,executionNonce}` | `{nextWorldState,receipt,postObservation}` 或拒绝 receipt | 纯函数；版本比较、AuthorityPolicy、效果和版本递增构成单一 transition |
+| `WorldPort.transition(state,request)` | immutable worldState、`ActionRequest{token,basedOnVersion,policyVersion,constraintsDigest,executionNonce}` | `{nextWorldState,receipt,postObservation}` 或拒绝 receipt | 内置 WorldPort 是纯函数；外部 WorldPort 可产生现实变化，但必须以 executionNonce 作为持久幂等键，版本比较、AuthorityPolicy、效果和版本递增仍构成单一 transition |
 | `Kernel.step(input)` | `KernelObservation{vector,stateVersion,intervalId}`、memory、ValueSpec、capabilities、显式 rngState | `StepIntent{status,expectation,choice,nextRngState}` 或 `Halt` | Application 从 WorldPort Observation 剥离 evidence 后投影；纯函数；禁止读取时钟/环境元数据；未知安全行动先于已学习行动探索 |
 | `Kernel.verify(input)` | `step` 原样返回的 StepIntent、receipt、投影后的 KernelObservation | `Verification{error,attribution,confidence,learnable}` | 纯函数；预测/选择/回执 token 必须一致；策略版本、约束摘要和 nonce 由 WorldPort/Application 绑定；证据不足为 AMBIGUOUS 且不学习 |
 | `Kernel.learn(input)` | memory、StepIntent、receipt、postObservation、Verification | `{status,token,nextMemory}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，`ACTION && learnable` 更新总体模型及其关系条件模型，`EXECUTION_REJECTED` 更新不含领域文本的最近关系拒绝证据；模型更新使用固定有界变化窗口，使近期证据可修正非平稳动力学。新 STEP 用 `kernelLearningVersion: 2` 标记该语义；Replay 对缺少标记且已记录 `SKIPPED` 的旧拒绝 STEP 保持兼容 |
@@ -92,11 +92,11 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `Replay.decision(run)` | immutable start、事件、外部输入 | 首差异或一致 | 只读；按 start 的 world/scenario 重建纯 World+Kernel+RNG；每个 STEP 的 `boundary.valueSpec` 是不可变决策输入 |
 | `Challenge.evaluate(case)` | 隔离 run 证据、预注册判别器 | 演示性三态结论+invalidator | 不读主实验 memory，不合并状态；不得作为自主证明 |
 
-外部 adapter 的 `hello`、`initialState`、`actions`、`observe`、`externalInputs`、`transition` 均以单次 JSONL 请求响应完成；运行期由宿主把外部输入视为潜在混杂，强制 accepted action 标记为 `AMBIGUOUS` 且不可学习。协议 v1 要求 accepted receipt 的 `effectDigest` 等于 `canonicalDigest(nextWorldState)`，rejected receipt 等于 `canonicalDigest(state)`，从而把回执绑定到连续性状态。外部 Run 的 Replay 使用 STEP 中冻结的 before/after capabilities、观测、回执和 afterState 证据磁带，inspect/replay 只校验本地 adapter 启动摘要，不启动 adapter 子进程，不读取实时环境。
+外部 adapter 的 `hello`、`initialState`、`actions`、`observe`、`externalInputs`、`transition` 均以单次 JSONL 请求响应完成；运行期由宿主把外部输入视为潜在混杂，强制 accepted action 标记为 `AMBIGUOUS` 且不可学习。协议 v1 要求 accepted receipt 的 `effectDigest` 等于 `canonicalDigest(nextWorldState)`，rejected receipt 等于 `canonicalDigest(state)`，从而把回执绑定到连续性状态。若 `hello.supportsIdempotentTransitions:true`，adapter 必须在现实变化提交前持久化 nonce→原始结果记录，响应丢失后的同 nonce 请求只能返回该结果，不能重复执行；宿主还必须把原始 token、basedOnVersion、beforeDigest 和 nonce 作为一次性重试约束，并在 checkpoint 模式下先同步 STEP 再删除 in-flight marker；若未声明，宿主会把 accepted transition 的响应丢失标记为 `EXTERNAL_TRANSITION_UNKNOWN`，并阻断后续 Run，等待外部人工对账。外部 Run 的 Replay 使用 STEP 中冻结的 before/after capabilities、观测、回执和 afterState 证据磁带，inspect/replay 只校验本地 adapter 启动摘要，不启动 adapter 子进程，不读取实时环境。
 
 EffectBroker 是 WorldPort 与真实副作用之间的第二道边界。Kernel 只能产生行动选择，应用层把它封装为带 `effectId/actionToken/target/precondition/risk/requiresConfirmation/reversible/compensation/executionNonce/planDigest` 的 EffectIntent。Broker 先登记计划和授权，再执行；执行器返回 `APPLIED/REJECTED/UNKNOWN`，其中 `UNKNOWN` 进入 `RECONCILE_REQUIRED`，禁止用新 nonce 重试。`APPLIED` 只有在存在声明式补偿方案时才允许进入补偿流程；补偿未知进入独立 `COMPENSATION_UNKNOWN`。持久化模式下，`EffectJournal` 先以 `handle.sync()` 刷新状态快照，`EXECUTION_STARTED` 或 `COMPENSATION_STARTED` 落盘后才允许调用对应 executor；恢复看到未完成边界时只能进入对账。每次 journal append 还要在同一文件旁取得跨进程原子 writer lock，锁内重新读取最新账本后再计算 sequence/prevDigest；stale-lock 回收使用固定 reclaim reservation，以原子硬链接竞争避免回收者互删或误删新 owner；执行、对账、补偿全过程再持有按 executionNonce 派生的可恢复操作锁，活跃 executor 不会被恢复流程抢占，进程死亡后才可回收；Broker 以共享日志头摘要作为 CAS 前置条件，陈旧 Broker 快照只返回 `CONFLICT` 而不追加语义事件；活 owner 在有界退避后仍返回 BUSY，确认死亡的 owner 才能回收，避免多个 CLI 进程各自从旧内存状态追加。当前 `src/effects/dry-run-executor.mjs` 只在内存中模拟状态变化，不能被解释为真实文件或设备安全。
 
-ModelAdvisor 的结果是外部非确定输入，不进入连续性状态。每个带模型的 STEP 可选记录 `policyEvidence={schemaVersion,source,model,token,responseDigest,applied,reason}`；其中 `responseDigest` 只绑定模型回答摘要，不是供应商真实性证明。Replay 使用该证据中的已接受 token重新调用纯 `Kernel.stepWithPreference`，因此不会访问网络，也不会把模型再次生成的不同结果混入历史。
+ModelAdvisor 的结果是外部非确定输入，不进入连续性状态。每个带模型的 STEP 可选记录 `policyEvidence={schemaVersion,source,model,token,responseDigest,applied,reason}`；其中 `responseDigest` 只绑定模型回答摘要，不是供应商真实性证明。Replay 使用该证据中的已接受 token重新调用纯 `Kernel.stepWithPreference`，因此不会访问网络，也不会把模型再次生成的不同结果混入历史。若外部 transition 已写入 in-flight marker，宿主还会把已应用的 `policyEvidence` 一并持久化，并在重试时复用原 token；重试不重新调用 advisor，避免模型非确定性破坏同 nonce 的连续性。
 
 为验证真实执行器仍可被同一底座约束，`src/effects/sandbox-file-executor.mjs` 提供了临时目录级文件移动：它拒绝路径穿越和符号链接，只在带用户显式创建 `.yi-agent-sandbox` 标记的沙箱根内操作，并复用 Broker 的确认、executionNonce、durable journal、reconcile 与 compensation。CLI 的 `effect` 命令跨进程恢复这个 Broker，支持安全实验；它不是用户桌面授权层。
 
@@ -120,11 +120,11 @@ ModelAdvisor 的结果是外部非确定输入，不进入连续性状态。每�
 1. 获取实验空间 writer lock；manifest 只读。若上次 current 落后于完整事件，则从对应 Run 起点和事件恢复 current；若事件损坏则 CORRUPT。start/end 都先在同目录写 staging、flush，再原子 rename 发布，发布前文件不参与恢复判定。
 2. 对每步依次执行：界→感→存→预→择→动→验→化；“验”内部包含行动后的复观，不增加第九阶段。
 3. `择` 只从 allowed 且 safe 的候选中选择；无候选立即记录 HALTED，不调用 `act`。
-4. 应用服务把当前 immutable worldState 与请求交给纯 `transition`；它在一个函数结果内比较 stateVersion/policyVersion、复核 AuthorityPolicy、计算效果并递增版本。拒绝即记录 HALTED，不自动重试。场景外部输入在 transition 前作为独立事件应用，行动中混杂由 scenario 显式包含在 transition 结果。
+4. 应用服务把当前 immutable worldState 与请求交给 `transition`；内置 WorldPort 在一个纯函数结果内比较 stateVersion/policyVersion、复核 AuthorityPolicy、计算效果并递增版本，外部 WorldPort 则由 adapter 以 executionNonce 保证同一现实行动的幂等性。拒绝即记录 HALTED，不自动重试。场景外部输入在 transition 前作为独立事件应用，行动中混杂由 scenario 显式包含在 transition 结果。
 5. 结果在已知 externalEvents 为空且干预窗口完整时可更新“经验效应”；已知混杂则 AMBIGUOUS 不学习。由于不可观测混杂原则上不可识别，v0.1 不把单步归因称为严格因果；独立 Tester 用随机化配对干预/对照实验检验统计效应。
-6. `transition` 不改变外部状态；先把完整 STEP（含 afterState、receipt.executionNonce、postObservation）追加并 flush，成功后该模拟行动才算发生，再原子替换与 STEP.afterState 逐字段相同的 current。首 STEP 的 beforeDigest/rngBefore 必须绑定 start.initialState，后续 STEP 必须绑定上一 afterState；同 executionNonce 的同证据重试返回原事件，不同证据拒绝。snapshot/finalState 不得另行陈述一套连续性状态；事件已落盘但 current 失败时退出 74，下次由事件恢复，不得标 CORRUPT。
+6. 内置 `transition` 不改变外部状态；先把完整 STEP（含 afterState、receipt.executionNonce、postObservation）追加并 flush，成功后该模拟行动才算发生，再原子替换与 STEP.afterState 逐字段相同的 current。外部 `transition` 可能先改变现实状态，因此 accepted response 丢失时只能依赖 adapter 的持久 executionNonce 幂等记录；宿主对未声明幂等能力的 adapter 写入 `EXTERNAL_TRANSITION_UNKNOWN` 并阻断续跑，不能假设外部状态未变。首 STEP 的 beforeDigest/rngBefore 必须绑定 start.initialState，后续 STEP 必须绑定上一 afterState；同 executionNonce 的同证据重试返回原事件，不同证据拒绝。snapshot/finalState 不得另行陈述一套连续性状态；事件已落盘但 current 失败时退出 74，下次由事件恢复，不得标 CORRUPT。
 7. Run 提交顺序固定：创建 start→追加 RUN_STARTED→current=RUNNING→逐 STEP→追加终态事件→创建 immutable end→current=READY/HALTED→释放锁。
-8. 崩溃恢复矩阵：start 无事件=orphan，追加 crash-HALTED 后补 end/current；有非终态事件=从 start 重放后追加 crash-HALTED；有终态事件无 end=补 end；有 end 而 current 落后=以 end 修 current；任何摘要/断序错误=CORRUPT。
+8. 崩溃恢复矩阵：start 无事件=orphan，追加 crash-HALTED 后补 end/current；有非终态事件且无外部 in-flight marker=从 start 重放后追加 crash-HALTED；外部 marker 未对应已提交 STEP=追加 `EXTERNAL_TRANSITION_UNKNOWN`；有终态事件无 end=补 end；有 end 而 current 落后=以 end 修 current；任何摘要/断序错误=CORRUPT。未决外部 transition 的续跑还必须绑定原 run 的 scenario；只有同场景且 adapter 声明 durable nonce 幂等时才允许自动重试。
 
 断言：任何 executed=true 的动作都有同一事件内的 expectation/before/after/verification/update。
 
@@ -191,7 +191,7 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 
 ## 6. 数据与持久化契约
 
-- `manifest.json`：初始化后不可变，含 schemaVersion、labId、worldId、seed、createdAt、canonicalRoot、声明式 `scenarioIds`、稳定 tokenMap 及 digest；外部 adapter 另含 `{schemaVersion:1,protocol:"yi-world-cli",version:1,adapterId,worldVersion,valueSpec,evidencePublicKey,descriptorDigest,launchDigest}`，将协议/描述/启动材料和外部证据公钥绑定到实验空间。tokenMap 为 `{schemaVersion:1,entries:[{token,capabilityId}],digest}`，应用层使用由 `SHA256(seed,labId,"capability-map",capabilityId)` 派生的独立 token 域，不消耗 world/policy RNG；即使 seed 相同，不同 labId 也产生不同映射。Runtime 只依据 manifest 的场景契约校验场景标识，不内置新的 WorldPort 领域名单。
+- `manifest.json`：初始化后不可变，含 schemaVersion、labId、worldId、seed、createdAt、canonicalRoot、声明式 `scenarioIds`、稳定 tokenMap 及 digest；外部 adapter 另含 `{schemaVersion:1,protocol:"yi-world-cli",version:1,adapterId,worldVersion,valueSpec,evidencePublicKey,descriptorDigest,launchDigest,supportsIdempotentTransitions?}`，将协议/描述/启动材料、幂等恢复声明和外部证据公钥绑定到实验空间。tokenMap 为 `{schemaVersion:1,entries:[{token,capabilityId}],digest}`，应用层使用由 `SHA256(seed,labId,"capability-map",capabilityId)` 派生的独立 token 域，不消耗 world/policy RNG；即使 seed 相同，不同 labId 也产生不同映射。Runtime 只依据 manifest 的场景契约校验场景标识，不内置新的 WorldPort 领域名单。
 - `state/current.json`：worldState、memory、rngState、kernelStep、changeSupervisor、lastRunId、lastRunSequence、status、eventsDigest；可由账本重建。
 - `runs/<runId>/start.json`：每 Run 不可变起点，记录 worldId 与规范化 scenario，引用 manifest 的稳定 tokenMapDigest，含规范化连续性投影和起始摘要；tokenMap 与 scenario 均不进入 Kernel 输入。
 - `runs/<runId>/events.jsonl`：Run 内 sequence 从 1 连续递增；每行含 schemaVersion、runId、sequence、kind、payload、prevDigest、digest。
@@ -218,4 +218,4 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 - 路径操作会拒绝已存在的符号链接/目录联接并在关键写入前复核；但 Node.js 在 Windows 上没有可移植的目录句柄相对操作来彻底封闭“检查后被同权限进程替换”的竞态。因此 v0.1 的威胁边界要求实验目录 ACL 仅授予当前用户，不能抵御同一用户下主动并发篡改；这类场景只会报告为超出安全保证，不宣称已解决。
 - v0.1 无 PII、鉴别数据、网络和进程内动态代码加载；显式 external adapter 仅通过固定 executable/args、`shell:false`、有限时限/输出的 JSONL 子进程协议接入。外部输入必须同时满足整步摘要绑定和 manifest 公钥验签；这能抵御证据被改写后重算本地无密钥哈希链，但不等同于 OS 沙箱或真实副作用保证。
 - 虚拟桌面只记录合成文件名/类别/位置，不读取文件内容；错误和日志不得输出主机环境变量、真实目录枚举或内部 tokenMap 语义映射。
-- v0.1 的纯模拟 transition 解决了“副作用发生而证据未落盘”窗口；真实桌面/设备适配器不具备该保证，必须在 Future-Gate 另设计持久 execution nonce、幂等回执查询、补偿/人工对账，不能复用本结论。
+- v0.1 的纯模拟 transition 解决了“副作用发生而证据未落盘”窗口；外部桌面/设备 adapter 只能在显式声明并实现持久 execution nonce 幂等后获得自动续跑资格，否则进入 `EXTERNAL_TRANSITION_UNKNOWN` 阻断，必须人工对账，不能复用纯模拟结论。
