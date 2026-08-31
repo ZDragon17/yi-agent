@@ -6,6 +6,7 @@ export function buildInspectView({ manifest, current, run = null, actions, value
   const viewState = terminal?.payload?.finalState ?? current;
   const actionModels = viewState.memory?.actionModels ?? {};
   const relationModels = viewState.memory?.relationModels ?? {};
+  const rejectionModels = viewState.memory?.rejectionModels ?? {};
   const viewRunId = run?.start?.runId ?? current.lastRunId;
   const viewStatus = run === null ? current.status : terminal?.payload?.terminalStatus === 'COMPLETED' ? 'READY' : 'HALTED';
   return {
@@ -33,12 +34,14 @@ export function buildInspectView({ manifest, current, run = null, actions, value
       kernelStep: viewState.kernelStep,
       memoryDigest: canonicalDigest(viewState.memory),
       relationModelCount: countRelationModels(relationModels),
+      rejectionModelCount: Object.keys(rejectionModels).length,
       changeSupervisor: viewRunId === null ? null : cloneJson(viewState.changeSupervisor ?? null),
     },
     hypotheses: Object.fromEntries(
       actions.map((action) => [action.token, {
         model: actionModels[action.token] ? cloneJson(actionModels[action.token]) : null,
         relationModels: relationModels[action.token] ? cloneJson(relationModels[action.token]) : {},
+        rejectionModel: rejectionModels[action.token] ? cloneJson(rejectionModels[action.token]) : null,
         sampleCount: actionModels[action.token]?.sampleCount ?? 0,
         uncertainty: actionModels[action.token]?.uncertainty ?? null,
       }]),

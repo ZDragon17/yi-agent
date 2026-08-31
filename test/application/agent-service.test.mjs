@@ -216,6 +216,35 @@ test('application service runs full steps when no explicit goal is provided', as
   });
 });
 
+test('application persists rejection feedback and selects another action after a rejected Run', async () => {
+  await withLab(async (lab) => {
+    const registry = createRejectionRegistry();
+    await initLab({ labPath: lab, labId: 'rejection-memory-lab', worldId: 'feedback', seed: 'rejection-memory-seed', registry });
+
+    const first = await runLab({ labPath: lab, runId: 'run-1', steps: 1, scenario: 'feedback', registry });
+    assert.equal(first.status, 'HALTED');
+    assert.equal(first.stopReason, 'EXECUTION_REJECTED');
+    const afterRejection = (await inspectLab({ labPath: lab, registry })).current;
+    const rejectedToken = afterRejection.memory.rejectionModels[registry.rejectedToken];
+    assert.equal(rejectedToken.rejected, true);
+    assert.equal(rejectedToken.sampleCount, 1);
+    const rejectionView = (await inspectLab({ labPath: lab, registry })).inspectView;
+    assert.equal(rejectionView.facts.rejectionModelCount, 1);
+    assert.equal(rejectionView.hypotheses[registry.rejectedToken].rejectionModel.rejected, true);
+
+    const second = await runLab({ labPath: lab, runId: 'run-2', steps: 1, scenario: 'feedback', registry });
+    assert.equal(second.status, 'COMPLETED');
+    assert.equal(second.metrics.accepted, 1);
+    const afterRecovery = (await inspectLab({ labPath: lab, registry })).current;
+    assert.equal(afterRecovery.kernelStep, 2);
+    assert.equal(afterRecovery.worldState.value, 1);
+    const secondRun = await (await LabStore.open({ labPath: lab })).readRun('run-2');
+    assert.equal(secondRun.events.find((event) => event.kind === 'STEP').payload.choice.token, registry.alternativeToken);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-2', registry })).verdict, 'CONSISTENT');
+  });
+});
+
 test('continuous runner preserves one state across multiple committed run boundaries', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'continuous-lab', worldId: 'temperature', seed: 'continuous-seed' });
@@ -627,4 +656,89 @@ function createGeneratedRegistry({ adaptive = false } = {}) {
       return [{ ...input, digest: canonicalDigest(input) }];
     },
   };
+}
+
+function createRejectionRegistry() {
+  const worldId = 'feedback';
+  const rejectedCapability = 'feedback.reject';
+  const alternativeCapability = 'feedback.advance';
+  const rejectedToken = 'tok_FEEDBACKREJECT01';
+  const alternativeToken = 'tok_FEEDBACKADVANCE1';
+  const capabilityIds = [rejectedCapability, alternativeCapability];
+  const scenarioIds = ['feedback'];
+  const valueSpec = { observationDimensions: 1, weights: [1], target: [2] };
+
+  function createWorld(manifest, scenario = 'feedback') {
+    const options = normalizeWorldFactoryOptions({ manifest, scenario }, worldId, scenarioIds);
+    return createWorldPort({
+      worldId,
+      manifest: {
+        schemaVersion: options.manifest.schemaVersion,
+        tokenMap: options.manifest.tokenMap,
+        authorityPolicy: options.manifest.authorityPolicy,
+      },
+      scenario: options.scenario,
+      capabilityIds,
+      makeInitialDomainState: () => ({ value: 0 }),
+      normalizeState: (value) => {
+        const state = assertExactKeys(value, ['schemaVersion', 'stateVersion', 'revision', 'value', 'usedExecutionNonces'], `${worldId}.state`);
+        return {
+          schemaVersion: assertSchemaVersion(state.schemaVersion, `${worldId}.state.schemaVersion`),
+          stateVersion: assertNonEmptyString(state.stateVersion, `${worldId}.state.stateVersion`),
+          revision: assertNonNegativeSafeInteger(state.revision, `${worldId}.state.revision`),
+          value: assertNonNegativeSafeInteger(state.value, `${worldId}.state.value`),
+          usedExecutionNonces: [...state.usedExecutionNonces],
+        };
+      },
+      observeVector: (state) => [state.value],
+      scenarioEvidence: () => [],
+      projectCapability: ({ authority }) => ({ allowed: authority.allowed, safe: authority.safe }),
+      applyEffect: ({ state, capabilityId }) => capabilityId === rejectedCapability
+        ? { accepted: false, rejectionReason: 'TEMPORARY_CONSTRAINT' }
+        : { accepted: true, patch: { value: state.value + 1 } },
+    });
+  }
+
+  const registry = {
+    rejectedToken,
+    alternativeToken,
+    worldDefinition(requestedWorldId) {
+      if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
+      return { scenarioIds: [...scenarioIds] };
+    },
+    createWorld,
+    createManifestParts({ labId, seed, worldId: requestedWorldId }) {
+      if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
+      const entries = [
+        { token: rejectedToken, capabilityId: rejectedCapability },
+        { token: alternativeToken, capabilityId: alternativeCapability },
+      ];
+      const tokenMap = {
+        schemaVersion: 1,
+        entries,
+        digest: `sha256:${createHash('sha256').update(JSON.stringify(entries)).digest('hex')}`,
+      };
+      return {
+        scenarioIds: [...scenarioIds],
+        tokenMap,
+        authorityPolicy: {
+          schemaVersion: 1,
+          policyVersion: `policy:${worldId}:1`,
+          constraintsDigest: `sha256:${createHash('sha256').update(`${labId}|${seed}|${worldId}|constraints`).digest('hex')}`,
+          capabilities: {
+            [rejectedCapability]: { allowed: true, safe: true, cost: 0 },
+            [alternativeCapability]: { allowed: true, safe: true, cost: 10 },
+          },
+        },
+      };
+    },
+    valueSpec(requestedWorldId) {
+      if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
+      return { schemaVersion: 1, ...valueSpec };
+    },
+    scenarioExternalInputs() {
+      return [];
+    },
+  };
+  return registry;
 }

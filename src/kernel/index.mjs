@@ -44,13 +44,14 @@ const VALUE_SPEC_KEYS = [
   'weights',
   'target',
 ];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
   'meanDelta',
   'uncertainty',
 ];
+const REJECTION_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'rejected', 'relationKey'];
 const CAPABILITY_KEYS = [
   'schemaVersion',
   'token',
@@ -126,14 +127,19 @@ export function stepWithPreference(input, preference = null) {
   }
 
   const rng = advanceRng(normalized.rngState);
+  const nonRejectedPredictions = safePredictions.filter((item) => !item.rejectedRecently);
   const untriedPredictions = safePredictions.filter(
-    (item) => item.expectation.sampleCount === 0,
+    (item) => item.expectation.sampleCount === 0 && !item.rejectedRecently,
   );
-  const selectionPool =
-    untriedPredictions.length > 0 ? untriedPredictions : safePredictions;
+  const selectionPool = untriedPredictions.length > 0
+    ? untriedPredictions
+    : nonRejectedPredictions.length > 0
+      ? nonRejectedPredictions
+      : safePredictions;
   const preferred = normalizedPreference === null
     ? null
-    : safePredictions.find((item) => item.choice.token === normalizedPreference.token);
+    : safePredictions.find((item) => item.choice.token === normalizedPreference.token &&
+      (!item.rejectedRecently || nonRejectedPredictions.length === 0));
   const selected = preferred ?? chooseByStrategy(selectionPool, normalized.strategy, rng.unit);
 
   return {
@@ -236,6 +242,29 @@ export function learn(input) {
   assertIntentIsExecutable(intent, 'learnInput.intent.choice');
 
   if (!verification.learnable || verification.attribution !== 'ACTION') {
+    if (verification.attribution === 'EXECUTION_REJECTED' && source.receipt.status === 'REJECTED') {
+      const token = intent.choice.token;
+      const nextMemory = cloneMemory(memory);
+      const rejectionModels = nextMemory.rejectionModels ?? {};
+      if (rejectionModels[token] === undefined && Object.keys(rejectionModels).length >= MAX_ACTION_MODELS) {
+        contractViolation('kernel learning would exceed the rejection-model limit', {
+          field: 'learnOutput.nextMemory.rejectionModels',
+        });
+      }
+      rejectionModels[token] = updateRejectionModel(
+        rejectionModels[token],
+        true,
+        intent.expectation.relationKey,
+        `learnOutput.nextMemory.rejectionModels.${token}`,
+      );
+      nextMemory.rejectionModels = rejectionModels;
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        status: 'REJECTION_RECORDED',
+        token,
+        nextMemory,
+      };
+    }
     return {
       schemaVersion: SCHEMA_VERSION,
       status: 'SKIPPED',
@@ -265,6 +294,14 @@ export function learn(input) {
   }
   const errorMagnitude = totalError / dimensions;
   const nextMemory = cloneMemory(memory);
+  if (memory.rejectionModels?.[token] !== undefined) {
+    nextMemory.rejectionModels[token] = updateRejectionModel(
+      memory.rejectionModels[token],
+      false,
+      intent.expectation.relationKey,
+      `learnOutput.nextMemory.rejectionModels.${token}`,
+    );
+  }
   nextMemory.actionModels[token] = updateActionModel(
     existing ?? defaultActionModel(dimensions),
     actualDelta,
@@ -431,11 +468,34 @@ function normalizeMemory(value, field, dimensions) {
   const normalizedRelations = source.relationModels === undefined
     ? undefined
     : normalizeRelationModels(source.relationModels, `${field}.relationModels`, dimensions);
+  const normalizedRejections = source.rejectionModels === undefined
+    ? undefined
+    : normalizeRejectionModels(source.rejectionModels, `${field}.rejectionModels`, dimensions);
   return {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
     ...(normalizedRelations === undefined ? {} : { relationModels: normalizedRelations }),
+    ...(normalizedRejections === undefined ? {} : { rejectionModels: normalizedRejections }),
   };
+}
+
+function normalizeRejectionModels(value, field, dimensions) {
+  const source = assertDynamicRecord(value, field, MAX_ACTION_MODELS);
+  const normalized = Object.create(null);
+  for (const [token, model] of Object.entries(source)) {
+    assertOpaqueToken(token, `${field} token`);
+    const modelSource = assertPlainRecord(model, `${field}.${token}`, REJECTION_MODEL_KEYS, ['schemaVersion', 'sampleCount', 'rejected']);
+    const relationKey = modelSource.relationKey === undefined
+      ? undefined
+      : assertRelationKey(modelSource.relationKey, `${field}.${token}.relationKey`, dimensions);
+    normalized[token] = {
+      schemaVersion: requireSchemaVersion(modelSource, `${field}.${token}`),
+      sampleCount: assertNonNegativeInteger(modelSource.sampleCount, `${field}.${token}.sampleCount`),
+      rejected: assertBoolean(modelSource.rejected, `${field}.${token}.rejected`),
+      ...(relationKey === undefined ? {} : { relationKey }),
+    };
+  }
+  return normalized;
 }
 
 function normalizeRelationModels(value, field, dimensions) {
@@ -502,6 +562,21 @@ function updateActionModel(current, actualDelta, errorMagnitude, dimensions, fie
     sampleCount: nextSampleCount,
     meanDelta: nextMean,
     uncertainty: nextUncertainty,
+  };
+}
+
+function updateRejectionModel(current, rejected, relationKey, field) {
+  const sampleCount = current?.sampleCount ?? 0;
+  if (rejected && sampleCount === Number.MAX_SAFE_INTEGER) {
+    contractViolation('kernel rejection-model sample count cannot be incremented safely', {
+      field: `${field}.sampleCount`,
+    });
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    sampleCount: rejected ? sampleCount + 1 : sampleCount,
+    rejected,
+    ...(relationKey === undefined ? {} : { relationKey }),
   };
 }
 
@@ -763,6 +838,9 @@ function buildPredictions(input) {
     const relationKey = input.memory.relationModels === undefined
       ? undefined
       : relationKeyFor(input.observation.vector, input.valueSpec);
+    const rejectionModel = input.memory.rejectionModels?.[capability.token];
+    const rejectedRecently = rejectionModel?.rejected === true &&
+      rejectionModel.relationKey === relationKey;
     const model =
       input.memory.relationModels?.[capability.token]?.[relationKey] ??
       input.memory.actionModels[capability.token] ??
@@ -807,6 +885,7 @@ function buildPredictions(input) {
         allowed: capability.allowed,
         safe: capability.safe,
       },
+      rejectedRecently,
     };
   });
 }
@@ -990,6 +1069,16 @@ function cloneMemory(value) {
           uncertainty: model.uncertainty,
         }])),
       ]),
+    );
+  }
+  if (value.rejectionModels !== undefined) {
+    cloned.rejectionModels = Object.fromEntries(
+      Object.entries(value.rejectionModels).map(([token, model]) => [token, {
+        schemaVersion: SCHEMA_VERSION,
+        sampleCount: model.sampleCount,
+        rejected: model.rejected,
+        ...(model.relationKey === undefined ? {} : { relationKey: model.relationKey }),
+      }]),
     );
   }
   return cloned;
