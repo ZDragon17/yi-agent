@@ -302,6 +302,26 @@ test('replay preserves a pre-rejection-memory ledger without rewriting its histo
   });
 });
 
+test('application refreshes state-dependent capabilities before each step', async () => {
+  await withLab(async (lab) => {
+    const registry = createDynamicCapabilitiesRegistry();
+    await initLab({ labPath: lab, labId: 'dynamic-capabilities-lab', worldId: 'dynamic-capabilities', seed: 'dynamic-capabilities-seed', registry });
+    const first = await runLab({ labPath: lab, runId: 'run-1', steps: 1, scenario: 'dynamic', registry });
+    assert.equal(first.status, 'COMPLETED');
+    assert.equal(first.metrics.accepted, 1);
+    const second = await runLab({ labPath: lab, runId: 'run-2', steps: 1, scenario: 'dynamic', registry });
+    assert.equal(second.status, 'COMPLETED');
+    assert.equal(second.metrics.accepted, 1);
+    const current = (await inspectLab({ labPath: lab, registry })).current;
+    assert.equal(current.worldState.value, 2);
+    const store = await LabStore.open({ labPath: lab });
+    assert.equal((await store.readRun('run-1')).events.find((event) => event.kind === 'STEP').payload.choice.token, registry.firstToken);
+    assert.equal((await store.readRun('run-2')).events.find((event) => event.kind === 'STEP').payload.choice.token, registry.secondToken);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-2', registry })).verdict, 'CONSISTENT');
+  });
+});
+
 test('continuous runner preserves one state across multiple committed run boundaries', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'continuous-lab', worldId: 'temperature', seed: 'continuous-seed' });
@@ -798,4 +818,88 @@ function createRejectionRegistry() {
     },
   };
   return registry;
+}
+
+function createDynamicCapabilitiesRegistry() {
+  const worldId = 'dynamic-capabilities';
+  const firstCapability = 'dynamic.first';
+  const secondCapability = 'dynamic.second';
+  const firstToken = 'tok_DYNAMICFIRST01';
+  const secondToken = 'tok_DYNAMICSECOND1';
+  const scenarioIds = ['dynamic'];
+
+  function createWorld(manifest, scenario = 'dynamic') {
+    const options = normalizeWorldFactoryOptions({ manifest, scenario }, worldId, scenarioIds);
+    return createWorldPort({
+      worldId,
+      manifest: {
+        schemaVersion: options.manifest.schemaVersion,
+        tokenMap: options.manifest.tokenMap,
+        authorityPolicy: options.manifest.authorityPolicy,
+      },
+      scenario: options.scenario,
+      capabilityIds: [firstCapability, secondCapability],
+      makeInitialDomainState: () => ({ value: 0 }),
+      normalizeState: (value) => {
+        const state = assertExactKeys(value, ['schemaVersion', 'stateVersion', 'revision', 'value', 'usedExecutionNonces'], `${worldId}.state`);
+        return {
+          schemaVersion: assertSchemaVersion(state.schemaVersion, `${worldId}.state.schemaVersion`),
+          stateVersion: assertNonEmptyString(state.stateVersion, `${worldId}.state.stateVersion`),
+          revision: assertNonNegativeSafeInteger(state.revision, `${worldId}.state.revision`),
+          value: assertNonNegativeSafeInteger(state.value, `${worldId}.state.value`),
+          usedExecutionNonces: [...state.usedExecutionNonces],
+        };
+      },
+      observeVector: (state) => [state.value],
+      scenarioEvidence: () => [],
+      projectCapability: ({ capabilityId, authority, state }) => capabilityId === firstCapability
+        ? { allowed: authority.allowed, safe: state?.value === 0 }
+        : { allowed: authority.allowed, safe: state?.value >= 1 },
+      applyEffect: ({ state, capabilityId }) => capabilityId === firstCapability && state.value > 0
+        ? { accepted: false, rejectionReason: 'DYNAMIC_CONSTRAINT' }
+        : { accepted: true, patch: { value: state.value + 1 } },
+    });
+  }
+
+  return {
+    firstToken,
+    secondToken,
+    worldDefinition(requestedWorldId) {
+      if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
+      return { scenarioIds: [...scenarioIds] };
+    },
+    createWorld,
+    createManifestParts({ labId, seed, worldId: requestedWorldId }) {
+      if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
+      const entries = [
+        { token: firstToken, capabilityId: firstCapability },
+        { token: secondToken, capabilityId: secondCapability },
+      ];
+      const tokenMap = {
+        schemaVersion: 1,
+        entries,
+        digest: `sha256:${createHash('sha256').update(JSON.stringify(entries)).digest('hex')}`,
+      };
+      return {
+        scenarioIds: [...scenarioIds],
+        tokenMap,
+        authorityPolicy: {
+          schemaVersion: 1,
+          policyVersion: `policy:${worldId}:1`,
+          constraintsDigest: `sha256:${createHash('sha256').update(`${labId}|${seed}|${worldId}|constraints`).digest('hex')}`,
+          capabilities: {
+            [firstCapability]: { allowed: true, safe: true, cost: 0 },
+            [secondCapability]: { allowed: true, safe: true, cost: 1 },
+          },
+        },
+      };
+    },
+    valueSpec(requestedWorldId) {
+      if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
+      return { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [2] };
+    },
+    scenarioExternalInputs() {
+      return [];
+    },
+  };
 }

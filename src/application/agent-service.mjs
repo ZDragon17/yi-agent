@@ -126,7 +126,6 @@ export async function runLab(input) {
     durability,
     ...(failpoint === undefined ? {} : { failpoint }),
   });
-  let capabilities;
   let state = initialState;
   let executed = 0;
   let accepted = 0;
@@ -137,9 +136,9 @@ export async function runLab(input) {
     : SNAPSHOT_INTERVAL;
 
   try {
-    capabilities = world.actions(worldManifest(manifest));
     for (let index = 0; index < steps; index += 1) {
     const beforeObservation = projectObservation(world.observe(state.worldState));
+    const capabilities = world.actions(worldManifest(manifest), state.worldState);
     // The state has already crossed the store/kernel validation boundary on
     // entry and every prior supervisor transition returns a normalized value.
     // Avoid re-normalizing this immutable internal value on every long-run
@@ -599,9 +598,16 @@ export async function inspectLab(input) {
   registry.assertManifest(manifest);
   const actions = manifest.adapter
     ? selectedAction?.payload?.boundary?.capabilities ?? manifestCapabilities(manifest)
-    : registry
-      .createWorld(manifest, run?.start?.scenario ?? manifest.scenarioIds?.[0] ?? 'steady')
-      .actions(worldManifest(manifest));
+    : (() => {
+        const world = registry.createWorld(
+          manifest,
+          run?.start?.scenario ?? manifest.scenarioIds?.[0] ?? 'steady',
+        );
+        const actionState = run?.events?.at(-1)?.payload?.finalState?.worldState
+          ?? inspection.current.worldState
+          ?? world.initialState();
+        return world.actions(worldManifest(manifest), actionState);
+      })();
   return {
     manifest,
     current: inspection.current,

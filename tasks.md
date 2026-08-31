@@ -203,7 +203,7 @@
 
 - 原理：停滞不是简单切换策略，而是对当前未完成变化假设的反证；允许有限 Planner 提出新路径，但已完成阶段和根目标必须保持不变。
 - 实现：`reviseGoalPlan` 只接受 `REPLAN_REQUIRED` 状态，保留已完成阶段前缀，修订未完成后缀并递增 `plan.revision`；Planner 是否可在后续 Run 触发由持久化的 `plannerEnabled` 决定；`boundary.goalReplan` 保存修订计划和 `planEvidence`。
-- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；当前全量门禁 220/220。
+- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；当前全量门禁 221/221。
 - 边界：计划修订仍是有限向量搜索，不代表模型理解了自然语言目标、获得了现实因果能力或实现了开放式自我改进。
 
 ## F-14 非平稳动力学下的有界变化记忆
@@ -233,6 +233,13 @@
 - 实现：新增独立外部 JSONL WorldPort，对同一组不透明能力提供原坐标和逆序坐标两个 adapter；两者使用不同启动摘要，分别经过两次 CLI 进程运行，再对状态向量、经验模型、关系模型、监督器和 Replay 做语义投影比较。
 - 验证：`test/e2e/metamorphic-world-cli.test.mjs` 当前验证两种 WorldPort 均跨 Run 重启继续，最终应用状态等价，`run-1`/`run-2` 均 Replay 为 `CONSISTENT`。
 - 边界：该回归验证的是受控外部 WorldPort 的应用闭环，不是桌面、设备或真实副作用；真实执行器仍须经过 execution nonce、幂等回执、对账和人工确认门禁。
+
+## F-18 状态依赖的能力投影
+
+- 原理：约束不是永远静态的；同一世界在变化后可能允许、禁止或暂时不安全不同动作，但这仍是同一状态—关系—约束—变化—反馈底层逻辑的投影。
+- 实现：WorldPort 的 `actions(manifest,state?)` 支持基于当前 immutable worldState 生成能力安全投影；Application 与 Replay 在每个 STEP 前刷新能力，外部 adapter 也可接收当前 state；省略 state 的旧适配器保持兼容。
+- 验证：最小动态约束世界在第一动作后切换安全动作，跨 Run 与 Replay 仍使用同一 Kernel 契约；既有外部 adapter 回归验证可选 state 字段不破坏协议，五个内置 WorldPort 继续通过原有契约；旧实现反例为能力快照过期后停机。
+- 边界：能力刷新不能预测未被 WorldPort 暴露的约束，也不能替代执行边界的二次校验；真实设备约束变化仍需通过 adapter 回执和人工安全门确认。
 
 ## F-9 连续 Run Runner
 

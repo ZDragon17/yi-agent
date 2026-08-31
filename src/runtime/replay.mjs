@@ -143,7 +143,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   let capabilities;
   let beforeObservation;
   try {
-    capabilities = world.actions(manifest);
+    capabilities = world.actions(manifest, state.worldState);
     beforeObservation = projectObservation(world.observe(state.worldState));
   } catch (error) {
     corrupt('Replay could not observe the world before a STEP.', { sequence: event.sequence, cause: errorName(error) });

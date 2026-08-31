@@ -288,11 +288,16 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
         descriptor.valueSpec.observationDimensions,
       );
     },
-    actions(suppliedManifest) {
+    actions(suppliedManifest, state = undefined) {
       if (canonicalJson(suppliedManifest) !== capturedManifest) {
         throw new ExternalWorldProtocolError('External WorldPort received a different manifest.', { op: 'actions' });
       }
-      const response = client.request('actions', { worldId: descriptor.worldId, scenario, manifest: worldManifest });
+      const response = client.request('actions', {
+        worldId: descriptor.worldId,
+        scenario,
+        manifest: worldManifest,
+        ...(state === undefined ? {} : { state: structuredClone(state) }),
+      });
       return normalizeExternalActions(response.actions, worldManifest, descriptor);
     },
     transition(state, request) {

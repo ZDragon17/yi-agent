@@ -72,7 +72,7 @@ export function createWorldPort({
     return buildObservation(normalizeAndCheckState(state));
   }
 
-  function actions(suppliedManifest) {
+  function actions(suppliedManifest, suppliedState = undefined) {
     const normalizedManifest = normalizeManifest(
       suppliedManifest,
       capabilityIds,
@@ -85,11 +85,15 @@ export function createWorldPort({
       });
     }
 
+    const state = suppliedState === undefined
+      ? undefined
+      : normalizeAndCheckState(suppliedState);
+
     return capabilityIds.map((capabilityId) => {
       const entry = normalizedManifest.tokenMap.entries.find(
         (candidate) => candidate.capabilityId === capabilityId,
       );
-      const policy = effectivePolicy(normalizedManifest, capabilityId);
+      const policy = effectivePolicy(normalizedManifest, capabilityId, state);
 
       return {
         schemaVersion: SCHEMA_VERSION,
@@ -171,7 +175,7 @@ export function createWorldPort({
       );
     }
 
-    const policy = effectivePolicy(capturedManifest, capabilityId);
+    const policy = effectivePolicy(capturedManifest, capabilityId, currentState);
     if (!policy.allowed) {
       return rejectedTransition(
         currentState,
@@ -307,11 +311,12 @@ export function createWorldPort({
     };
   }
 
-  function effectivePolicy(normalizedManifest, capabilityId) {
+  function effectivePolicy(normalizedManifest, capabilityId, state = undefined) {
     const authority = normalizedManifest.authorityPolicy.capabilities[capabilityId];
     const projected = projectCapability({
       capabilityId,
       authority: { ...authority },
+      ...(state === undefined ? {} : { state: cloneData(state) }),
       scenario,
     });
     const projection = assertExactKeys(

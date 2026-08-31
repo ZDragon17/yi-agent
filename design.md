@@ -77,7 +77,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `WorldRegistry` | world id、manifest、scenario 和 state version | WorldPort、ValueSpec、声明式 externalInputs | Application 的适配边界；未知世界只能通过显式 registry 注入，外部输入必须成为可摘要、可重放的证据 |
 | `ExternalWorldPort` | 显式 adapter config、JSONL request | JSONL response 或协议错误 | 宿主使用 `shell:false`、固定 executable/args、超时和输出上限；nonce、manifest policy 和连续性由宿主绑定 |
 | `WorldPort.observe(state)` | immutable worldState | `Observation{vector:number[],stateVersion:string,intervalId:string,evidence[]}` | 纯函数，不消耗策略 RNG |
-| `WorldPort.actions(manifest)` | 实验空间 manifest | `Capability{token:string,cost:number,allowed:boolean,safe:boolean}[]` | token 在同一 lab 跨 Run 稳定、跨 lab 可置换；allowed/safe 是 WorldPort/AuthorityPolicy 生成的领域盲安全投影，不含领域标签 |
+| `WorldPort.actions(manifest,state?)` | 实验空间 manifest，可选当前 immutable worldState | `Capability{token:string,cost:number,allowed:boolean,safe:boolean}[]` | token 在同一 lab 跨 Run 稳定、跨 lab 可置换；allowed/safe 是 WorldPort/AuthorityPolicy 基于当前边界生成的领域盲安全投影，不含领域标签；省略 state 的旧适配器保持兼容 |
 | `WorldPort.transition(state,request)` | immutable worldState、`ActionRequest{token,basedOnVersion,policyVersion,constraintsDigest,executionNonce}` | `{nextWorldState,receipt,postObservation}` 或拒绝 receipt | 纯函数；版本比较、AuthorityPolicy、效果和版本递增构成单一 transition |
 | `Kernel.step(input)` | `KernelObservation{vector,stateVersion,intervalId}`、memory、ValueSpec、capabilities、显式 rngState | `StepIntent{status,expectation,choice,nextRngState}` 或 `Halt` | Application 从 WorldPort Observation 剥离 evidence 后投影；纯函数；禁止读取时钟/环境元数据；未知安全行动先于已学习行动探索 |
 | `Kernel.verify(input)` | `step` 原样返回的 StepIntent、receipt、投影后的 KernelObservation | `Verification{error,attribution,confidence,learnable}` | 纯函数；预测/选择/回执 token 必须一致；策略版本、约束摘要和 nonce 由 WorldPort/Application 绑定；证据不足为 AMBIGUOUS 且不学习 |
@@ -102,7 +102,7 @@ ModelAdvisor 的结果是外部非确定输入，不进入连续性状态。每�
 
 为验证“真实执行器仍可被同一底座约束”，`src/effects/sandbox-file-executor.mjs` 提供了临时目录级文件移动：它拒绝路径穿越和符号链接，只在沙箱根内操作，并复用 Broker 的确认、executionNonce、durable journal、reconcile 与 compensation。它是安全实验执行器，不是用户桌面授权层。
 
-`InspectView` 固定包含：lab/run 状态、boundary、goal、constraints、facts、hypotheses、每 action 的 token/model mean/sampleCount/uncertainty/rejectionModel、最近 attribution/confidence、stopReason、evidence locator。拒绝证据不保存领域拒绝文本，只保存有限计数、最近关系签名和当前是否仍在该关系下被拒绝。
+`InspectView` 固定包含：lab/run 状态、boundary、goal、constraints、facts、hypotheses、每 action 的 token/model mean/sampleCount/uncertainty/rejectionModel、最近 attribution/confidence、stopReason、evidence locator。运行时每个 STEP 都用当前 worldState 刷新一次能力投影；拒绝证据不保存领域拒绝文本，只保存有限计数、最近关系签名和当前是否仍在该关系下被拒绝。
 
 ## 3. 主逻辑链路
 
