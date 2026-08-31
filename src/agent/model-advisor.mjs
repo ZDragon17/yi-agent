@@ -69,12 +69,18 @@ export function buildDecisionPrompt({ observation, memory, valueSpec, capabiliti
 
 function memorySummary(memory) {
   const models = memory?.actionModels;
-  if (models === null || typeof models !== 'object' || Array.isArray(models)) return {};
-  return Object.fromEntries(Object.entries(models).slice(0, MAX_MEMORY_MODELS).map(([token, model]) => [token, {
+  const actionModels = models === null || typeof models !== 'object' || Array.isArray(models)
+    ? {}
+    : Object.fromEntries(Object.entries(models).slice(0, MAX_MEMORY_MODELS).map(([token, model]) => [token, {
     sampleCount: model.sampleCount,
     meanDelta: model.meanDelta,
     uncertainty: model.uncertainty,
-  }]));
+    }]));
+  const relationModels = memory?.relationModels;
+  const relationContexts = relationModels === null || typeof relationModels !== 'object' || Array.isArray(relationModels)
+    ? {}
+    : Object.fromEntries(Object.entries(relationModels).slice(0, MAX_MEMORY_MODELS).map(([token, relations]) => [token, relations]));
+  return { actionModels, relationContexts };
 }
 
 function parseProposal(content) {

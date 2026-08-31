@@ -72,7 +72,7 @@ export async function runLab(input) {
   const initialState = current.lastRunId === null
     ? {
         worldState: world.initialState(),
-        memory: { schemaVersion: SCHEMA_VERSION, actionModels: {} },
+        memory: { schemaVersion: SCHEMA_VERSION, actionModels: {}, relationModels: {} },
         rngState: initialRng(manifest.seed),
         kernelStep: 0,
         changeSupervisor: createChangeSupervisor({
@@ -640,9 +640,12 @@ function manifestCapabilities(manifest) {
 }
 
 function projectCurrent(current) {
+  const memory = current.memory?.relationModels === undefined
+    ? { ...current.memory, relationModels: {} }
+    : current.memory;
   return {
     worldState: current.worldState,
-    memory: current.memory,
+    memory,
     rngState: current.rngState,
     kernelStep: current.kernelStep,
     ...(current.changeSupervisor === undefined ? {} : { changeSupervisor: current.changeSupervisor }),

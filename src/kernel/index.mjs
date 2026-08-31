@@ -4,6 +4,8 @@ const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_VECTOR_DIMENSIONS = 1024;
 const MAX_CAPABILITIES = 4096;
 const MAX_ACTION_MODELS = 8192;
+const MAX_RELATION_MODELS = 8192;
+const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
 
 const STEP_INPUT_KEYS = [
   'observation',
@@ -41,7 +43,7 @@ const VALUE_SPEC_KEYS = [
   'weights',
   'target',
 ];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -69,6 +71,7 @@ const EXPECTATION_KEYS = [
   'token',
   'expectedDelta',
   'predictedObservation',
+  'relationKey',
   'score',
   'sampleCount',
   'uncertainty',
@@ -247,23 +250,10 @@ export function learn(input) {
       field: 'learnInput.memory.actionModels',
     });
   }
-  const current = existing ?? defaultActionModel(dimensions);
-  if (current.sampleCount === Number.MAX_SAFE_INTEGER) {
-    contractViolation('kernel action-model sample count cannot be incremented safely', {
-      field: `learnInput.memory.actionModels.${token}.sampleCount`,
-    });
-  }
-  const nextSampleCount = current.sampleCount + 1;
   const actualDelta = addVectors(
     intent.expectation.expectedDelta,
     verification.error,
     'learnOutput.actualDelta',
-  );
-  const nextMean = current.meanDelta.map((mean, index) =>
-    assertComputedFiniteNumber(
-      mean + (actualDelta[index] - mean) / nextSampleCount,
-      `learnOutput.nextMemory.actionModels.${token}.meanDelta[${index}]`,
-    ),
   );
   let totalError = 0;
   for (let index = 0; index < verification.error.length; index += 1) {
@@ -273,18 +263,36 @@ export function learn(input) {
     );
   }
   const errorMagnitude = totalError / dimensions;
-  const nextUncertainty = assertComputedFiniteNumber(
-    (current.uncertainty * current.sampleCount + errorMagnitude) /
-      nextSampleCount,
-    `learnOutput.nextMemory.actionModels.${token}.uncertainty`,
-  );
   const nextMemory = cloneMemory(memory);
-  nextMemory.actionModels[token] = {
-    schemaVersion: SCHEMA_VERSION,
-    sampleCount: nextSampleCount,
-    meanDelta: nextMean,
-    uncertainty: nextUncertainty,
-  };
+  nextMemory.actionModels[token] = updateActionModel(
+    existing ?? defaultActionModel(dimensions),
+    actualDelta,
+    errorMagnitude,
+    dimensions,
+    `learnOutput.nextMemory.actionModels.${token}`,
+  );
+  const relationKey = intent.expectation.relationKey;
+  if (relationKey !== undefined) {
+    const relationModels = nextMemory.relationModels ?? {};
+    const tokenRelations = { ...(relationModels[token] ?? {}) };
+    const existingRelation = tokenRelations[relationKey];
+    if (existingRelation === undefined && countRelationModels(relationModels) >= MAX_RELATION_MODELS) {
+      contractViolation('kernel learning would exceed the relation-model limit', {
+        field: `learnInput.memory.relationModels.${token}.${relationKey}`,
+      });
+    }
+    tokenRelations[relationKey] = updateActionModel(
+      existingRelation ?? defaultActionModel(dimensions),
+      actualDelta,
+      errorMagnitude,
+      dimensions,
+      `learnOutput.nextMemory.relationModels.${token}.${relationKey}`,
+    );
+    nextMemory.relationModels = {
+      ...relationModels,
+      [token]: tokenRelations,
+    };
+  }
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -402,7 +410,7 @@ function normalizeValueSpec(value, field, dimensions) {
 }
 
 function normalizeMemory(value, field, dimensions) {
-  const source = assertPlainRecord(value, field, MEMORY_KEYS);
+  const source = assertPlainRecord(value, field, MEMORY_KEYS, ['schemaVersion', 'actionModels']);
   const actionModels = assertDynamicRecord(
     source.actionModels,
     `${field}.actionModels`,
@@ -419,10 +427,39 @@ function normalizeMemory(value, field, dimensions) {
     );
   }
 
+  const normalizedRelations = source.relationModels === undefined
+    ? undefined
+    : normalizeRelationModels(source.relationModels, `${field}.relationModels`, dimensions);
   return {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
+    ...(normalizedRelations === undefined ? {} : { relationModels: normalizedRelations }),
   };
+}
+
+function normalizeRelationModels(value, field, dimensions) {
+  const source = assertDynamicRecord(value, field, MAX_ACTION_MODELS);
+  const normalized = Object.create(null);
+  let relationCount = 0;
+  for (const [token, relations] of Object.entries(source)) {
+    assertOpaqueToken(token, `${field} token`);
+    const relationSource = assertDynamicRecord(relations, `${field}.${token}`, MAX_RELATION_MODELS);
+    const relationModels = Object.create(null);
+    for (const [relationKey, model] of Object.entries(relationSource)) {
+      relationCount += 1;
+      if (relationCount > MAX_RELATION_MODELS) {
+        contractViolation('kernel relation-model memory exceeds its size limit', { field });
+      }
+      assertRelationKey(relationKey, `${field}.${token}.${relationKey}`, dimensions);
+      relationModels[relationKey] = normalizeActionModel(
+        model,
+        `${field}.${token}.${relationKey}`,
+        dimensions,
+      );
+    }
+    normalized[token] = relationModels;
+  }
+  return normalized;
 }
 
 function normalizeActionModel(value, field, dimensions) {
@@ -437,6 +474,39 @@ function normalizeActionModel(value, field, dimensions) {
       `${field}.uncertainty`,
     ),
   };
+}
+
+function updateActionModel(current, actualDelta, errorMagnitude, dimensions, field) {
+  if (current.sampleCount === Number.MAX_SAFE_INTEGER) {
+    contractViolation('kernel action-model sample count cannot be incremented safely', {
+      field: `${field}.sampleCount`,
+    });
+  }
+  const nextSampleCount = current.sampleCount + 1;
+  const nextMean = current.meanDelta.map((mean, index) =>
+    assertComputedFiniteNumber(
+      mean + (actualDelta[index] - mean) / nextSampleCount,
+      `${field}.meanDelta[${index}]`,
+    ),
+  );
+  const nextUncertainty = assertComputedFiniteNumber(
+    (current.uncertainty * current.sampleCount + errorMagnitude) /
+      nextSampleCount,
+    `${field}.uncertainty`,
+  );
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    sampleCount: nextSampleCount,
+    meanDelta: nextMean,
+    uncertainty: nextUncertainty,
+  };
+}
+
+function countRelationModels(value) {
+  return Object.values(value).reduce(
+    (sum, relations) => sum + Object.keys(relations).length,
+    0,
+  );
 }
 
 function normalizeCapabilities(value, field) {
@@ -531,7 +601,7 @@ function normalizeVerification(value, field, dimensions) {
 }
 
 function normalizeExpectation(value, field) {
-  const source = assertPlainRecord(value, field, EXPECTATION_KEYS);
+  const source = assertPlainRecord(value, field, EXPECTATION_KEYS, EXPECTATION_KEYS.filter((key) => key !== 'relationKey'));
   const predictedObservation = normalizeObservation(
     source.predictedObservation,
     `${field}.predictedObservation`,
@@ -541,12 +611,16 @@ function normalizeExpectation(value, field) {
     `${field}.expectedDelta`,
     predictedObservation.vector.length,
   );
+  const relationKey = source.relationKey === undefined
+    ? undefined
+    : assertRelationKey(source.relationKey, `${field}.relationKey`, predictedObservation.vector.length);
 
   return {
     schemaVersion: requireSchemaVersion(source, field),
     token: assertOpaqueToken(source.token, `${field}.token`),
     expectedDelta,
     predictedObservation,
+    ...(relationKey === undefined ? {} : { relationKey }),
     score: assertFiniteNumber(source.score, `${field}.score`),
     sampleCount: assertNonNegativeInteger(source.sampleCount, `${field}.sampleCount`),
     uncertainty: assertNonNegativeFiniteNumber(
@@ -683,7 +757,11 @@ function assertIntentIsExecutable(intent, field) {
 
 function buildPredictions(input) {
   return input.capabilities.map((capability) => {
+    const relationKey = input.memory.relationModels === undefined
+      ? undefined
+      : relationKeyFor(input.observation.vector, input.valueSpec);
     const model =
+      input.memory.relationModels?.[capability.token]?.[relationKey] ??
       input.memory.actionModels[capability.token] ??
       defaultActionModel(input.observation.vector.length);
     const expectedDelta = cloneVector(model.meanDelta);
@@ -712,6 +790,7 @@ function buildPredictions(input) {
         token: capability.token,
         expectedDelta,
         predictedObservation,
+        ...(relationKey === undefined ? {} : { relationKey }),
         score,
         sampleCount: model.sampleCount,
         uncertainty: model.uncertainty,
@@ -893,10 +972,24 @@ function cloneMemory(value) {
       uncertainty: model.uncertainty,
     };
   }
-  return {
+  const cloned = {
     schemaVersion: SCHEMA_VERSION,
     actionModels,
   };
+  if (value.relationModels !== undefined) {
+    cloned.relationModels = Object.fromEntries(
+      Object.entries(value.relationModels).map(([token, relations]) => [
+        token,
+        Object.fromEntries(Object.entries(relations).map(([relationKey, model]) => [relationKey, {
+          schemaVersion: SCHEMA_VERSION,
+          sampleCount: model.sampleCount,
+          meanDelta: cloneVector(model.meanDelta),
+          uncertainty: model.uncertainty,
+        }])),
+      ]),
+    );
+  }
+  return cloned;
 }
 
 function cloneObservation(value) {
@@ -914,6 +1007,7 @@ function cloneExpectation(value) {
     token: value.token,
     expectedDelta: cloneVector(value.expectedDelta),
     predictedObservation: cloneObservation(value.predictedObservation),
+    ...(value.relationKey === undefined ? {} : { relationKey: value.relationKey }),
     score: value.score,
     sampleCount: value.sampleCount,
     uncertainty: value.uncertainty,
@@ -1215,6 +1309,21 @@ function assertOpaqueToken(value, field) {
     contractViolation('kernel action token is not opaque', { field });
   }
 
+  return value;
+}
+
+function relationKeyFor(vector, valueSpec) {
+  return `r1:${vector.map((value, index) => {
+    const difference = valueSpec.target[index] - value;
+    return difference === 0 ? '0' : difference > 0 ? '+' : '-';
+  }).join('')}`;
+}
+
+function assertRelationKey(value, field, dimensions) {
+  if (typeof value !== 'string' || value.length > MAX_RELATION_KEY_LENGTH ||
+      !/^r1:[+\-0]+$/u.test(value) || value.length !== dimensions + 3) {
+    contractViolation('kernel relation key is invalid', { field });
+  }
   return value;
 }
 

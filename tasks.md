@@ -192,6 +192,13 @@
 - 验证：模型有效提议只请求一次；非法 JSON、错误维度、Planner 异常均不改变执行边界；后续 Run、重启和 Replay 不重新请求 Planner；CLI `--auto-plan` 与显式 `--goal-plan` 互斥。
 - 边界：Planner 仍不能从自然语言证明目标正确，也不能替代长期语义记忆、现实因果识别或人工授权；当前证明的是“模型可提出、宿主可验证、账本可恢复”的自动分解边界。
 
+## F-12 关系条件长期记忆
+
+- 原理：单一 Token 的全局平均会把不同上下文中的变化混在一起；用观测向量相对当前 ValueSpec 的三态关系签名作为共同上下文轴，形成 `Token×RelationSignature` 条件模型，不引入领域标签。
+- 实现：Kernel 在 StepIntent 中记录可选关系签名；经 `ACTION && learnable` 验证后，同时更新总体 `actionModels` 和条件 `relationModels`。Application 为新实验启用关系记忆，旧账本缺失该字段时保持兼容；InspectView 暴露关系模型数量和每个 action 的条件模型。
+- 验证：相同 Token 在两个关系签名下采用不同已验证模型；关系模型只在可归因变化时增长，歧义/拒绝不增长；跨 Run、重启、Replay 及五个 WorldPort 保持同一关系签名和预测结果。
+- 边界：关系签名是数值层的有限抽象，不等于自然语言语义、因果模型或跨世界 Token 对齐；下一步仍需验证关系模型在动力学变化和多目标迁移中的实际收益。
+
 ## F-9 连续 Run Runner
 
 - 实现：`runContinuous` 和 `agent loop` 将有限步数分割为多个独立、可恢复、可 Replay 的 Run；每个 Run 提交完成后才启动下一个，显式目标达成、执行拒绝或无安全动作立即停止；`--forever` 提供长期策略，SIGINT/SIGTERM 只在已提交 Run 边界停止并返回 `INTERRUPTED`。

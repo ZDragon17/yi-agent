@@ -35,6 +35,7 @@ test('application service runs a real closed loop and replays it without changin
       Object.values(inspection.inspectView.hypotheses).reduce((sum, model) => sum + model.sampleCount, 0),
       3,
     );
+    assert.ok(inspection.inspectView.facts.relationModelCount > 0);
     const actionInspection = await inspectLab({ labPath: lab, action: 'run-1:4' });
     assert.equal(actionInspection.inspectView.selectedAction.sequence, 4);
     assert.equal(actionInspection.inspectView.selectedAction.evidence, 'run-1:4');

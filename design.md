@@ -8,7 +8,7 @@
 
 - 电平高低、二进制、数值向量、不透明 Token 和领域对象属于不同表达层；不能把某一表达层误认为智能本身；
 - 所有领域必须通过同一套观察—行动—验证—学习闭环接入；金融、医疗、组织、设备和软件的差异只能由 WorldPort 的状态、观测、能力和约束表达；
-- Kernel、Memory、Replay 和智能判据必须保持领域中立；新增领域特判、孤立维度或单独一套底层逻辑，均视为架构偏移；
+- Kernel、Memory、Replay 和智能判据必须保持领域中立；新增领域特判、孤立维度或单独一套底层逻辑，均视为架构偏移；Memory 可以按观测相对 ValueSpec 的关系签名条件化，但不能按领域标签条件化；
 - 每一项扩展必须回答：它对应哪条共同变化规律、如何被反例检验、如何在另一个领域复用；不能只用模型提示词或演示结果宣称成立；
 - 易经思想是架构公理和可证伪的工程方向，不把卦象、数字或哲学判断直接冒充为科学定律。
 
@@ -16,13 +16,13 @@
 
 ## 1. 系统边界
 
-- 内核负责：闭环时序、候选预测、安全筛选、探索、执行回执处理、验证归因、学习和停止。它只看到数值向量、ValueSpec 和不透明 action token。
+- 内核负责：闭环时序、候选预测、安全筛选、探索、执行回执处理、验证归因、学习和停止。它只看到数值向量、ValueSpec 和不透明 action token；学习同时维护 Token 总体变化模型与 `Token×RelationSignature` 条件变化模型。
 - Runtime 负责：实验空间、单 writer 锁、事件追加、快照、恢复和重放。
 - WorldPort 负责：领域观测向量、实验空间初始化时随机生成且在该空间内稳定的 action token、纯状态 transition、独立 AuthorityPolicy 安全兜底和场景扰动。v0.1 没有真实外部副作用。
 - Application 通过显式 `WorldRegistry` 注入 `worldDefinition/createManifestParts/createWorld/valueSpec/scenarioExternalInputs`；默认 registry 注册五个内置世界，测试或宿主可在进程内注入第三方适配器，CLI 不开放动态代码发现。
 - CLI 负责：参数解析、调用应用服务、结构化/人类可读输出和退出码，不直接修改内核状态。
 - API client 负责：读取环境变量、调用 OpenAI-compatible `/models` 与 `/chat/completions`；它是显式工具，不进入 Kernel 的确定性决策链。
-- ModelAdvisor 负责：把有限的观测、目标和值域上下文转换为一个不可信的 token 提议；它不能写状态、调用 WorldPort 或更新 Memory。
+- ModelAdvisor 负责：把有限的观测、目标和值域上下文转换为一个不可信的 token 提议；它不能写状态、调用 WorldPort 或更新 Memory。它可读取受限的总体/关系记忆摘要，但 Kernel 不接受其对记忆的改写。
 - ModelPlanner 负责：把有限的观测、根目标和值域上下文转换为不可信的阶段目标提议；它只能建议目标向量，不能改权重、权限、Token、WorldPort 状态或 Memory。Application 必须先用当前 ValueSpec 物化并校验计划，才允许激活；失败时退回单阶段根目标。
 - ChangeSupervisor 负责：在不认识领域名称的前提下，根据 `ValueSpec` 计算目标距离，区分确认变化与歧义/拒绝，累计停滞，要求重规划，并在目标达成或预算耗尽时给出停止判定；它不能执行 WorldPort、调用模型或自行改变目标。运行时把目标是否由用户显式激活（`enabled`）与目标文本一并持久化，后续 Run 不传 `--goal` 也延续同一监督意图；记录原因后可开启下一周期，避免跨 Run/进程丢失连续性。
 - v0.1 默认含 `temperature`、`virtual-desktop`、`inventory`、`grid` 与 `queue` 五个内置模拟世界；另提供显式外部 WorldPort adapter 协议，但不提供动态发现、任意 in-process import 或真实副作用保证。
@@ -81,7 +81,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `WorldPort.transition(state,request)` | immutable worldState、`ActionRequest{token,basedOnVersion,policyVersion,constraintsDigest,executionNonce}` | `{nextWorldState,receipt,postObservation}` 或拒绝 receipt | 纯函数；版本比较、AuthorityPolicy、效果和版本递增构成单一 transition |
 | `Kernel.step(input)` | `KernelObservation{vector,stateVersion,intervalId}`、memory、ValueSpec、capabilities、显式 rngState | `StepIntent{status,expectation,choice,nextRngState}` 或 `Halt` | Application 从 WorldPort Observation 剥离 evidence 后投影；纯函数；禁止读取时钟/环境元数据；未知安全行动先于已学习行动探索 |
 | `Kernel.verify(input)` | `step` 原样返回的 StepIntent、receipt、投影后的 KernelObservation | `Verification{error,attribution,confidence,learnable}` | 纯函数；预测/选择/回执 token 必须一致；策略版本、约束摘要和 nonce 由 WorldPort/Application 绑定；证据不足为 AMBIGUOUS 且不学习 |
-| `Kernel.learn(input)` | memory、StepIntent、receipt、postObservation、Verification | `{status,token,nextMemory}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，只有 `ACTION && learnable` 才更新行动模型，其余返回未改变的 memory |
+| `Kernel.learn(input)` | memory、StepIntent、receipt、postObservation、Verification | `{status,token,nextMemory}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，只有 `ACTION && learnable` 才更新总体模型及其关系条件模型，其余返回未改变的 memory |
 | `ChangeSupervisor.advance(state,input)` | 当前监督状态、完整 `Verification`、前后含 `stateVersion/intervalId` 的观察 | 新监督状态，或 `REPLAN_REQUIRED`/终止状态 | 纯函数；只承认 `ACTION && learnable` 的即时目标距离下降为确认进步；不接触领域标签、模型、WorldPort 或 I/O |
 | `ChangeSupervisor.resume(state)` | 上一周期的持久化状态 | 下一变化周期的 `ACTIVE` 状态 | 记录 `runtime-continuation` 原因并清零当前停滞；不重置目标、周期计数、最佳距离或历史变化证据 |
 | `ChangeSupervisor.acknowledgeReplan(state,reason)` | `REPLAN_REQUIRED` 状态、有限原因 | 恢复为 `ACTIVE` 的监督状态 | 清零停滞、增加 `replanCount`，并在 `strategy` 中以版本化方式切换 `BALANCED/EXPLORATORY`；不改变目标、权重或历史周期 |

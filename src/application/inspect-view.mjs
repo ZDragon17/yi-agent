@@ -5,6 +5,7 @@ export function buildInspectView({ manifest, current, run = null, actions, value
   const terminal = run?.events?.at(-1);
   const viewState = terminal?.payload?.finalState ?? current;
   const actionModels = viewState.memory?.actionModels ?? {};
+  const relationModels = viewState.memory?.relationModels ?? {};
   const viewRunId = run?.start?.runId ?? current.lastRunId;
   const viewStatus = run === null ? current.status : terminal?.payload?.terminalStatus === 'COMPLETED' ? 'READY' : 'HALTED';
   return {
@@ -31,11 +32,13 @@ export function buildInspectView({ manifest, current, run = null, actions, value
       worldState: viewRunId === null ? null : cloneJson(viewState.worldState),
       kernelStep: viewState.kernelStep,
       memoryDigest: canonicalDigest(viewState.memory),
+      relationModelCount: countRelationModels(relationModels),
       changeSupervisor: viewRunId === null ? null : cloneJson(viewState.changeSupervisor ?? null),
     },
     hypotheses: Object.fromEntries(
       actions.map((action) => [action.token, {
         model: actionModels[action.token] ? cloneJson(actionModels[action.token]) : null,
+        relationModels: relationModels[action.token] ? cloneJson(relationModels[action.token]) : {},
         sampleCount: actionModels[action.token]?.sampleCount ?? 0,
         uncertainty: actionModels[action.token]?.uncertainty ?? null,
       }]),
@@ -62,4 +65,8 @@ export function buildInspectView({ manifest, current, run = null, actions, value
       ? latestStep?.payload.receipt.status === 'REJECTED' ? 'EXECUTION_REJECTED' : 'HALTED'
       : null,
   };
+}
+
+function countRelationModels(value) {
+  return Object.values(value).reduce((sum, relations) => sum + Object.keys(relations).length, 0);
 }

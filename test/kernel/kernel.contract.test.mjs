@@ -138,6 +138,31 @@ test('step is deterministic with an explicit rngState and does not require polic
   assert.notDeepEqual(first.nextRngState, input.rngState);
 });
 
+test('step conditions an action prediction on a domain-neutral relation to the current target', async () => {
+  const { step } = await loadKernel();
+  const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });
+  input.memory.relationModels = {
+    [TOKEN_A]: {
+      'r1:--': {
+        schemaVersion: 1,
+        sampleCount: 4,
+        meanDelta: [0.9, 0.8],
+        uncertainty: 0.01,
+      },
+    },
+  };
+  const conditioned = step(input);
+  assert.equal(conditioned.expectation.relationKey, 'r1:--');
+  assert.deepEqual(conditioned.expectation.expectedDelta, [0.9, 0.8]);
+
+  const otherContext = step({
+    ...input,
+    observation: observation([-1, -1], 'state-other'),
+  });
+  assert.equal(otherContext.expectation.relationKey, 'r1:++');
+  assert.deepEqual(otherContext.expectation.expectedDelta, [0.5, -0.25]);
+});
+
 test('step halts fail-closed when every capability is unsafe or disallowed', async () => {
   const { step } = await loadKernel();
   const input = makeStepInput({
@@ -519,6 +544,28 @@ test('learn is the only memory transition and updates only verified learnable ev
     }),
     'sample-count overflow',
   );
+});
+
+test('verified learning records the same change under its relation context', async () => {
+  const { learn, verify } = await loadKernel();
+  const request = actionRequest();
+  const intent = intentForRequest(request);
+  intent.expectation.relationKey = 'r1:++';
+  const verifyInput = makeVerifyInput({ intent });
+  const verification = verify(verifyInput);
+  const updated = learn({
+    memory: {
+      schemaVersion: 1,
+      actionModels: {},
+      relationModels: {},
+    },
+    intent,
+    receipt: verifyInput.receipt,
+    postObservation: verifyInput.postObservation,
+    verification,
+  });
+  assert.equal(updated.nextMemory.relationModels[request.token]['r1:++'].sampleCount, 1);
+  assert.deepEqual(updated.nextMemory.relationModels[request.token]['r1:++'].meanDelta, [0.5, -0.25]);
 });
 
 test('kernel rejects oversized numeric and capability surfaces before prediction work', async () => {
