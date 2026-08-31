@@ -46,7 +46,7 @@ test('a force-killed CLI process recovers its unfinished Run and continues', asy
     const init = await invoke(['init', '--lab', lab, '--world', 'inventory', '--seed', 'force-kill-seed', '--json']);
     assert.equal(init.code, 0, JSON.stringify(init));
 
-    const child = spawn(process.execPath, [CLI, 'agent', 'loop', '--lab', lab, '--steps', '1', '--forever', '--json'], {
+    const child = spawn(process.execPath, [CLI, 'agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '2', '--json'], {
       env,
       windowsHide: true,
     });
@@ -62,7 +62,7 @@ test('a force-killed CLI process recovers its unfinished Run and continues', asy
     assert.equal(recovered.stdout[0].data.current.kernelStep, 1);
     assert.equal(recovered.stdout[0].data.reason, 'CRASH_HALTED');
 
-    const continued = await invoke(['agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '1', '--json'], env);
+    const continued = await invoke(['agent', 'loop', '--lab', lab, '--resume', '--json'], env);
     assert.equal(continued.code, 0, JSON.stringify(continued));
     const inspection = await invoke(['inspect', '--lab', lab, '--json']);
     assert.equal(inspection.code, 0, JSON.stringify(inspection));

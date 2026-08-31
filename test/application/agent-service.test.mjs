@@ -371,6 +371,24 @@ test('continuous resume honors an objective reached before the persisted run bud
   });
 });
 
+test('a new continuous loop cannot orphan an unfinished loop continuation', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'single-loop-owner-lab', worldId: 'temperature', seed: 'single-loop-owner-seed' });
+    let stopChecks = 0;
+    const interrupted = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      runs: 3,
+      shouldStop: () => stopChecks++ > 0,
+    });
+    assert.equal(interrupted.stopReason, 'INTERRUPTED');
+    await assert.rejects(
+      () => runContinuous({ labPath: lab, stepsPerRun: 1, runs: 3 }),
+      (error) => error.code === 'CONFLICT' && error.context.continuationId === interrupted.continuationId,
+    );
+  });
+});
+
 test('explicit goal activation persists across a later run that omits the goal', async () => {
   await withLab(async (root) => {
     const lab = path.join(root, 'goal-continuity-lab');

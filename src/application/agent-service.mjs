@@ -511,6 +511,17 @@ export async function runContinuous(input) {
     }
   } else {
     const stepsPerRun = requireSteps(source.stepsPerRun ?? source.steps);
+    const store = await LabStore.open({ labPath: requireText(source.labPath, 'labPath') });
+    try {
+      const existing = await store.readLoopContinuation();
+      if (existing.status === 'ACTIVE') {
+        throw new LabStoreError('CONFLICT', 'An unfinished loop continuation already owns this lab; use resume first.', {
+          continuationId: existing.loopId,
+        });
+      }
+    } catch (error) {
+      if (error?.code !== 'NOT_FOUND') throw error;
+    }
     continuation = {
       schemaVersion: SCHEMA_VERSION,
       loopId: randomUUID(),

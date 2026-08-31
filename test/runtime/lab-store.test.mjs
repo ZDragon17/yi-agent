@@ -829,6 +829,66 @@ test('a later run must continue exactly from the verified current state', async 
   await second.finish({ terminalStatus: 'HALTED', finalState: finalState() });
 }));
 
+test('startRun atomically protects loop ownership and the next logical run index', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const continuation = {
+    schemaVersion: SCHEMA_VERSION,
+    loopId: '00000000-0000-4000-8000-000000000001',
+    scenario: 'steady',
+    runIndex: 0,
+    stepsPerRun: 1,
+    mode: 'finite',
+    maxRuns: 2,
+  };
+  const first = await store.startRun(runInput({ runId: 'loop-run-1', continuation }));
+  await first.finish({ terminalStatus: 'HALTED', finalState: runInput().initialState, reason: 'CRASH_HALTED' });
+
+  await assert.rejects(
+    store.startRun(runInput({
+      runId: 'other-loop-run-1',
+      continuation: { ...continuation, loopId: '00000000-0000-4000-8000-000000000002' },
+    })),
+    (error) => assertCode(error, 'CONFLICT'),
+  );
+  await assert.rejects(
+    store.startRun(runInput({ runId: 'manual-run-1' })),
+    (error) => assertCode(error, 'CONFLICT'),
+  );
+
+  const retry = await store.startRun(runInput({
+    runId: 'loop-run-2',
+    continuation: { ...continuation, runIndex: 0 },
+  }));
+  await retry.finish({ terminalStatus: 'COMPLETED', finalState: runInput().initialState });
+}));
+
+test('startRun rejects a stale same-loop retry after the next index is committed', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const continuation = {
+    schemaVersion: SCHEMA_VERSION,
+    loopId: '00000000-0000-4000-8000-000000000003',
+    scenario: 'steady',
+    runIndex: 0,
+    stepsPerRun: 1,
+    mode: 'finite',
+    maxRuns: 2,
+  };
+  const first = await store.startRun(runInput({ runId: 'loop-run-1', continuation }));
+  await first.finish({ terminalStatus: 'COMPLETED', finalState: runInput().initialState });
+
+  await assert.rejects(
+    store.startRun(runInput({ runId: 'stale-loop-run-1', continuation })),
+    (error) => assertCode(error, 'CONFLICT'),
+  );
+  const next = await store.startRun(runInput({
+    runId: 'loop-run-2',
+    continuation: { ...continuation, runIndex: 1 },
+  }));
+  await next.finish({ terminalStatus: 'COMPLETED', finalState: runInput().initialState });
+}));
+
 test('inspect and startRun reject current state that disagrees with its valid ledger watermark', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

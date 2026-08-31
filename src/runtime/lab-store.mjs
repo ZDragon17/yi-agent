@@ -416,6 +416,9 @@ export class LabStore {
     }
     const initialState = cloneInputJson(requireObject(source.initialState, 'initialState'), 'initialState');
     validateContinuityState(initialState, 'initialState');
+    const continuation = source.continuation === undefined
+      ? undefined
+      : validateLoopContinuation(source.continuation, 'continuation');
     const failpoint = typeof source.failpoint === 'function' ? source.failpoint : undefined;
     const durability = source.durability ?? 'strict';
     if (!DURABILITY_MODES.has(durability)) {
@@ -449,6 +452,39 @@ export class LabStore {
         throw new LabStoreError('BUSY', 'The current run requires recovery.', { phase: 'current-running' });
       }
       if (previousCurrent.status === 'CORRUPT') corrupt('A corrupt lab cannot start a run.', {});
+      let existingContinuation = null;
+      try {
+        existingContinuation = await this.readLoopContinuation();
+      } catch (error) {
+        if (error?.code !== 'NOT_FOUND') throw error;
+      }
+      if (existingContinuation?.status === 'ACTIVE') {
+        if (existingContinuation.loopId !== continuation?.loopId) {
+          conflict('An unfinished loop continuation already owns this lab.', {
+            continuationId: existingContinuation.loopId,
+          });
+        }
+        if (canonicalJson(loopContract(existingContinuation)) !== canonicalJson(loopContract(continuation))) {
+          conflict('Loop continuation contract differs from the persisted owner.', {
+            continuationId: existingContinuation.loopId,
+          });
+        }
+        if (continuation.runIndex !== existingContinuation.nextRunIndex) {
+          conflict('Run index does not match the persisted loop continuation.', {
+            continuationId: existingContinuation.loopId,
+            expectedRunIndex: existingContinuation.nextRunIndex,
+            runIndex: continuation.runIndex,
+          });
+        }
+      } else if (
+        existingContinuation !== null &&
+        existingContinuation.loopId === continuation?.loopId
+      ) {
+        conflict('A completed loop continuation cannot start another Run.', {
+          continuationId: existingContinuation.loopId,
+          status: existingContinuation.status,
+        });
+      }
       if (
         previousCurrent.lastRunId !== null &&
         !sameContinuityState(stateProjection(previousCurrent, previousCurrent), initialState)
@@ -474,9 +510,7 @@ export class LabStore {
         tokenMapDigest: this.manifest.tokenMap.digest,
         manifestDigest: this.manifest.selfDigest,
         initialState,
-        ...(source.continuation === undefined
-          ? {}
-          : { continuation: validateLoopContinuation(source.continuation, 'continuation') }),
+        ...(continuation === undefined ? {} : { continuation }),
         startedAt: now(),
       });
       if (start.continuation !== undefined && start.continuation.scenario !== scenario) {
