@@ -604,7 +604,9 @@ export async function inspectLab(input) {
           manifest,
           run?.start?.scenario ?? manifest.scenarioIds?.[0] ?? 'steady',
         );
-          const actionState = inspection.current.worldState ?? world.initialState();
+          const actionState = run?.events?.at(-1)?.payload?.finalState?.worldState
+            ?? inspection.current.worldState
+            ?? world.initialState();
         return world.actions(worldManifest(manifest), actionState);
         })());
   return {
