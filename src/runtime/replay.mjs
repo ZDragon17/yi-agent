@@ -231,6 +231,10 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
     rngState: intent.nextRngState,
     kernelStep: state.kernelStep + 1,
   };
+  if (payload.boundary.goalReplan !== undefined &&
+      state.changeSupervisor === undefined && payload.boundary.goalActivation === undefined) {
+    corrupt('STEP contains goal replan evidence without a change supervisor.', { sequence: event.sequence });
+  }
   if (state.changeSupervisor !== undefined || payload.boundary.goalActivation !== undefined) {
     try {
       const baseSupervisor = state.changeSupervisor === undefined
@@ -257,10 +261,14 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
         verification,
       });
       if (nextSupervisor.status === 'REPLAN_REQUIRED') {
-        if (payload.boundary.goalReplan?.plan !== undefined) {
-          nextSupervisor = reviseGoalPlan(nextSupervisor, payload.boundary.goalReplan.plan);
+        if (payload.boundary.goalReplan !== undefined) {
+          if (payload.boundary.goalReplan.plan !== undefined) {
+            nextSupervisor = reviseGoalPlan(nextSupervisor, payload.boundary.goalReplan.plan);
+          }
         }
         nextSupervisor = acknowledgeReplan(nextSupervisor, 'supervisor-stagnation');
+      } else if (payload.boundary.goalReplan !== undefined) {
+        corrupt('STEP contains goal replan evidence without a supervisor stagnation decision.', { sequence: event.sequence });
       }
       nextState.changeSupervisor = preserveLegacyActivationMarker(nextSupervisor, state.changeSupervisor, payload.boundary.goalActivation);
     } catch (error) {
@@ -295,6 +303,9 @@ function validatePlanEvidence(value, sequence) {
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
     corrupt('STEP planner evidence is invalid.', { sequence });
   }
+  if ((value.applied && value.reason !== null) || (!value.applied && value.reason === null)) {
+    corrupt('STEP planner evidence reason does not match its applied state.', { sequence });
+  }
 }
 
 function validateGoalReplan(value, sequence) {
@@ -302,6 +313,9 @@ function validateGoalReplan(value, sequence) {
     corrupt('STEP goal replan is invalid.', { sequence });
   }
   validatePlanEvidence(value.planEvidence, sequence);
+  if (value.planEvidence.applied !== (value.plan !== undefined)) {
+    corrupt('STEP goal replan evidence does not match its plan payload.', { sequence });
+  }
   if (value.plan !== undefined && !isRecord(value.plan)) {
     corrupt('STEP goal replan plan is invalid.', { sequence });
   }
