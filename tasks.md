@@ -267,3 +267,10 @@
 - 实现：应用边界捕获 advisor 异常，或拒绝非法能力令牌/非法结果，回退到 Kernel 的确定性选择；模型故障原因、规范化结果和响应摘要指纹写入 STEP policy evidence，重启与 Replay 不重新调用模型。
 - 验证：应用测试和真实 CLI 子进程分别覆盖模型抛出 provider outage、HTTP 503、返回非法 token 或缺失响应指纹；Run 仍完成，Kernel 不执行模型未授权的动作，账本可重放且与 current 一致。
 - 边界：这不是把模型错误伪装成成功；真实外部动作仍受 WorldPort receipt、幂等协议和人工安全门约束，模型不可用时不自动扩大权限或生成新能力。
+
+## F-22 Kernel-only 启动
+
+- 原理：如果模型只是可替换的假设生成器，它不能成为底座启动的必要条件；同一套状态—关系—约束—变化—反馈闭环必须能在没有模型时独立运行。
+- 实现：CLI 增加显式 `--kernel-only`，跳过 API client、Advisor 和 Planner 创建，直接把 WorldPort 交给 Application/Kernel；默认模式仍保持模型配置错误可见，避免静默改变用户意图。
+- 验证：无 API 环境下真实 CLI 的 `agent run` 与 `agent loop` 均可完成，多 Run、inspect 和每个 Run Replay 保持一致；带 API 的既有提议路径不变。
+- 边界：Kernel-only 不等于自然语言目标理解或现实自主性；`--auto-plan` 没有模型时只能记录 Planner 不可用并退回受限根目标，真实外部副作用仍须独立安全门。

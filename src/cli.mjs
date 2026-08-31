@@ -97,17 +97,19 @@ async function dispatchAgent(options) {
   }
   let advisor;
   let planner;
-  try {
-    const config = loadApiConfig();
-    const client = createOpenAICompatibleClient(config);
-    advisor = createModelAdvisor({
-      client,
-      model: config.model,
-      goal: options.goal ?? null,
-    });
-    planner = createModelPlanner({ client, model: config.model });
-  } catch (error) {
-    if (!canResumeWithoutModel(options, error)) throw error;
+  if (options['kernel-only'] !== true) {
+    try {
+      const config = loadApiConfig();
+      const client = createOpenAICompatibleClient(config);
+      advisor = createModelAdvisor({
+        client,
+        model: config.model,
+        goal: options.goal ?? null,
+      });
+      planner = createModelPlanner({ client, model: config.model });
+    } catch (error) {
+      if (!canResumeWithoutModel(options, error)) throw error;
+    }
   }
   const goalPlan = options['goal-plan'] === undefined
     ? undefined
@@ -250,7 +252,7 @@ function parseArguments(argv) {
     if (argument === '--json') continue;
     if (!argument.startsWith('--')) throw cliError('INVALID_INPUT', `Unexpected argument: ${argument}`, {}, 64);
     const name = argument.slice(2);
-    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan' || name === 'resume') {
+    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan' || name === 'kernel-only' || name === 'resume') {
       options[name] = true;
       continue;
     }
@@ -262,7 +264,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-plan', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
@@ -449,8 +451,8 @@ function helpText() {
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
-    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
-    '  yi-agent agent loop --lab PATH --resume [--adapter CONFIG] [--json]',
+    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--kernel-only] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
+    '  yi-agent agent loop --lab PATH --resume [--kernel-only] [--adapter CONFIG] [--json]',
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',

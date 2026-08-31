@@ -159,6 +159,38 @@ test('a new agent loop still requires model configuration', async () => {
   assert.match(result.stdout[0].error.message, /YI_AGENT_API_KEY(?: or ZAI_API_KEY)? must be configured/u);
 });
 
+test('kernel-only agent run works without model configuration and remains replayable', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-kernel-only-e2e-'));
+  const lab = path.join(root, 'lab');
+  const env = { ...process.env };
+  delete env.YI_AGENT_API_KEY;
+  delete env.ZAI_API_KEY;
+  delete env.YI_AGENT_MODEL;
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'inventory', '--seed', 'kernel-only-seed', '--json'], process.env)).code, 0);
+    const run = await invoke(['agent', 'run', '--lab', lab, '--steps', '2', '--kernel-only', '--json'], env);
+    assert.equal(run.code, 0);
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    const inspection = await invoke(['inspect', '--lab', lab, '--json'], env);
+    assert.equal(inspection.code, 0);
+    assert.equal(inspection.stdout[0].data.current.kernelStep, 2);
+    const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], env);
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    const loop = await invoke(['agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '2', '--kernel-only', '--json'], env);
+    assert.equal(loop.code, 0);
+    assert.equal(loop.stdout[0].data.runs, 2);
+    assert.equal((await invoke(['inspect', '--lab', lab, '--json'], env)).stdout[0].data.current.kernelStep, 4);
+    for (const result of loop.stdout[0].data.results) {
+      const loopReplay = await invoke(['replay', '--lab', lab, '--run', result.runId, '--json'], env);
+      assert.equal(loopReplay.code, 0);
+      assert.equal(loopReplay.stdout[0].data.verdict, 'CONSISTENT');
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent run rejects the loop-only forever policy', async () => {
   const result = await invoke(['agent', 'run', '--lab', 'missing', '--steps', '1', '--forever', '--json'], {
     ...process.env,

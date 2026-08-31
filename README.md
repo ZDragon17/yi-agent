@@ -257,6 +257,7 @@ yi-agent api test --json
 yi-agent ask --prompt "请用一句话解释什么是闭环" --json
 yi-agent agent run --lab E:\labs\temperature --steps 3 --goal "保持系统稳定" --json
 yi-agent agent loop --lab E:\labs\temperature --steps 10 --runs 100 --goal "保持系统稳定" --json
+yi-agent agent run --lab E:\labs\temperature --steps 3 --kernel-only --json
 yi-agent agent loop --lab E:\labs\temperature --resume --json
 yi-agent agent run --lab E:\labs\temperature --steps 10 --goal-plan E:\plans\stability.json --json
 yi-agent agent run --lab E:\labs\temperature --steps 10 --goal "自动维持温度" --auto-plan --json
@@ -269,6 +270,8 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 `agent run` 会在每一步把当前观测和可用能力交给模型提出一个 token，再由 Kernel 独立计算预期、复核安全性、执行、验证和学习。模型不能直接执行动作；每一步只保存结构化提议摘要，`replay` 不会再次调用模型。
 
 如果 Advisor 的 API 超时、断开或返回非法 Token，应用边界会记录 `MODEL_UNAVAILABLE` 或 `INVALID_ADVISOR_RESULT`，然后让 Kernel 在同一状态上选择安全候选继续闭环；该回退也会进入账本，因此重启和 `replay` 不依赖模型再次返回相同结果。
+
+`--kernel-only` 显式关闭 Advisor/Planner，只运行共同的 Kernel—WorldPort—verify—learn 闭环，不需要 API Key；它用于证明模型是可替换工具，而不是 Agent 的启动前提。若需要 `--auto-plan`，仍应提供模型配置，或接受 Planner 不可用并回退为根目标阶段。
 
 `agent loop` 是连续运行的 CLI 入口：`--steps` 表示每个可恢复 Run 的步数，`--runs` 表示最多串联多少个 Run；需要长期守护时使用 `--forever`，它与 `--runs` 互斥。每个 Run 都先完成自己的账本提交，再开始下一个 Run；收到 SIGINT/SIGTERM 时只在当前 Run 提交后停止，返回 `INTERRUPTED`。loop 的 `loopId/runIndex/scenario/budget` 会固化到每个 immutable `start.json`，进程重启并完成恢复卡点后，可以用 `yi-agent agent loop --lab PATH --resume --json` 从完整账本重建剩余 Run，不必重新输入也不会重复已提交 Run。同一 lab 中，一条未完成 continuation 对实验空间拥有唯一调度权；新的 loop 或普通 run 会被拒绝，必须先用 `--resume` 接续，已完成或已停止的历史 loop 不阻塞新实验。发生执行拒绝、无安全动作或显式目标达成时，循环会停止并返回原因。`--forever` 的内存结果摘要只保留最近一个 Run，累计 `runs/metrics` 持续统计，完整历史以 lab 账本和独立 Replay 为准，因此不会随运行时间积累结果对象。进程在一个 Run 内被终止或崩溃时，仍须先用 `recover --confirm-lock-owner-dead` 完成明确的恢复卡点，再使用 `--resume` 继续；若未决外部 transition 已保存原始策略证据，恢复进程暂时没有 API 时也能复用该证据并由 Kernel 继续安全选择；`test/e2e/crash-restart-cli.test.mjs` 已用真实子进程强制终止覆盖该路径。
 

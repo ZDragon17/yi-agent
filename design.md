@@ -43,9 +43,9 @@
 | `effect plan|confirm|execute|reconcile|compensate|reconcile-compensation|inspect --journal PATH [--sandbox-root PATH] [--intent PATH] [--nonce N] [--json]` | EffectIntent、durable journal、显式标记 sandbox | EffectBroker 状态快照或全部 effect 状态 | 参数 64；损坏 3；不存在 66；I/O 74；状态错误 70 | 每次进程从 journal 恢复；execute/compensate 只允许标记 sandbox root |
 | `api test [--json]` | 环境变量中的 API 配置 | 连通状态与模型数量 | 参数 64；API 74；协议 70 | 无本地状态副作用 |
 | `ask --prompt TEXT|--prompt-file PATH [--json]` | 环境变量中的 API 配置与用户提示 | 模型、回答、可选 usage | 参数 64；API 74；协议 70 | 单次非流式请求；提示文件只读 |
-| `agent run --lab PATH --steps N [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 每步一次模型提议；`--auto-plan` 激活持久化 Planner 策略；停滞时只修订未完成计划；replay 不访问 API |
-| `agent loop --lab PATH --steps N [--runs N|--forever] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；同一 lab 只允许一条未完成 continuation 持有调度权；SIGINT/SIGTERM 只在 Run 边界停止；loop 身份和预算写入每个 Run start，重启可从 current 继续 |
-| `agent loop --lab PATH --resume [--adapter CONFIG] [--json]` | 已存在的未完成 loop continuation；模型配置在需要新提议时可用 | 从账本重建的剩余 Run 摘要 | 参数 64；不存在 66；冲突 65；API 74；协议 70 | 不重新接受 steps/runs/goal 等控制参数；按 immutable Run start 的 loopId/runIndex/scenario/budget 恢复，已提交 Run 不重复；恢复模式可在无 API 配置下使用 Kernel 安全选择继续，未决外部 transition 则复用冻结策略证据 |
+| `agent run --lab PATH --steps N [--kernel-only] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间；默认使用 API，`--kernel-only` 不需要 API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 默认每步一次模型提议；`--kernel-only` 只运行 Kernel；`--auto-plan` 激活持久化 Planner 策略；停滞时只修订未完成计划；replay 不访问 API |
+| `agent loop --lab PATH --steps N [--runs N|--forever] [--kernel-only] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间；默认使用 API，`--kernel-only` 不需要 API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；同一 lab 只允许一条未完成 continuation 持有调度权；SIGINT/SIGTERM 只在 Run 边界停止；loop 身份和预算写入每个 Run start，重启可从 current 继续 |
+| `agent loop --lab PATH --resume [--kernel-only] [--adapter CONFIG] [--json]` | 已存在的未完成 loop continuation；默认需要新提议时使用模型，`--kernel-only` 始终离线 | 从账本重建的剩余 Run 摘要 | 参数 64；不存在 66；冲突 65；API 74；协议 70 | 不重新接受 steps/runs/goal 等控制参数；按 immutable Run start 的 loopId/runIndex/scenario/budget 恢复，已提交 Run 不重复；恢复模式可在无 API 配置下使用 Kernel 安全选择继续，未决外部 transition 则复用冻结策略证据 |
 
 标准错误对象：`{code, message, context?, recoverable}`。`--json` 时成功或失败都只在 stdout 输出一个 JSON envelope，stderr 保持空；仅 CLI 启动前的致命错误可写 stderr。人类模式的错误写 stderr。
 
@@ -99,7 +99,7 @@ EffectBroker 是 WorldPort 与真实副作用之间的第二道边界。Kernel �
 
 ModelAdvisor 的结果是外部非确定输入，不进入连续性状态。每个带模型的 STEP 可选记录 `policyEvidence={schemaVersion,source,model,token,responseDigest,observationDigest,applied,reason}`；`observationDigest` 绑定模型实际看到的有界 observation 上下文，`responseDigest` 只绑定模型回答摘要，两者都不是供应商真实性证明。WorldPort 的原始 evidence 不进入 Kernel，只由 `observation-context` 做有限项数、深度、键数、字符串长度和总字节投影；超限时显式标记截断，避免模型上下文无界增长。Replay 使用该证据中的已接受 token重新调用纯 `Kernel.stepWithPreference`，因此不会访问网络，也不会把模型再次生成的不同结果混入历史。若外部 transition 已写入 in-flight marker，宿主还会把已应用的 `policyEvidence` 一并持久化，并在重试时复用原 token；重试不重新调用 advisor，避免模型非确定性破坏同 nonce 的连续性。
 
-Advisor 的异常和非法结果也按同一证据边界处理：宿主不把异常文本写入账本，不把未经校验的 Token 交给 Kernel；只保存稳定的模型标识、摘要指纹、标准化 Token 和故障原因。故障回退不是把模型错误算作成功，而是让共同底座在没有模型提议时继续走可验证的安全选择路径。
+Advisor 的异常和非法结果也按同一证据边界处理：宿主不把异常文本写入账本，不把未经校验的 Token 交给 Kernel；只保存稳定的模型标识、摘要指纹、标准化 Token 和故障原因。故障回退不是把模型错误算作成功，而是让共同底座在没有模型提议时继续走可验证的安全选择路径。CLI 的 `--kernel-only` 则把这种可替换关系显式化：从启动时就不创建模型工具。
 
 为验证真实执行器仍可被同一底座约束，`src/effects/sandbox-file-executor.mjs` 提供了临时目录级文件移动：它拒绝路径穿越和符号链接，只在带用户显式创建 `.yi-agent-sandbox` 标记的沙箱根内操作，并复用 Broker 的确认、executionNonce、durable journal、reconcile 与 compensation。CLI 的 `effect` 命令跨进程恢复这个 Broker，支持安全实验；它不是用户桌面授权层。
 
