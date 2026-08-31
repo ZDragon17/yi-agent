@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { LabStore } from '../../src/runtime/lab-store.mjs';
+import { initLab, runContinuous } from '../../src/application/agent-service.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 
@@ -139,6 +140,59 @@ test('a resumed finite loop preserves its durable run budget after a process res
   } finally {
     server.released = true;
     releasePending();
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('two independent CLIs cannot commit the same resumed loop index twice', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-concurrent-resume-e2e-'));
+  let requestCount = 0;
+  const server = createServer(async (request, response) => {
+    requestCount += 1;
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const token = /tok_[A-Z0-9]{8,128}/u.exec(body.messages[0].content)?.[0] ?? null;
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'concurrent-resume',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({ token }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'concurrent-resume-test-key',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'concurrent-resume-model',
+  };
+  const lab = path.join(root, 'lab');
+  try {
+    await initLab({ labPath: lab, labId: 'concurrent-resume-lab', worldId: 'temperature', seed: 'concurrent-resume-seed' });
+    let stopChecks = 0;
+    const prepared = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      runs: 2,
+      shouldStop: () => stopChecks++ > 0,
+    });
+    assert.equal(prepared.stopReason, 'INTERRUPTED');
+
+    const resumed = await Promise.all([
+      invoke(['agent', 'loop', '--lab', lab, '--resume', '--json'], env),
+      invoke(['agent', 'loop', '--lab', lab, '--resume', '--json'], env),
+    ]);
+    assert.equal(resumed.filter((result) => result.code === 0).length, 1, JSON.stringify(resumed));
+    assert.equal(requestCount, 1, JSON.stringify(resumed));
+    const store = await LabStore.open({ labPath: lab });
+    const continuation = await store.readLoopContinuation();
+    assert.equal(continuation.status, 'COMPLETED');
+    assert.equal((await store.inspect()).current.kernelStep, 2);
+  } finally {
     server.closeAllConnections?.();
     await new Promise((resolve) => server.close(() => resolve()));
     await rm(root, { recursive: true, force: true });
