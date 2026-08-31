@@ -203,7 +203,7 @@
 
 - 原理：停滞不是简单切换策略，而是对当前未完成变化假设的反证；允许有限 Planner 提出新路径，但已完成阶段和根目标必须保持不变。
 - 实现：`reviseGoalPlan` 只接受 `REPLAN_REQUIRED` 状态，保留已完成阶段前缀，修订未完成后缀并递增 `plan.revision`；Planner 是否可在后续 Run 触发由持久化的 `plannerEnabled` 决定；`boundary.goalReplan` 保存修订计划和 `planEvidence`。
-- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；全量门禁 214/214。
+- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；当前全量门禁 215/215。
 - 边界：计划修订仍是有限向量搜索，不代表模型理解了自然语言目标、获得了现实因果能力或实现了开放式自我改进。
 
 ## F-14 非平稳动力学下的有界变化记忆
@@ -226,6 +226,13 @@
 - 实现：仓库外 `E:\demo\yi-agent-oracle\late-bound-oracle.mjs` 作为独立 Node 进程，只加载 Kernel 公共入口；在运行时生成 48 个未知有限世界输入和坐标/Token 置换，比较 `step → verify → learn` 的状态、预测、归因和记忆关系。
 - 验证：输出 `candidateDigest/oracleRevision/generatedWorldCount/caseCount/verdict/failures` 单行 JSON；当前 48/48 为 `PASS`。同一候选摘要通过，伪造摘要返回 `INCONCLUSIVE` 且 exit code 非零。
 - 边界：这是本机外部验证工件，不是随仓库分发的第三方审计；Oracle 自身仍需由独立组织重新实现才能进一步提高独立性。它只说明当前关系契约未被该输入集合证伪。
+
+## F-17 应用层 WorldPort 同构回归
+
+- 原理：Kernel 通过同构测试还不够；应用服务、持久化、监督器和 Replay 也不能依赖具体世界名称、物理坐标或 adapter 身份。
+- 实现：新增独立外部 JSONL WorldPort，对同一组不透明能力提供原坐标和逆序坐标两个 adapter；两者使用不同启动摘要，分别经过两次 CLI 进程运行，再对状态向量、经验模型、关系模型、监督器和 Replay 做语义投影比较。
+- 验证：`test/e2e/metamorphic-world-cli.test.mjs` 当前验证两种 WorldPort 均跨 Run 重启继续，最终应用状态等价，`run-1`/`run-2` 均 Replay 为 `CONSISTENT`。
+- 边界：该回归验证的是受控外部 WorldPort 的应用闭环，不是桌面、设备或真实副作用；真实执行器仍须经过 execution nonce、幂等回执、对账和人工确认门禁。
 
 ## F-9 连续 Run Runner
 
