@@ -42,6 +42,7 @@ HTML 原型证明了“预期—行动—验证—修正”能够运行，但状
 - 输出：每步完整记录界、感、存、预、择、动、验、化，以及最终状态和退出原因。
 - 可选推演：`planning.horizon` 为 1～8 的有界模型推演步数，默认 1；仅使用 Kernel 已持久化的经验模型，不把推演状态送入 WorldPort，且必须随 STEP boundary 固化以供 Replay 重建。候选与未来模拟能力受固定窗口限制，避免能力面扩大导致平方级展开。
 - 延迟反馈：WorldPort 可在后续 observation 的 `feedback[]` 中，按 `executionNonce` 返回此前动作的结果快照；Kernel 对已接受但 `attributionWindowComplete=false` 且无已知混杂的动作暂存有界 pending credit，基线从动作前观测推导；同一步先结算旧 feedback 时，当前新动作的 pending 基线只叠加已明确归属于旧 nonce 的变化，不把当前动作的部分即时变化算进旧 credit。收到匹配反馈后才学习，混杂反馈只结算为 `AMBIGUOUS` 而不学习；若当前动作与旧反馈同一步产生证据，当前动作保守跳过学习。反馈必须经过 stateVersion、intervalId、向量维度、nonce 唯一性和数量上限校验，并随 STEP/Replay 重建。
+- 版本边界：带 `kernelLearningVersion: 3` 的新 STEP 启用有界已结算反馈收据；缺少标记或标记为旧版本的历史 STEP 在 Replay 时保持旧 Memory 形状，不凭空补写收据字段。
 - 边界：没有安全行动或模拟 transition 拒绝时记录 HALTED；世界代码异常为内部错误，持久层异常为 I/O 错误，均立即停止且不得记为一次已执行行动。
 - 验收：每个已执行动作都能找到先验预测、执行回执、后验观测、误差归因和学习结果；越过目标的动作不能仅因带符号方向而被判定为更优，旧账本仍可按其固化的兼容语义 Replay。
 
@@ -53,7 +54,7 @@ HTML 原型证明了“预期—行动—验证—修正”能够运行，但状
 - 验收：从同一已初始化 lab 的相同语义起点/tokenMap 做两个隔离分支：一支跨进程运行 15+15，另一支参考执行 30 步；同外部输入下 `{worldState,memory,rngState,kernelStep}` 规范化投影完全相等。runId、时间、run 边界和摘要链不参与比较。
 - 连续配置：`agent loop` 的推演步数随 continuation 持久化；恢复时不得通过新的 CLI 参数静默改变，必须沿原 continuation 继续。
 - 外部恢复：adapter transition 前的 in-flight marker 必须固化同一推演配置；响应丢失后的幂等重试在未显式指定时恢复 marker 配置，显式冲突必须拒绝。
-- 反馈恢复：反馈只能结算同一实验空间内已持久化的 execution nonce；未知、重复或相互矛盾的反馈必须 fail-closed，不得追加 STEP 或污染 Memory。
+- 反馈恢复：反馈只能结算同一实验空间内已持久化的 execution nonce；同一 nonce 的完全相同反馈在有界已结算收据窗口内可幂等忽略，未知或相互矛盾的反馈必须 fail-closed，不得追加 STEP 或污染 Memory；超出收据窗口的旧重复反馈视为未知。
 
 ### FR-4 确定性重放
 

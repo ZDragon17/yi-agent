@@ -164,10 +164,10 @@ test('CLI runs and replays an unknown generated world through an external adapte
   });
 });
 
-test('CLI carries delayed feedback across WorldPort processes and run restarts', async () => {
+test('CLI carries delayed and repeated feedback across WorldPort processes and run restarts', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'delayed-feedback-lab');
-    const adapter = await writeDelayedFeedbackAdapterConfig(root);
+    const adapter = await writeDelayedFeedbackAdapterConfig(root, true);
     const init = await invoke('init', '--lab', lab, '--world', 'delayed-feedback', '--seed', 'delayed-feedback-seed', '--lab-id', 'delayed-feedback-lab', '--adapter', adapter, '--json');
     assert.equal(init.code, 0);
 
@@ -210,11 +210,18 @@ test('CLI carries delayed feedback across WorldPort processes and run restarts',
       const continued = await invoke('run', '--lab', lab, '--run-id', runId, '--steps', '1', '--scenario', 'delayed', '--adapter', adapter, '--json');
       assert.equal(continued.code, 0);
     }
+    const thirdStep = decodeStoredEvent(
+      (await readFile(path.join(lab, 'runs', 'run-3', 'events.jsonl'), 'utf8'))
+        .trim().split(/\r?\n/u).map(JSON.parse).find((event) => event.kind === 'STEP'),
+    );
+    assert.equal(thirdStep.payload.postObservation.feedback.length, 2);
+    assert.equal(thirdStep.payload.update.settled.length, 1);
     const persisted = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
     const learned = Object.values(persisted.memory.actionModels)[0];
     assert.equal(persisted.worldState.value, 3);
     assert.equal(learned.sampleCount, 3);
     assert.equal(learned.meanDelta[0], 1);
+    assert.equal(persisted.memory.settledFeedback.length, 3);
   });
 });
 
@@ -721,11 +728,11 @@ async function writeAdapterConfig(root, args = []) {
   return config;
 }
 
-async function writeDelayedFeedbackAdapterConfig(root) {
+async function writeDelayedFeedbackAdapterConfig(root, repeatFeedback = false) {
   const config = path.join(root, 'delayed-feedback-adapter.json');
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
-    args: [DELAYED_FEEDBACK_ADAPTER_FIXTURE],
+    args: [DELAYED_FEEDBACK_ADAPTER_FIXTURE, ...(repeatFeedback ? ['--repeat-feedback'] : [])],
     adapterId: 'delayed-feedback-adapter-v1',
     worldId: 'delayed-feedback',
     timeoutMs: 2000,

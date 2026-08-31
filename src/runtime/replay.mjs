@@ -17,6 +17,7 @@ const REQUIRED_BOUNDARY_KEYS = ['schemaVersion', 'valueSpec'];
 const MAX_SCENARIO_IDS = 256;
 const MAX_SCENARIO_ID_LENGTH = 4096;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
+const SETTLED_FEEDBACK_LEARNING_VERSION = 3;
 
 export class ReplayError extends Error {
   constructor(code, message, context = {}) {
@@ -224,6 +225,10 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       postObservation,
       verification,
     });
+    const learningVersion = payload.boundary.kernelLearningVersion ?? 1;
+    const replayLearned = learningVersion < SETTLED_FEEDBACK_LEARNING_VERSION
+      ? withoutSettledFeedback(learned)
+      : learned;
     update = payload.boundary.kernelLearningVersion === undefined &&
       payload.update?.status === 'SKIPPED' &&
       verification.attribution === 'EXECUTION_REJECTED'
@@ -233,7 +238,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
           token: intent.choice.token,
           nextMemory: cloneJson(state.memory),
         }
-      : learned;
+      : replayLearned;
   } catch (error) {
     corrupt('Replay kernel verification or learning failed.', { sequence: event.sequence, cause: errorName(error) });
   }
@@ -295,6 +300,12 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       ?? compareValue(payload.afterState, nextState, 'payload.afterState', event.sequence);
   }
   return difference ? { difference } : { nextState };
+}
+
+function withoutSettledFeedback(update) {
+  if (update.nextMemory?.settledFeedback === undefined) return update;
+  const { settledFeedback: _ignored, ...nextMemory } = update.nextMemory;
+  return { ...update, nextMemory };
 }
 
 function validateGoalActivation(value, sequence) {

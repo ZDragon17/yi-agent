@@ -5,6 +5,7 @@ import { ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
 const WORLD_ID = 'delayed-feedback';
 const CAPABILITY_ID = 'delayed-feedback.advance';
 const VALUE_SPEC = { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1] };
+const REPEAT_FEEDBACK = process.argv.includes('--repeat-feedback');
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (line) => {
@@ -58,12 +59,23 @@ function dispatch(op, payload) {
 function transition(prior, request) {
   const delayedNonce = prior.pendingExecutionNonce ?? null;
   const nextValue = delayedNonce === null ? prior.value : prior.value + 1;
+  const feedback = delayedNonce === null ? null : {
+    schemaVersion: 1,
+    executionNonce: delayedNonce,
+    stateVersion: `state:${WORLD_ID}:${prior.revision + 1}`,
+    intervalId: `${WORLD_ID}:interval:${prior.revision + 1}`,
+    vector: [nextValue],
+    confounderCount: 0,
+  };
   const next = state(
     nextValue,
     prior.revision + 1,
     request.executionNonce,
     [...prior.usedExecutionNonces, request.executionNonce].slice(-8),
+    feedback,
   );
+  const feedbackItems = feedback === null ? [] : [feedback];
+  if (REPEAT_FEEDBACK && prior.lastFeedback !== null) feedbackItems.push(prior.lastFeedback);
   const result = {
     nextWorldState: next,
     receipt: {
@@ -75,19 +87,12 @@ function transition(prior, request) {
       attributionWindowComplete: false,
       confounderCount: 0,
     },
-    postObservation: observation(next, delayedNonce === null ? null : {
-      schemaVersion: 1,
-      executionNonce: delayedNonce,
-      stateVersion: next.stateVersion,
-      intervalId: `${WORLD_ID}:interval:${next.revision}`,
-      vector: [next.value],
-      confounderCount: 0,
-    }),
+    postObservation: observation(next, feedbackItems),
   };
   return result;
 }
 
-function state(value, revision = 0, pendingExecutionNonce = null, usedExecutionNonces = []) {
+function state(value, revision = 0, pendingExecutionNonce = null, usedExecutionNonces = [], lastFeedback = null) {
   return {
     schemaVersion: 1,
     stateVersion: `state:${WORLD_ID}:${revision}`,
@@ -95,17 +100,18 @@ function state(value, revision = 0, pendingExecutionNonce = null, usedExecutionN
     value,
     pendingExecutionNonce,
     usedExecutionNonces,
+    lastFeedback,
   };
 }
 
-function observation(current, feedback = null) {
+function observation(current, feedback = []) {
   return {
     schemaVersion: 1,
     vector: [current.value],
     stateVersion: current.stateVersion,
     intervalId: `${WORLD_ID}:interval:${current.revision}`,
     evidence: [],
-    ...(feedback === null ? {} : { feedback: [feedback] }),
+    ...(feedback.length === 0 ? {} : { feedback }),
   };
 }
 

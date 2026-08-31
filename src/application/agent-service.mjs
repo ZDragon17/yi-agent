@@ -15,6 +15,7 @@ const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
+const KERNEL_LEARNING_VERSION = 3;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -129,7 +130,7 @@ export async function runLab(input) {
   let initialState = current.lastRunId === null
     ? {
         worldState: world.initialState(),
-        memory: { schemaVersion: SCHEMA_VERSION, actionModels: {}, relationModels: {}, pendingCredits: [] },
+        memory: { schemaVersion: SCHEMA_VERSION, actionModels: {}, relationModels: {}, pendingCredits: [], settledFeedback: [] },
         rngState: initialRng(manifest.seed),
         kernelStep: 0,
         changeSupervisor: createChangeSupervisor({
@@ -395,7 +396,7 @@ export async function runLab(input) {
         recordedAt: new Date().toISOString(),
         boundary: {
           schemaVersion: SCHEMA_VERSION,
-          kernelLearningVersion: 2,
+          kernelLearningVersion: KERNEL_LEARNING_VERSION,
           valueSpec: stepValueSpec,
           planning: { schemaVersion: SCHEMA_VERSION, horizon: planningHorizon },
           capabilities,

@@ -846,6 +846,60 @@ test('delayed feedback cannot settle an execution nonce that is absent from memo
   );
 });
 
+test('an identical delayed feedback delivery is idempotent after its original settlement', async () => {
+  const { learn, verify } = await loadKernel();
+  const request = actionRequest({ token: TOKEN_B, executionNonce: 'nonce:00000002' });
+  const intent = intentForRequest(request);
+  const receipt = receiptForRequest(request);
+  const priorFeedback = {
+    schemaVersion: 1,
+    executionNonce: 'nonce:00000001',
+    stateVersion: 'state-2',
+    intervalId: 'interval:state-2',
+    vector: [1.5, 0.75],
+    confounderCount: 0,
+  };
+  const postObservation = {
+    ...observation([1.5, 0.75], 'state-3'),
+    feedback: [priorFeedback],
+  };
+  const settled = learn({
+    memory: {
+      schemaVersion: 1,
+      actionModels: {},
+      settledFeedback: [priorFeedback],
+    },
+    intent,
+    receipt,
+    postObservation,
+    verification: verify({ intent, receipt, postObservation }),
+  });
+
+  assert.equal(settled.status, 'UPDATED');
+  assert.equal(settled.settled, undefined);
+  assert.equal(settled.nextMemory.settledFeedback.length, 1);
+  assert.equal(settled.nextMemory.actionModels[TOKEN_B].sampleCount, 1);
+
+  const contradictory = {
+    ...postObservation,
+    feedback: [{ ...priorFeedback, vector: [1.6, 0.75] }],
+  };
+  assertContractViolation(
+    () => learn({
+      memory: {
+        schemaVersion: 1,
+        actionModels: {},
+        settledFeedback: [priorFeedback],
+      },
+      intent,
+      receipt,
+      postObservation: contradictory,
+      verification: verify({ intent, receipt, postObservation: contradictory }),
+    }),
+    'contradictory settled feedback',
+  );
+});
+
 test('delayed feedback rejects a snapshot from the pending action boundary', async () => {
   const { step, verify, learn } = await loadKernel();
   const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });

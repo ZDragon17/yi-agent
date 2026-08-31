@@ -12,6 +12,7 @@ const MAX_PLANNING_CANDIDATES = 64;
 const MAX_PENDING_CREDITS = 64;
 const MAX_FEEDBACK_ITEMS = 64;
 const MAX_EXECUTION_NONCE_LENGTH = 256;
+const MAX_SETTLED_FEEDBACK = 64;
 
 const STEP_INPUT_KEYS = [
   'observation',
@@ -54,7 +55,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -427,6 +428,8 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
   const feedback = postObservation.feedback ?? [];
   const pendingCredits = memory.pendingCredits ?? [];
   const pendingByNonce = new Map(pendingCredits.map((credit) => [credit.executionNonce, credit]));
+  const settledFeedback = memory.settledFeedback ?? [];
+  const settledFeedbackByNonce = new Map(settledFeedback.map((item) => [item.executionNonce, item]));
   const settled = [];
   const cleanDeltas = [];
   const remaining = [];
@@ -438,8 +441,16 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
 
   for (const item of feedback) {
     const pending = pendingByNonce.get(item.executionNonce);
+    const prior = settledFeedbackByNonce.get(item.executionNonce);
     if (pending === undefined) {
+      if (prior !== undefined && feedbackEqual(prior, item)) continue;
       contractViolation('kernel feedback references no pending action', { field, executionNonce: item.executionNonce });
+    }
+    if (prior !== undefined) {
+      contractViolation('kernel feedback is contradictory for an already settled action', {
+        field,
+        executionNonce: item.executionNonce,
+      });
     }
     if (settledNonces.has(item.executionNonce)) {
       contractViolation('kernel feedback contains a duplicate execution nonce', { field, executionNonce: item.executionNonce });
@@ -452,6 +463,7 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
       });
     }
     if (item.confounderCount > 0) {
+      rememberSettledFeedback(memory, item);
       settled.push({
         schemaVersion: SCHEMA_VERSION,
         executionNonce: item.executionNonce,
@@ -484,6 +496,7 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
       dimensions,
       field: `learnOutput.nextMemory.settled.${item.executionNonce}`,
     });
+    rememberSettledFeedback(memory, item);
     cleanDeltas.push(actualDelta);
     settled.push({
       schemaVersion: SCHEMA_VERSION,
@@ -498,6 +511,17 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
 
   if (memory.pendingCredits !== undefined || feedback.length > 0) memory.pendingCredits = remaining;
   return { entries: settled, cleanDeltas };
+}
+
+function rememberSettledFeedback(memory, feedback) {
+  // Older ledgers do not carry a receipt window. Preserve their memory shape
+  // so replaying them does not manufacture a new learning field.
+  if (memory.settledFeedback === undefined) return;
+  const settledFeedback = memory.settledFeedback ?? [];
+  if (settledFeedback.some((item) => item.executionNonce === feedback.executionNonce)) return;
+  if (settledFeedback.length >= MAX_SETTLED_FEEDBACK) settledFeedback.shift();
+  settledFeedback.push(cloneFeedback(feedback));
+  memory.settledFeedback = settledFeedback;
 }
 
 function pendingBaselineObservation(intent, cleanDeltas) {
@@ -769,13 +793,24 @@ function normalizeMemory(value, field, dimensions) {
   const normalizedPendingCredits = source.pendingCredits === undefined
     ? undefined
     : normalizePendingCredits(source.pendingCredits, `${field}.pendingCredits`, dimensions);
+  const normalizedSettledFeedback = source.settledFeedback === undefined
+    ? undefined
+    : normalizeSettledFeedback(source.settledFeedback, `${field}.settledFeedback`, dimensions);
   return {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
     ...(normalizedRelations === undefined ? {} : { relationModels: normalizedRelations }),
     ...(normalizedRejections === undefined ? {} : { rejectionModels: normalizedRejections }),
     ...(normalizedPendingCredits === undefined ? {} : { pendingCredits: normalizedPendingCredits }),
+    ...(normalizedSettledFeedback === undefined ? {} : { settledFeedback: normalizedSettledFeedback }),
   };
+}
+
+function normalizeSettledFeedback(value, field, dimensions) {
+  const items = assertArray(value, field);
+  assertCollectionLimit(items.length, MAX_SETTLED_FEEDBACK, field);
+  const normalized = normalizeFeedback(items, field, dimensions);
+  return normalized;
 }
 
 function normalizePendingCredits(value, field, dimensions) {
@@ -1550,6 +1585,9 @@ function cloneMemory(value) {
       expectedDelta: cloneVector(credit.expectedDelta),
       ...(credit.relationKey === undefined ? {} : { relationKey: credit.relationKey }),
     }));
+  }
+  if (value.settledFeedback !== undefined) {
+    cloned.settledFeedback = value.settledFeedback.map(cloneFeedback);
   }
   return cloned;
 }

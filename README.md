@@ -116,6 +116,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 可审计运行时：事件账本、快照、锁、恢复和哈希链；
 - 证据闭环：行动前预期、行动回执、复观、验证、学习；
 - 延迟反馈归因：对已接受但尚未完成归因窗口的动作，按 executionNonce 持久保存有界 pending credit；后续 WorldPort 可返回匹配反馈，Kernel 只在证据闭合后学习，混杂反馈不会污染动作模型；该机制已用跨独立 CLI 进程、跨 Run 和 Replay 的外部 WorldPort 回归验证；
+- 反馈投递幂等：在有界已结算收据窗口内，完全相同的重复 feedback 可跨 Run/进程安全忽略；同 nonce 的不同内容仍会 fail-closed，避免把消息重放或篡改变成新的学习样本；
 - 变化监督器：用同一套目标距离、确认进步、停滞、重规划和停止判定约束不同世界；状态随 STEP、快照、终态和恢复账本连续保存，跨进程 CLI 可继续运行；
 - 连续 Runner：`agent loop` 把有限 STEP 批次串成多个已提交 Run；每个边界都可独立 Replay，进程重启后从同一个 current 继续；每个子 Run 的 `loopId/runIndex/scenario/budget` 都写入 immutable start，使用 `--resume` 时从账本重建剩余预算，不重复已提交 Run；
 - 进程级恢复回归：E2E 真实启动 CLI 子进程，在第二个模型请求挂起期间强制终止进程，显式回收死亡 owner 后继续下一 Run，验证 current 和 execution 链不回退；
