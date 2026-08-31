@@ -142,7 +142,6 @@ function defineWorld(worldId, worldSourcePath, definition) {
       scenarioIds: definition.scenarioIds,
       valueSpec: definition.valueSpec,
       sourceFiles: [
-        ['world-registry.mjs', readSourceFile(import.meta.url)],
         ['world-port-base.mjs', readSourceFile(new URL('../worlds/world-port-base.mjs', import.meta.url))],
         [worldSourcePath, readSourceFile(new URL(worldSourcePath, import.meta.url))],
       ],
