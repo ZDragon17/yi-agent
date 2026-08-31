@@ -105,9 +105,7 @@ async function dispatchAgent(options) {
   const goalPlan = options['goal-plan'] === undefined
     ? undefined
     : await readGoalPlanFile(options['goal-plan']);
-  const planner = options['auto-plan'] === true
-    ? createModelPlanner({ client, model: config.model })
-    : undefined;
+  const planner = createModelPlanner({ client, model: config.model });
   if (options.agentOperation === 'loop') {
     let interrupted = false;
     const onSignal = () => { interrupted = true; };
@@ -125,6 +123,7 @@ async function dispatchAgent(options) {
         registry: loadRegistry(options),
         advisor,
         planner,
+        autoPlan: options['auto-plan'] === true,
         goal: options.goal,
         goalPlan,
         maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
@@ -149,6 +148,7 @@ async function dispatchAgent(options) {
     registry: loadRegistry(options),
     advisor,
     planner,
+    autoPlan: options['auto-plan'] === true,
     goal: options.goal,
     goalPlan,
     maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),

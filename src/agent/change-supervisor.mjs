@@ -23,6 +23,7 @@ const STATE_KEYS = [
   'schemaVersion',
   'status',
   'enabled',
+  'plannerEnabled',
   'goal',
   'plan',
   'objective',
@@ -65,6 +66,7 @@ const STATUS_DECISIONS = Object.freeze({
 export function createChangeSupervisor({
   goal,
   enabled = true,
+  plannerEnabled = false,
   plan,
   valueSpec,
   maxCycles = 100,
@@ -86,6 +88,7 @@ export function createChangeSupervisor({
     schemaVersion: SCHEMA_VERSION,
     status: 'ACTIVE',
     enabled: requireBoolean(enabled, 'enabled'),
+    plannerEnabled: requireBoolean(plannerEnabled, 'plannerEnabled'),
     goal: normalizedGoal,
     objective: normalizedPlan.stages[0].objective,
     plan: normalizedPlan,
@@ -198,7 +201,42 @@ export function acknowledgeReplan(state, reason = 'strategy-change') {
   };
 }
 
-export function enableGoal(state, goal, plan) {
+export function reviseGoalPlan(state, plan) {
+  const current = normalizeState(state);
+  if (current.status !== 'REPLAN_REQUIRED' || current.plan === undefined) {
+    throw new Error('ChangeSupervisor can revise a plan only after REPLAN_REQUIRED with an existing plan.');
+  }
+  const currentIndex = current.plan.stages.findIndex((stage) => stage.id === current.plan.activeStageId);
+  const candidate = normalizePlan(plan, current.goal, current.objective, false);
+  if (candidate.rootGoal !== current.goal || candidate.stages.length <= currentIndex) {
+    throw new Error('ChangeSupervisor replanning must preserve the root goal and leave an unfinished stage.');
+  }
+  for (let index = 0; index < currentIndex; index += 1) {
+    if (!sameStageDefinition(current.plan.stages[index], candidate.stages[index])) {
+      throw new Error('ChangeSupervisor replanning cannot rewrite a completed stage.');
+    }
+  }
+  const stages = candidate.stages.map((stage, index) => ({
+    ...stage,
+    status: index < currentIndex ? 'COMPLETED' : index === currentIndex ? 'ACTIVE' : 'PENDING',
+    attempts: index === currentIndex ? stage.attempts : index < currentIndex ? current.plan.stages[index].attempts : stage.attempts,
+  }));
+  const nextPlan = {
+    ...candidate,
+    revision: requireBoundedInteger(current.plan.revision + 1, 0, MAX_CYCLES, 'plan.revision'),
+    activeStageId: stages[currentIndex].id,
+    stages,
+  };
+  return {
+    ...current,
+    objective: stages[currentIndex].objective,
+    plan: nextPlan,
+    bestDistance: null,
+    stagnation: 0,
+  };
+}
+
+export function enableGoal(state, goal, plan, plannerEnabled = undefined) {
   const current = normalizeState(state);
   const normalizedGoal = requireGoal(goal);
   if (current.enabled && current.goal !== normalizedGoal) {
@@ -209,7 +247,9 @@ export function enableGoal(state, goal, plan) {
     if (current.plan === undefined || !samePlanDefinition(current.plan, candidate)) {
       throw new Error('ChangeSupervisor cannot replace an enabled goal plan without a new lab.');
     }
-    return current;
+    return plannerEnabled === undefined || plannerEnabled === current.plannerEnabled
+      ? current
+      : { ...current, plannerEnabled: requireBoolean(plannerEnabled, 'plannerEnabled') };
   }
   const nextPlan = plan === undefined
     ? current.enabled ? current.plan : createPlan(undefined, normalizedGoal, current.objective)
@@ -218,6 +258,9 @@ export function enableGoal(state, goal, plan) {
   return {
     ...current,
     enabled: true,
+    plannerEnabled: plannerEnabled === undefined
+      ? current.plannerEnabled
+      : requireBoolean(plannerEnabled, 'plannerEnabled'),
     goal: normalizedGoal,
     ...(nextPlan === undefined ? {} : { plan: nextPlan, objective: activeStage.objective }),
   };
@@ -309,6 +352,7 @@ function normalizeState(value) {
     enabled: source.enabled === undefined
       ? source.goal !== '逼近 ValueSpec 目标'
       : requireBoolean(source.enabled, 'enabled'),
+    plannerEnabled: source.plannerEnabled === undefined ? false : requireBoolean(source.plannerEnabled, 'plannerEnabled'),
     goal: normalizedGoal,
     objective,
     maxCycles: requireBoundedInteger(source.maxCycles, 1, MAX_CYCLES, 'maxCycles'),
@@ -426,6 +470,10 @@ function advancePlan(plan, activeIndex) {
 
 function activePlanStage(plan) {
   return plan.stages.find((stage) => stage.id === plan.activeStageId);
+}
+
+function sameStageDefinition(left, right) {
+  return left.id === right.id && left.goal === right.goal && sameObjective(left.objective, right.objective);
 }
 
 function sameObjective(left, right) {

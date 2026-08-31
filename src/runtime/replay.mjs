@@ -10,7 +10,7 @@ import {
   isValidEvidencePublicKey,
   verifyExternalInputAttestation,
 } from './external-evidence.mjs';
-import { acknowledgeReplan, advanceChangeSupervisor, createChangeSupervisor, enableGoal, normalizeChangeSupervisorState, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
+import { acknowledgeReplan, advanceChangeSupervisor, createChangeSupervisor, enableGoal, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
 const REQUIRED_BOUNDARY_KEYS = ['schemaVersion', 'valueSpec'];
@@ -136,6 +136,9 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   if (payload.boundary.goalActivation !== undefined) {
     validateGoalActivation(payload.boundary.goalActivation, event.sequence);
   }
+  if (payload.boundary.goalReplan !== undefined) {
+    validateGoalReplan(payload.boundary.goalReplan, event.sequence);
+  }
   if (payload.policyEvidence !== undefined) validatePolicyEvidence(payload.policyEvidence, event.sequence);
   let capabilities;
   let beforeObservation;
@@ -234,6 +237,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
         ? createChangeSupervisor({
             goal: payload.boundary.goalActivation.goal,
             enabled: true,
+            plannerEnabled: payload.boundary.goalActivation.plannerEnabled === true,
             plan: payload.boundary.goalActivation.plan,
             valueSpec,
             maxCycles: payload.boundary.goalActivation.maxCycles,
@@ -241,13 +245,21 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
           })
         : payload.boundary.goalActivation === undefined
           ? normalizeChangeSupervisorState(state.changeSupervisor)
-          : enableGoal(state.changeSupervisor, payload.boundary.goalActivation.goal, payload.boundary.goalActivation.plan);
+          : enableGoal(
+              state.changeSupervisor,
+              payload.boundary.goalActivation.goal,
+              payload.boundary.goalActivation.plan,
+              payload.boundary.goalActivation.plannerEnabled === true,
+            );
       let nextSupervisor = advanceChangeSupervisor(resumeChangeSupervisor(baseSupervisor), {
         beforeObservation,
         postObservation,
         verification,
       });
       if (nextSupervisor.status === 'REPLAN_REQUIRED') {
+        if (payload.boundary.goalReplan?.plan !== undefined) {
+          nextSupervisor = reviseGoalPlan(nextSupervisor, payload.boundary.goalReplan.plan);
+        }
         nextSupervisor = acknowledgeReplan(nextSupervisor, 'supervisor-stagnation');
       }
       nextState.changeSupervisor = preserveLegacyActivationMarker(nextSupervisor, state.changeSupervisor, payload.boundary.goalActivation);
@@ -269,6 +281,9 @@ function validateGoalActivation(value, sequence) {
       !Number.isSafeInteger(value.stagnationLimit) || value.stagnationLimit < 1 || value.stagnationLimit > 100_000) {
     corrupt('STEP goal activation is invalid.', { sequence });
   }
+  if (value.plannerEnabled !== undefined && typeof value.plannerEnabled !== 'boolean') {
+    corrupt('STEP goal activation planner policy is invalid.', { sequence });
+  }
   if (value.planEvidence !== undefined) validatePlanEvidence(value.planEvidence, sequence);
 }
 
@@ -279,6 +294,16 @@ function validatePlanEvidence(value, sequence) {
       typeof value.applied !== 'boolean' ||
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
     corrupt('STEP planner evidence is invalid.', { sequence });
+  }
+}
+
+function validateGoalReplan(value, sequence) {
+  if (!isRecord(value) || value.schemaVersion !== SCHEMA_VERSION || value.planEvidence === undefined) {
+    corrupt('STEP goal replan is invalid.', { sequence });
+  }
+  validatePlanEvidence(value.planEvidence, sequence);
+  if (value.plan !== undefined && !isRecord(value.plan)) {
+    corrupt('STEP goal replan plan is invalid.', { sequence });
   }
 }
 

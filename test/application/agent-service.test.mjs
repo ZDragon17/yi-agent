@@ -402,6 +402,59 @@ test('invalid automatic planner proposals fall back to one validated root stage 
   });
 });
 
+test('automatic replanning revises only the unfinished plan and is frozen for Replay', async () => {
+  await withLab(async (lab) => {
+    let plannerCalls = 0;
+    const goal = '在混杂中持续调整';
+    const planner = async ({ plan }) => {
+      plannerCalls += 1;
+      const target = plan === null ? [30] : [25];
+      return {
+        model: 'replanning-test-planner',
+        responseDigest: `sha256:${'e'.repeat(64)}`,
+        plan: {
+          rootGoal: goal,
+          stages: [{ id: 'active', goal: '调整当前阶段', target }],
+        },
+      };
+    };
+    await initLab({ labPath: lab, labId: 'replanning-lab', worldId: 'temperature', seed: 'replanning-seed' });
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 2,
+      scenario: 'external-during-step',
+      goal,
+      planner,
+      stagnationLimit: 2,
+    });
+    assert.equal(result.metrics.executed, 2);
+    assert.equal(plannerCalls, 2);
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const steps = run.events.filter((event) => event.kind === 'STEP');
+    assert.equal(steps[0].payload.boundary.goalActivation.planEvidence.applied, true);
+    assert.equal(steps[1].payload.boundary.goalReplan.planEvidence.applied, true);
+    assert.equal(steps[1].payload.boundary.goalReplan.plan.stages[0].objective.target[0], 25);
+    assert.equal((await inspectLab({ labPath: lab })).current.changeSupervisor.plan.revision, 1);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+
+    const resumed = await runLab({
+      labPath: lab,
+      runId: 'run-2',
+      steps: 2,
+      scenario: 'external-during-step',
+      planner,
+      autoPlan: false,
+    });
+    assert.equal(resumed.metrics.executed, 2);
+    assert.equal(plannerCalls, 3);
+    const resumedRun = await (await LabStore.open({ labPath: lab })).readRun('run-2');
+    assert.equal(resumedRun.events.some((event) => event.kind === 'STEP' && event.payload.boundary.goalReplan?.planEvidence.applied === true), true);
+    assert.equal((await inspectLab({ labPath: lab })).current.changeSupervisor.plan.revision, 2);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-2' })).verdict, 'CONSISTENT');
+  });
+});
+
 test('continuous runner can stop a forever policy only between committed runs', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'forever-lab', worldId: 'temperature', seed: 'forever-seed' });

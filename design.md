@@ -23,7 +23,7 @@
 - CLI 负责：参数解析、调用应用服务、结构化/人类可读输出和退出码，不直接修改内核状态。
 - API client 负责：读取环境变量、调用 OpenAI-compatible `/models` 与 `/chat/completions`；它是显式工具，不进入 Kernel 的确定性决策链。
 - ModelAdvisor 负责：把有限的观测、目标和值域上下文转换为一个不可信的 token 提议；它不能写状态、调用 WorldPort 或更新 Memory。它可读取受限的总体/关系记忆摘要，但 Kernel 不接受其对记忆的改写。
-- ModelPlanner 负责：把有限的观测、根目标和值域上下文转换为不可信的阶段目标提议；它只能建议目标向量，不能改权重、权限、Token、WorldPort 状态或 Memory。Application 必须先用当前 ValueSpec 物化并校验计划，才允许激活；失败时退回单阶段根目标。
+- ModelPlanner 负责：把有限的观测、根目标和值域上下文转换为不可信的阶段目标提议；它只能建议目标向量，不能改权重、权限、Token、WorldPort 状态或 Memory。Application 必须先用当前 ValueSpec 物化并校验计划，才允许激活或修订；失败时首次激活退回单阶段根目标，停滞修订则保留原计划。
 - ChangeSupervisor 负责：在不认识领域名称的前提下，根据 `ValueSpec` 计算目标距离，区分确认变化与歧义/拒绝，累计停滞，要求重规划，并在目标达成或预算耗尽时给出停止判定；它不能执行 WorldPort、调用模型或自行改变目标。运行时把目标是否由用户显式激活（`enabled`）与目标文本一并持久化，后续 Run 不传 `--goal` 也延续同一监督意图；记录原因后可开启下一周期，避免跨 Run/进程丢失连续性。
 - v0.1 默认含 `temperature`、`virtual-desktop`、`inventory`、`grid` 与 `queue` 五个内置模拟世界；另提供显式外部 WorldPort adapter 协议，但不提供动态发现、任意 in-process import 或真实副作用保证。
 - 信任边界：CLI 参数与磁盘数据都按畸形/损坏输入校验；无密钥 SHA-256 链只检测偶然损坏或未重算篡改，不提供对主动攻击者的真实性证明。
@@ -43,8 +43,8 @@
 | `effect plan|confirm|execute|reconcile|compensate|reconcile-compensation|inspect --journal PATH [--sandbox-root PATH] [--intent PATH] [--nonce N] [--json]` | EffectIntent、durable journal、显式标记 sandbox | EffectBroker 状态快照或全部 effect 状态 | 参数 64；损坏 3；不存在 66；I/O 74；状态错误 70 | 每次进程从 journal 恢复；execute/compensate 只允许标记 sandbox root |
 | `api test [--json]` | 环境变量中的 API 配置 | 连通状态与模型数量 | 参数 64；API 74；协议 70 | 无本地状态副作用 |
 | `ask --prompt TEXT|--prompt-file PATH [--json]` | 环境变量中的 API 配置与用户提示 | 模型、回答、可选 usage | 参数 64；API 74；协议 70 | 单次非流式请求；提示文件只读 |
-| `agent run --lab PATH --steps N [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 每步一次模型提议；首次 `--auto-plan` 只请求一次 Planner；replay 不访问 API；激活计划随 current 延续 |
-| `agent loop --lab PATH --steps N [--runs N|--forever] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；SIGINT/SIGTERM 只在 Run 边界停止；重启从 current 继续；Planner 计划只在首次激活时请求 |
+| `agent run --lab PATH --steps N [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 每步一次模型提议；`--auto-plan` 激活持久化 Planner 策略；停滞时只修订未完成计划；replay 不访问 API |
+| `agent loop --lab PATH --steps N [--runs N|--forever] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；SIGINT/SIGTERM 只在 Run 边界停止；重启从 current 继续；Planner 策略、计划修订和关系记忆均从 current 恢复 |
 
 标准错误对象：`{code, message, context?, recoverable}`。`--json` 时成功或失败都只在 stdout 输出一个 JSON envelope，stderr 保持空；仅 CLI 启动前的致命错误可写 stderr。人类模式的错误写 stderr。
 
@@ -196,7 +196,7 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 - `runs/<runId>/start.json`：每 Run 不可变起点，记录 worldId 与规范化 scenario，引用 manifest 的稳定 tokenMapDigest，含规范化连续性投影和起始摘要；tokenMap 与 scenario 均不进入 Kernel 输入。
 - `runs/<runId>/events.jsonl`：Run 内 sequence 从 1 连续递增；每行含 schemaVersion、runId、sequence、kind、payload、prevDigest、digest。
 - 应用服务的长跑模式将 STEP 的完整 `payload` 无损 deflate 后以 base64 字符串写入 JSONL；Runtime 读取时还原为同一语义对象，再执行原有 schema、摘要链和重放校验。`RUN_STARTED`、终态事件和公开 `LabStore` 默认仍使用普通 JSON 对象；外层 sequence/prevDigest/digest 始终明文。每次追加都执行 data-sync 后才返回，压缩不改变证据完整性或恢复边界。
-- STEP payload 必填：`recordedAt,boundary,beforeObservation,memoryEvidenceProjection,beforeDigest,expectation,choice,receipt,postObservation,verification{schemaVersion,error,attribution,confidence,learnable},update,afterDigest,rngBefore,rngAfter,externalInputs,afterState`。其中 `boundary` 至少含 `{schemaVersion:1,valueSpec}`，外部 Run 还必须含 `externalInputsDigest`；它把该步 Kernel 决策所需的目标/权重和整组外部输入固定进账本；Replay 不接受调用者默认值。`afterState` 是该步完整连续性投影 `{worldState,memory,rngState,kernelStep,changeSupervisor}`，用于账本已落盘而 current 尚未发布时的确定性恢复；`changeSupervisor` 仍只由同一套观察向量、ValueSpec、归因和变化证据推进；若某个变化周期完成、停滞或耗尽预算，运行时会记录原因并开启下一变化周期，保持长期运行而不丢失历史证据；`memoryEvidenceProjection` 记录本次预测实际使用的样本数、均值和不确定度摘要；时间只审计，不进决策摘要。
+- STEP payload 必填：`recordedAt,boundary,beforeObservation,memoryEvidenceProjection,beforeDigest,expectation,choice,receipt,postObservation,verification{schemaVersion,error,attribution,confidence,learnable},update,afterDigest,rngBefore,rngAfter,externalInputs,afterState`。其中 `boundary` 至少含 `{schemaVersion:1,valueSpec}`，外部 Run 还必须含 `externalInputsDigest`；它把该步 Kernel 决策所需的目标/权重和整组外部输入固定进账本；可选的 `boundary.goalActivation` 固定初次目标/计划/Planner 策略，可选的 `boundary.goalReplan` 固定停滞后的计划修订及其证据，Replay 不接受调用者默认值或重新请求 Planner。`afterState` 是该步完整连续性投影 `{worldState,memory,rngState,kernelStep,changeSupervisor}`，用于账本已落盘而 current 尚未发布时的确定性恢复；`changeSupervisor` 仍只由同一套观察向量、ValueSpec、归因和变化证据推进；若某个变化周期完成、停滞或耗尽预算，运行时会记录原因并开启下一变化周期，保持长期运行而不丢失历史证据；`memoryEvidenceProjection` 记录本次预测实际使用的样本数、均值和不确定度摘要；时间只审计，不进决策摘要。
 - `externalInputs` 每项固定为 `{schemaVersion:1,source:"scenario",kind,payload,appliedBeforeVersion,digest,attestation}`；`digest` 覆盖除 `digest`/`attestation` 外的输入字段，`attestation` 是适配器以 manifest 绑定的 Ed25519 私钥对“规范化输入 + digest”的签名。未知版本、摘要或签名错误为 CORRUPT。已注册内置 scenario 使用其 schema 校验；声明式通用 WorldPort 场景只受 Runtime 的结构与摘要契约约束，不接受任意代码。
 - `runs/<runId>/end.json`：终态、finalSequence、finalEventDigest、finalStateDigest 和自摘要；Run 终态后不可修改。完整前缀截断会与 finalSequence/digest 不符。
 - manifest/current/start/end 均含 schemaVersion 和 canonical selfDigest；current 还校验引用的 run/sequence/eventDigest。tokenMap 属于 manifest 自摘要。未知 schema、任一对象摘要错、引用错、终态事件与 end 不符均为 CORRUPT。

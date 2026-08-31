@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { LabStore, LabStoreError } from '../runtime/lab-store.mjs';
 import { canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { learn, stepWithPreference, verify } from '../kernel/index.mjs';
-import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
+import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
 import {
   builtInWorldRegistry,
@@ -55,11 +55,15 @@ export async function runLab(input) {
   const failpoint = typeof source.failpoint === 'function' ? source.failpoint : undefined;
   const supervisorMaxCycles = requireBoundedOptional(source.maxCycles, 1, 1_000_000, 'maxCycles') ?? 1_000_000;
   const supervisorStagnationLimit = requireBoundedOptional(source.stagnationLimit, 1, 100_000, 'stagnationLimit') ?? 3;
-  const plannerRequested = source.planner !== undefined;
-  if (plannerRequested && (source.goal === undefined || source.goal === null)) {
+  if (source.autoPlan !== undefined && typeof source.autoPlan !== 'boolean') {
+    throw new LabStoreError('INVALID_INPUT', 'autoPlan must be a boolean.', { field: 'autoPlan' });
+  }
+  const planningExplicitlyRequested = source.autoPlan === true ||
+    (source.autoPlan === undefined && source.planner !== undefined);
+  if (planningExplicitlyRequested && (source.goal === undefined || source.goal === null)) {
     throw new LabStoreError('INVALID_INPUT', 'planner requires an explicit goal.', { field: 'goal' });
   }
-  if (plannerRequested && source.goalPlan !== undefined) {
+  if (planningExplicitlyRequested && source.goalPlan !== undefined) {
     throw new LabStoreError('INVALID_INPUT', 'planner and goalPlan are mutually exclusive.', { fields: ['planner', 'goalPlan'] });
   }
   const store = await LabStore.open({ labPath });
@@ -77,7 +81,8 @@ export async function runLab(input) {
         kernelStep: 0,
         changeSupervisor: createChangeSupervisor({
           goal: source.goal ?? source.goalPlan?.rootGoal ?? '逼近 ValueSpec 目标',
-          enabled: goalRequested && !plannerRequested,
+          enabled: goalRequested && !planningExplicitlyRequested,
+          plannerEnabled: planningExplicitlyRequested,
           plan: source.goalPlan,
           valueSpec: spec,
           maxCycles: supervisorMaxCycles,
@@ -89,6 +94,8 @@ export async function runLab(input) {
     ? null
     : normalizeChangeSupervisorState(initialState.changeSupervisor);
   const requestedGoal = source.goal ?? source.goalPlan?.rootGoal ?? existingSupervisor?.goal ?? '逼近 ValueSpec 目标';
+  const plannerRequested = source.planner !== undefined &&
+    (planningExplicitlyRequested || existingSupervisor?.plannerEnabled === true);
   if (current.lastRunId !== null && existingSupervisor?.enabled === true && goalRequested && existingSupervisor.goal !== requestedGoal) {
     throw new LabStoreError('CONFLICT', 'An enabled goal cannot be replaced in an existing lab.', { field: 'goal' });
   }
@@ -141,6 +148,7 @@ export async function runLab(input) {
       : createChangeSupervisor({
           goal: requestedGoal,
           enabled: true,
+          plannerEnabled: plannerRequested,
           plan: activationPlan,
           valueSpec: spec,
           maxCycles: supervisorMaxCycles,
@@ -148,12 +156,13 @@ export async function runLab(input) {
         }));
     const supervisor = baseSupervisor === null || !goalRequested
       ? baseSupervisor
-      : enableGoal(baseSupervisor, requestedGoal, activationPlan);
+      : enableGoal(baseSupervisor, requestedGoal, activationPlan, plannerRequested ? true : undefined);
     const activatedPlan = supervisor === null ? undefined : goalPlanForActivation(supervisor);
     const goalActivation = supervisor?.enabled === true && previousSupervisor?.enabled !== true
       ? {
           schemaVersion: SCHEMA_VERSION,
           goal: supervisor.goal,
+          plannerEnabled: supervisor.plannerEnabled,
           maxCycles: supervisor.maxCycles,
           stagnationLimit: supervisor.stagnationLimit,
           ...(activatedPlan === undefined ? {} : { plan: activatedPlan }),
@@ -225,7 +234,41 @@ export async function runLab(input) {
       postObservation,
       verification,
     });
+    let goalReplan = null;
     if (nextChangeSupervisor?.status === 'REPLAN_REQUIRED') {
+      if (plannerRequested) {
+        const plannerResult = await requestPlan({
+          planner: source.planner,
+          goal: requestedGoal,
+          observation: postObservation,
+          valueSpec: spec,
+          memory: update.nextMemory,
+          manifest,
+          plan: nextChangeSupervisor.plan,
+          reason: 'STAGNATION',
+          step: state.kernelStep + 1,
+        });
+        if (plannerResult.plan !== undefined) {
+          try {
+            nextChangeSupervisor = reviseGoalPlan(nextChangeSupervisor, plannerResult.plan);
+            goalReplan = {
+              schemaVersion: SCHEMA_VERSION,
+              plan: nextChangeSupervisor.plan,
+              planEvidence: plannerResult.evidence,
+            };
+          } catch {
+            goalReplan = {
+              schemaVersion: SCHEMA_VERSION,
+              planEvidence: { ...plannerResult.evidence, applied: false, reason: 'PLAN_REJECTED' },
+            };
+          }
+        } else {
+          goalReplan = {
+            schemaVersion: SCHEMA_VERSION,
+            planEvidence: plannerResult.evidence,
+          };
+        }
+      }
       nextChangeSupervisor = acknowledgeReplan(nextChangeSupervisor, 'supervisor-stagnation');
     }
     const nextState = {
@@ -245,6 +288,7 @@ export async function runLab(input) {
           capabilities,
           ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
           ...(goalActivation === null ? {} : { goalActivation }),
+          ...(goalReplan === null ? {} : { goalReplan }),
           externalInputsDigest: canonicalDigest(externalInputs),
         },
         beforeObservation,
@@ -399,10 +443,10 @@ function preferenceFor(modelDecision) {
     : { schemaVersion: SCHEMA_VERSION, token: modelDecision.token };
 }
 
-async function requestPlan({ planner, goal, observation, valueSpec, memory, manifest, step }) {
+async function requestPlan({ planner, goal, observation, valueSpec, memory, manifest, plan = null, reason = null, step }) {
   let result;
   try {
-    result = await planner({ goal, observation, valueSpec, memory, manifest, step });
+    result = await planner({ goal, observation, valueSpec, memory, manifest, plan, reason, step });
   } catch {
     return {
       plan: undefined,

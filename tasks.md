@@ -189,7 +189,7 @@
 
 - 原理：Planner 不是第二个执行内核，而是对同一根目标提出有限阶段候选；权重、维度、权限、Token 和真实状态仍由 WorldPort、Application、Kernel 与账本拥有。
 - 实现：`src/agent/model-planner.mjs` 生成不可信阶段目标提议；Application 继承当前 ValueSpec 的权重与维度，校验有限数值、阶段数量、根目标一致性和顺序后才激活；首次 STEP 同时记录冻结计划与 `planEvidence`，无效提议回退单阶段根目标。
-- 验证：模型有效提议只请求一次；非法 JSON、错误维度、Planner 异常均不改变执行边界；后续 Run、重启和 Replay 不重新请求 Planner；CLI `--auto-plan` 与显式 `--goal-plan` 互斥。
+- 验证：模型有效提议在首次激活时只请求一次；非法 JSON、错误维度、Planner 异常均不改变执行边界；后续普通 Run、重启和 Replay 不重复请求 Planner，只有持久化停滞策略才会为未完成计划请求修订；CLI `--auto-plan` 与显式 `--goal-plan` 互斥。
 - 边界：Planner 仍不能从自然语言证明目标正确，也不能替代长期语义记忆、现实因果识别或人工授权；当前证明的是“模型可提出、宿主可验证、账本可恢复”的自动分解边界。
 
 ## F-12 关系条件长期记忆
@@ -198,6 +198,13 @@
 - 实现：Kernel 在 StepIntent 中记录可选关系签名；经 `ACTION && learnable` 验证后，同时更新总体 `actionModels` 和条件 `relationModels`。Application 为新实验启用关系记忆，旧账本缺失该字段时保持兼容；InspectView 暴露关系模型数量和每个 action 的条件模型。
 - 验证：相同 Token 在两个关系签名下采用不同已验证模型；关系模型只在可归因变化时增长，歧义/拒绝不增长；跨 Run、重启、Replay 及五个 WorldPort 保持同一关系签名和预测结果。
 - 边界：关系签名是数值层的有限抽象，不等于自然语言语义、因果模型或跨世界 Token 对齐；下一步仍需验证关系模型在动力学变化和多目标迁移中的实际收益。
+
+## F-13 反馈驱动的计划修订
+
+- 原理：停滞不是简单切换策略，而是对当前未完成变化假设的反证；允许有限 Planner 提出新路径，但已完成阶段和根目标必须保持不变。
+- 实现：`reviseGoalPlan` 只接受 `REPLAN_REQUIRED` 状态，保留已完成阶段前缀，修订未完成后缀并递增 `plan.revision`；Planner 是否可在后续 Run 触发由持久化的 `plannerEnabled` 决定；`boundary.goalReplan` 保存修订计划和 `planEvidence`。
+- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；全量门禁 198/198。
+- 边界：计划修订仍是有限向量搜索，不代表模型理解了自然语言目标、获得了现实因果能力或实现了开放式自我改进。
 
 ## F-9 连续 Run Runner
 

@@ -28,12 +28,14 @@ export function createModelPlanner({ client, model } = {}) {
   };
 }
 
-export function buildPlanningPrompt({ goal = null, observation, valueSpec, memory, step = 0 } = {}) {
+export function buildPlanningPrompt({ goal = null, observation, valueSpec, memory, plan = null, reason = null, step = 0 } = {}) {
   const context = {
     goal: typeof goal === 'string' && goal.length > 0 ? goal : null,
     step,
     observation,
     valueSpec,
+    currentPlan: plan,
+    reason,
     memory: memorySummary(memory),
   };
   const prompt = [
@@ -41,6 +43,7 @@ export function buildPlanningPrompt({ goal = null, observation, valueSpec, memor
     'Propose a short sequence of measurable intermediate objectives for the supplied goal.',
     'Do not propose actions, capabilities, tokens, code, or claims about the outside world.',
     'Use the same observation dimensions as valueSpec. Every objective must be finite and bounded.',
+    'If currentPlan is present, preserve its completed prefix exactly and only revise its unfinished suffix.',
     'Return JSON only with exactly this shape: {"rootGoal":"...","stages":[{"id":"...","goal":"...","target":[...]}]}.',
     'The host validates the proposal and may reject it; a rejected proposal falls back to one bounded root stage.',
     JSON.stringify(context),

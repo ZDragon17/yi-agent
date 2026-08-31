@@ -7,6 +7,7 @@ import {
   enableGoal,
   normalizeChangeSupervisorState,
   resumeChangeSupervisor,
+  reviseGoalPlan,
   weightedDistance,
 } from '../../src/agent/change-supervisor.mjs';
 
@@ -157,6 +158,7 @@ test('goal activation is durable and legacy states normalize without an activati
   assert.equal(enabled.enabled, true);
   assert.equal(enabled.goal, '用户目标');
   assert.equal(enabled.plan.rootGoal, '用户目标');
+  assert.equal(enableGoal(disabled, '用户目标', undefined, true).plannerEnabled, true);
   const legacy = { ...createChangeSupervisor({ goal: '逼近 ValueSpec 目标', valueSpec }) };
   delete legacy.enabled;
   assert.equal(normalizeChangeSupervisorState(legacy).enabled, false);
@@ -203,6 +205,56 @@ test('a goal plan advances through measurable stages using the same distance rul
   });
   assert.equal(completed.status, 'COMPLETED');
   assert.equal(completed.lastChange.stopReason, 'OBJECTIVE_REACHED');
+});
+
+test('replanning can replace only the unfinished suffix and preserves completed stages', () => {
+  const supervisor = createChangeSupervisor({
+    goal: '保留完成历史',
+    valueSpec,
+    stagnationLimit: 1,
+    plan: {
+      rootGoal: '保留完成历史',
+      stages: [
+        { id: 'done', goal: '已完成阶段', objective: { ...valueSpec, target: [9, 10] } },
+        { id: 'stuck', goal: '原停滞阶段', objective: { ...valueSpec, target: [10, 10] } },
+        { id: 'final', goal: '最终阶段' },
+      ],
+    },
+  });
+  const first = advanceChangeSupervisor(supervisor, {
+    beforeObservation: observation('state:0', [8, 9]),
+    postObservation: observation('state:1', [9, 10]),
+    verification: verification('ACTION', true),
+  });
+  const stuck = advanceChangeSupervisor(first, {
+    beforeObservation: observation('state:1', [9, 10]),
+    postObservation: observation('state:2', [9, 10]),
+    verification: verification('ACTION', true),
+  });
+  const revised = reviseGoalPlan(stuck, {
+    rootGoal: '保留完成历史',
+    stages: [
+      { id: 'done', goal: '已完成阶段', objective: { ...valueSpec, target: [9, 10] } },
+      { id: 'detour', goal: '改走新阶段', objective: { ...valueSpec, target: [9, 11] } },
+      { id: 'final', goal: '最终阶段' },
+    ],
+  });
+  assert.equal(stuck.status, 'REPLAN_REQUIRED');
+  assert.equal(revised.plan.revision, 2);
+  assert.equal(revised.plan.stages[0].status, 'COMPLETED');
+  assert.equal(revised.plan.activeStageId, 'detour');
+  assert.deepEqual(revised.plan.stages[0].objective.target, [9, 10]);
+  assert.equal(acknowledgeReplan(revised).status, 'ACTIVE');
+  assert.throws(
+    () => reviseGoalPlan(stuck, {
+      rootGoal: '保留完成历史',
+      stages: [
+        { id: 'done', goal: '被篡改', objective: { ...valueSpec, target: [0, 0] } },
+        { id: 'detour', goal: '改走新阶段', objective: { ...valueSpec, target: [9, 11] } },
+      ],
+    }),
+    /cannot rewrite a completed stage/u,
+  );
 });
 
 test('supervisor snapshots data descriptors before reading untrusted inputs', () => {
