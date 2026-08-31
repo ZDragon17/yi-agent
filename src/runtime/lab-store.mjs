@@ -37,6 +37,7 @@ const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
 const MAX_PLANNING_HORIZON = 8;
 const MAX_WORLD_VERSION_LENGTH = 4096;
+const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
 export const INTERNAL_RUN_APPEND = Symbol('yi-agent.internal-run-append');
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
@@ -68,6 +69,9 @@ export class LabStore {
     const worldVersion = input.worldVersion === undefined
       ? null
       : requireWorldVersion(input.worldVersion, 'worldVersion');
+    const worldImplementationDigest = input.worldImplementationDigest === undefined
+      ? null
+      : requireWorldImplementationDigest(input.worldImplementationDigest, 'worldImplementationDigest');
     const scenarioIds = input.scenarioIds === undefined
       ? null
       : normalizeScenarioIds(input.scenarioIds, 'scenarioIds');
@@ -96,6 +100,10 @@ export class LabStore {
       }
       if (worldVersion !== null && manifest.worldVersion !== undefined && manifest.worldVersion !== worldVersion) {
         conflict('Existing lab world contract differs.', { field: 'worldVersion' });
+      }
+      if (worldImplementationDigest !== null && manifest.worldImplementationDigest !== undefined &&
+          manifest.worldImplementationDigest !== worldImplementationDigest) {
+        conflict('Existing lab world implementation contract differs.', { field: 'worldImplementationDigest' });
       }
       if (scenarioIds !== null
         && manifest.scenarioIds !== undefined
@@ -138,6 +146,7 @@ export class LabStore {
         worldId,
         seed,
         ...(worldVersion === null ? {} : { worldVersion }),
+        ...(worldImplementationDigest === null ? {} : { worldImplementationDigest }),
         createdAt: marker.createdAt,
         canonicalRoot: root,
         tokenMap: manifestTokenMap,
@@ -1784,9 +1793,20 @@ function isValidWorldVersion(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_WORLD_VERSION_LENGTH;
 }
 
+function isValidWorldImplementationDigest(value) {
+  return typeof value === 'string' && WORLD_IMPLEMENTATION_DIGEST_PATTERN.test(value);
+}
+
 function requireWorldVersion(value, field) {
   if (!isValidWorldVersion(value)) {
     throw new LabStoreError('INVALID_INPUT', `${field} must be a non-empty string.`, { field });
+  }
+  return value;
+}
+
+function requireWorldImplementationDigest(value, field) {
+  if (!isValidWorldImplementationDigest(value)) {
+    throw new LabStoreError('INVALID_INPUT', `${field} must be a SHA-256 digest.`, { field });
   }
   return value;
 }
@@ -1932,6 +1952,10 @@ async function validateInitializedLab(root, manifest) {
   await validateManifestRoot(root, manifest);
   if (manifest.worldVersion !== undefined && !isValidWorldVersion(manifest.worldVersion)) {
     corrupt('World version contract is invalid.', { field: 'worldVersion' });
+  }
+  if (manifest.worldImplementationDigest !== undefined &&
+      !isValidWorldImplementationDigest(manifest.worldImplementationDigest)) {
+    corrupt('World implementation contract is invalid.', { field: 'worldImplementationDigest' });
   }
   if (manifest.scenarioIds !== undefined && !isValidScenarioIds(manifest.scenarioIds)) {
     corrupt('Scenario contract is invalid.', {});

@@ -7,41 +7,41 @@ import { createTemperatureWorld } from '../worlds/temperature.mjs';
 import { createVirtualDesktopWorld } from '../worlds/virtual-desktop.mjs';
 
 const WORLD_DEFINITIONS = {
-  temperature: {
+  temperature: defineWorld('temperature', {
     worldVersion: 'temperature.v1',
     factory: createTemperatureWorld,
     capabilities: ['temperature.increase', 'temperature.decrease'],
     scenarioIds: ['steady', 'regime-shift', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 1, weights: [1], target: [22] },
-  },
-  'virtual-desktop': {
+  }),
+  'virtual-desktop': defineWorld('virtual-desktop', {
     worldVersion: 'virtual-desktop.v1',
     factory: createVirtualDesktopWorld,
     capabilities: ['desktop.move-report', 'desktop.move-protected'],
     scenarioIds: ['steady', 'new-files', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 5, weights: [1, 1, 1, 1, 1], target: [0, 0, 9, 9, 2] },
-  },
-  inventory: {
+  }),
+  inventory: defineWorld('inventory', {
     worldVersion: 'inventory.v1',
     factory: createInventoryWorld,
     capabilities: ['inventory.restock-a', 'inventory.restock-b', 'inventory.fulfill'],
     scenarioIds: ['steady', 'supply-shock', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 3, weights: [1, 1, 1], target: [8, 8, 0] },
-  },
-  grid: {
+  }),
+  grid: defineWorld('grid', {
     worldVersion: 'grid.v1',
     factory: createGridWorld,
     capabilities: ['grid.move-south', 'grid.move-east', 'grid.move-north', 'grid.move-west', 'grid.teleport'],
     scenarioIds: ['steady', 'blocked-route', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 4, weights: [1, 1, 1, 1], target: [2, 2, 2, 2] },
-  },
-  queue: {
+  }),
+  queue: defineWorld('queue', {
     worldVersion: 'queue.v1',
     factory: createQueueWorld,
     capabilities: ['queue.serve', 'queue.admit', 'queue.clear'],
     scenarioIds: ['steady', 'burst', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 3, weights: [1, 1, 1], target: [0, 5, 5] },
-  },
+  }),
 };
 
 export function createWorldRegistry(definitions = WORLD_DEFINITIONS) {
@@ -61,7 +61,7 @@ export function createWorldRegistry(definitions = WORLD_DEFINITIONS) {
           context: { field: 'adapter' },
         });
       }
-      assertWorldVersion(manifest, definition(manifest.worldId));
+      assertWorldIdentity(manifest, definition(manifest.worldId));
     },
     worldDefinition: definition,
     createWorld(manifest, scenario = 'steady') {
@@ -94,6 +94,7 @@ export function createWorldRegistry(definitions = WORLD_DEFINITIONS) {
       );
       return {
         worldVersion: requireWorldVersion(worldDefinition.worldVersion, worldId),
+        worldImplementationDigest: requireWorldImplementationDigest(worldDefinition, worldId),
         scenarioIds: [...worldDefinition.scenarioIds],
         tokenMap,
         authorityPolicy: {
@@ -128,6 +129,20 @@ export function createWorldRegistry(definitions = WORLD_DEFINITIONS) {
   });
 }
 
+function defineWorld(worldId, definition) {
+  return {
+    ...definition,
+    worldImplementationDigest: canonicalDigest({
+      worldId,
+      worldVersion: definition.worldVersion,
+      factorySource: definition.factory.toString(),
+      capabilities: definition.capabilities,
+      scenarioIds: definition.scenarioIds,
+      valueSpec: definition.valueSpec,
+    }),
+  };
+}
+
 function requireWorldVersion(value, worldId) {
   if (typeof value !== 'string' || value.length === 0 || value.length > 4096) {
     throw new Error(`World ${worldId} must declare a non-empty worldVersion.`);
@@ -135,7 +150,15 @@ function requireWorldVersion(value, worldId) {
   return value;
 }
 
-function assertWorldVersion(manifest, worldDefinition) {
+function requireWorldImplementationDigest(worldDefinition, worldId) {
+  const value = worldDefinition.worldImplementationDigest;
+  if (typeof value !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value)) {
+    throw new Error(`World ${worldId} must declare a valid worldImplementationDigest.`);
+  }
+  return value;
+}
+
+function assertWorldIdentity(manifest, worldDefinition) {
   if (manifest?.worldVersion === undefined) return;
   const expected = requireWorldVersion(worldDefinition.worldVersion, manifest.worldId);
   if (manifest.worldVersion !== expected) {
@@ -143,6 +166,15 @@ function assertWorldVersion(manifest, worldDefinition) {
       code: 'CONFLICT',
       context: { field: 'worldVersion', expected, actual: manifest.worldVersion },
     });
+  }
+  if (manifest.worldImplementationDigest !== undefined) {
+    const expectedDigest = requireWorldImplementationDigest(worldDefinition, manifest.worldId);
+    if (manifest.worldImplementationDigest !== expectedDigest) {
+      throw Object.assign(new Error('The supplied WorldPort implementation does not match the lab world contract.'), {
+        code: 'CONFLICT',
+        context: { field: 'worldImplementationDigest', expected: expectedDigest, actual: manifest.worldImplementationDigest },
+      });
+    }
   }
 }
 

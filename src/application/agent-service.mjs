@@ -32,6 +32,14 @@ export async function initLab(input) {
       actual: manifestParts.worldVersion ?? null,
     });
   }
+  if (definition?.worldImplementationDigest !== undefined &&
+      manifestParts.worldImplementationDigest !== definition.worldImplementationDigest) {
+    throw new LabStoreError('CONFLICT', 'World registry did not persist its declared implementation contract.', {
+      field: 'worldImplementationDigest',
+      expected: definition.worldImplementationDigest,
+      actual: manifestParts.worldImplementationDigest ?? null,
+    });
+  }
   const store = await LabStore.init({
     labPath: requireText(source.labPath, 'labPath'),
     labId,
@@ -45,6 +53,8 @@ export async function initLab(input) {
     canonicalJson(store.manifest.authorityPolicy) !== canonicalJson(manifestParts.authorityPolicy) ||
     (store.manifest.worldVersion !== undefined &&
       canonicalJson(store.manifest.worldVersion) !== canonicalJson(manifestParts.worldVersion)) ||
+    (store.manifest.worldImplementationDigest !== undefined &&
+      canonicalJson(store.manifest.worldImplementationDigest) !== canonicalJson(manifestParts.worldImplementationDigest)) ||
     (store.manifest.scenarioIds !== undefined &&
       canonicalJson(store.manifest.scenarioIds) !== canonicalJson(manifestParts.scenarioIds))
   ) {
@@ -958,6 +968,15 @@ function resolveRegistry(value) {
           field: 'worldVersion',
           expected: definition?.worldVersion ?? null,
           actual: manifest.worldVersion,
+        });
+      }
+      if (manifest.worldImplementationDigest !== undefined &&
+          (typeof definition?.worldImplementationDigest !== 'string' ||
+            manifest.worldImplementationDigest !== definition.worldImplementationDigest)) {
+        throw new LabStoreError('CONFLICT', 'The supplied WorldPort implementation does not match the lab world contract.', {
+          field: 'worldImplementationDigest',
+          expected: definition?.worldImplementationDigest ?? null,
+          actual: manifest.worldImplementationDigest,
         });
       }
     },

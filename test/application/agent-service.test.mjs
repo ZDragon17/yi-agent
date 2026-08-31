@@ -218,8 +218,8 @@ test('application service runs full steps when no explicit goal is provided', as
 
 test('lab continuation does not silently accept a different WorldPort implementation', async () => {
   await withLab(async (lab) => {
-    const worldA = createGeneratedRegistry({ stepDelta: 1, worldVersion: 'generated.v1' });
-    const worldB = createGeneratedRegistry({ stepDelta: 2, worldVersion: 'generated.v2' });
+    const worldA = createGeneratedRegistry({ stepDelta: 1, worldVersion: 'generated.v1', worldImplementationDigest: `sha256:${'a'.repeat(64)}` });
+    const worldB = createGeneratedRegistry({ stepDelta: 2, worldVersion: 'generated.v2', worldImplementationDigest: `sha256:${'b'.repeat(64)}` });
     await initLab({ labPath: lab, labId: 'world-identity-lab', worldId: 'generated', seed: 'world-identity-seed', registry: worldA });
     await runLab({ labPath: lab, runId: 'world-a', steps: 1, scenario: 'generated', registry: worldA });
 
@@ -232,6 +232,21 @@ test('lab continuation does not silently accept a different WorldPort implementa
       () => replayLab({ labPath: lab, runId: 'world-a', registry: worldB }),
       (error) => error.code === 'CONFLICT' && error.context.field === 'worldVersion',
     );
+  });
+});
+
+test('WorldPort implementation drift is rejected even when its version is unchanged', async () => {
+  await withLab(async (lab) => {
+    const worldA = createGeneratedRegistry({ stepDelta: 1, worldVersion: 'generated.v1', worldImplementationDigest: `sha256:${'a'.repeat(64)}` });
+    const worldB = createGeneratedRegistry({ stepDelta: 2, worldVersion: 'generated.v1', worldImplementationDigest: `sha256:${'b'.repeat(64)}` });
+    await initLab({ labPath: lab, labId: 'same-version-drift-lab', worldId: 'generated', seed: 'same-version-drift-seed', registry: worldA });
+    await runLab({ labPath: lab, runId: 'world-a', steps: 1, scenario: 'generated', registry: worldA });
+
+    await assert.rejects(
+      () => runLab({ labPath: lab, runId: 'world-b', steps: 1, scenario: 'generated', registry: worldB }),
+      (error) => error.code === 'CONFLICT' && error.context.field === 'worldImplementationDigest',
+    );
+    assert.equal((await inspectLab({ labPath: lab, registry: worldA })).current.worldState.value, 1);
   });
 });
 
@@ -943,7 +958,7 @@ function project(current) {
   };
 }
 
-function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelta = 1, worldVersion } = {}) {
+function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelta = 1, worldVersion, worldImplementationDigest } = {}) {
   const worldId = 'generated';
   const scenarioIds = adaptive ? ['baseline', 'shifted'] : ['generated'];
   const capabilityId = 'generated.advance';
@@ -988,7 +1003,11 @@ function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelt
   return {
     worldDefinition(requestedWorldId) {
       if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
-      return { scenarioIds: [...scenarioIds], ...(worldVersion === undefined ? {} : { worldVersion }) };
+      return {
+        scenarioIds: [...scenarioIds],
+        ...(worldVersion === undefined ? {} : { worldVersion }),
+        ...(worldImplementationDigest === undefined ? {} : { worldImplementationDigest }),
+      };
     },
     createWorld,
     createManifestParts({ labId, seed, worldId: requestedWorldId }) {
@@ -1002,6 +1021,7 @@ function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelt
       return {
         scenarioIds: [...scenarioIds],
         ...(worldVersion === undefined ? {} : { worldVersion }),
+        ...(worldImplementationDigest === undefined ? {} : { worldImplementationDigest }),
         tokenMap,
         authorityPolicy: {
           schemaVersion: 1,

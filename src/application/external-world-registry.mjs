@@ -70,6 +70,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
 
   const definition = {
     worldVersion: descriptor.worldVersion,
+    worldImplementationDigest: descriptor.descriptorDigest,
     capabilities: descriptor.capabilityIds,
     scenarioIds: descriptor.scenarioIds,
     valueSpec: descriptor.valueSpec,
@@ -118,6 +119,14 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
           actual: manifest.worldVersion,
         });
       }
+      if (manifest.worldImplementationDigest !== undefined &&
+          manifest.worldImplementationDigest !== descriptor.descriptorDigest) {
+        throw new LabStoreError('CONFLICT', 'The supplied WorldPort implementation does not match the lab world contract.', {
+          field: 'worldImplementationDigest',
+          expected: descriptor.descriptorDigest,
+          actual: manifest.worldImplementationDigest,
+        });
+      }
     },
   });
 }
@@ -136,6 +145,7 @@ function createIdentityOnlyRegistry(config) {
           adapter?.version !== PROTOCOL_VERSION ||
           adapter?.adapterId !== config.adapterId ||
           (manifest.worldVersion !== undefined && manifest.worldVersion !== adapter?.worldVersion) ||
+          (manifest.worldImplementationDigest !== undefined && manifest.worldImplementationDigest !== adapter?.descriptorDigest) ||
           adapter?.launchDigest !== config.launchDigest ||
           !isValidEvidencePublicKey(adapter?.evidencePublicKey) ||
           !isValueSpec(adapter?.valueSpec)) {

@@ -24,6 +24,7 @@ const CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION = 6;
 const SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION = 7;
 const SUPERVISOR_FEEDBACK_ALIGNMENT_LEARNING_VERSION = 8;
 const MAX_WORLD_VERSION_LENGTH = 4096;
+const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
 export class ReplayError extends Error {
   constructor(code, message, context = {}) {
@@ -428,6 +429,11 @@ function validateManifest(manifest) {
   if (manifest.worldVersion !== undefined &&
       (typeof manifest.worldVersion !== 'string' || manifest.worldVersion.length === 0 || manifest.worldVersion.length > MAX_WORLD_VERSION_LENGTH)) {
     corrupt('Replay manifest world version contract is invalid.');
+  }
+  if (manifest.worldImplementationDigest !== undefined &&
+      (typeof manifest.worldImplementationDigest !== 'string' ||
+        !WORLD_IMPLEMENTATION_DIGEST_PATTERN.test(manifest.worldImplementationDigest))) {
+    corrupt('Replay manifest world implementation contract is invalid.');
   }
   if (manifest.scenarioIds !== undefined && !isValidScenarioIds(manifest.scenarioIds)) {
     corrupt('Replay manifest scenario contract is invalid.');
