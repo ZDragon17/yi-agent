@@ -151,6 +151,40 @@ test('step treats the valueSpec tolerance as an acceptable target band', async (
   assert.equal(result.choice.score, 0);
 });
 
+test('bounded planning can choose a temporary detour from domain-neutral learned models', async () => {
+  const { step } = await loadKernel();
+  const input = makeStepInput({
+    observation: observation([0, 1], 'state-detour'),
+    valueSpec: { schemaVersion: 1, observationDimensions: 2, weights: [1, 1], target: [2, 0], tolerance: 0, valueMode: 'distance-v2' },
+    capabilities: [capability(TOKEN_A), capability(TOKEN_B)],
+    memory: memoryWithModels([
+      [TOKEN_A, { sampleCount: 4, meanDelta: [0, 0], uncertainty: 0 }],
+      [TOKEN_B, { sampleCount: 4, meanDelta: [0, 0], uncertainty: 0 }],
+    ]),
+  });
+  input.memory.relationModels = {
+    [TOKEN_A]: {
+      'r1:+-': { schemaVersion: 1, sampleCount: 4, meanDelta: [-1, -1], uncertainty: 0 },
+    },
+    [TOKEN_B]: {
+      'r1:+-': { schemaVersion: 1, sampleCount: 4, meanDelta: [0.5, 0], uncertainty: 0 },
+      'r1:+0': { schemaVersion: 1, sampleCount: 4, meanDelta: [3, 0], uncertainty: 0 },
+      'r1:++': { schemaVersion: 1, sampleCount: 4, meanDelta: [0.5, 0], uncertainty: 0 },
+    },
+  };
+
+  const greedy = step(input);
+  const planned = step({
+    ...input,
+    planning: { schemaVersion: 1, horizon: 2 },
+  });
+
+  assert.equal(greedy.choice.token, TOKEN_B);
+  assert.equal(planned.choice.token, TOKEN_A);
+  assert.deepEqual(planned.expectation.predictedObservation.vector, [-1, 0]);
+  assert.deepEqual(planned.nextRngState, greedy.nextRngState);
+});
+
 test('step is deterministic with an explicit rngState and does not require policy metadata', async () => {
   const { step } = await loadKernel();
   const input = makeStepInput({
@@ -268,12 +302,14 @@ test('step never selects memory-only unknown tokens even when their model is str
 
 test('step explores an untried safe capability before exploiting learned actions', async () => {
   const { step } = await loadKernel();
-  const result = step(makeStepInput({
+  const input = makeStepInput({
     capabilities: [capability(TOKEN_A), capability(TOKEN_B)],
     memory: memoryWithModels([
       [TOKEN_A, { sampleCount: 50, meanDelta: [100, 0], uncertainty: 0.001 }],
     ]),
-  }));
+  });
+  input.planning = { schemaVersion: 1, horizon: 2 };
+  const result = step(input);
 
   assert.equal(result.choice.token, TOKEN_B);
   assert.equal(result.expectation.sampleCount, 0);
@@ -645,6 +681,27 @@ test('kernel rejects oversized numeric and capability surfaces before prediction
   });
 
   assertContractViolation(() => step(input), 'oversized observation surface');
+});
+
+test('bounded planning remains finite on the maximum capability surface', async () => {
+  const { step } = await loadKernel();
+  const capabilities = Array.from({ length: 4096 }, (_, index) => capability(
+    `tok_${index.toString(36).toUpperCase().padStart(8, '0')}`,
+  ));
+  const memory = memoryWithModels(capabilities.map((item) => [item.token, {
+    sampleCount: 4,
+    meanDelta: [0, 0],
+    uncertainty: 0,
+  }]));
+  const input = makeStepInput({
+    capabilities,
+    memory,
+  });
+  input.planning = { schemaVersion: 1, horizon: 8 };
+  const result = step(input);
+
+  assert.equal(result.status, 'READY');
+  assert.match(result.choice.token, /^tok_[A-Z0-9]{8,128}$/u);
 });
 
 test('verify rejects scenario externalInputs and domain payloads at the kernel boundary', async () => {

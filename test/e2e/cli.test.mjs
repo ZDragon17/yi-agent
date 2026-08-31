@@ -36,7 +36,7 @@ test('CLI executes init, run, inspect, and replay as one JSON-envelope chain', a
     assert.equal(init.stdout[0].ok, true);
     assert.equal(init.stdout[0].data.tokenMap.entries.length, 2);
 
-    const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--json');
+    const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--planning-horizon', '2', '--json');
     assert.equal(run.code, 0);
     assert.equal(run.stdout[0].data.status, 'COMPLETED');
 
@@ -211,9 +211,13 @@ test('CLI resumes a response-lost external transition through the same execution
     const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'idempotent-seed', '--lab-id', 'idempotent-lab', '--adapter', adapter, '--json');
     assert.equal(init.code, 0);
 
-    const lost = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    const lost = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--planning-horizon', '2', '--scenario', 'idempotent', '--adapter', adapter, '--json');
     assert.notEqual(lost.code, 0);
     assert.equal(await countLedgerSteps(lab, 'run-1'), 0);
+    const recoveredEvents = (await readFile(path.join(lab, 'runs', 'run-1', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map(JSON.parse);
+    const recoveryTerminal = recoveredEvents.find((event) => event.kind === 'RUN_HALTED');
+    assert.equal(recoveryTerminal.payload.externalTransition.planning.horizon, 2);
     const afterLoss = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
     assert.equal(afterLoss.code, 0);
     assert.equal(afterLoss.stdout[0].data.current.status, 'HALTED');
@@ -222,6 +226,10 @@ test('CLI resumes a response-lost external transition through the same execution
     const resumed = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
     assert.equal(resumed.code, 0);
     assert.equal(resumed.stdout[0].data.status, 'COMPLETED');
+    const resumedEvents = (await readFile(path.join(lab, 'runs', 'run-2', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map(JSON.parse);
+    const resumedStep = decodeStoredEvent(resumedEvents.find((event) => event.kind === 'STEP'));
+    assert.equal(resumedStep.payload.boundary.planning.horizon, 2);
 
     const current = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
     assert.equal(current.code, 0);

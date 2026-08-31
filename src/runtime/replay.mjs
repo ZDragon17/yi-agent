@@ -172,6 +172,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       capabilities,
       rngState: state.rngState,
       ...(state.changeSupervisor?.strategy === undefined ? {} : { strategy: state.changeSupervisor.strategy }),
+      ...(payload.boundary.planning === undefined ? {} : { planning: payload.boundary.planning }),
     };
     intent = decision === undefined
       ? kernel.step(stepInput)

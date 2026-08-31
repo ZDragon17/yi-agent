@@ -51,6 +51,7 @@ async function dispatch(command, options) {
     return runLab({
       labPath: required(options, 'lab'),
       steps: parseSteps(required(options, 'steps')),
+      planningHorizon: options['planning-horizon'] === undefined ? undefined : parseBoundedInt(options['planning-horizon'], 1, 8, 'planning-horizon'),
       runId: options['run-id'],
       scenario: options.scenario,
       registry: loadRegistry(options),
@@ -119,7 +120,8 @@ async function dispatchAgent(options) {
       options.steps !== undefined || options.runs !== undefined || options.forever === true ||
       options.scenario !== undefined || options.goal !== undefined || options['goal-plan'] !== undefined ||
       options['auto-plan'] === true || options['run-id'] !== undefined ||
-      options['max-cycles'] !== undefined || options['stagnation-limit'] !== undefined
+      options['max-cycles'] !== undefined || options['stagnation-limit'] !== undefined ||
+      options['planning-horizon'] !== undefined
     )) {
       throw cliError('INVALID_INPUT', '--resume cannot be combined with loop configuration options.', {
         field: 'resume',
@@ -148,6 +150,7 @@ async function dispatchAgent(options) {
         durability: 'checkpoint',
         maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
         stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
+        planningHorizon: options['planning-horizon'] === undefined ? undefined : parseBoundedInt(options['planning-horizon'], 1, 8, 'planning-horizon'),
       });
     } finally {
       process.removeListener('SIGINT', onSignal);
@@ -166,6 +169,7 @@ async function dispatchAgent(options) {
   return runLab({
     labPath: required(options, 'lab'),
     steps: parseSteps(required(options, 'steps')),
+    planningHorizon: options['planning-horizon'] === undefined ? undefined : parseBoundedInt(options['planning-horizon'], 1, 8, 'planning-horizon'),
     runId: options['run-id'],
     scenario: options.scenario,
     registry: loadRegistry(options),
@@ -264,11 +268,11 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
-    run: ['lab', 'run-id', 'steps', 'scenario', 'adapter', 'max-cycles', 'stagnation-limit'],
+    run: ['lab', 'run-id', 'steps', 'scenario', 'adapter', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     inspect: ['lab', 'run', 'action', 'adapter'],
     replay: ['lab', 'run', 'adapter'],
     recover: ['lab', 'confirm-lock-owner-dead'],
@@ -451,7 +455,7 @@ function helpText() {
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
-    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--kernel-only] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
+    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--planning-horizon N] [--kernel-only] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
     '  yi-agent agent loop --lab PATH --resume [--kernel-only] [--adapter CONFIG] [--json]',
     '',
     '实验室:',

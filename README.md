@@ -261,6 +261,7 @@ yi-agent agent run --lab E:\labs\temperature --steps 3 --kernel-only --json
 yi-agent agent loop --lab E:\labs\temperature --resume --json
 yi-agent agent run --lab E:\labs\temperature --steps 10 --goal-plan E:\plans\stability.json --json
 yi-agent agent run --lab E:\labs\temperature --steps 10 --goal "自动维持温度" --auto-plan --json
+yi-agent agent run --lab E:\labs\temperature --steps 10 --planning-horizon 3 --kernel-only --json
 Get-Content .\prompt.txt -Raw | yi-agent ask --prompt - --json
 yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 ```
@@ -295,6 +296,8 @@ node E:\demo\yi-agent-oracle\late-bound-oracle.mjs `
 Memory 现在同时保留三层证据：`actionModels` 记录 Token 的总体变化，`relationModels` 记录同一 Token 在观测相对当前目标的关系签名（每个维度为接近、相等或远离）下的变化，`rejectionModels` 记录同一 Token 在最近关系位置是否遭到执行拒绝。Kernel 优先使用关系条件模型，缺失时回退总体模型；拒绝反馈只在同一关系签名下暂时降权，关系改变或所有候选都被拒绝时仍允许重新验证。关系签名只由数值观测和 ValueSpec 计算，不读取领域名称。每个模型使用有界变化窗口，让近期已验证证据能够修正过时动力学，同时保留总样本数审计；旧账本没有关系字段时仍按旧模型 Replay，新实验会把关系模型和拒绝证据随 current/STEP 持久化。
 
 目标评价现在也固定在同一底层几何上：新 Run 的 `valueMode=distance-v2` 用每个观测维度到目标的带权绝对距离打分，`tolerance` 把目标从一个点扩展为可接受带；因此越过目标不会被错误奖励，带内状态可被视为满足该维度。`valueMode` 不进入领域逻辑，旧 STEP 缺少它时 Replay 保持 `signed-v1`，避免演化破坏历史连续性。
+
+在已有关系记忆的基础上，Kernel 现在支持有界的多步模型推演：`--planning-horizon N`（1～8，默认 1）会在没有未尝试安全动作时，用当前已验证的 `actionModels`/`relationModels` 预测有限步，并选择终点价值更高的首个动作。它可以识别“先暂时远离目标、再进入目标”的受控反例，但不会把推演状态当成现实状态，也不会让未来猜测越过当前 WorldPort 的安全边界；每一步仍须重新观测、筛选、执行、验证和学习。为使底座随 WorldPort 数量增长仍可运行，规划使用固定候选窗口，未来模拟不重复展开全量能力。推演参数写入 STEP boundary、loop continuation 和外部 transition 的恢复标记，因此重启、跨 Run、幂等重试和 Replay 使用同一规则。它仍不是可达性证明、全局规划或现实因果模型，后续必须用更多未知 WorldPort 反例校准。
 
 复杂目标可以通过 `--goal-plan PATH` 提供阶段序列。每个阶段只声明不透明的阶段 ID、阶段目标文本和可选 `ValueSpec`；运行时仍用同一套观察向量、加权距离、证据和安全约束推进阶段，阶段完成后才切换到下一个阶段。计划会进入 supervisor/current/STEP，Replay 不会重新询问模型或读取计划文件；已激活的计划不能在同一个 lab 中被静默替换。
 

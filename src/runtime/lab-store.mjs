@@ -35,6 +35,7 @@ const MAX_EVENT_LINE_BYTES = 1024 * 1024;
 const MAX_RECENT_COMMITTED_STEPS = 32;
 const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
+const MAX_PLANNING_HORIZON = 8;
 
 export const INTERNAL_RUN_APPEND = Symbol('yi-agent.internal-run-append');
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
@@ -804,6 +805,9 @@ class ActiveRun {
     const basedOnVersion = requireText(source.basedOnVersion, 'basedOnVersion');
     const beforeState = cloneInputJson(requireObject(source.beforeState, 'beforeState'), 'beforeState');
     validateContinuityState(beforeState, 'beforeState');
+    const planning = source.planning === undefined
+      ? { schemaVersion: SCHEMA_VERSION, horizon: 1 }
+      : validatePlanningEvidence(source.planning, 'external transition planning');
     if (source.policyEvidence !== undefined) {
       validateExternalPolicyEvidence(source.policyEvidence, this.start.runId);
     }
@@ -816,6 +820,7 @@ class ActiveRun {
       token,
       basedOnVersion,
       beforeDigest: canonicalDigest(beforeState),
+      planning,
       markedAt: now(),
       ...(source.policyEvidence === undefined ? {} : { policyEvidence: cloneJson(source.policyEvidence) }),
     });
@@ -1006,12 +1011,14 @@ async function recoverRun(root, manifest) {
       event.sequence === externalMarker.sequence &&
       event.payload.receipt.executionNonce === externalMarker.executionNonce
     ));
-    if (committed !== undefined) {
-      if (committed.payload.receipt.token !== externalMarker.token ||
-          committed.payload.beforeDigest !== externalMarker.beforeDigest ||
-          committed.payload.receipt.basedOnVersion !== externalMarker.basedOnVersion) {
-        corrupt('External transition marker does not match its committed STEP.', { runId });
-      }
+      if (committed !== undefined) {
+        if (committed.payload.receipt.token !== externalMarker.token ||
+            committed.payload.beforeDigest !== externalMarker.beforeDigest ||
+            committed.payload.receipt.basedOnVersion !== externalMarker.basedOnVersion ||
+            canonicalJson(normalizePlanningEvidence(committed.payload.boundary?.planning)) !==
+              canonicalJson(normalizePlanningEvidence(externalMarker.planning))) {
+          corrupt('External transition marker does not match its committed STEP.', { runId });
+        }
       await rm(markerPath);
       externalMarker = null;
     } else if (TERMINAL_KINDS.has(last?.kind)) {
@@ -1310,6 +1317,7 @@ function externalTransitionEvidence(marker, start) {
     token: marker.token,
     basedOnVersion: marker.basedOnVersion,
     beforeDigest: marker.beforeDigest,
+    planning: normalizePlanningEvidence(marker.planning),
     ...(marker.policyEvidence === undefined ? {} : { policyEvidence: cloneJson(marker.policyEvidence) }),
   };
 }
@@ -1336,7 +1344,29 @@ function validateExternalTransitionEvidence(value, runId, scenario = undefined) 
   ) {
     corrupt('External transition evidence is invalid.', { runId });
   }
+  if (value.planning !== undefined && !isValidPlanningEvidence(value.planning)) {
+    corrupt('External transition planning evidence is invalid.', { runId });
+  }
   if (value.policyEvidence !== undefined) validateExternalPolicyEvidence(value.policyEvidence, runId);
+}
+
+function isValidPlanningEvidence(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    value.schemaVersion === SCHEMA_VERSION &&
+    Number.isSafeInteger(value.horizon) && value.horizon >= 1 && value.horizon <= MAX_PLANNING_HORIZON;
+}
+
+function validatePlanningEvidence(value, field) {
+  if (!isValidPlanningEvidence(value)) {
+    throw new LabStoreError('INVALID_INPUT', 'Planning evidence is invalid.', { field });
+  }
+  return { schemaVersion: SCHEMA_VERSION, horizon: value.horizon };
+}
+
+function normalizePlanningEvidence(value) {
+  return value === undefined
+    ? { schemaVersion: SCHEMA_VERSION, horizon: 1 }
+    : { schemaVersion: SCHEMA_VERSION, horizon: value.horizon };
 }
 
 function validateExternalPolicyEvidence(value, runId) {
@@ -1362,6 +1392,7 @@ function externalTransitionIdentity(value) {
     token: value.token,
     basedOnVersion: value.basedOnVersion,
     beforeDigest: value.beforeDigest,
+    planning: normalizePlanningEvidence(value.planning),
   };
 }
 
@@ -1374,6 +1405,7 @@ function validateExternalTransitionMarker(marker, runId, start, events, current)
     typeof marker.token !== 'string' || marker.token.length === 0 ||
     typeof marker.basedOnVersion !== 'string' || marker.basedOnVersion.length === 0 ||
     typeof marker.beforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(marker.beforeDigest) ||
+    (marker.planning !== undefined && !isValidPlanningEvidence(marker.planning)) ||
     typeof marker.markedAt !== 'string' ||
     !events.some((event) => event.kind === 'RUN_STARTED' && event.payload.startDigest === start.selfDigest)
   ) {
@@ -1415,6 +1447,7 @@ function validateLoopContinuation(value, field, corruptOnFailure = false) {
       typeof value.scenario !== 'string' || value.scenario.length === 0 || value.scenario.length > 4096 ||
       !Number.isSafeInteger(value.runIndex) || value.runIndex < 0 ||
       !Number.isSafeInteger(value.stepsPerRun) || value.stepsPerRun < 1 || value.stepsPerRun > 10_000 ||
+      (value.planningHorizon !== undefined && (!Number.isSafeInteger(value.planningHorizon) || value.planningHorizon < 1 || value.planningHorizon > MAX_PLANNING_HORIZON)) ||
       (value.mode !== 'finite' && value.mode !== 'forever') ||
       (value.mode === 'finite' && (!Number.isSafeInteger(value.maxRuns) || value.maxRuns < 1 || value.maxRuns > 10_000 || value.runIndex >= value.maxRuns)) ||
       (value.mode === 'forever' && value.maxRuns !== undefined)) {
@@ -1426,6 +1459,7 @@ function validateLoopContinuation(value, field, corruptOnFailure = false) {
     scenario: value.scenario,
     runIndex: value.runIndex,
     stepsPerRun: value.stepsPerRun,
+    ...(value.planningHorizon === undefined ? {} : { planningHorizon: value.planningHorizon }),
     mode: value.mode,
     ...(value.maxRuns === undefined ? {} : { maxRuns: value.maxRuns }),
   };
@@ -1437,6 +1471,7 @@ function loopContract(continuation) {
     loopId: continuation.loopId,
     scenario: continuation.scenario,
     stepsPerRun: continuation.stepsPerRun,
+    ...(continuation.planningHorizon === undefined ? {} : { planningHorizon: continuation.planningHorizon }),
     mode: continuation.mode,
     ...(continuation.maxRuns === undefined ? {} : { maxRuns: continuation.maxRuns }),
   };

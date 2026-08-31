@@ -14,6 +14,7 @@ import { projectModelObservation } from '../agent/observation-context.mjs';
 const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
+const MAX_PLANNING_HORIZON = 8;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -62,6 +63,10 @@ export async function runLab(input) {
   }
   const supervisorMaxCycles = requireBoundedOptional(source.maxCycles, 1, 1_000_000, 'maxCycles') ?? 1_000_000;
   const supervisorStagnationLimit = requireBoundedOptional(source.stagnationLimit, 1, 100_000, 'stagnationLimit') ?? 3;
+  const requestedPlanningHorizon = source.planningHorizon === undefined
+    ? undefined
+    : requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon');
+  let planningHorizon = requestedPlanningHorizon ?? 1;
   if (source.autoPlan !== undefined && typeof source.autoPlan !== 'boolean') {
     throw new LabStoreError('INVALID_INPUT', 'autoPlan must be a boolean.', { field: 'autoPlan' });
   }
@@ -105,6 +110,20 @@ export async function runLab(input) {
         { runId: unresolved.runId, executionNonce: unresolved.evidence.executionNonce },
       );
     }
+    const recoveredPlanningHorizon = unresolved.evidence.planning?.horizon ?? 1;
+    if (requestedPlanningHorizon !== undefined && requestedPlanningHorizon !== recoveredPlanningHorizon) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'An unresolved external transition must be retried with its original planning horizon.',
+        {
+          runId: unresolved.runId,
+          fields: ['planningHorizon'],
+          expected: recoveredPlanningHorizon,
+          actual: requestedPlanningHorizon,
+        },
+      );
+    }
+    planningHorizon = recoveredPlanningHorizon;
   }
   const goalRequested = (source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined;
   let initialState = current.lastRunId === null
@@ -248,6 +267,7 @@ export async function runLab(input) {
       capabilities,
       rngState: state.rngState,
       ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
+      planning: { schemaVersion: SCHEMA_VERSION, horizon: planningHorizon },
     }, preferenceFor(retryPreference ?? modelDecision));
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
@@ -265,7 +285,7 @@ export async function runLab(input) {
       executionNonce: `execution:step:${state.kernelStep + 1}`,
     };
     if (unresolvedExternalTransition !== null) {
-      assertExternalTransitionRetry(unresolvedExternalTransition, receiptRequest, state);
+      assertExternalTransitionRetry(unresolvedExternalTransition, receiptRequest, state, planningHorizon);
     }
     const externalInputs = registry.scenarioExternalInputs(
       manifest.worldId,
@@ -278,6 +298,7 @@ export async function runLab(input) {
         token: receiptRequest.token,
         basedOnVersion: receiptRequest.basedOnVersion,
         beforeState: state,
+        planning: { schemaVersion: SCHEMA_VERSION, horizon: planningHorizon },
         ...(retryPolicyEvidence === null && modelDecision === null
           ? {}
           : { policyEvidence: retryPolicyEvidence ?? policyEvidence(modelDecision, intent, capabilities) }),
@@ -372,6 +393,7 @@ export async function runLab(input) {
           schemaVersion: SCHEMA_VERSION,
           kernelLearningVersion: 2,
           valueSpec: stepValueSpec,
+          planning: { schemaVersion: SCHEMA_VERSION, horizon: planningHorizon },
           capabilities,
           afterCapabilities,
           ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
@@ -493,7 +515,8 @@ export async function runContinuous(input) {
   if (source.resume === true && (
     source.runs !== undefined || source.forever !== undefined || source.stepsPerRun !== undefined || source.steps !== undefined ||
     source.runId !== undefined || source.scenario !== undefined || source.goal !== undefined || source.goalPlan !== undefined ||
-    source.autoPlan === true || source.maxCycles !== undefined || source.stagnationLimit !== undefined
+    source.autoPlan === true || source.maxCycles !== undefined || source.stagnationLimit !== undefined ||
+    source.planningHorizon !== undefined
   )) {
     throw new LabStoreError('INVALID_INPUT', 'resume cannot be combined with loop configuration.', {
       fields: ['resume', 'loop configuration'],
@@ -541,6 +564,7 @@ export async function runContinuous(input) {
       runIndex: 0,
       stepsPerRun,
       mode: forever ? 'forever' : 'finite',
+      planningHorizon: requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon') ?? 1,
       ...(forever ? {} : { maxRuns: requestedRuns }),
     };
   }
@@ -576,6 +600,7 @@ export async function runContinuous(input) {
       scenario,
       continuation: { ...continuation, runIndex: index },
       steps: stepsPerRun,
+      planningHorizon: continuation.planningHorizon,
       stepsPerRun: undefined,
       runs: undefined,
       durability,
@@ -669,13 +694,14 @@ function fallbackAdvice(reason) {
   };
 }
 
-function assertExternalTransitionRetry(unresolved, request, state) {
+function assertExternalTransitionRetry(unresolved, request, state, planningHorizon) {
   const evidence = unresolved.evidence;
   const mismatches = [];
   if (request.executionNonce !== evidence.executionNonce) mismatches.push('executionNonce');
   if (request.token !== evidence.token) mismatches.push('token');
   if (request.basedOnVersion !== evidence.basedOnVersion) mismatches.push('basedOnVersion');
   if (canonicalDigest(state) !== evidence.beforeDigest) mismatches.push('beforeDigest');
+  if ((evidence.planning?.horizon ?? 1) !== planningHorizon) mismatches.push('planningHorizon');
   if (mismatches.length > 0) {
     throw new LabStoreError(
       'CONFLICT',

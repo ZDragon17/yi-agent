@@ -245,6 +245,17 @@ test('application persists rejection feedback and selects another action after a
   });
 });
 
+test('bounded planning is persisted at the step boundary and survives replay', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'planning-lab', worldId: 'temperature', seed: 'planning-seed' });
+    await runLab({ labPath: lab, runId: 'run-1', steps: 3, planningHorizon: 2 });
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const step = run.events.find((event) => event.kind === 'STEP');
+    assert.deepEqual(step.payload.boundary.planning, { schemaVersion: 1, horizon: 2 });
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
 test('replay preserves a pre-rejection-memory ledger without rewriting its historical update', async () => {
   await withLab(async (lab) => {
     const registry = createRejectionRegistry();
@@ -345,6 +356,30 @@ test('continuous runner preserves one state across multiple committed run bounda
     for (const run of result.results) {
       assert.equal((await replayLab({ labPath: lab, runId: run.runId })).verdict, 'CONSISTENT');
     }
+  });
+});
+
+test('continuous planning configuration survives interruption and resume', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'planning-loop-lab', worldId: 'temperature', seed: 'planning-loop-seed' });
+    let checks = 0;
+    const interrupted = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      runs: 2,
+      planningHorizon: 2,
+      shouldStop: () => checks++ > 0,
+    });
+    assert.equal(interrupted.stopReason, 'INTERRUPTED');
+    const store = await LabStore.open({ labPath: lab });
+    assert.equal((await store.readLoopContinuation()).planningHorizon, 2);
+
+    const resumed = await runContinuous({ labPath: lab, resume: true });
+    assert.equal(resumed.status, 'COMPLETED');
+    assert.equal(resumed.runs, 1);
+    const run = await store.readRun(resumed.results[0].runId);
+    assert.deepEqual(run.events.find((event) => event.kind === 'STEP').payload.boundary.planning, { schemaVersion: 1, horizon: 2 });
+    assert.equal((await replayLab({ labPath: lab, runId: resumed.results[0].runId })).verdict, 'CONSISTENT');
   });
 });
 

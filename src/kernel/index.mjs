@@ -7,6 +7,8 @@ const MAX_ACTION_MODELS = 8192;
 const MAX_RELATION_MODELS = 8192;
 const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
 const ADAPTATION_WINDOW = 8;
+const MAX_PLANNING_HORIZON = 8;
+const MAX_PLANNING_CANDIDATES = 64;
 
 const STEP_INPUT_KEYS = [
   'observation',
@@ -15,8 +17,9 @@ const STEP_INPUT_KEYS = [
   'capabilities',
   'rngState',
   'strategy',
+  'planning',
 ];
-const STEP_INPUT_REQUIRED_KEYS = STEP_INPUT_KEYS.filter((key) => key !== 'strategy');
+const STEP_INPUT_REQUIRED_KEYS = STEP_INPUT_KEYS.filter((key) => key !== 'strategy' && key !== 'planning');
 const VERIFY_INPUT_KEYS = ['intent', 'receipt', 'postObservation'];
 const LEARN_INPUT_KEYS = [
   'memory',
@@ -143,7 +146,9 @@ export function stepWithPreference(input, preference = null) {
     ? null
     : safePredictions.find((item) => item.choice.token === normalizedPreference.token &&
       (!item.rejectedRecently || nonRejectedPredictions.length === 0));
-  const selected = preferred ?? chooseByStrategy(selectionPool, normalized.strategy, rng.unit);
+  const selected = preferred ?? (normalized.planning.horizon > 1 && untriedPredictions.length === 0
+    ? chooseByPlanning(selectionPool, normalized, rng.unit)
+    : chooseByStrategy(selectionPool, normalized.strategy, rng.unit));
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -380,6 +385,7 @@ function normalizeStepInput(input) {
   );
   const rngState = normalizeRngState(source.rngState, 'stepInput.rngState');
   const strategy = normalizeStrategy(source.strategy, 'stepInput.strategy');
+  const planning = normalizePlanning(source.planning, 'stepInput.planning');
 
   return {
     observation,
@@ -388,6 +394,26 @@ function normalizeStepInput(input) {
     capabilities,
     rngState,
     strategy,
+    planning,
+  };
+}
+
+function normalizePlanning(value, field) {
+  if (value === undefined) {
+    return { schemaVersion: SCHEMA_VERSION, horizon: 1 };
+  }
+  const source = assertPlainRecord(value, field, ['schemaVersion', 'horizon']);
+  const horizon = assertPositiveInteger(source.horizon, `${field}.horizon`);
+  if (horizon > MAX_PLANNING_HORIZON) {
+    contractViolation('kernel planning horizon exceeds its size limit', {
+      field: `${field}.horizon`,
+      max: MAX_PLANNING_HORIZON,
+      actual: horizon,
+    });
+  }
+  return {
+    schemaVersion: requireSchemaVersion(source, field),
+    horizon,
   };
 }
 
@@ -945,6 +971,76 @@ function chooseByStrategy(predictions, strategy, unit) {
     }
   });
   return predictions[candidates[Math.floor(unit * candidates.length)]];
+}
+
+// Planning is deliberately bounded and model-only. It projects the current
+// learned transition model forward, then lets the normal kernel policy choose
+// each simulated follow-up action. The real WorldPort is still re-observed at
+// the next committed step, so speculative state never crosses the safety
+// boundary.
+function chooseByPlanning(predictions, input, unit) {
+  const candidatePool = boundedPlanningPredictions(predictions);
+  const rolloutInput = {
+    ...input,
+    capabilities: boundedPlanningCapabilities(input.capabilities, candidatePool),
+  };
+  let bestUtility = -Infinity;
+  const candidates = [];
+  for (const prediction of candidatePool) {
+    const utility = rolloutUtility(prediction, rolloutInput, input.planning.horizon, unit);
+    if (utility > bestUtility) {
+      bestUtility = utility;
+      candidates.length = 0;
+      candidates.push(prediction);
+    } else if (Object.is(utility, bestUtility)) {
+      candidates.push(prediction);
+    }
+  }
+  return candidates[Math.floor(unit * candidates.length)];
+}
+
+function boundedPlanningPredictions(predictions) {
+  if (predictions.length <= MAX_PLANNING_CANDIDATES) return predictions;
+  return [...predictions]
+    .sort((left, right) => right.choice.score - left.choice.score)
+    .slice(0, MAX_PLANNING_CANDIDATES);
+}
+
+function boundedPlanningCapabilities(capabilities, predictions) {
+  if (capabilities.length <= MAX_PLANNING_CANDIDATES) return capabilities;
+  const tokens = new Set(predictions.map((prediction) => prediction.choice.token));
+  return capabilities.filter((capability) => tokens.has(capability.token));
+}
+
+function rolloutUtility(firstPrediction, input, horizon, unit) {
+  let predictedVector = firstPrediction.expectation.predictedObservation.vector;
+  let totalCost = firstPrediction.choice.cost +
+    uncertaintyPenalty(firstPrediction.expectation.uncertainty, input.valueSpec.weights);
+  for (let depth = 1; depth < horizon; depth += 1) {
+    const futurePredictions = buildPredictions({
+      ...input,
+      observation: {
+        ...input.observation,
+        vector: predictedVector,
+      },
+    }).filter((item) => item.choice.allowed && item.choice.safe);
+    if (futurePredictions.length === 0) break;
+    const futurePool = selectionPoolFor(futurePredictions);
+    const future = chooseByStrategy(futurePool, input.strategy, unit);
+    predictedVector = future.expectation.predictedObservation.vector;
+    totalCost += future.choice.cost +
+      uncertaintyPenalty(future.expectation.uncertainty, input.valueSpec.weights);
+  }
+  return assertComputedFiniteNumber(
+    valueObservation(predictedVector, input.valueSpec) - totalCost,
+    'stepOutput.planning.utility',
+  );
+}
+
+function selectionPoolFor(predictions) {
+  const nonRejected = predictions.filter((item) => !item.rejectedRecently);
+  const untried = nonRejected.filter((item) => item.expectation.sampleCount === 0);
+  return untried.length > 0 ? untried : nonRejected.length > 0 ? nonRejected : predictions;
 }
 
 function defaultActionModel(dimensions) {
