@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { canonicalDigest, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { createGridWorld } from '../worlds/grid.mjs';
 import { createInventoryWorld } from '../worlds/inventory.mjs';
@@ -7,35 +9,35 @@ import { createTemperatureWorld } from '../worlds/temperature.mjs';
 import { createVirtualDesktopWorld } from '../worlds/virtual-desktop.mjs';
 
 const WORLD_DEFINITIONS = {
-  temperature: defineWorld('temperature', {
+  temperature: defineWorld('temperature', '../worlds/temperature.mjs', {
     worldVersion: 'temperature.v1',
     factory: createTemperatureWorld,
     capabilities: ['temperature.increase', 'temperature.decrease'],
     scenarioIds: ['steady', 'regime-shift', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 1, weights: [1], target: [22] },
   }),
-  'virtual-desktop': defineWorld('virtual-desktop', {
+  'virtual-desktop': defineWorld('virtual-desktop', '../worlds/virtual-desktop.mjs', {
     worldVersion: 'virtual-desktop.v1',
     factory: createVirtualDesktopWorld,
     capabilities: ['desktop.move-report', 'desktop.move-protected'],
     scenarioIds: ['steady', 'new-files', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 5, weights: [1, 1, 1, 1, 1], target: [0, 0, 9, 9, 2] },
   }),
-  inventory: defineWorld('inventory', {
+  inventory: defineWorld('inventory', '../worlds/inventory.mjs', {
     worldVersion: 'inventory.v1',
     factory: createInventoryWorld,
     capabilities: ['inventory.restock-a', 'inventory.restock-b', 'inventory.fulfill'],
     scenarioIds: ['steady', 'supply-shock', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 3, weights: [1, 1, 1], target: [8, 8, 0] },
   }),
-  grid: defineWorld('grid', {
+  grid: defineWorld('grid', '../worlds/grid.mjs', {
     worldVersion: 'grid.v1',
     factory: createGridWorld,
     capabilities: ['grid.move-south', 'grid.move-east', 'grid.move-north', 'grid.move-west', 'grid.teleport'],
     scenarioIds: ['steady', 'blocked-route', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 4, weights: [1, 1, 1, 1], target: [2, 2, 2, 2] },
   }),
-  queue: defineWorld('queue', {
+  queue: defineWorld('queue', '../worlds/queue.mjs', {
     worldVersion: 'queue.v1',
     factory: createQueueWorld,
     capabilities: ['queue.serve', 'queue.admit', 'queue.clear'],
@@ -129,7 +131,7 @@ export function createWorldRegistry(definitions = WORLD_DEFINITIONS) {
   });
 }
 
-function defineWorld(worldId, definition) {
+function defineWorld(worldId, worldSourcePath, definition) {
   return {
     ...definition,
     worldImplementationDigest: canonicalDigest({
@@ -139,8 +141,17 @@ function defineWorld(worldId, definition) {
       capabilities: definition.capabilities,
       scenarioIds: definition.scenarioIds,
       valueSpec: definition.valueSpec,
+      sourceFiles: [
+        ['world-registry.mjs', readSourceFile(import.meta.url)],
+        ['world-port-base.mjs', readSourceFile(new URL('../worlds/world-port-base.mjs', import.meta.url))],
+        [worldSourcePath, readSourceFile(new URL(worldSourcePath, import.meta.url))],
+      ],
     }),
   };
+}
+
+function readSourceFile(url) {
+  return readFileSync(fileURLToPath(url), 'utf8');
 }
 
 function requireWorldVersion(value, worldId) {
