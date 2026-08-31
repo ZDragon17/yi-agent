@@ -245,7 +245,7 @@
 
 - 原理：外部世界和本地账本无法共享一个原子提交；`transition` 已改变现实但响应丢失时，本地未追加 STEP 不能证明动作未发生。跨边界连续性必须依赖同一 `executionNonce` 的持久幂等结果，未知状态则宁可阻断也不能重复执行。
 - 实现：`hello` 可声明 `supportsIdempotentTransitions:true`，宿主把 `executionNonce` 作为跨 Run 重试键；外部 transition 前先持久化宿主侧 in-flight marker，checkpoint 模式在对应 STEP 完成 data-sync 后才清 marker；续跑必须复现原始 token、basedOnVersion、beforeDigest 和 nonce，且约束只消费一次；未声明幂等能力的 accepted transition 不确定错误以终态 `EXTERNAL_TRANSITION_UNKNOWN` 落盘，未决动作身份绑定在终态证据并跨历史 Run 保留，直到同 scenario、同 nonce、同 before-state 的 STEP 真正提交；旧 adapter 不改变正常运行与 Replay 兼容性。
-- 验证：独立外部子进程在 transition 持久化一次现实结果后丢弃响应，或让宿主死在外部 transition 返回与 STEP 追加之间；幂等 adapter 的下一 Run 用同 nonce 恢复且 effect 计数仍为 1，Replay 不启动 adapter；模型选择过的原始 token 由 marker 复用，不依赖重启后的 advisor；未声明 adapter 的下一 Run 被 `CONFLICT` 阻断且 effect 计数仍为 1；幂等续跑再次崩溃后仍禁止跨 scenario；当前全量门禁 232/232。
+- 验证：独立外部子进程在 transition 持久化一次现实结果后丢弃响应，或让宿主死在外部 transition 返回与 STEP 追加之间；幂等 adapter 的下一 Run 用同 nonce 恢复且 effect 计数仍为 1，Replay 不启动 adapter；文件持久化多效果 adapter 还覆盖同一连续 loop 的响应丢失、重启、第二个 nonce 继续提交和两段 Run Replay，外部效果计数最终为 2 且没有重复；模型选择过的原始 token 由 marker 复用，不依赖重启后的 advisor；未声明 adapter 的下一 Run 被 `CONFLICT` 阻断且 effect 计数仍为 1；幂等续跑再次崩溃后仍禁止跨 scenario；当前全量门禁 239/239，E2E 39/39。
 - 边界：宿主无法凭空修复外部 adapter 的 durable store、网络分区或现实世界对账；真实设备仍需 adapter 自己提供 nonce 查询/结果回放及人工安全门，不能把本地 HALTED 当作外部未执行证明。
 
 ## F-9 连续 Run Runner
