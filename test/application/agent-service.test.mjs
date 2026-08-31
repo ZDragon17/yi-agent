@@ -575,6 +575,52 @@ test('application forwards bounded WorldPort evidence and its truncation marker 
   });
 });
 
+test('model advisor failure is isolated, falls back to the kernel, and remains replayable', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'advisor-outage-lab', worldId: 'temperature', seed: 'advisor-outage-seed' });
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 3,
+      advisor: async () => {
+        throw new Error('provider outage');
+      },
+    });
+    assert.equal(result.status, 'COMPLETED');
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const policyEvidence = run.events.find((event) => event.kind === 'STEP').payload.policyEvidence;
+    assert.equal(policyEvidence.model, 'unknown');
+    assert.equal(policyEvidence.token, null);
+    assert.equal(policyEvidence.applied, false);
+    assert.equal(policyEvidence.reason, 'MODEL_UNAVAILABLE');
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
+test('invalid model advisor output is rejected at the application boundary and remains replayable', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'invalid-advisor-lab', worldId: 'temperature', seed: 'invalid-advisor-seed' });
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 1,
+      advisor: async () => ({
+        model: 'untrusted-advisor',
+        token: 'not-a-capability',
+        responseDigest: 'not-a-digest',
+      }),
+    });
+    assert.equal(result.status, 'COMPLETED');
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const policyEvidence = run.events.find((event) => event.kind === 'STEP').payload.policyEvidence;
+    assert.equal(policyEvidence.token, null);
+    assert.equal(policyEvidence.applied, false);
+    assert.equal(policyEvidence.reason, 'INVALID_ADVISOR_RESULT');
+    assert.match(policyEvidence.responseDigest, /^sha256:[0-9a-f]{64}$/u);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
 test('invalid automatic planner proposals fall back to one validated root stage and remain replayable', async () => {
   await withLab(async (root) => {
     const lab = path.join(root, 'invalid-auto-plan-lab');

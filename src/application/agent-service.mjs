@@ -13,6 +13,7 @@ import { projectModelObservation } from '../agent/observation-context.mjs';
 
 const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
+const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -227,7 +228,8 @@ export async function runLab(input) {
     const retryPreference = retryPolicyEvidence?.applied === true ? retryPolicyEvidence : null;
     const modelDecision = retryPolicyEvidence === null &&
       source.advisor !== undefined && capabilities.some((capability) => capability.allowed && capability.safe)
-      ? await source.advisor({
+      ? await requestAdvice({
+          advisor: source.advisor,
           observation: beforeObservation,
           memory: state.memory,
           valueSpec: stepValueSpec,
@@ -610,6 +612,61 @@ function preferenceFor(modelDecision) {
   return modelDecision?.token === null || modelDecision?.token === undefined
     ? null
     : { schemaVersion: SCHEMA_VERSION, token: modelDecision.token };
+}
+
+async function requestAdvice({ advisor, ...input }) {
+  let result;
+  try {
+    result = await advisor(input);
+  } catch {
+    return normalizedAdvice(null, 'MODEL_UNAVAILABLE');
+  }
+  return normalizedAdvice(result, null);
+}
+
+function normalizedAdvice(result, fallbackReason) {
+  if (fallbackReason !== null || result === null || typeof result !== 'object' || Array.isArray(result)) {
+    return fallbackAdvice(fallbackReason ?? 'INVALID_ADVISOR_RESULT');
+  }
+  try {
+    const model = typeof result.model === 'string' && result.model.length > 0 && result.model.length <= 4096
+      ? result.model
+      : 'unknown';
+    const hasToken = Object.hasOwn(result, 'token');
+    const token = result.token;
+    const tokenValid = hasToken && (token === null || (typeof token === 'string' && TOKEN_PATTERN.test(token)));
+    const reasonValid = result.reason === undefined || result.reason === null ||
+      (typeof result.reason === 'string' && result.reason.length > 0 && result.reason.length <= 256);
+    const valid = tokenValid && reasonValid;
+    const reason = valid ? (result.reason ?? null) : 'INVALID_ADVISOR_RESULT';
+    const responseDigest = validDigest(result.responseDigest)
+      ? result.responseDigest
+      : canonicalDigest({ model, reason });
+    const observationDigest = validDigest(result.observationDigest) ? result.observationDigest : null;
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      source: 'model',
+      model,
+      token: valid ? token : null,
+      responseDigest,
+      ...(observationDigest === null ? {} : { observationDigest }),
+      reason,
+    };
+  } catch {
+    return fallbackAdvice('INVALID_ADVISOR_RESULT');
+  }
+}
+
+function fallbackAdvice(reason) {
+  const model = 'unknown';
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    source: 'model',
+    model,
+    token: null,
+    responseDigest: canonicalDigest({ model, reason }),
+    reason,
+  };
 }
 
 function assertExternalTransitionRetry(unresolved, request, state) {

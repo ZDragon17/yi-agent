@@ -22,7 +22,7 @@
 - Application 通过显式 `WorldRegistry` 注入 `worldDefinition/createManifestParts/createWorld/valueSpec/scenarioExternalInputs`；默认 registry 注册五个内置世界，测试或宿主可在进程内注入第三方适配器，CLI 不开放动态代码发现。
 - CLI 负责：参数解析、调用应用服务、结构化/人类可读输出和退出码，不直接修改内核状态。
 - API client 负责：读取环境变量、调用 OpenAI-compatible `/models` 与 `/chat/completions`；它是显式工具，不进入 Kernel 的确定性决策链。
-- ModelAdvisor 负责：把有限的数值观测、经有界投影的 observation evidence、目标和值域上下文转换为一个不可信的 token 提议；它不能写状态、调用 WorldPort 或更新 Memory。它可读取受限的总体/关系记忆摘要，但 Kernel 不接受其对记忆的改写。
+- ModelAdvisor 负责：把有限的数值观测、经有界投影的 observation evidence、目标和值域上下文转换为一个不可信的 token 提议；它不能写状态、调用 WorldPort 或更新 Memory。它可读取受限的总体/关系记忆摘要，但 Kernel 不接受其对记忆的改写。Application 将其视为不可靠外部输入：调用失败或输出不符合契约时回退到 Kernel 的确定性选择，并持久化 `MODEL_UNAVAILABLE`/`INVALID_ADVISOR_RESULT` 证据。
 - ModelPlanner 负责：把有限的数值观测、同一有界 observation evidence、根目标和值域上下文转换为不可信的阶段目标提议；它只能建议目标向量，不能改权重、权限、Token、WorldPort 状态或 Memory。Application 必须先用当前 ValueSpec 物化并校验计划，才允许激活或修订；失败时首次激活退回单阶段根目标，停滞修订则保留原计划。
 - ChangeSupervisor 负责：在不认识领域名称的前提下，根据 `ValueSpec` 计算目标距离，区分确认变化与歧义/拒绝，累计停滞，要求重规划，并在目标达成或预算耗尽时给出停止判定；它不能执行 WorldPort、调用模型或自行改变目标。运行时把目标是否由用户显式激活（`enabled`）与目标文本一并持久化，后续 Run 不传 `--goal` 也延续同一监督意图；记录原因后可开启下一周期，避免跨 Run/进程丢失连续性。
 - v0.1 默认含 `temperature`、`virtual-desktop`、`inventory`、`grid` 与 `queue` 五个内置模拟世界；另提供显式外部 WorldPort adapter 协议，但不提供动态发现、任意 in-process import 或真实副作用保证。
@@ -98,6 +98,8 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 EffectBroker 是 WorldPort 与真实副作用之间的第二道边界。Kernel 只能产生行动选择，应用层把它封装为带 `effectId/actionToken/target/precondition/risk/requiresConfirmation/reversible/compensation/executionNonce/planDigest` 的 EffectIntent。Broker 先登记计划和授权，再执行；执行器返回 `APPLIED/REJECTED/UNKNOWN`，其中 `UNKNOWN` 进入 `RECONCILE_REQUIRED`，禁止用新 nonce 重试。`APPLIED` 只有在存在声明式补偿方案时才允许进入补偿流程；补偿未知进入独立 `COMPENSATION_UNKNOWN`。持久化模式下，`EffectJournal` 先以 `handle.sync()` 刷新状态快照，`EXECUTION_STARTED` 或 `COMPENSATION_STARTED` 落盘后才允许调用对应 executor；恢复看到未完成边界时只能进入对账。每次 journal append 还要在同一文件旁取得跨进程原子 writer lock，锁内重新读取最新账本后再计算 sequence/prevDigest；stale-lock 回收使用固定 reclaim reservation，以原子硬链接竞争避免回收者互删或误删新 owner；执行、对账、补偿全过程再持有按 executionNonce 派生的可恢复操作锁，活跃 executor 不会被恢复流程抢占，进程死亡后才可回收；Broker 以共享日志头摘要作为 CAS 前置条件，陈旧 Broker 快照只返回 `CONFLICT` 而不追加语义事件；活 owner 在有界退避后仍返回 BUSY，确认死亡的 owner 才能回收，避免多个 CLI 进程各自从旧内存状态追加。当前 `src/effects/dry-run-executor.mjs` 只在内存中模拟状态变化，不能被解释为真实文件或设备安全。
 
 ModelAdvisor 的结果是外部非确定输入，不进入连续性状态。每个带模型的 STEP 可选记录 `policyEvidence={schemaVersion,source,model,token,responseDigest,observationDigest,applied,reason}`；`observationDigest` 绑定模型实际看到的有界 observation 上下文，`responseDigest` 只绑定模型回答摘要，两者都不是供应商真实性证明。WorldPort 的原始 evidence 不进入 Kernel，只由 `observation-context` 做有限项数、深度、键数、字符串长度和总字节投影；超限时显式标记截断，避免模型上下文无界增长。Replay 使用该证据中的已接受 token重新调用纯 `Kernel.stepWithPreference`，因此不会访问网络，也不会把模型再次生成的不同结果混入历史。若外部 transition 已写入 in-flight marker，宿主还会把已应用的 `policyEvidence` 一并持久化，并在重试时复用原 token；重试不重新调用 advisor，避免模型非确定性破坏同 nonce 的连续性。
+
+Advisor 的异常和非法结果也按同一证据边界处理：宿主不把异常文本写入账本，不把未经校验的 Token 交给 Kernel；只保存稳定的模型标识、摘要指纹、标准化 Token 和故障原因。故障回退不是把模型错误算作成功，而是让共同底座在没有模型提议时继续走可验证的安全选择路径。
 
 为验证真实执行器仍可被同一底座约束，`src/effects/sandbox-file-executor.mjs` 提供了临时目录级文件移动：它拒绝路径穿越和符号链接，只在带用户显式创建 `.yi-agent-sandbox` 标记的沙箱根内操作，并复用 Broker 的确认、executionNonce、durable journal、reconcile 与 compensation。CLI 的 `effect` 命令跨进程恢复这个 Broker，支持安全实验；它不是用户桌面授权层。
 

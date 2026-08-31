@@ -260,3 +260,10 @@
 - 实现：`src/agent/observation-context.mjs` 将 WorldPort observation evidence 投影为有界、可序列化的数据，仅提供给 ModelAdvisor/ModelPlanner；投影超限会显式标记截断。模型结果记录 `observationDigest`，只绑定实际提供给模型的投影摘要；Kernel、WorldPort transition、verify、learn 和 Replay 契约保持不变。
 - 验证：内置带场景 evidence 的 WorldPort 通过真实 CLI 将 evidence 送达模型；Advisor 与 Planner 使用同一投影；超大/非数据 evidence 被截断而不扩大提示；既有多 WorldPort、重启、外部 transition 和 Replay 仍保持一致。
 - 边界：上下文投影不验证 evidence 的现实真实性，也不替代 WorldPort 的状态/权限回执；真实文件、设备和敏感信息的授权仍属于外部 adapter 与人工安全门。
+
+## F-21 模型故障隔离
+
+- 原理：模型只是可替换的假设生成器，不应成为 Kernel 闭环的单点故障；模型不可用或越过输出契约时，底座仍须沿可验证路径继续，并留下可解释、可 Replay 的证据。
+- 实现：应用边界捕获 advisor 异常，或拒绝非法能力令牌/非法结果，回退到 Kernel 的确定性选择；模型故障原因、规范化结果和响应摘要指纹写入 STEP policy evidence，重启与 Replay 不重新调用模型。
+- 验证：模型抛出 provider outage、返回非法 token 或缺失响应指纹时，Run 仍完成，Kernel 不执行模型未授权的动作，账本可重放且与 current 一致。
+- 边界：这不是把模型错误伪装成成功；真实外部动作仍受 WorldPort receipt、幂等协议和人工安全门约束，模型不可用时不自动扩大权限或生成新能力。

@@ -122,6 +122,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 证据驱动策略变化：停滞不会只写一条日志，而会把领域无关的 `BALANCED/EXPLORATORY` 策略、版本和原因持久化；探索策略只使用动作样本数/不确定度重新排序安全候选；
 - 模型提议层：通过 OpenAI-compatible API 提出候选 Token；
 - 有界感知上下文：WorldPort 的结构化 observation evidence 只经过大小/深度/数据类型边界后提供给 Advisor/Planner；Kernel 仍只接收数值观测，账本只保存上下文摘要，不把原始证据当作事实或执行权限；
+- 模型故障隔离：Advisor 不可用、返回非法能力 Token 或破坏输出契约时，应用边界回退到 Kernel 的确定性选择，并把故障证据写入 STEP；不会因为模型暂时不可用而扩大权限，也不会让模型成为连续运行的单点故障；
 - 安全边界：模型不能绕过 Kernel 直接执行动作；
 - 确定性 Replay：回放使用已记录的模型提议摘要，不重新请求模型；
 - Effect Broker：对明确声明的副作用提供计划、确认、执行、对账和补偿流程；
@@ -266,6 +267,8 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 `api test` 只报告连通状态和模型数量，不会输出 API Key。`ask` 的成功结果和失败结果都使用单行 JSON envelope，便于 PowerShell 或脚本继续处理。
 
 `agent run` 会在每一步把当前观测和可用能力交给模型提出一个 token，再由 Kernel 独立计算预期、复核安全性、执行、验证和学习。模型不能直接执行动作；每一步只保存结构化提议摘要，`replay` 不会再次调用模型。
+
+如果 Advisor 的 API 超时、断开或返回非法 Token，应用边界会记录 `MODEL_UNAVAILABLE` 或 `INVALID_ADVISOR_RESULT`，然后让 Kernel 在同一状态上选择安全候选继续闭环；该回退也会进入账本，因此重启和 `replay` 不依赖模型再次返回相同结果。
 
 `agent loop` 是连续运行的 CLI 入口：`--steps` 表示每个可恢复 Run 的步数，`--runs` 表示最多串联多少个 Run；需要长期守护时使用 `--forever`，它与 `--runs` 互斥。每个 Run 都先完成自己的账本提交，再开始下一个 Run；收到 SIGINT/SIGTERM 时只在当前 Run 提交后停止，返回 `INTERRUPTED`。loop 的 `loopId/runIndex/scenario/budget` 会固化到每个 immutable `start.json`，进程重启并完成恢复卡点后，可以用 `yi-agent agent loop --lab PATH --resume --json` 从完整账本重建剩余 Run，不必重新输入也不会重复已提交 Run。同一 lab 中，一条未完成 continuation 对实验空间拥有唯一调度权；新的 loop 或普通 run 会被拒绝，必须先用 `--resume` 接续，已完成或已停止的历史 loop 不阻塞新实验。发生执行拒绝、无安全动作或显式目标达成时，循环会停止并返回原因。`--forever` 的内存结果摘要只保留最近一个 Run，累计 `runs/metrics` 持续统计，完整历史以 lab 账本和独立 Replay 为准，因此不会随运行时间积累结果对象。进程在一个 Run 内被终止或崩溃时，仍须先用 `recover --confirm-lock-owner-dead` 完成明确的恢复卡点，再使用 `--resume` 继续；若未决外部 transition 已保存原始策略证据，恢复进程暂时没有 API 时也能复用该证据并由 Kernel 继续安全选择；`test/e2e/crash-restart-cli.test.mjs` 已用真实子进程强制终止覆盖该路径。
 
