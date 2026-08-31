@@ -43,7 +43,7 @@ function dispatch(op, payload) {
   }
   if (op === 'initialState') {
     const initial = state(0);
-    if (mode === 'bad-state-version') initial.stateVersion = 'state:generated:999';
+    if (mode === 'bad-revision') initial.revision = -1;
     return { state: initial };
   }
   if (op === 'actions') {
@@ -81,15 +81,21 @@ function dispatch(op, payload) {
 function state(value, executionNonce = null) {
   return {
     schemaVersion: 1,
-    stateVersion: `state:${worldId}:${value}`,
+    stateVersion: stateVersionFor(value),
     revision: value,
     value,
     usedExecutionNonces: executionNonce === null ? [] : [executionNonce],
   };
 }
 
+function stateVersionFor(value) {
+  return mode === 'opaque-state-version'
+    ? `opaque-v7/${value.toString(36)}`
+    : `state:${worldId}:${value}`;
+}
+
 function observation(value) {
-  return { schemaVersion: 1, vector: [value.value], stateVersion: value.stateVersion, intervalId: `${worldId}:interval:${value.revision}`, evidence: [] };
+  return { schemaVersion: 1, vector: [value.value], stateVersion: value.stateVersion, intervalId: `boundary-v7/${value.revision.toString(36)}`, evidence: [] };
 }
 
 function respond(id, ok, result) {

@@ -339,8 +339,7 @@ function normalizeExternalState(value, worldId, field) {
     !Number.isSafeInteger(value.revision) || value.revision < 0 ||
     !Array.isArray(value.usedExecutionNonces) || value.usedExecutionNonces.length > 8 ||
     value.usedExecutionNonces.some((nonce) => typeof nonce !== 'string' || nonce.length === 0) ||
-    new Set(value.usedExecutionNonces).size !== value.usedExecutionNonces.length ||
-    value.stateVersion !== `state:${worldId}:${value.revision}`
+    new Set(value.usedExecutionNonces).size !== value.usedExecutionNonces.length
   ) {
     throw new ExternalWorldProtocolError('External WorldPort state violates the base state contract.', { field });
   }

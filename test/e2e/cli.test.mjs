@@ -649,7 +649,7 @@ test('CLI external adapter failures do not append STEP events', async () => {
 });
 
 test('CLI rejects external state and observation contract violations before STEP', async () => {
-  for (const mode of ['bad-state-version', 'bad-observation-dimensions']) {
+  for (const mode of ['bad-revision', 'bad-observation-dimensions']) {
     await withTemp(async (root) => {
       const lab = path.join(root, 'generated-lab');
       const adapter = await writeAdapterConfig(root, ['--mode', mode]);
@@ -661,6 +661,22 @@ test('CLI rejects external state and observation contract violations before STEP
       assert.equal(await countLedgerSteps(lab, 'run-1'), 0, `${mode}: invalid contract appended a STEP`);
     });
   }
+});
+
+test('CLI accepts an opaque external state-version representation', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'opaque-version-lab');
+    const adapter = await writeAdapterConfig(root, ['--mode', 'opaque-state-version']);
+    const init = await invoke('init', '--lab', lab, '--world', 'generated', '--seed', 'opaque-version-seed', '--lab-id', 'opaque-version-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+    const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--scenario', 'generated', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0);
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal(replay.stdout[0].data.finalState.worldState.stateVersion, 'opaque-v7/2');
+  });
 });
 
 test('CLI rejects an adapter config whose executable is not absolute', async () => {

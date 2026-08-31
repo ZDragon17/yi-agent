@@ -323,3 +323,10 @@
 - 实现：v7 Kernel 在 feedback 结算前按观测边界统计本批新反馈；同一边界出现多个 pending nonce 时，全部记录 `AMBIGUOUS`、移出 pending 并保留有界收据，不更新总体模型、关系模型或信念样本。v6 及以前 Replay 显式使用旧归因模式，避免重写历史。
 - 验证：独立外部 adapter 让两个动作跨 Run/进程保持 pending，再在第三个 Run 以相同后验边界返回两条故意声称 clean 的 feedback；正序/逆序 adapter 得到相同 Memory，两个 settled 均为 `AMBIGUOUS`，动作模型不增长，三个 Run 均可 Replay 为 `CONSISTENT`。
 - 边界：不同观测边界的 feedback 仍只能说明各自快照下的经验效应，不是严格因果证明；共享边界规则也不能识别 adapter 伪造的边界或现实中的隐藏混杂，真实设备仍需提供可审计的隔离/对账证据。
+
+## F-31 外部 WorldPort 的不透明版本边界
+
+- 原理：`stateVersion` 和 `intervalId` 是世界给出的边界标识，不是 Kernel 可以解释的领域文本。把它们强制成 `state:<worldId>:<revision>` 会把一个实现习惯误当作通用契约，阻断哈希版本、复合时钟和不暴露世界名称的合法 WorldPort。
+- 实现：外部适配器宿主只要求版本/区间标识为非空字符串，并继续校验 revision 单调性、nonce 窗口、观测前后绑定和反馈边界；不再检查 stateVersion 的字符串模板。内置世界保留自身内部格式，旧外部 adapter 的正常格式保持兼容。
+- 验证：独立外部 adapter 使用 `opaque-v7/<revision>` 与 `boundary-v7/<revision>` 完成 init、跨进程 Run 和 Replay；非法 revision 仍在写入 STEP 前被拒绝。
+- 边界：不透明标识不能证明适配器没有伪造现实版本；真实外部系统仍需提供可审计的版本/对账语义，宿主只验证它能观察到的连续性。

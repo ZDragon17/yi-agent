@@ -113,6 +113,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 纯 Kernel：数值观测、ValueSpec、不透明 Action Token、确定性随机状态；新运行使用带权绝对距离和 `tolerance` 可接受目标带，旧账本按兼容语义重放；
 - `WorldPort`：五个内置世界覆盖连续控制、受保护对象、多资源库存、离散网格和排队系统；
 - 可插拔外部世界：通过受控 JSONL 子进程协议接入；
+- 外部版本不透明：`stateVersion`/`intervalId` 只作为 WorldPort 提供的边界标识，宿主不再强制它们包含 world id 或采用某种字符串格式；连续性仍由 revision、nonce 窗口和前后状态绑定校验；
 - 可审计运行时：事件账本、快照、锁、恢复和哈希链；
 - 证据闭环：行动前预期、行动回执、复观、验证、学习；
 - 延迟反馈归因：对已接受但尚未完成归因窗口的动作，按 executionNonce 持久保存有界 pending credit；后续 WorldPort 可返回匹配反馈，Kernel 只在证据闭合后学习，混杂反馈不会污染动作模型；该机制已用跨独立 CLI 进程、跨 Run 和 Replay 的外部 WorldPort 回归验证；
