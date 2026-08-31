@@ -274,3 +274,10 @@
 - 实现：CLI 增加显式 `--kernel-only`，跳过 API client、Advisor 和 Planner 创建，直接把 WorldPort 交给 Application/Kernel；默认模式仍保持模型配置错误可见，避免静默改变用户意图。
 - 验证：无 API 环境下真实 CLI 的 `agent run` 与 `agent loop` 均可完成，多 Run、inspect 和每个 Run Replay 保持一致；带 API 的既有提议路径不变。
 - 边界：Kernel-only 不等于自然语言目标理解或现实自主性；`--auto-plan` 没有模型时只能记录 Planner 不可用并退回受限根目标，真实外部副作用仍须独立安全门。
+
+## F-23 目标几何一致性
+
+- 原理：如果监督器用绝对距离判断变化，而 Kernel 用带符号差值选择动作，同一目标会在不同层产生相互矛盾的“好变化”；目标应先定义可接受关系，再决定行动价值。
+- 实现：Kernel 支持领域无关的 `valueMode=distance-v2` 与标量 `tolerance`；新应用 Run 固化该语义，关系签名在容差带内归零；缺少版本字段的旧输入保持 `signed-v1`，Replay 不破坏历史账本。
+- 验证：越过目标的强动作不再压过较近动作；容差带内候选价值为零；旧 Replay、Kernel 置换不变性、连续 Run、五个内置 WorldPort 和外部 adapter 回归继续通过。
+- 边界：这只是统一目标评价几何，不是自然语言目标理解、可达性证明或长期规划；下一道反例仍是需要暂时远离目标才能到达目标的多步动力学。

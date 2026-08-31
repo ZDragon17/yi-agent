@@ -43,7 +43,10 @@ const VALUE_SPEC_KEYS = [
   'observationDimensions',
   'weights',
   'target',
+  'tolerance',
+  'valueMode',
 ];
+const VALUE_MODES = ['signed-v1', 'distance-v2'];
 const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
@@ -423,7 +426,12 @@ function normalizeObservation(value, field) {
 }
 
 function normalizeValueSpec(value, field, dimensions) {
-  const source = assertPlainRecord(value, field, VALUE_SPEC_KEYS);
+  const source = assertPlainRecord(
+    value,
+    field,
+    VALUE_SPEC_KEYS,
+    VALUE_SPEC_KEYS.filter((key) => key !== 'tolerance' && key !== 'valueMode'),
+  );
   const observationDimensions = assertPositiveInteger(
     source.observationDimensions,
     `${field}.observationDimensions`,
@@ -444,6 +452,12 @@ function normalizeValueSpec(value, field, dimensions) {
     observationDimensions,
     weights,
     target,
+    tolerance: source.tolerance === undefined
+      ? 0
+      : assertNonNegativeFiniteNumber(source.tolerance, `${field}.tolerance`),
+    valueMode: source.valueMode === undefined
+      ? 'signed-v1'
+      : assertOneOf(source.valueMode, VALUE_MODES, `${field}.valueMode`),
   };
 }
 
@@ -945,8 +959,11 @@ function defaultActionModel(dimensions) {
 function valueObservation(vector, valueSpec) {
   let total = 0;
   for (let index = 0; index < vector.length; index += 1) {
-    const contribution =
-      (vector[index] - valueSpec.target[index]) * valueSpec.weights[index];
+    const difference = vector[index] - valueSpec.target[index];
+    const distance = Math.max(0, Math.abs(difference) - valueSpec.tolerance);
+    const contribution = valueSpec.valueMode === 'distance-v2'
+      ? -distance * Math.abs(valueSpec.weights[index])
+      : difference * valueSpec.weights[index];
     total = assertComputedFiniteNumber(
       total + contribution,
       `stepOutput.choice.expectedValue[${index}]`,
@@ -1407,7 +1424,9 @@ function assertOpaqueToken(value, field) {
 function relationKeyFor(vector, valueSpec) {
   return `r1:${vector.map((value, index) => {
     const difference = valueSpec.target[index] - value;
-    return difference === 0 ? '0' : difference > 0 ? '+' : '-';
+    return valueSpec.valueMode === 'distance-v2' && Math.abs(difference) <= valueSpec.tolerance
+      ? '0'
+      : difference > 0 ? '+' : '-';
   }).join('')}`;
 }
 

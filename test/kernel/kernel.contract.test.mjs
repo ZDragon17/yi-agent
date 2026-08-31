@@ -27,6 +27,8 @@ const VALUE_SPEC_KEYS = [
   'observationDimensions',
   'weights',
   'target',
+  'tolerance',
+  'valueMode',
 ];
 const CAPABILITY_KEYS = [
   'schemaVersion',
@@ -108,13 +110,45 @@ test('step makes a pure decision from only observation, memory, valueSpec, capab
   const result = step(clonePreservingDataHazards(input));
 
   assertStepIntent(result);
-  assert.equal(result.choice.token, TOKEN_A);
-  assert.equal(result.expectation.token, TOKEN_A);
+  assert.equal(result.choice.token, TOKEN_B);
+  assert.equal(result.expectation.token, TOKEN_B);
   assert.equal(Object.hasOwn(result, 'receipt'), false);
   assert.equal(Object.hasOwn(result, 'postObservation'), false);
   assert.equal(Object.hasOwn(result, 'nextWorldState'), false);
   assert.equal(Object.hasOwn(result, 'verification'), false);
   assert.equal(Object.hasOwn(result, 'update'), false);
+});
+
+test('step ranks absolute distance to the target and does not reward overshoot', async () => {
+  const { step } = await loadKernel();
+  const result = step(makeStepInput({
+    observation: observation([0], 'state-target'),
+    valueSpec: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1], tolerance: 0, valueMode: 'distance-v2' },
+    capabilities: [capability(TOKEN_A), capability(TOKEN_B)],
+    memory: memoryWithModels([
+      [TOKEN_A, { sampleCount: 4, meanDelta: [10], uncertainty: 0 }],
+      [TOKEN_B, { sampleCount: 4, meanDelta: [0.5], uncertainty: 0 }],
+    ]),
+  }));
+
+  assert.equal(result.choice.token, TOKEN_B);
+  assert.equal(result.choice.expectedValue, -0.5);
+});
+
+test('step treats the valueSpec tolerance as an acceptable target band', async () => {
+  const { step } = await loadKernel();
+  const result = step(makeStepInput({
+    observation: observation([0], 'state-band'),
+    valueSpec: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [10], tolerance: 1, valueMode: 'distance-v2' },
+    capabilities: [capability(TOKEN_A), capability(TOKEN_B)],
+    memory: memoryWithModels([
+      [TOKEN_A, { sampleCount: 4, meanDelta: [9], uncertainty: 0 }],
+      [TOKEN_B, { sampleCount: 4, meanDelta: [11], uncertainty: 0 }],
+    ]),
+  }));
+
+  assert.equal(result.choice.expectedValue, 0);
+  assert.equal(result.choice.score, 0);
 });
 
 test('step is deterministic with an explicit rngState and does not require policy metadata', async () => {
@@ -902,6 +936,8 @@ function valueSpec(weights) {
     observationDimensions: weights.length,
     weights,
     target: weights.map(() => 0),
+    tolerance: 0,
+    valueMode: 'distance-v2',
   };
 }
 

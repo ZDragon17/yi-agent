@@ -110,7 +110,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 ## 当前已经实现什么
 
-- 纯 Kernel：数值观测、ValueSpec、不透明 Action Token、确定性随机状态；
+- 纯 Kernel：数值观测、ValueSpec、不透明 Action Token、确定性随机状态；新运行使用带权绝对距离和 `tolerance` 可接受目标带，旧账本按兼容语义重放；
 - `WorldPort`：五个内置世界覆盖连续控制、受保护对象、多资源库存、离散网格和排队系统；
 - 可插拔外部世界：通过受控 JSONL 子进程协议接入；
 - 可审计运行时：事件账本、快照、锁、恢复和哈希链；
@@ -293,6 +293,8 @@ node E:\demo\yi-agent-oracle\late-bound-oracle.mjs `
 当监督器检测到达到停滞阈值，它会把 `replanCount`、`strategy.revision`、策略模式和 `replanReason` 写进 STEP 的 `afterState`。`EXPLORATORY` 只改变安全候选的选择顺序，不能改变目标、权限、WorldPort 回执或验证规则；Replay 会重现同一次策略切换。若启用了持久化 Planner 策略，停滞还会把新的有限计划写入同一步的 `boundary.goalReplan`：已完成阶段不可改写，只能修订未完成后缀；Planner 不可用或提议不合法时，保留原计划并记录拒绝证据。
 
 Memory 现在同时保留三层证据：`actionModels` 记录 Token 的总体变化，`relationModels` 记录同一 Token 在观测相对当前目标的关系签名（每个维度为接近、相等或远离）下的变化，`rejectionModels` 记录同一 Token 在最近关系位置是否遭到执行拒绝。Kernel 优先使用关系条件模型，缺失时回退总体模型；拒绝反馈只在同一关系签名下暂时降权，关系改变或所有候选都被拒绝时仍允许重新验证。关系签名只由数值观测和 ValueSpec 计算，不读取领域名称。每个模型使用有界变化窗口，让近期已验证证据能够修正过时动力学，同时保留总样本数审计；旧账本没有关系字段时仍按旧模型 Replay，新实验会把关系模型和拒绝证据随 current/STEP 持久化。
+
+目标评价现在也固定在同一底层几何上：新 Run 的 `valueMode=distance-v2` 用每个观测维度到目标的带权绝对距离打分，`tolerance` 把目标从一个点扩展为可接受带；因此越过目标不会被错误奖励，带内状态可被视为满足该维度。`valueMode` 不进入领域逻辑，旧 STEP 缺少它时 Replay 保持 `signed-v1`，避免演化破坏历史连续性。
 
 复杂目标可以通过 `--goal-plan PATH` 提供阶段序列。每个阶段只声明不透明的阶段 ID、阶段目标文本和可选 `ValueSpec`；运行时仍用同一套观察向量、加权距离、证据和安全约束推进阶段，阶段完成后才切换到下一个阶段。计划会进入 supervisor/current/STEP，Replay 不会重新询问模型或读取计划文件；已激活的计划不能在同一个 lab 中被静默替换。
 
