@@ -536,6 +536,7 @@ export async function runContinuous(input) {
   const runLimit = continuation.mode === 'finite'
     ? continuation.maxRuns
     : Number.POSITIVE_INFINITY;
+  const longLived = continuation.mode === 'forever';
   const startIndex = source.resume === true ? continuation.nextRunIndex : 0;
   const scenario = continuation.scenario;
   const durability = source.durability ?? 'checkpoint';
@@ -543,6 +544,9 @@ export async function runContinuous(input) {
     throw new LabStoreError('INVALID_INPUT', 'durability must be strict or checkpoint.', { field: 'durability' });
   }
   const results = [];
+  let lastResult = null;
+  let completedRuns = 0;
+  const metrics = { executed: 0, accepted: 0, rejected: 0 };
   let interrupted = false;
   const shouldStop = () => source.shouldStop?.() === true;
 
@@ -564,7 +568,12 @@ export async function runContinuous(input) {
       runs: undefined,
       durability,
     });
-    results.push(result);
+    completedRuns += 1;
+    metrics.executed += result.metrics?.executed ?? 0;
+    metrics.accepted += result.metrics?.accepted ?? 0;
+    metrics.rejected += result.metrics?.rejected ?? 0;
+    if (longLived) lastResult = result;
+    else results.push(result);
     if (result.status === 'HALTED' || result.stopReason === 'OBJECTIVE_REACHED') break;
     if (shouldStop()) {
       interrupted = true;
@@ -572,19 +581,18 @@ export async function runContinuous(input) {
     }
   }
 
-  const last = results.at(-1);
+  const last = longLived ? lastResult : results.at(-1);
+  const reportedResults = longLived
+    ? (lastResult === null ? [] : [lastResult])
+    : results;
   return {
     schemaVersion: SCHEMA_VERSION,
     status: last?.status ?? 'COMPLETED',
     stopReason: interrupted ? 'INTERRUPTED' : (last?.stopReason ?? 'COMPLETED'),
     continuationId: continuation.loopId,
-    runs: results.length,
-    metrics: {
-      executed: results.reduce((sum, result) => sum + (result.metrics?.executed ?? 0), 0),
-      accepted: results.reduce((sum, result) => sum + (result.metrics?.accepted ?? 0), 0),
-      rejected: results.reduce((sum, result) => sum + (result.metrics?.rejected ?? 0), 0),
-    },
-    results,
+    runs: completedRuns,
+    metrics,
+    results: reportedResults,
   };
 }
 

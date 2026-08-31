@@ -646,6 +646,23 @@ test('continuous runner can stop a forever policy only between committed runs', 
   });
 });
 
+test('forever runner keeps in-memory result retention bounded across many run boundaries', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'forever-retention-lab', worldId: 'temperature', seed: 'forever-retention-seed' });
+    let stopChecks = 0;
+    const result = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      forever: true,
+      shouldStop: () => stopChecks++ >= 60,
+    });
+    assert.ok(result.runs >= 30, `expected many committed runs, got ${result.runs}`);
+    assert.equal(result.results.length, 1);
+    assert.equal(result.metrics.executed, result.runs);
+    assert.equal((await inspectLab({ labPath: lab })).current.kernelStep, result.runs);
+  });
+});
+
 test('split and whole runs preserve the same continuity projection across every WorldPort', async () => {
   await withLab(async (root) => {
     for (const worldId of ['temperature', 'virtual-desktop', 'inventory', 'grid', 'queue']) {
