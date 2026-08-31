@@ -95,21 +95,35 @@ async function dispatchAgent(options) {
     goal: options.goal ?? null,
   });
   if (options.agentOperation === 'loop') {
-    return runContinuous({
-      labPath: required(options, 'lab'),
-      stepsPerRun: parseSteps(required(options, 'steps')),
-      runs: options.runs === undefined ? undefined : parseBoundedInt(options.runs, 1, 10_000, 'runs'),
-      runId: options['run-id'],
-      scenario: options.scenario,
-      registry: loadRegistry(options),
-      advisor,
-      goal: options.goal,
-      maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
-      stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
-    });
+    let interrupted = false;
+    const onSignal = () => { interrupted = true; };
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+    try {
+      return await runContinuous({
+        labPath: required(options, 'lab'),
+        stepsPerRun: parseSteps(required(options, 'steps')),
+        runs: options.runs === undefined ? undefined : parseBoundedInt(options.runs, 1, 10_000, 'runs'),
+        forever: options.forever === true,
+        shouldStop: () => interrupted,
+        runId: options['run-id'],
+        scenario: options.scenario,
+        registry: loadRegistry(options),
+        advisor,
+        goal: options.goal,
+        maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
+        stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
+      });
+    } finally {
+      process.removeListener('SIGINT', onSignal);
+      process.removeListener('SIGTERM', onSignal);
+    }
   }
   if (options.agentOperation !== 'run') {
     throw cliError('INVALID_INPUT', `Unsupported agent operation: ${options.agentOperation ?? '(missing)'}`, {}, 64);
+  }
+  if (options.forever === true) {
+    throw cliError('INVALID_INPUT', '--forever is only supported by agent loop.', { field: 'forever' }, 64);
   }
   return runLab({
     labPath: required(options, 'lab'),
@@ -197,7 +211,7 @@ function parseArguments(argv) {
     if (argument === '--json') continue;
     if (!argument.startsWith('--')) throw cliError('INVALID_INPUT', `Unexpected argument: ${argument}`, {}, 64);
     const name = argument.slice(2);
-    if (name === 'confirm-lock-owner-dead') {
+    if (name === 'confirm-lock-owner-dead' || name === 'forever') {
       options[name] = true;
       continue;
     }
@@ -209,7 +223,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'run-id', 'scenario', 'adapter', 'goal', 'max-cycles', 'stagnation-limit'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'run-id', 'scenario', 'adapter', 'goal', 'max-cycles', 'stagnation-limit'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
@@ -375,7 +389,7 @@ function helpText() {
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
-    '  yi-agent agent run|loop --lab PATH --steps N [--runs N] [--goal TEXT] [--max-cycles N] [--stagnation-limit N] [--json]',
+    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--goal TEXT] [--max-cycles N] [--stagnation-limit N] [--json]',
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',

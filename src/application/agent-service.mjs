@@ -269,11 +269,27 @@ export async function runLab(input) {
 
 export async function runContinuous(input) {
   const source = requireRecord(input, 'continuous run input');
+  if (source.shouldStop !== undefined && typeof source.shouldStop !== 'function') {
+    throw new LabStoreError('INVALID_INPUT', 'shouldStop must be a function.', { field: 'shouldStop' });
+  }
+  const forever = source.forever === true;
+  if (source.forever !== undefined && typeof source.forever !== 'boolean') {
+    throw new LabStoreError('INVALID_INPUT', 'forever must be a boolean.', { field: 'forever' });
+  }
+  if (forever && source.runs !== undefined) {
+    throw new LabStoreError('INVALID_INPUT', 'forever and runs are mutually exclusive.', { fields: ['forever', 'runs'] });
+  }
   const runs = requireBoundedOptional(source.runs, 1, 10_000, 'runs') ?? 1;
   const stepsPerRun = requireSteps(source.stepsPerRun ?? source.steps);
   const results = [];
+  let interrupted = false;
+  const shouldStop = () => source.shouldStop?.() === true;
 
-  for (let index = 0; index < runs; index += 1) {
+  for (let index = 0; forever || index < runs; index += 1) {
+    if (shouldStop()) {
+      interrupted = true;
+      break;
+    }
     const runId = source.runId === undefined
       ? randomUUID()
       : `${requireText(source.runId, 'runId')}-${index + 1}-${randomUUID()}`;
@@ -286,13 +302,17 @@ export async function runContinuous(input) {
     });
     results.push(result);
     if (result.status === 'HALTED' || result.stopReason === 'OBJECTIVE_REACHED') break;
+    if (shouldStop()) {
+      interrupted = true;
+      break;
+    }
   }
 
   const last = results.at(-1);
   return {
     schemaVersion: SCHEMA_VERSION,
     status: last?.status ?? 'COMPLETED',
-    stopReason: last?.stopReason ?? 'COMPLETED',
+    stopReason: interrupted ? 'INTERRUPTED' : (last?.stopReason ?? 'COMPLETED'),
     runs: results.length,
     metrics: {
       executed: results.reduce((sum, result) => sum + (result.metrics?.executed ?? 0), 0),

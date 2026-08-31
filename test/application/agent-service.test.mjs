@@ -233,6 +233,26 @@ test('continuous runner preserves one state across multiple committed run bounda
   });
 });
 
+test('continuous runner can stop a forever policy only between committed runs', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'forever-lab', worldId: 'temperature', seed: 'forever-seed' });
+    let stopChecks = 0;
+    const result = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 2,
+      forever: true,
+      shouldStop: () => stopChecks++ > 0,
+      runId: 'forever',
+    });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(result.stopReason, 'INTERRUPTED');
+    assert.equal(result.runs, 1);
+    assert.equal(result.metrics.executed, 2);
+    assert.equal((await inspectLab({ labPath: lab })).current.kernelStep, 2);
+    assert.equal((await replayLab({ labPath: lab, runId: result.results[0].runId })).verdict, 'CONSISTENT');
+  });
+});
+
 test('split and whole runs preserve the same continuity projection across every WorldPort', async () => {
   await withLab(async (root) => {
     for (const worldId of ['temperature', 'virtual-desktop', 'inventory', 'grid', 'queue']) {
