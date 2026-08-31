@@ -18,6 +18,7 @@ const MAX_BELIEF_MODELS = 8192;
 const MAX_BELIEF_SAMPLES = 8;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const FEEDBACK_ORDER_MODES = ['arrival-v1', 'pending-v2'];
+const FEEDBACK_CAUSALITY_MODES = ['legacy-v1', 'boundary-v2'];
 
 const STEP_INPUT_KEYS = [
   'observation',
@@ -37,8 +38,9 @@ const LEARN_INPUT_KEYS = [
   'postObservation',
   'verification',
   'feedbackOrder',
+  'feedbackCausality',
 ];
-const LEARN_INPUT_REQUIRED_KEYS = LEARN_INPUT_KEYS.filter((key) => key !== 'feedbackOrder');
+const LEARN_INPUT_REQUIRED_KEYS = LEARN_INPUT_KEYS.filter((key) => !['feedbackOrder', 'feedbackCausality'].includes(key));
 const VERIFICATION_KEYS = [
   'schemaVersion',
   'error',
@@ -306,6 +308,9 @@ export function learn(input) {
   const feedbackOrder = source.feedbackOrder === undefined
     ? 'pending-v2'
     : assertOneOf(source.feedbackOrder, FEEDBACK_ORDER_MODES, 'learnInput.feedbackOrder');
+  const feedbackCausality = source.feedbackCausality === undefined
+    ? 'boundary-v2'
+    : assertOneOf(source.feedbackCausality, FEEDBACK_CAUSALITY_MODES, 'learnInput.feedbackCausality');
   const intent = normalizeIntent(source.intent, 'learnInput.intent');
   const dimensions = intent.expectation.expectedDelta.length;
   const memory = normalizeMemory(source.memory, 'learnInput.memory', dimensions);
@@ -333,6 +338,7 @@ export function learn(input) {
     dimensions,
     'learnInput.postObservation.feedback',
     feedbackOrder,
+    feedbackCausality,
   );
   const settled = settlement.entries;
 
@@ -438,7 +444,14 @@ export function learn(input) {
   };
 }
 
-function settlePendingCredits(memory, postObservation, dimensions, field, feedbackOrder = 'pending-v2') {
+function settlePendingCredits(
+  memory,
+  postObservation,
+  dimensions,
+  field,
+  feedbackOrder = 'pending-v2',
+  feedbackCausality = 'boundary-v2',
+) {
   const feedback = postObservation.feedback ?? [];
   const pendingCredits = memory.pendingCredits ?? [];
   const pendingByNonce = new Map(pendingCredits.map((credit) => [credit.executionNonce, credit]));
@@ -458,6 +471,15 @@ function settlePendingCredits(memory, postObservation, dimensions, field, feedba
       const rightOrder = pendingOrder.get(right.executionNonce) ?? Number.MAX_SAFE_INTEGER;
       return leftOrder - rightOrder || left.executionNonce.localeCompare(right.executionNonce);
     });
+  const freshBoundaryCounts = new Map();
+  if (feedbackCausality === 'boundary-v2') {
+    for (const item of orderedFeedback) {
+      if (pendingByNonce.has(item.executionNonce) && !settledFeedbackByNonce.has(item.executionNonce)) {
+        const boundary = feedbackBoundaryKey(item);
+        freshBoundaryCounts.set(boundary, (freshBoundaryCounts.get(boundary) ?? 0) + 1);
+      }
+    }
+  }
   let hasFeedbackSettlement = false;
 
   for (const credit of pendingCredits) {
@@ -506,7 +528,9 @@ function settlePendingCredits(memory, postObservation, dimensions, field, feedba
         executionNonce: item.executionNonce,
       });
     }
-    if (item.confounderCount > 0) {
+    const sharedObservationBoundary = feedbackCausality === 'boundary-v2' &&
+      freshBoundaryCounts.get(feedbackBoundaryKey(item)) > 1;
+    if (item.confounderCount > 0 || sharedObservationBoundary) {
       hasFeedbackSettlement = true;
       rememberSettledFeedback(memory, item);
       settled.push({
@@ -557,6 +581,10 @@ function settlePendingCredits(memory, postObservation, dimensions, field, feedba
 
   if (memory.pendingCredits !== undefined || feedback.length > 0) memory.pendingCredits = remaining;
   return { entries: settled, cleanDeltas, hasFeedbackSettlement };
+}
+
+function feedbackBoundaryKey(feedback) {
+  return `${feedback.stateVersion.length}:${feedback.stateVersion}${feedback.intervalId.length}:${feedback.intervalId}`;
 }
 
 function rememberSettledFeedback(memory, feedback) {

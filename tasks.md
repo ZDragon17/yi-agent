@@ -316,3 +316,10 @@
 - 实现：v6 Kernel 在结算前按 pending credit 的持久顺序排序合法 feedback；该顺序同时稳定 `settled`、`settledFeedback` 和 `beliefModels` 的样本写入。Replay 对 v5 及以前显式保留历史到达顺序，避免重算旧账本时改变结果。未知 nonce、矛盾 feedback、重复 nonce 和超限数据仍 fail-closed，不通过排序掩盖契约错误。
 - 验证：两个 pending action 收到同一组反馈的正序与逆序时，`settled` 与完整 Memory 规范化相等；已有延迟反馈、重复投递、窗口关闭、重启和 Replay 回归继续通过。
 - 边界：规范化消除的是传输时序差异，不是多动作信用分配；一个观测无法区分多个动作的重叠效果时，WorldPort 必须提供 `confounderCount>0`，Kernel 只记录 `AMBIGUOUS` 而不学习。
+
+## F-30 共享观测边界的保守多动作归因
+
+- 原理：多个 pending action 如果只得到同一 `stateVersion + intervalId` 的后验快照，数值结果没有提供把变化拆回各动作的独立观测边界；不能因为 adapter 将 `confounderCount` 声明为 0 就把同一份变化复制成多条经验。
+- 实现：v7 Kernel 在 feedback 结算前按观测边界统计本批新反馈；同一边界出现多个 pending nonce 时，全部记录 `AMBIGUOUS`、移出 pending 并保留有界收据，不更新总体模型、关系模型或信念样本。v6 及以前 Replay 显式使用旧归因模式，避免重写历史。
+- 验证：独立外部 adapter 让两个动作跨 Run/进程保持 pending，再在第三个 Run 以相同后验边界返回两条故意声称 clean 的 feedback；正序/逆序 adapter 得到相同 Memory，两个 settled 均为 `AMBIGUOUS`，动作模型不增长，三个 Run 均可 Replay 为 `CONSISTENT`。
+- 边界：不同观测边界的 feedback 仍只能说明各自快照下的经验效应，不是严格因果证明；共享边界规则也不能识别 adapter 伪造的边界或现实中的隐藏混杂，真实设备仍需提供可审计的隔离/对账证据。

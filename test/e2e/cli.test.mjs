@@ -14,6 +14,7 @@ const ADAPTER_FIXTURE = path.resolve('test/fixtures/generated-world-adapter.mjs'
 const STATEFUL_ADAPTER_FIXTURE = path.resolve('test/fixtures/stateful-capabilities-world-adapter.mjs');
 const IDEMPOTENT_ADAPTER_FIXTURE = path.resolve('test/fixtures/idempotent-transition-world-adapter.mjs');
 const DELAYED_FEEDBACK_ADAPTER_FIXTURE = path.resolve('test/fixtures/delayed-feedback-world-adapter.mjs');
+const OVERLAP_FEEDBACK_ADAPTER_FIXTURE = path.resolve('test/fixtures/overlap-feedback-world-adapter.mjs');
 
 test('generated adapter exposes a fixed Ed25519 key for its hello descriptor', async () => {
   const response = await invokeAdapter([], { protocol: 'yi-world-cli', version: 1, id: '1', op: 'hello', payload: {} });
@@ -222,6 +223,43 @@ test('CLI carries delayed and repeated feedback across WorldPort processes and r
     assert.equal(learned.sampleCount, 3);
     assert.equal(learned.meanDelta[0], 1);
     assert.equal(persisted.memory.settledFeedback.length, 3);
+  });
+});
+
+test('CLI refuses shared-boundary multi-action credit across adapter restarts and feedback order', async () => {
+  await withTemp(async (root) => {
+    const identityLab = path.join(root, 'overlap-identity-lab');
+    const reverseLab = path.join(root, 'overlap-reverse-lab');
+    const identityAdapter = await writeOverlapFeedbackAdapterConfig(root, false);
+    const reverseAdapter = await writeOverlapFeedbackAdapterConfig(root, true);
+
+    for (const [lab, adapter] of [[identityLab, identityAdapter], [reverseLab, reverseAdapter]]) {
+      const init = await invoke('init', '--lab', lab, '--world', 'overlap-feedback', '--seed', 'overlap-seed', '--lab-id', 'overlap-lab', '--adapter', adapter, '--json');
+      assert.equal(init.code, 0, `${lab}: init`);
+      const firstRun = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--scenario', 'overlap', '--adapter', adapter, '--json');
+      assert.equal(firstRun.code, 0, `${lab}: first run`);
+      const secondRun = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'overlap', '--adapter', adapter, '--json');
+      assert.equal(secondRun.code, 0, `${lab}: second run`);
+    }
+
+    const identityCurrent = JSON.parse(await readFile(path.join(identityLab, 'state', 'current.json'), 'utf8'));
+    const reverseCurrent = JSON.parse(await readFile(path.join(reverseLab, 'state', 'current.json'), 'utf8'));
+    assert.deepEqual(identityCurrent.memory, reverseCurrent.memory);
+    assert.equal(identityCurrent.worldState.value, 1);
+    assert.equal(identityCurrent.memory.pendingCredits.length, 1);
+    assert.equal(Object.keys(identityCurrent.memory.actionModels).length, 0);
+    assert.equal(identityCurrent.memory.settledFeedback.length, 2);
+
+    for (const [lab, adapter] of [[identityLab, identityAdapter], [reverseLab, reverseAdapter]]) {
+      const step = decodeStoredEvent(
+        (await readFile(path.join(lab, 'runs', 'run-2', 'events.jsonl'), 'utf8'))
+          .trim().split(/\r?\n/u).map(JSON.parse).find((event) => event.kind === 'STEP'),
+      );
+      assert.deepEqual(step.payload.update.settled.map((item) => item.attribution), ['AMBIGUOUS', 'AMBIGUOUS']);
+      const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
+      assert.equal(replay.code, 0, `${lab}: replay`);
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT', `${lab}: replay verdict`);
+    }
   });
 });
 
@@ -768,6 +806,19 @@ async function writeDelayedFeedbackAdapterConfig(root, repeatFeedback = false, d
     args: [DELAYED_FEEDBACK_ADAPTER_FIXTURE, ...(repeatFeedback ? ['--repeat-feedback'] : []), ...(dropFeedback ? ['--drop-feedback'] : [])],
     adapterId: 'delayed-feedback-adapter-v1',
     worldId: 'delayed-feedback',
+    timeoutMs: 2000,
+  }));
+  return config;
+}
+
+async function writeOverlapFeedbackAdapterConfig(root, reverseFeedback) {
+  const suffix = reverseFeedback ? 'reverse' : 'identity';
+  const config = path.join(root, `overlap-feedback-${suffix}.json`);
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [OVERLAP_FEEDBACK_ADAPTER_FIXTURE, ...(reverseFeedback ? ['--reverse-feedback'] : [])],
+    adapterId: 'overlap-feedback-adapter-v1',
+    worldId: 'overlap-feedback',
     timeoutMs: 2000,
   }));
   return config;

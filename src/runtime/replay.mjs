@@ -21,6 +21,7 @@ const SETTLED_FEEDBACK_LEARNING_VERSION = 3;
 const PENDING_CREDIT_EXPIRY_LEARNING_VERSION = 4;
 const BELIEF_LEARNING_VERSION = 5;
 const CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION = 6;
+const SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION = 7;
 
 export class ReplayError extends Error {
   constructor(code, message, context = {}) {
@@ -231,6 +232,9 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       feedbackOrder: learningVersion >= CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION
         ? 'pending-v2'
         : 'arrival-v1',
+      feedbackCausality: learningVersion >= SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION
+        ? 'boundary-v2'
+        : 'legacy-v1',
     });
     const replayLearned = projectLearningForVersion(learned, learningVersion);
     update = payload.boundary.kernelLearningVersion === undefined &&

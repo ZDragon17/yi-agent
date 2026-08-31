@@ -768,15 +768,15 @@ test('feedback settlement is canonical across transport order when multiple pend
     verification: secondVerification,
   }).nextMemory;
   const completedReceipt = receiptForRequest(secondRequest);
-  const feedback = (executionNonce, vector) => ({
+  const feedback = (executionNonce, vector, stateVersion = 'state-2', intervalId = `interval:${stateVersion}`) => ({
     schemaVersion: 1,
     executionNonce,
-    stateVersion: 'state-2',
-    intervalId: 'interval:state-2',
+    stateVersion,
+    intervalId,
     vector,
     confounderCount: 0,
   });
-  const settle = (items, feedbackOrder) => {
+  const settle = (items, feedbackOrder, feedbackCausality) => {
     const postObservation = { ...secondPostObservation, feedback: items };
     const verification = verify({ intent: secondIntent, receipt: completedReceipt, postObservation });
     return learn({
@@ -786,25 +786,34 @@ test('feedback settlement is canonical across transport order when multiple pend
       postObservation,
       verification,
       ...(feedbackOrder === undefined ? {} : { feedbackOrder }),
+      ...(feedbackCausality === undefined ? {} : { feedbackCausality }),
     });
   };
 
   const forward = settle([
-    feedback(firstRequest.executionNonce, [1, 0]),
-    feedback(secondRequest.executionNonce, [0, 2]),
+    feedback(firstRequest.executionNonce, [1, 0], 'state-1', 'x\u0000interval:y'),
+    feedback(secondRequest.executionNonce, [0, 2], 'state-1\u0000x', 'interval:y'),
   ]);
   const reverse = settle([
-    feedback(secondRequest.executionNonce, [0, 2]),
-    feedback(firstRequest.executionNonce, [1, 0]),
+    feedback(secondRequest.executionNonce, [0, 2], 'state-1\u0000x', 'interval:y'),
+    feedback(firstRequest.executionNonce, [1, 0], 'state-1', 'x\u0000interval:y'),
   ]);
 
+  assert.deepEqual(forward.settled.map((item) => item.attribution), ['ACTION', 'ACTION']);
   assert.deepEqual(reverse.settled, forward.settled);
   assert.deepEqual(reverse.nextMemory, forward.nextMemory);
   const legacyReverse = settle([
     feedback(secondRequest.executionNonce, [0, 2]),
-    feedback(firstRequest.executionNonce, [1, 0]),
-  ], 'arrival-v1');
+    feedback(firstRequest.executionNonce, [1, 0], 'state-1'),
+  ], 'arrival-v1', 'legacy-v1');
   assert.notDeepEqual(legacyReverse.nextMemory, forward.nextMemory);
+
+  const sharedBoundary = settle([
+    feedback(firstRequest.executionNonce, [1, 2]),
+    feedback(secondRequest.executionNonce, [1, 2]),
+  ]);
+  assert.deepEqual(sharedBoundary.settled.map((item) => item.attribution), ['AMBIGUOUS', 'AMBIGUOUS']);
+  assert.deepEqual(sharedBoundary.nextMemory.actionModels, {});
 });
 
 test('missing feedback expires at a bounded window without learning and rejects late evidence', async () => {
