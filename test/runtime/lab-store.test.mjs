@@ -338,6 +338,22 @@ test('a stale ActiveRun cannot write after terminal evidence or lock takeover', 
   );
 }));
 
+test('an active run detects an in-place writer lock mutation', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  const lockPath = path.join(lab, 'locks/writer.lock');
+  const lock = await readJson(lockPath);
+  lock.createdAt = `${lock.createdAt.slice(0, -1)}X`;
+  lock.selfDigest = canonicalDigest(omit(lock, 'selfDigest'));
+  await writeJson(lockPath, lock);
+
+  await assert.rejects(
+    run.append(stepEvent()),
+    (error) => assertCode(error, 'CORRUPT'),
+  );
+}));
+
 test('recovery selects the current nonterminal run when historical terminal runs exist', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

@@ -30,7 +30,7 @@ import { normalizeChangeSupervisorState } from '../agent/change-supervisor.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
 const MAX_JSON_BYTES = 1024 * 1024;
-const MAX_LEDGER_BYTES = 16 * 1024 * 1024;
+const MAX_LEDGER_BYTES = 32 * 1024 * 1024;
 const MAX_EVENT_LINE_BYTES = 1024 * 1024;
 const MAX_RECENT_COMMITTED_STEPS = 32;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
@@ -418,7 +418,16 @@ export class LabStore {
       await atomicWriteJson(this.root, childPath(this.root, 'state', 'current.json'), current);
       inject(failpoint, 'current:running');
 
-      return new ActiveRun(this, start, writerLock, startedEvent, failpoint, source.reuseLedgerHandle === true);
+      const writerLockIdentity = await captureWriterLockIdentity(this.root);
+      return new ActiveRun(
+        this,
+        start,
+        writerLock,
+        startedEvent,
+        failpoint,
+        source.reuseLedgerHandle === true,
+        writerLockIdentity,
+      );
     } catch (error) {
       if (!durable && error?.code !== 'BUSY') {
         await removeOwnedLock(this.root, writerLock).catch(() => {});
@@ -430,13 +439,14 @@ export class LabStore {
 }
 
 class ActiveRun {
-  constructor(store, start, writerLock, lastEvent, failpoint, reuseLedgerHandle) {
+  constructor(store, start, writerLock, lastEvent, failpoint, reuseLedgerHandle, writerLockIdentity) {
     this.store = store;
     this.start = start;
     this.writerLock = writerLock;
     this.lastEvent = lastEvent;
     this.failpoint = failpoint;
     this.reuseLedgerHandle = reuseLedgerHandle;
+    this.writerLockIdentity = writerLockIdentity;
     this.terminal = false;
     this.terminalEvidence = false;
     this.operationTail = Promise.resolve();
@@ -446,6 +456,7 @@ class ActiveRun {
     this.knownExecutionNonces = new Set();
     this.needsLedgerReconcile = false;
     this.ledgerHandle = null;
+    this.ledgerBytes = null;
   }
 
   append(input, options = {}) {
@@ -456,7 +467,7 @@ class ActiveRun {
     if (this.terminal || this.terminalEvidence) {
       throw new LabStoreError('BUSY', 'Run already has terminal evidence.', { runId: this.start.runId });
     }
-    await assertOwnedLock(this.store.root, this.store.manifest, this.writerLock);
+    await assertOwnedLock(this.store.root, this.writerLockIdentity);
     const source = requireObject(input, 'event');
     const kind = requireText(source.kind, 'event.kind');
     if (kind === 'RUN_STARTED' || TERMINAL_KINDS.has(kind)) {
@@ -492,14 +503,15 @@ class ActiveRun {
         options.failpoint ?? this.failpoint,
         this.reuseLedgerHandle ? await this.ensureLedgerHandle() : null,
         this.reuseLedgerHandle,
+        this.reuseLedgerHandle ? this : null,
       );
     } catch (error) {
       this.needsLedgerReconcile = true;
       throw error;
     }
     this.lastEvent = event;
-    this.lastStepState = cloneJson(payload.afterState);
-    this.expectedState = cloneJson(payload.afterState);
+    this.lastStepState = payload.afterState;
+    this.expectedState = payload.afterState;
     this.rememberCommittedStep(executionNonce, event, payload);
     inject(options.failpoint ?? this.failpoint, `${kind}:appended`);
     return cloneJson(event);
@@ -513,7 +525,7 @@ class ActiveRun {
     if (this.terminal || this.terminalEvidence) {
       throw new LabStoreError('BUSY', 'A terminal run cannot publish a running snapshot.', { runId: this.start.runId });
     }
-    await assertOwnedLock(this.store.root, this.store.manifest, this.writerLock);
+    await assertOwnedLock(this.store.root, this.writerLockIdentity);
     const source = cloneInputJson(requireObject(snapshot, 'snapshot'), 'snapshot');
     validateContinuityState({
       worldState: source.worldState,
@@ -558,7 +570,7 @@ class ActiveRun {
     if (this.terminal || this.terminalEvidence) {
       throw new LabStoreError('BUSY', 'Run already has terminal evidence.', { runId: this.start.runId });
     }
-    await assertOwnedLock(this.store.root, this.store.manifest, this.writerLock);
+    await assertOwnedLock(this.store.root, this.writerLockIdentity);
     const source = requireObject(input, 'finish input');
     const terminalStatus = source.terminalStatus;
     if (terminalStatus !== 'COMPLETED' && terminalStatus !== 'HALTED') {
@@ -585,6 +597,7 @@ class ActiveRun {
         failpoint,
         this.reuseLedgerHandle ? await this.ensureLedgerHandle() : null,
         this.reuseLedgerHandle,
+        this.reuseLedgerHandle ? this : null,
       );
     } finally {
       await this.closeLedgerHandle();
@@ -653,18 +666,25 @@ class ActiveRun {
     const eventsPath = childPath(this.store.root, 'runs', this.start.runId, 'events.jsonl');
     await assertSafePath(this.store.root, eventsPath);
     this.ledgerHandle = await open(eventsPath, 'a', 0o600);
+    const status = await this.ledgerHandle.stat();
+    if (!status.isFile() || status.size > MAX_LEDGER_BYTES) {
+      await this.closeLedgerHandle();
+      corrupt('Ledger exceeds the size limit.', { runId: this.start.runId });
+    }
+    this.ledgerBytes = status.size;
     return this.ledgerHandle;
   }
 
   async closeLedgerHandle() {
     const handle = this.ledgerHandle;
     this.ledgerHandle = null;
+    this.ledgerBytes = null;
     if (handle !== null) await handle.close();
   }
 
   rememberCommittedStep(executionNonce, event, payload) {
     this.knownExecutionNonces.add(executionNonce);
-    this.committedSteps.set(executionNonce, { event: cloneJson(event), payload: cloneJson(payload) });
+    this.committedSteps.set(executionNonce, { event, payload });
     while (this.committedSteps.size > MAX_RECENT_COMMITTED_STEPS) {
       this.committedSteps.delete(this.committedSteps.keys().next().value);
     }
@@ -676,7 +696,7 @@ class ActiveRun {
       candidate.kind === 'STEP' && candidate.payload.receipt.executionNonce === executionNonce
     ));
     if (event === undefined) return undefined;
-    const committed = { event: cloneJson(event), payload: cloneJson(event.payload) };
+    const committed = { event, payload: event.payload };
     this.committedSteps.set(executionNonce, committed);
     while (this.committedSteps.size > MAX_RECENT_COMMITTED_STEPS) {
       this.committedSteps.delete(this.committedSteps.keys().next().value);
@@ -702,8 +722,8 @@ class ActiveRun {
       }
       this.rememberCommittedStep(nonce, event, event.payload);
       this.lastEvent = event;
-      this.lastStepState = cloneJson(event.payload.afterState);
-      this.expectedState = cloneJson(event.payload.afterState);
+      this.lastStepState = event.payload.afterState;
+      this.expectedState = event.payload.afterState;
     }
     this.needsLedgerReconcile = false;
   }
@@ -816,7 +836,17 @@ async function recoverRun(root, manifest) {
   return { reason, current: finalCurrent };
 }
 
-async function appendLedgerEvent(root, runId, sequence, prevDigest, input, failpoint, existingHandle = null, compactStorage = false) {
+async function appendLedgerEvent(
+  root,
+  runId,
+  sequence,
+  prevDigest,
+  input,
+  failpoint,
+  existingHandle = null,
+  compactStorage = false,
+  ledgerOwner = null,
+) {
   const unsigned = {
     schemaVersion: SCHEMA_VERSION,
     runId,
@@ -827,7 +857,7 @@ async function appendLedgerEvent(root, runId, sequence, prevDigest, input, failp
   };
   const event = { ...unsigned, digest: canonicalDigest(unsigned) };
   const eventsPath = childPath(root, 'runs', runId, 'events.jsonl');
-  await assertSafePath(root, eventsPath);
+  if (existingHandle === null) await assertSafePath(root, eventsPath);
   const storedEvent = compactStorage && input.kind === 'STEP'
     ? encodeStoredLedgerEvent(event)
     : event;
@@ -838,13 +868,16 @@ async function appendLedgerEvent(root, runId, sequence, prevDigest, input, failp
   const handle = existingHandle ?? await open(eventsPath, 'a', 0o600);
   const ownsHandle = existingHandle === null;
   try {
-    const status = await handle.stat();
-    if (!status.isFile() || status.size + Buffer.byteLength(line) > MAX_LEDGER_BYTES) {
+    const lineBytes = Buffer.byteLength(line);
+    const status = ledgerOwner === null ? await handle.stat() : null;
+    const currentBytes = ledgerOwner === null ? status.size : ledgerOwner.ledgerBytes;
+    if ((status !== null && !status.isFile()) || currentBytes === undefined || currentBytes === null || currentBytes + lineBytes > MAX_LEDGER_BYTES) {
       corrupt('Ledger exceeds the size limit.', { runId });
     }
     await handle.writeFile(line, 'utf8');
     inject(failpoint, 'ledger:after-write-before-sync');
     await handle.datasync();
+    if (ledgerOwner !== null) ledgerOwner.ledgerBytes += lineBytes;
   } finally {
     if (ownsHandle) await handle.close();
   }
@@ -1460,13 +1493,52 @@ async function removeOwnedLock(root, expected) {
   await rm(lockPath);
 }
 
-async function assertOwnedLock(root, manifest, expected) {
-  const actual = await readOptionalJson(childPath(root, 'locks', 'writer.lock'));
-  if (actual === null) corrupt('Writer lock disappeared while the run was active.', { phase: 'write' });
-  validateWriterLock(actual, manifest);
-  if (actual.selfDigest !== expected.selfDigest) {
+async function captureWriterLockIdentity(root) {
+  const lockPath = childPath(root, 'locks', 'writer.lock');
+  let status;
+  try {
+    status = await lstat(lockPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') corrupt('Writer lock disappeared while the run was starting.', { phase: 'start' });
+    throw error;
+  }
+  if (!status.isFile() || status.isSymbolicLink()) {
+    pathEscape('Writer lock is not a plain file.', { phase: 'start' });
+  }
+  return fileIdentity(status);
+}
+
+async function assertOwnedLock(root, expectedIdentity) {
+  const lockPath = childPath(root, 'locks', 'writer.lock');
+  let actual;
+  try {
+    actual = await lstat(lockPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') corrupt('Writer lock disappeared while the run was active.', { phase: 'write' });
+    throw error;
+  }
+  if (!actual.isFile() || actual.isSymbolicLink() || !sameFileIdentity(actual, expectedIdentity)) {
     corrupt('Writer lock ownership changed while the run was active.', { phase: 'write' });
   }
+}
+
+function fileIdentity(status) {
+  return {
+    dev: status.dev,
+    ino: status.ino,
+    size: status.size,
+    mtimeMs: status.mtimeMs,
+    ctimeMs: status.ctimeMs,
+  };
+}
+
+function sameFileIdentity(status, expected) {
+  return expected !== undefined &&
+    status.dev === expected.dev &&
+    status.ino === expected.ino &&
+    status.size === expected.size &&
+    status.mtimeMs === expected.mtimeMs &&
+    status.ctimeMs === expected.ctimeMs;
 }
 
 function validateWriterLock(lock, manifest) {

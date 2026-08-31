@@ -214,7 +214,7 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 - 不跟随实验目录外的符号链接/目录联接；初始化后记录 canonical root。
 - WorldPort 的 action capability 使用闭集白名单；Kernel 和执行器双检。
 - 所有 `src/**` 不得导入 `test/**`；Kernel 不得导入 `src/worlds`，不得包含内置 world/scenario/action 领域字面量。晚绑定 Oracle 在隔离临时空间执行，只返回 verdict、冻结源码摘要和证据定位；这增加反证强度但不构成不可作弊证明。
-- JSON 对象单文件上限 1 MiB、JSON 最大嵌套深度 128；单 Run 账本上限 16 MiB、事件行上限 1 MiB，读写两侧均拒绝越界，避免意外内存耗尽。
+- JSON 对象单文件上限 1 MiB、JSON 最大嵌套深度 128；单 Run 账本上限 32 MiB、事件行上限 1 MiB，读写两侧均拒绝越界，避免意外内存耗尽；该上限覆盖当前压缩证据格式下的 10,000 步模拟 Run。
 - 路径操作会拒绝已存在的符号链接/目录联接并在关键写入前复核；但 Node.js 在 Windows 上没有可移植的目录句柄相对操作来彻底封闭“检查后被同权限进程替换”的竞态。因此 v0.1 的威胁边界要求实验目录 ACL 仅授予当前用户，不能抵御同一用户下主动并发篡改；这类场景只会报告为超出安全保证，不宣称已解决。
 - v0.1 无 PII、鉴别数据、网络和进程内动态代码加载；显式 external adapter 仅通过固定 executable/args、`shell:false`、有限时限/输出的 JSONL 子进程协议接入。外部输入必须同时满足整步摘要绑定和 manifest 公钥验签；这能抵御证据被改写后重算本地无密钥哈希链，但不等同于 OS 沙箱或真实副作用保证。
 - 虚拟桌面只记录合成文件名/类别/位置，不读取文件内容；错误和日志不得输出主机环境变量、真实目录枚举或内部 tokenMap 语义映射。
