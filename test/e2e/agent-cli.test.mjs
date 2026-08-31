@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -115,6 +115,48 @@ test('agent run rejects the loop-only forever policy', async () => {
   });
   assert.equal(result.code, 64);
   assert.equal(result.stdout[0].error.message, '--forever is only supported by agent loop.');
+});
+
+test('agent run loads and persists a multi-stage goal plan from PowerShell-facing CLI input', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-plan-e2e-'));
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const token = /tok_[A-Z0-9]{8,128}/u.exec(body.messages[0].content)?.[0] ?? null;
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ id: 'agent-plan', model: body.model, choices: [{ message: { content: JSON.stringify({ token }) } }] }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'local-plan-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'local-plan-model',
+  };
+  const lab = path.join(root, 'lab');
+  const plan = path.join(root, 'plan.json');
+  try {
+    await writeFile(plan, JSON.stringify({
+      schemaVersion: 1,
+      rootGoal: '保持系统稳定',
+      stages: [
+        { id: 'approach', goal: '先接近稳定状态' },
+        { id: 'settle', goal: '再维持稳定状态' },
+      ],
+    }));
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--json'], process.env)).code, 0);
+    const result = await invoke(['agent', 'run', '--lab', lab, '--steps', '3', '--goal-plan', plan, '--json'], env);
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout[0].data.status, 'COMPLETED');
+    const inspection = await invoke(['inspect', '--lab', lab, '--json'], process.env);
+    assert.equal(inspection.stdout[0].data.current.changeSupervisor.plan.stages.length, 2);
+    assert.equal((await invoke(['replay', '--lab', lab, '--run', result.stdout[0].data.runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('agent loop handles SIGINT at a committed run boundary', async () => {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { LabStore, LabStoreError } from '../runtime/lab-store.mjs';
 import { canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { learn, stepWithPreference, verify } from '../kernel/index.mjs';
-import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
+import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
 import {
   builtInWorldRegistry,
@@ -52,13 +52,13 @@ export async function runLab(input) {
   const failpoint = typeof source.failpoint === 'function' ? source.failpoint : undefined;
   const supervisorMaxCycles = requireBoundedOptional(source.maxCycles, 1, 1_000_000, 'maxCycles') ?? 1_000_000;
   const supervisorStagnationLimit = requireBoundedOptional(source.stagnationLimit, 1, 100_000, 'stagnationLimit') ?? 3;
-  const supervisionActive = source.goal !== undefined && source.goal !== null;
   const store = await LabStore.open({ labPath });
   const manifest = store.manifest;
   registry.assertManifest(manifest);
   const spec = registry.valueSpec(manifest.worldId);
   const world = registry.createWorld(manifest, scenario);
   const current = (await store.inspect()).current;
+  const goalRequested = (source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined;
   const initialState = current.lastRunId === null
     ? {
         worldState: world.initialState(),
@@ -66,13 +66,29 @@ export async function runLab(input) {
         rngState: initialRng(manifest.seed),
         kernelStep: 0,
         changeSupervisor: createChangeSupervisor({
-          goal: source.goal ?? '逼近 ValueSpec 目标',
+          goal: source.goal ?? source.goalPlan?.rootGoal ?? '逼近 ValueSpec 目标',
+          enabled: goalRequested,
+          plan: source.goalPlan,
           valueSpec: spec,
           maxCycles: supervisorMaxCycles,
           stagnationLimit: supervisorStagnationLimit,
         }),
       }
-    : ensureSupervisor(projectCurrent(current), spec, source.goal, supervisorMaxCycles, supervisorStagnationLimit);
+      : projectCurrent(current);
+  const existingSupervisor = initialState.changeSupervisor === undefined
+    ? null
+    : normalizeChangeSupervisorState(initialState.changeSupervisor);
+  const requestedGoal = source.goal ?? source.goalPlan?.rootGoal ?? existingSupervisor?.goal ?? '逼近 ValueSpec 目标';
+  if (current.lastRunId !== null && existingSupervisor?.enabled === true && goalRequested && existingSupervisor.goal !== requestedGoal) {
+    throw new LabStoreError('CONFLICT', 'An enabled goal cannot be replaced in an existing lab.', { field: 'goal' });
+  }
+  if (current.lastRunId !== null && existingSupervisor?.enabled === true && source.goalPlan !== undefined) {
+    try {
+      enableGoal(existingSupervisor, requestedGoal, source.goalPlan);
+    } catch (error) {
+      throw new LabStoreError('CONFLICT', error instanceof Error ? error.message : 'An enabled goal plan cannot be replaced in an existing lab.', { field: 'goalPlan' });
+    }
+  }
   const run = await store.startRun({
     runId,
     worldId: manifest.worldId,
@@ -92,24 +108,51 @@ export async function runLab(input) {
     capabilities = world.actions(worldManifest(manifest));
     for (let index = 0; index < steps; index += 1) {
     const beforeObservation = projectObservation(world.observe(state.worldState));
+    const previousSupervisor = state.changeSupervisor === undefined
+      ? null
+      : normalizeChangeSupervisorState(state.changeSupervisor);
+    const baseSupervisor = previousSupervisor ?? (!goalRequested
+      ? null
+      : createChangeSupervisor({
+          goal: requestedGoal,
+          enabled: true,
+          plan: source.goalPlan,
+          valueSpec: spec,
+          maxCycles: supervisorMaxCycles,
+          stagnationLimit: supervisorStagnationLimit,
+        }));
+    const supervisor = baseSupervisor === null || !goalRequested
+      ? baseSupervisor
+      : enableGoal(baseSupervisor, requestedGoal, source.goalPlan);
+    const activationPlan = supervisor === null ? undefined : goalPlanForActivation(supervisor);
+    const goalActivation = supervisor?.enabled === true && previousSupervisor?.enabled !== true
+      ? {
+          schemaVersion: SCHEMA_VERSION,
+          goal: supervisor.goal,
+          maxCycles: supervisor.maxCycles,
+          stagnationLimit: supervisor.stagnationLimit,
+          ...(activationPlan === undefined ? {} : { plan: activationPlan }),
+        }
+      : null;
+    const stepValueSpec = kernelValueSpec(supervisor?.objective ?? spec);
     const modelDecision = source.advisor !== undefined && capabilities.some((capability) => capability.allowed && capability.safe)
       ? await source.advisor({
           observation: beforeObservation,
           memory: state.memory,
-          valueSpec: spec,
+          valueSpec: stepValueSpec,
           capabilities,
           manifest,
           step: state.kernelStep,
-          goal: state.changeSupervisor.goal,
+          goal: supervisor?.goal ?? requestedGoal,
         })
       : null;
     const intent = stepWithPreference({
       observation: beforeObservation,
       memory: state.memory,
-      valueSpec: spec,
+      valueSpec: stepValueSpec,
       capabilities,
       rngState: state.rngState,
-      ...(state.changeSupervisor.strategy === undefined ? {} : { strategy: state.changeSupervisor.strategy }),
+      ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
     }, preferenceFor(modelDecision));
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
@@ -148,15 +191,15 @@ export async function runLab(input) {
       postObservation,
       verification,
     });
-    const activeSupervisor = state.changeSupervisor.status === 'ACTIVE'
-      ? state.changeSupervisor
-      : resumeChangeSupervisor(state.changeSupervisor, 'runtime-continuation');
-    let nextChangeSupervisor = advanceChangeSupervisor(activeSupervisor, {
+    const activeSupervisor = supervisor === null ? null : supervisor.status === 'ACTIVE'
+      ? supervisor
+      : resumeChangeSupervisor(supervisor, 'runtime-continuation');
+    let nextChangeSupervisor = activeSupervisor === null ? null : advanceChangeSupervisor(activeSupervisor, {
       beforeObservation,
       postObservation,
       verification,
     });
-    if (nextChangeSupervisor.status === 'REPLAN_REQUIRED') {
+    if (nextChangeSupervisor?.status === 'REPLAN_REQUIRED') {
       nextChangeSupervisor = acknowledgeReplan(nextChangeSupervisor, 'supervisor-stagnation');
     }
     const nextState = {
@@ -164,7 +207,7 @@ export async function runLab(input) {
       memory: update.nextMemory,
       rngState: intent.nextRngState,
       kernelStep: state.kernelStep + 1,
-      changeSupervisor: nextChangeSupervisor,
+      ...(nextChangeSupervisor === null ? {} : { changeSupervisor: nextChangeSupervisor }),
     };
     const event = await run.append({
       kind: 'STEP',
@@ -172,9 +215,10 @@ export async function runLab(input) {
         recordedAt: new Date().toISOString(),
         boundary: {
           schemaVersion: SCHEMA_VERSION,
-          valueSpec: spec,
+          valueSpec: stepValueSpec,
           capabilities,
-          ...(state.changeSupervisor.strategy === undefined ? {} : { strategy: state.changeSupervisor.strategy }),
+          ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
+          ...(goalActivation === null ? {} : { goalActivation }),
           externalInputsDigest: canonicalDigest(externalInputs),
         },
         beforeObservation,
@@ -221,7 +265,7 @@ export async function runLab(input) {
         evidence: { rejectionReason: transition.receipt.rejectionReason },
       });
     }
-    if (supervisionActive && nextChangeSupervisor.status === 'COMPLETED') {
+    if (supervisor?.enabled === true && nextChangeSupervisor?.status === 'COMPLETED') {
       terminalRequested = true;
       await run.finish({ terminalStatus: 'COMPLETED', finalState: state });
       return runSummary(runId, 'COMPLETED', 'OBJECTIVE_REACHED', executed, {
@@ -231,7 +275,7 @@ export async function runLab(input) {
         supervision: state.changeSupervisor,
       });
     }
-    if (supervisionActive && nextChangeSupervisor.status === 'HALTED') {
+    if (supervisor?.enabled === true && nextChangeSupervisor?.status === 'HALTED') {
       terminalRequested = true;
       await run.finish({ terminalStatus: 'HALTED', finalState: state });
       return runSummary(runId, 'HALTED', 'MAX_CYCLES', executed, {
@@ -461,6 +505,15 @@ function projectObservation(observation) {
   };
 }
 
+function kernelValueSpec(valueSpec) {
+  return {
+    schemaVersion: valueSpec.schemaVersion,
+    observationDimensions: valueSpec.observationDimensions,
+    weights: [...valueSpec.weights],
+    target: [...valueSpec.target],
+  };
+}
+
 function manifestCapabilities(manifest) {
   return manifest.tokenMap.entries.map((entry) => {
     const policy = manifest.authorityPolicy.capabilities[entry.capabilityId];
@@ -482,21 +535,6 @@ function projectCurrent(current) {
     kernelStep: current.kernelStep,
     ...(current.changeSupervisor === undefined ? {} : { changeSupervisor: current.changeSupervisor }),
   };
-}
-
-function ensureSupervisor(state, valueSpec, goal, maxCycles, stagnationLimit) {
-  if (state.changeSupervisor === undefined) {
-    return {
-      ...state,
-      changeSupervisor: createChangeSupervisor({
-        goal: goal ?? '逼近 ValueSpec 目标',
-        valueSpec,
-        maxCycles,
-        stagnationLimit,
-      }),
-    };
-  }
-  return state;
 }
 
 function initialRng(seed) {

@@ -252,6 +252,7 @@ yi-agent api test --json
 yi-agent ask --prompt "请用一句话解释什么是闭环" --json
 yi-agent agent run --lab E:\labs\temperature --steps 3 --goal "保持系统稳定" --json
 yi-agent agent loop --lab E:\labs\temperature --steps 10 --runs 100 --goal "保持系统稳定" --json
+yi-agent agent run --lab E:\labs\temperature --steps 10 --goal-plan E:\plans\stability.json --json
 Get-Content .\prompt.txt -Raw | yi-agent ask --prompt - --json
 yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 ```
@@ -263,5 +264,7 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 `agent loop` 是连续运行的 CLI 入口：`--steps` 表示每个可恢复 Run 的步数，`--runs` 表示最多串联多少个 Run；需要长期守护时使用 `--forever`，它与 `--runs` 互斥。每个 Run 都先完成自己的账本提交，再开始下一个 Run；收到 SIGINT/SIGTERM 时只在当前 Run 提交后停止，返回 `INTERRUPTED`，随后重启同一命令即可从 current 继续。发生执行拒绝、无安全动作或显式目标达成时，循环会停止并返回原因。进程在一个 Run 内崩溃时，仍须先用 `recover --confirm-lock-owner-dead` 完成明确的恢复卡点，再继续循环。
 
 当监督器检测到达到停滞阈值，它会把 `replanCount`、`strategy.revision`、策略模式和 `replanReason` 写进 STEP 的 `afterState`。`EXPLORATORY` 只改变安全候选的选择顺序，不能改变目标、权限、WorldPort 回执或验证规则；Replay 会重现同一次策略切换。
+
+复杂目标可以通过 `--goal-plan PATH` 提供阶段序列。每个阶段只声明不透明的阶段 ID、阶段目标文本和可选 `ValueSpec`；运行时仍用同一套观察向量、加权距离、证据和安全约束推进阶段，阶段完成后才切换到下一个阶段。计划会进入 supervisor/current/STEP，Replay 不会重新询问模型或读取计划文件；已激活的计划不能在同一个 lab 中被静默替换。
 
 当前 CLI 不会替你保存密钥；真实连通性需要你在本机配置上述环境变量后执行 `yi-agent api test`。模型调用只负责提出候选 Token，仍由 WorldPort、Kernel、verify、learn 和 replay 闭环裁决。

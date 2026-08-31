@@ -233,6 +233,108 @@ test('continuous runner preserves one state across multiple committed run bounda
   });
 });
 
+test('explicit goal activation persists across a later run that omits the goal', async () => {
+  await withLab(async (root) => {
+    const lab = path.join(root, 'goal-continuity-lab');
+    const registry = createGeneratedRegistry();
+    await initLab({ labPath: lab, labId: 'goal-continuity-lab', worldId: 'generated', seed: 'goal-continuity-seed', registry });
+    const first = await runLab({ labPath: lab, runId: 'run-1', steps: 1, scenario: 'generated', goal: '推进生成计数器', registry });
+    assert.equal(first.stopReason, 'COMPLETED');
+    const second = await runLab({ labPath: lab, runId: 'run-2', steps: 5, scenario: 'generated', registry });
+    assert.equal(second.status, 'COMPLETED');
+    assert.equal(second.stopReason, 'OBJECTIVE_REACHED');
+    assert.equal(second.metrics.executed, 1);
+    assert.equal((await inspectLab({ labPath: lab, registry })).current.changeSupervisor.enabled, true);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-2', registry })).verdict, 'CONSISTENT');
+  });
+});
+
+test('a previously untracked lab can acquire a persistent explicit goal on a later run', async () => {
+  await withLab(async (root) => {
+    const lab = path.join(root, 'late-goal-lab');
+    const registry = createGeneratedRegistry();
+    await initLab({ labPath: lab, labId: 'late-goal-lab', worldId: 'generated', seed: 'late-goal-seed', registry });
+    const first = await runLab({ labPath: lab, runId: 'run-1', steps: 1, scenario: 'generated', registry });
+    assert.equal(first.stopReason, 'COMPLETED');
+    const second = await runLab({ labPath: lab, runId: 'run-2', steps: 5, scenario: 'generated', goal: '开始监督生成计数器', registry });
+    assert.equal(second.stopReason, 'OBJECTIVE_REACHED');
+    assert.equal(second.metrics.executed, 1);
+    const current = (await inspectLab({ labPath: lab, registry })).current;
+    assert.equal(current.changeSupervisor.enabled, true);
+    assert.equal(current.changeSupervisor.plan.rootGoal, '开始监督生成计数器');
+  });
+});
+
+test('application persists and replays a multi-stage goal plan on an opaque WorldPort', async () => {
+  await withLab(async (root) => {
+    const lab = path.join(root, 'planned-goal-lab');
+    const registry = createGeneratedRegistry();
+    const goalPlan = {
+      schemaVersion: 1,
+      rootGoal: '完成生成计数器目标',
+      stages: [
+        { id: 'first', goal: '先完成第一步', objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1] } },
+        { id: 'final', goal: '再完成最终值', objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [2] } },
+      ],
+    };
+    const stageTargets = [];
+    const advisor = async ({ capabilities, valueSpec }) => {
+      stageTargets.push([...valueSpec.target]);
+      return {
+        model: 'planned-test-advisor',
+        token: capabilities.find((capability) => capability.allowed && capability.safe).token,
+        responseDigest: `sha256:${'b'.repeat(64)}`,
+      };
+    };
+    await initLab({ labPath: lab, labId: 'planned-goal-lab', worldId: 'generated', seed: 'planned-goal-seed', registry });
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 5,
+      scenario: 'generated',
+      goalPlan,
+      advisor,
+      registry,
+    });
+    assert.equal(result.stopReason, 'OBJECTIVE_REACHED');
+    assert.equal(result.metrics.executed, 2);
+    assert.deepEqual(stageTargets, [[1], [2]]);
+    const current = (await inspectLab({ labPath: lab, registry })).current;
+    assert.equal(current.changeSupervisor.plan.activeStageId, 'final');
+    assert.equal(current.changeSupervisor.plan.revision, 1);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+  });
+});
+
+test('continuous runner preserves a goal plan across multiple Run boundaries', async () => {
+  await withLab(async (root) => {
+    const lab = path.join(root, 'planned-loop-lab');
+    const registry = createGeneratedRegistry();
+    const goalPlan = {
+      schemaVersion: 1,
+      rootGoal: '分阶段推进计数器',
+      stages: [
+        { id: 'first', goal: '第一阶段', objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1] } },
+        { id: 'final', goal: '第二阶段', objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [2] } },
+      ],
+    };
+    await initLab({ labPath: lab, labId: 'planned-loop-lab', worldId: 'generated', seed: 'planned-loop-seed', registry });
+    const result = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      runs: 2,
+      scenario: 'generated',
+      goalPlan,
+      registry,
+    });
+    assert.equal(result.runs, 2);
+    assert.equal(result.metrics.executed, 2);
+    assert.equal(result.results[1].stopReason, 'OBJECTIVE_REACHED');
+    assert.equal((await replayLab({ labPath: lab, runId: result.results[0].runId, registry })).verdict, 'CONSISTENT');
+    assert.equal((await replayLab({ labPath: lab, runId: result.results[1].runId, registry })).verdict, 'CONSISTENT');
+  });
+});
+
 test('continuous runner can stop a forever policy only between committed runs', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'forever-lab', worldId: 'temperature', seed: 'forever-seed' });

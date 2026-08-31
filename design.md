@@ -23,7 +23,7 @@
 - CLI 负责：参数解析、调用应用服务、结构化/人类可读输出和退出码，不直接修改内核状态。
 - API client 负责：读取环境变量、调用 OpenAI-compatible `/models` 与 `/chat/completions`；它是显式工具，不进入 Kernel 的确定性决策链。
 - ModelAdvisor 负责：把有限的观测、目标和值域上下文转换为一个不可信的 token 提议；它不能写状态、调用 WorldPort 或更新 Memory。
-- ChangeSupervisor 负责：在不认识领域名称的前提下，根据 `ValueSpec` 计算目标距离，区分确认变化与歧义/拒绝，累计停滞，要求重规划，并在目标达成或预算耗尽时给出停止判定；它不能执行 WorldPort、调用模型或自行改变目标。运行时把该判定作为一个可持久化的变化周期边界，记录原因后可开启下一周期，避免跨 Run/进程丢失连续性。
+- ChangeSupervisor 负责：在不认识领域名称的前提下，根据 `ValueSpec` 计算目标距离，区分确认变化与歧义/拒绝，累计停滞，要求重规划，并在目标达成或预算耗尽时给出停止判定；它不能执行 WorldPort、调用模型或自行改变目标。运行时把目标是否由用户显式激活（`enabled`）与目标文本一并持久化，后续 Run 不传 `--goal` 也延续同一监督意图；记录原因后可开启下一周期，避免跨 Run/进程丢失连续性。
 - v0.1 默认含 `temperature`、`virtual-desktop`、`inventory`、`grid` 与 `queue` 五个内置模拟世界；另提供显式外部 WorldPort adapter 协议，但不提供动态发现、任意 in-process import 或真实副作用保证。
 - 信任边界：CLI 参数与磁盘数据都按畸形/损坏输入校验；无密钥 SHA-256 链只检测偶然损坏或未重算篡改，不提供对主动攻击者的真实性证明。
 
@@ -42,8 +42,8 @@
 | `effect plan|confirm|execute|reconcile|compensate|reconcile-compensation|inspect --journal PATH [--sandbox-root PATH] [--intent PATH] [--nonce N] [--json]` | EffectIntent、durable journal、显式标记 sandbox | EffectBroker 状态快照或全部 effect 状态 | 参数 64；损坏 3；不存在 66；I/O 74；状态错误 70 | 每次进程从 journal 恢复；execute/compensate 只允许标记 sandbox root |
 | `api test [--json]` | 环境变量中的 API 配置 | 连通状态与模型数量 | 参数 64；API 74；协议 70 | 无本地状态副作用 |
 | `ask --prompt TEXT|--prompt-file PATH [--json]` | 环境变量中的 API 配置与用户提示 | 模型、回答、可选 usage | 参数 64；API 74；协议 70 | 单次非流式请求；提示文件只读 |
-| `agent run --lab PATH --steps N [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--json]` | 已初始化实验空间、API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 每步一次模型提议；replay 不访问 API |
-| `agent loop --lab PATH --steps N [--runs N|--forever] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--json]` | 已初始化实验空间、API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；SIGINT/SIGTERM 只在 Run 边界停止；重启从 current 继续 |
+| `agent run --lab PATH --steps N [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH] [--json]` | 已初始化实验空间、API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 每步一次模型提议；replay 不访问 API；首次显式 goal/goal-plan 的监督意图随 current 延续 |
+| `agent loop --lab PATH --steps N [--runs N|--forever] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH] [--json]` | 已初始化实验空间、API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；SIGINT/SIGTERM 只在 Run 边界停止；重启从 current 继续；计划阶段同一套监督逻辑推进 |
 
 标准错误对象：`{code, message, context?, recoverable}`。`--json` 时成功或失败都只在 stdout 输出一个 JSON envelope，stderr 保持空；仅 CLI 启动前的致命错误可写 stderr。人类模式的错误写 stderr。
 

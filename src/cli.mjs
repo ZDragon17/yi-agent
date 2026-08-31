@@ -94,6 +94,9 @@ async function dispatchAgent(options) {
     model: config.model,
     goal: options.goal ?? null,
   });
+  const goalPlan = options['goal-plan'] === undefined
+    ? undefined
+    : await readGoalPlanFile(options['goal-plan']);
   if (options.agentOperation === 'loop') {
     let interrupted = false;
     const onSignal = () => { interrupted = true; };
@@ -111,6 +114,7 @@ async function dispatchAgent(options) {
         registry: loadRegistry(options),
         advisor,
         goal: options.goal,
+        goalPlan,
         maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
         stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
       });
@@ -133,6 +137,7 @@ async function dispatchAgent(options) {
     registry: loadRegistry(options),
     advisor,
     goal: options.goal,
+    goalPlan,
     maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
     stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
   });
@@ -223,7 +228,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'run-id', 'scenario', 'adapter', 'goal', 'max-cycles', 'stagnation-limit'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
@@ -281,6 +286,21 @@ async function readIntentFile(filePath) {
     return JSON.parse(raw);
   } catch (error) {
     throw cliError('INVALID_INPUT', 'Effect intent file is not valid JSON.', { filePath }, 64);
+  }
+}
+
+async function readGoalPlanFile(filePath) {
+  const resolvedPath = path.resolve(filePath);
+  let raw;
+  try {
+    raw = await readFile(resolvedPath, 'utf8');
+  } catch (error) {
+    throw Object.assign(new Error('Goal plan file could not be read.'), { code: error?.code ?? 'EIO', context: { filePath: resolvedPath } });
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw cliError('INVALID_INPUT', 'Goal plan file is not valid JSON.', { filePath: resolvedPath }, 64);
   }
 }
 
@@ -389,7 +409,7 @@ function helpText() {
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
-    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--goal TEXT] [--max-cycles N] [--stagnation-limit N] [--json]',
+    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--goal TEXT] [--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',

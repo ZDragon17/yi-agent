@@ -3,6 +3,7 @@ const MAX_GOAL_LENGTH = 4096;
 const MAX_DIMENSIONS = 1024;
 const MAX_CYCLES = 1_000_000;
 const MAX_STAGNATION = 100_000;
+const MAX_STAGES = 128;
 const OBJECTIVE_KEYS = [
   'schemaVersion',
   'observationDimensions',
@@ -21,7 +22,9 @@ const VERIFICATION_KEYS = [
 const STATE_KEYS = [
   'schemaVersion',
   'status',
+  'enabled',
   'goal',
+  'plan',
   'objective',
   'maxCycles',
   'stagnationLimit',
@@ -48,6 +51,9 @@ const LAST_CHANGE_KEYS = [
 ];
 const STRATEGY_KEYS = ['schemaVersion', 'mode', 'revision', 'reason'];
 const STRATEGY_MODES = ['BALANCED', 'EXPLORATORY'];
+const PLAN_KEYS = ['schemaVersion', 'rootGoal', 'revision', 'activeStageId', 'stages'];
+const STAGE_KEYS = ['schemaVersion', 'id', 'goal', 'objective', 'status', 'attempts'];
+const STAGE_STATUSES = ['PENDING', 'ACTIVE', 'COMPLETED'];
 
 const STATUS_DECISIONS = Object.freeze({
   ACTIVE: 'CONTINUE',
@@ -58,6 +64,8 @@ const STATUS_DECISIONS = Object.freeze({
 
 export function createChangeSupervisor({
   goal,
+  enabled = true,
+  plan,
   valueSpec,
   maxCycles = 100,
   stagnationLimit = 3,
@@ -72,12 +80,15 @@ export function createChangeSupervisor({
     MAX_STAGNATION,
     'stagnationLimit',
   );
+  const normalizedPlan = createPlan(plan, normalizedGoal, objective, hasPlanProgress(plan));
 
   return {
     schemaVersion: SCHEMA_VERSION,
     status: 'ACTIVE',
+    enabled: requireBoolean(enabled, 'enabled'),
     goal: normalizedGoal,
-    objective,
+    objective: normalizedPlan.stages[0].objective,
+    plan: normalizedPlan,
     maxCycles: normalizedMaxCycles,
     stagnationLimit: normalizedStagnationLimit,
     cycle: 0,
@@ -104,20 +115,35 @@ export function advanceChangeSupervisor(state, {
     verification,
     current.objective.target.length,
   );
-  const beforeDistance = weightedDistance(before.vector, current.objective);
-  const afterDistance = weightedDistance(after.vector, current.objective);
+  const activeStage = current.plan === undefined ? null : activePlanStage(current.plan);
+  const objective = activeStage?.objective ?? current.objective;
+  const beforeDistance = weightedDistance(before.vector, objective);
+  const afterDistance = weightedDistance(after.vector, objective);
   const currentBest = current.bestDistance ?? beforeDistance;
   const confirmed = evidence.attribution === 'ACTION' && evidence.learnable === true;
   const improved = confirmed && afterDistance < beforeDistance;
   const nextCycle = current.cycle + 1;
-  const nextStagnation = improved ? 0 : current.stagnation + 1;
-  const bestDistance = confirmed
+  let nextStagnation = improved ? 0 : current.stagnation + 1;
+  let bestDistance = confirmed
     ? Math.min(currentBest, afterDistance)
     : current.bestDistance;
 
   let status = 'ACTIVE';
   let stopReason = null;
-  if (afterDistance <= current.objective.tolerance) {
+  let nextPlan = current.plan;
+  let nextObjective = current.objective;
+  let stageAdvanced = false;
+  if (afterDistance <= objective.tolerance && current.plan !== undefined && activeStage !== null) {
+    const activeIndex = current.plan.stages.findIndex((stage) => stage.id === current.plan.activeStageId);
+    if (activeIndex < current.plan.stages.length - 1) {
+      nextPlan = advancePlan(current.plan, activeIndex);
+      nextObjective = nextPlan.stages.find((stage) => stage.id === nextPlan.activeStageId).objective;
+      nextStagnation = 0;
+      bestDistance = null;
+      stageAdvanced = true;
+    }
+  }
+  if (afterDistance <= objective.tolerance && !stageAdvanced) {
     status = 'COMPLETED';
     stopReason = 'OBJECTIVE_REACHED';
   } else if (nextCycle >= current.maxCycles) {
@@ -131,6 +157,8 @@ export function advanceChangeSupervisor(state, {
   return {
     ...current,
     status,
+    objective: nextObjective,
+    ...(nextPlan === undefined ? {} : { plan: nextPlan }),
     cycle: nextCycle,
     bestDistance,
     stagnation: nextStagnation,
@@ -168,6 +196,36 @@ export function acknowledgeReplan(state, reason = 'strategy-change') {
       replanReason: normalizedReason,
     },
   };
+}
+
+export function enableGoal(state, goal, plan) {
+  const current = normalizeState(state);
+  const normalizedGoal = requireGoal(goal);
+  if (current.enabled && current.goal !== normalizedGoal) {
+    throw new Error('ChangeSupervisor cannot replace an enabled goal without a new lab.');
+  }
+  if (current.enabled && plan !== undefined) {
+    const candidate = createPlan(plan, normalizedGoal, current.objective, hasPlanProgress(plan));
+    if (current.plan === undefined || !samePlanDefinition(current.plan, candidate)) {
+      throw new Error('ChangeSupervisor cannot replace an enabled goal plan without a new lab.');
+    }
+    return current;
+  }
+  const nextPlan = plan === undefined
+    ? current.enabled ? current.plan : createPlan(undefined, normalizedGoal, current.objective)
+    : createPlan(plan, normalizedGoal, current.objective, hasPlanProgress(plan));
+  const activeStage = nextPlan === undefined ? null : activePlanStage(nextPlan);
+  return {
+    ...current,
+    enabled: true,
+    goal: normalizedGoal,
+    ...(nextPlan === undefined ? {} : { plan: nextPlan, objective: activeStage.objective }),
+  };
+}
+
+export function goalPlanForActivation(state) {
+  const current = normalizeState(state);
+  return current.plan === undefined ? undefined : current.plan;
 }
 
 function createStrategy() {
@@ -228,7 +286,7 @@ function normalizeState(value) {
   const source = snapshotRecord(
     value,
     STATE_KEYS,
-    STATE_KEYS.filter((key) => key !== 'strategy'),
+    STATE_KEYS.filter((key) => !['strategy', 'enabled', 'plan'].includes(key)),
     'state',
   );
   if (source.schemaVersion !== SCHEMA_VERSION ||
@@ -236,10 +294,22 @@ function normalizeState(value) {
     throw new Error('ChangeSupervisor state is invalid.');
   }
   const objective = normalizeObjective(source.objective);
+  const normalizedGoal = requireGoal(source.goal);
+  const normalizedPlan = source.plan === undefined
+    ? undefined
+    : normalizePlan(source.plan, normalizedGoal, objective);
+  if (normalizedPlan !== undefined && !sameObjective(normalizedPlan.stages.find(
+    (stage) => stage.id === normalizedPlan.activeStageId,
+  ).objective, objective)) {
+    throw new Error('ChangeSupervisor plan active objective must equal state objective.');
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
     status: source.status,
-    goal: requireGoal(source.goal),
+    enabled: source.enabled === undefined
+      ? source.goal !== '逼近 ValueSpec 目标'
+      : requireBoolean(source.enabled, 'enabled'),
+    goal: normalizedGoal,
     objective,
     maxCycles: requireBoundedInteger(source.maxCycles, 1, MAX_CYCLES, 'maxCycles'),
     stagnationLimit: requireBoundedInteger(source.stagnationLimit, 1, MAX_STAGNATION, 'stagnationLimit'),
@@ -249,7 +319,143 @@ function normalizeState(value) {
     replanCount: requireBoundedInteger(source.replanCount, 0, MAX_CYCLES, 'replanCount'),
     lastChange: source.lastChange === null ? null : normalizeLastChange(source.lastChange),
     ...(source.strategy === undefined ? {} : { strategy: normalizeStrategy(source.strategy, 'state.strategy') }),
+    ...(normalizedPlan === undefined ? {} : { plan: normalizedPlan }),
   };
+}
+
+function requireBoolean(value, field) {
+  if (typeof value !== 'boolean') throw new Error(`ChangeSupervisor ${field} must be a boolean.`);
+  return value;
+}
+
+function createPlan(value, rootGoal, fallbackObjective, preserveProgress = false) {
+  if (value === undefined) {
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      rootGoal,
+      revision: 0,
+      activeStageId: 'root',
+      stages: [{
+        schemaVersion: SCHEMA_VERSION,
+        id: 'root',
+        goal: rootGoal,
+        objective: fallbackObjective,
+        status: 'ACTIVE',
+        attempts: 0,
+      }],
+    };
+  }
+  return normalizePlan(value, rootGoal, fallbackObjective, preserveProgress);
+}
+
+function normalizePlan(value, rootGoal, fallbackObjective, preserveProgress = true) {
+  const source = snapshotRecord(value, PLAN_KEYS, ['stages'], 'plan');
+  if (source.schemaVersion !== undefined && source.schemaVersion !== SCHEMA_VERSION) {
+    throw new Error('ChangeSupervisor plan schema is unsupported.');
+  }
+  const rawStages = snapshotArray(source.stages, 'plan.stages');
+  if (rawStages.length < 1 || rawStages.length > MAX_STAGES) {
+    throw new Error('ChangeSupervisor plan must contain 1 to 128 stages.');
+  }
+  const baseDimensions = fallbackObjective.observationDimensions;
+  const stages = rawStages.map((rawStage, index) => {
+    const stage = snapshotRecord(rawStage, STAGE_KEYS, ['id', 'goal'], `plan.stages[${index}]`);
+    const objective = stage.objective === undefined
+      ? fallbackObjective
+      : normalizeObjective(stage.objective);
+    if (objective.observationDimensions !== baseDimensions) {
+      throw new Error('ChangeSupervisor plan stage dimensions must match the WorldPort observation.');
+    }
+    const status = preserveProgress && stage.status !== undefined
+      ? stage.status
+      : index === 0 ? 'ACTIVE' : 'PENDING';
+    const attempts = preserveProgress && stage.attempts !== undefined ? stage.attempts : 0;
+    if (!STAGE_STATUSES.includes(status) || !Number.isSafeInteger(attempts) || attempts < 0 || attempts > MAX_CYCLES) {
+      throw new Error('ChangeSupervisor plan stage state is invalid.');
+    }
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      id: requireStageId(stage.id),
+      goal: requireGoal(stage.goal),
+      objective,
+      status,
+      attempts,
+    };
+  });
+  if (new Set(stages.map((stage) => stage.id)).size !== stages.length) {
+    throw new Error('ChangeSupervisor plan stage ids must be unique.');
+  }
+  const activeStages = stages.filter((stage) => stage.status === 'ACTIVE');
+  const activeStageId = source.activeStageId ?? activeStages[0]?.id ?? stages[0].id;
+  if (typeof activeStageId !== 'string' || activeStages.length !== 1 || activeStages[0].id !== activeStageId) {
+    throw new Error('ChangeSupervisor plan must have exactly one active stage.');
+  }
+  const activeIndex = stages.findIndex((stage) => stage.id === activeStageId);
+  if (stages.some((stage, index) => stage.status !== (index < activeIndex ? 'COMPLETED' : index === activeIndex ? 'ACTIVE' : 'PENDING'))) {
+    throw new Error('ChangeSupervisor plan stages must advance in order.');
+  }
+  const normalizedRootGoal = requireGoal(source.rootGoal ?? rootGoal);
+  if (normalizedRootGoal !== rootGoal) {
+    throw new Error('ChangeSupervisor plan rootGoal must equal the supervisor goal.');
+  }
+  const revision = source.revision ?? 0;
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    rootGoal: normalizedRootGoal,
+    revision: requireBoundedInteger(revision, 0, MAX_CYCLES, 'plan.revision'),
+    activeStageId,
+    stages,
+  };
+}
+
+function advancePlan(plan, activeIndex) {
+  const nextStageId = plan.stages[activeIndex + 1].id;
+  return {
+    ...plan,
+    revision: requireBoundedInteger(plan.revision + 1, 0, MAX_CYCLES, 'plan.revision'),
+    activeStageId: nextStageId,
+    stages: plan.stages.map((stage, index) => ({
+      ...stage,
+      status: index <= activeIndex ? 'COMPLETED' : index === activeIndex + 1 ? 'ACTIVE' : 'PENDING',
+      attempts: index === activeIndex + 1
+        ? requireBoundedInteger(stage.attempts + 1, 0, MAX_CYCLES, 'plan.stage.attempts')
+        : stage.attempts,
+    })),
+  };
+}
+
+function activePlanStage(plan) {
+  return plan.stages.find((stage) => stage.id === plan.activeStageId);
+}
+
+function sameObjective(left, right) {
+  return left.schemaVersion === right.schemaVersion &&
+    left.observationDimensions === right.observationDimensions &&
+    left.tolerance === right.tolerance &&
+    left.weights.every((value, index) => value === right.weights[index]) &&
+    left.target.every((value, index) => value === right.target[index]);
+}
+
+function samePlanDefinition(left, right) {
+  return left.rootGoal === right.rootGoal &&
+    left.stages.length === right.stages.length &&
+    left.stages.every((stage, index) => {
+      const candidate = right.stages[index];
+      return stage.id === candidate.id && stage.goal === candidate.goal && sameObjective(stage.objective, candidate.objective);
+    });
+}
+
+function hasPlanProgress(value) {
+  return value !== null && typeof value === 'object' &&
+    (Object.hasOwn(value, 'activeStageId') ||
+      (Array.isArray(value.stages) && value.stages.some((stage) => stage?.status !== undefined || stage?.attempts !== undefined)));
+}
+
+function requireStageId(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_GOAL_LENGTH) {
+    throw new Error('ChangeSupervisor plan stage id must be a bounded non-empty string.');
+  }
+  return value;
 }
 
 function normalizeStrategy(value, field) {

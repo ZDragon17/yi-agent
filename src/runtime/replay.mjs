@@ -10,7 +10,7 @@ import {
   isValidEvidencePublicKey,
   verifyExternalInputAttestation,
 } from './external-evidence.mjs';
-import { acknowledgeReplan, advanceChangeSupervisor, normalizeChangeSupervisorState, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
+import { acknowledgeReplan, advanceChangeSupervisor, createChangeSupervisor, enableGoal, normalizeChangeSupervisorState, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
 const REQUIRED_BOUNDARY_KEYS = ['schemaVersion', 'valueSpec'];
@@ -133,6 +133,9 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
     corrupt('STEP external evidence attestation is invalid.', { sequence: event.sequence });
   }
   const valueSpec = cloneJson(payload.boundary.valueSpec);
+  if (payload.boundary.goalActivation !== undefined) {
+    validateGoalActivation(payload.boundary.goalActivation, event.sequence);
+  }
   if (payload.policyEvidence !== undefined) validatePolicyEvidence(payload.policyEvidence, event.sequence);
   let capabilities;
   let beforeObservation;
@@ -225,9 +228,21 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
     rngState: intent.nextRngState,
     kernelStep: state.kernelStep + 1,
   };
-  if (state.changeSupervisor !== undefined) {
+  if (state.changeSupervisor !== undefined || payload.boundary.goalActivation !== undefined) {
     try {
-      let nextSupervisor = advanceChangeSupervisor(resumeChangeSupervisor(state.changeSupervisor), {
+      const baseSupervisor = state.changeSupervisor === undefined
+        ? createChangeSupervisor({
+            goal: payload.boundary.goalActivation.goal,
+            enabled: true,
+            plan: payload.boundary.goalActivation.plan,
+            valueSpec,
+            maxCycles: payload.boundary.goalActivation.maxCycles,
+            stagnationLimit: payload.boundary.goalActivation.stagnationLimit,
+          })
+        : payload.boundary.goalActivation === undefined
+          ? normalizeChangeSupervisorState(state.changeSupervisor)
+          : enableGoal(state.changeSupervisor, payload.boundary.goalActivation.goal, payload.boundary.goalActivation.plan);
+      let nextSupervisor = advanceChangeSupervisor(resumeChangeSupervisor(baseSupervisor), {
         beforeObservation,
         postObservation,
         verification,
@@ -235,7 +250,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       if (nextSupervisor.status === 'REPLAN_REQUIRED') {
         nextSupervisor = acknowledgeReplan(nextSupervisor, 'supervisor-stagnation');
       }
-      nextState.changeSupervisor = nextSupervisor;
+      nextState.changeSupervisor = preserveLegacyActivationMarker(nextSupervisor, state.changeSupervisor, payload.boundary.goalActivation);
     } catch (error) {
       corrupt('Replay change supervisor failed.', { sequence: event.sequence, cause: errorName(error) });
     }
@@ -245,6 +260,24 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       ?? compareValue(payload.afterState, nextState, 'payload.afterState', event.sequence);
   }
   return difference ? { difference } : { nextState };
+}
+
+function validateGoalActivation(value, sequence) {
+  if (!isRecord(value) || value.schemaVersion !== SCHEMA_VERSION ||
+      typeof value.goal !== 'string' || value.goal.length === 0 || value.goal.length > 4096 ||
+      !Number.isSafeInteger(value.maxCycles) || value.maxCycles < 1 || value.maxCycles > 1_000_000 ||
+      !Number.isSafeInteger(value.stagnationLimit) || value.stagnationLimit < 1 || value.stagnationLimit > 100_000) {
+    corrupt('STEP goal activation is invalid.', { sequence });
+  }
+}
+
+function preserveLegacyActivationMarker(nextSupervisor, previousSupervisor, activation) {
+  if (activation === undefined && previousSupervisor !== undefined && !Object.prototype.hasOwnProperty.call(previousSupervisor, 'enabled')) {
+    const legacy = { ...nextSupervisor };
+    delete legacy.enabled;
+    return legacy;
+  }
+  return nextSupervisor;
 }
 
 function validatePolicyEvidence(value, sequence) {

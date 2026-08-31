@@ -4,6 +4,8 @@ import {
   acknowledgeReplan,
   advanceChangeSupervisor,
   createChangeSupervisor,
+  enableGoal,
+  normalizeChangeSupervisorState,
   resumeChangeSupervisor,
   weightedDistance,
 } from '../../src/agent/change-supervisor.mjs';
@@ -19,6 +21,7 @@ test('change supervisor measures one common weighted distance independent of wor
   const supervisor = createChangeSupervisor({ goal: '达到目标', valueSpec });
   assert.equal(weightedDistance([8, 9], supervisor.objective), 4);
   assert.equal(supervisor.status, 'ACTIVE');
+  assert.equal(supervisor.enabled, true);
   assert.equal(supervisor.cycle, 0);
 });
 
@@ -146,6 +149,60 @@ test('valueSpec tolerance is preserved unless the caller explicitly overrides it
       .objective.tolerance,
     3,
   );
+});
+
+test('goal activation is durable and legacy states normalize without an activation marker', () => {
+  const disabled = createChangeSupervisor({ goal: '默认目标', enabled: false, valueSpec });
+  const enabled = enableGoal(disabled, '用户目标');
+  assert.equal(enabled.enabled, true);
+  assert.equal(enabled.goal, '用户目标');
+  assert.equal(enabled.plan.rootGoal, '用户目标');
+  const legacy = { ...createChangeSupervisor({ goal: '逼近 ValueSpec 目标', valueSpec }) };
+  delete legacy.enabled;
+  assert.equal(normalizeChangeSupervisorState(legacy).enabled, false);
+});
+
+test('goal plans cannot drift from the supervisor goal', () => {
+  assert.throws(
+    () => createChangeSupervisor({
+      goal: '监督目标',
+      valueSpec,
+      plan: { rootGoal: '另一个目标', stages: [{ id: 'root', goal: '阶段', objective: valueSpec }] },
+    }),
+    /rootGoal must equal the supervisor goal/u,
+  );
+});
+
+test('a goal plan advances through measurable stages using the same distance rule', () => {
+  const supervisor = createChangeSupervisor({
+    goal: '完成两阶段变化',
+    valueSpec,
+    plan: {
+      schemaVersion: 1,
+      rootGoal: '完成两阶段变化',
+      stages: [
+        { id: 'approach', goal: '先接近目标', objective: { ...valueSpec, target: [9, 10] } },
+        { id: 'settle', goal: '再达到目标' },
+      ],
+    },
+  });
+  const approach = advanceChangeSupervisor(supervisor, {
+    beforeObservation: observation('state:0', [8, 9]),
+    postObservation: observation('state:1', [9, 10]),
+    verification: verification('ACTION', true),
+  });
+  assert.equal(approach.status, 'ACTIVE');
+  assert.equal(approach.plan.revision, 1);
+  assert.equal(approach.plan.activeStageId, 'settle');
+  assert.equal(approach.plan.stages[0].status, 'COMPLETED');
+  assert.deepEqual(approach.objective.target, [10, 10]);
+  const completed = advanceChangeSupervisor(approach, {
+    beforeObservation: observation('state:1', [9, 10]),
+    postObservation: observation('state:2', [10, 10]),
+    verification: verification('ACTION', true),
+  });
+  assert.equal(completed.status, 'COMPLETED');
+  assert.equal(completed.lastChange.stopReason, 'OBJECTIVE_REACHED');
 });
 
 test('supervisor snapshots data descriptors before reading untrusted inputs', () => {
