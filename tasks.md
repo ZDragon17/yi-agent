@@ -172,6 +172,12 @@
 ## F-8 领域中立的变化监督器
 
 - 原理：所有领域都投影为观察向量、目标和值域；监督器只计算同一套加权目标距离，并把“行动造成的可归因改善”“歧义/拒绝”“停滞”“重规划”“目标达成”和“预算耗尽”表达为统一状态变化。
-- 实现：`src/agent/change-supervisor.mjs` 提供纯 `create/advance/acknowledgeReplan/resume` 契约；确认进步必须同时满足 `attribution=ACTION` 与 `learnable=true`，退步不能被历史最佳距离误判为改善；`changeSupervisor` 进入 start/current/STEP afterState/快照/终态，旧实验室可在下一 Run 平滑升级。
-- 验证：覆盖确认进步、歧义不学习、确认退步、目标达成、停滞重规划、重规划恢复、最大周期和参数边界；应用层验证 15+15 与 30 步的监督状态相等；CLI 通过多进程接力、STEP 落盘后进程崩溃、显式 recover、后续 Run 和 Replay 验证重启恢复及跨 WorldPort 一致。
-- 边界：这是底座的可证伪监督层，不等于通用自主智能；当前 `resume` 只开启下一变化周期，不声称已经完成有证据的策略重规划；它不能从不存在的观测、归因或执行回执中创造智能。
+- 实现：`src/agent/change-supervisor.mjs` 提供纯 `create/advance/acknowledgeReplan/resume` 契约；确认进步必须同时满足 `attribution=ACTION` 与 `learnable=true`，退步不能被历史最佳距离误判为改善；`changeSupervisor.strategy` 以版本、模式和原因记录领域无关的策略变化，并进入 start/current/STEP afterState/快照/终态，旧实验室可在下一 Run 平滑升级。`Kernel` 的 `EXPLORATORY` 只利用样本数与不确定度选择安全候选。
+- 验证：覆盖确认进步、歧义不学习、确认退步、目标达成、停滞重规划、重规划恢复、最大周期和参数边界；应用层验证 15+15 与 30 步的监督状态相等，且在五个内置 WorldPort 上验证分段/整段连续性；CLI 通过多进程接力、STEP 落盘后进程崩溃、显式 recover、后续 Run 和 Replay 验证重启恢复及跨 WorldPort 一致。
+- 边界：这是底座的可证伪监督层，不等于通用自主智能；策略切换只改变安全候选排序，不能从不存在的观测、归因或执行回执中创造智能。
+
+## F-9 连续 Run Runner
+
+- 实现：`runContinuous` 和 `agent loop` 将有限步数分割为多个独立、可恢复、可 Replay 的 Run；每个 Run 提交完成后才启动下一个，显式目标达成、执行拒绝或无安全动作立即停止。
+- 验证：同一个 lab 在多个 Run 间持续推进，所有子 Run 可独立 Replay；重新执行 loop 命令从 current 继续，不重置 WorldPort、memory、RNG 或 supervisor strategy。
+- 边界：单个 Run 崩溃后的锁接管仍需显式 `recover --confirm-lock-owner-dead`，这是故意保留的人工安全卡点；无限运行、后台服务和真实桌面执行不在本阶段自动开启。

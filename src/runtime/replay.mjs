@@ -10,7 +10,7 @@ import {
   isValidEvidencePublicKey,
   verifyExternalInputAttestation,
 } from './external-evidence.mjs';
-import { advanceChangeSupervisor, normalizeChangeSupervisorState, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
+import { acknowledgeReplan, advanceChangeSupervisor, normalizeChangeSupervisorState, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
 const REQUIRED_BOUNDARY_KEYS = ['schemaVersion', 'valueSpec'];
@@ -147,6 +147,9 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   if (!difference && payload.boundary.capabilities !== undefined) {
     difference = compareValue(payload.boundary.capabilities, capabilities, 'payload.boundary.capabilities', event.sequence);
   }
+  if (!difference && payload.boundary.strategy !== undefined) {
+    difference = compareValue(payload.boundary.strategy, state.changeSupervisor?.strategy, 'payload.boundary.strategy', event.sequence);
+  }
   if (!difference) difference = compareValue(payload.beforeObservation, beforeObservation, 'payload.beforeObservation', event.sequence);
   if (difference) return { difference };
 
@@ -162,6 +165,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       valueSpec,
       capabilities,
       rngState: state.rngState,
+      ...(state.changeSupervisor?.strategy === undefined ? {} : { strategy: state.changeSupervisor.strategy }),
     };
     intent = decision === undefined
       ? kernel.step(stepInput)
@@ -223,11 +227,15 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   };
   if (state.changeSupervisor !== undefined) {
     try {
-      nextState.changeSupervisor = advanceChangeSupervisor(resumeChangeSupervisor(state.changeSupervisor), {
+      let nextSupervisor = advanceChangeSupervisor(resumeChangeSupervisor(state.changeSupervisor), {
         beforeObservation,
         postObservation,
         verification,
       });
+      if (nextSupervisor.status === 'REPLAN_REQUIRED') {
+        nextSupervisor = acknowledgeReplan(nextSupervisor, 'supervisor-stagnation');
+      }
+      nextState.changeSupervisor = nextSupervisor;
     } catch (error) {
       corrupt('Replay change supervisor failed.', { sequence: event.sequence, cause: errorName(error) });
     }

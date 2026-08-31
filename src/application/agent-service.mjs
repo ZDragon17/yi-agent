@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { LabStore, LabStoreError } from '../runtime/lab-store.mjs';
 import { canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { learn, stepWithPreference, verify } from '../kernel/index.mjs';
-import { advanceChangeSupervisor, createChangeSupervisor, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
+import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, resumeChangeSupervisor } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
 import {
   builtInWorldRegistry,
@@ -50,6 +50,9 @@ export async function runLab(input) {
   const scenario = source.scenario ?? 'steady';
   const registry = resolveRegistry(source.registry);
   const failpoint = typeof source.failpoint === 'function' ? source.failpoint : undefined;
+  const supervisorMaxCycles = requireBoundedOptional(source.maxCycles, 1, 1_000_000, 'maxCycles') ?? 1_000_000;
+  const supervisorStagnationLimit = requireBoundedOptional(source.stagnationLimit, 1, 100_000, 'stagnationLimit') ?? 3;
+  const supervisionActive = source.goal !== undefined && source.goal !== null;
   const store = await LabStore.open({ labPath });
   const manifest = store.manifest;
   registry.assertManifest(manifest);
@@ -65,9 +68,11 @@ export async function runLab(input) {
         changeSupervisor: createChangeSupervisor({
           goal: source.goal ?? '逼近 ValueSpec 目标',
           valueSpec: spec,
+          maxCycles: supervisorMaxCycles,
+          stagnationLimit: supervisorStagnationLimit,
         }),
       }
-    : ensureSupervisor(projectCurrent(current), spec, source.goal);
+    : ensureSupervisor(projectCurrent(current), spec, source.goal, supervisorMaxCycles, supervisorStagnationLimit);
   const run = await store.startRun({
     runId,
     worldId: manifest.worldId,
@@ -104,6 +109,7 @@ export async function runLab(input) {
       valueSpec: spec,
       capabilities,
       rngState: state.rngState,
+      ...(state.changeSupervisor.strategy === undefined ? {} : { strategy: state.changeSupervisor.strategy }),
     }, preferenceFor(modelDecision));
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
@@ -142,11 +148,17 @@ export async function runLab(input) {
       postObservation,
       verification,
     });
-    const nextChangeSupervisor = advanceChangeSupervisor(resumeChangeSupervisor(state.changeSupervisor), {
+    const activeSupervisor = state.changeSupervisor.status === 'ACTIVE'
+      ? state.changeSupervisor
+      : resumeChangeSupervisor(state.changeSupervisor, 'runtime-continuation');
+    let nextChangeSupervisor = advanceChangeSupervisor(activeSupervisor, {
       beforeObservation,
       postObservation,
       verification,
     });
+    if (nextChangeSupervisor.status === 'REPLAN_REQUIRED') {
+      nextChangeSupervisor = acknowledgeReplan(nextChangeSupervisor, 'supervisor-stagnation');
+    }
     const nextState = {
       worldState: transition.nextWorldState,
       memory: update.nextMemory,
@@ -162,6 +174,7 @@ export async function runLab(input) {
           schemaVersion: SCHEMA_VERSION,
           valueSpec: spec,
           capabilities,
+          ...(state.changeSupervisor.strategy === undefined ? {} : { strategy: state.changeSupervisor.strategy }),
           externalInputsDigest: canonicalDigest(externalInputs),
         },
         beforeObservation,
@@ -208,6 +221,26 @@ export async function runLab(input) {
         evidence: { rejectionReason: transition.receipt.rejectionReason },
       });
     }
+    if (supervisionActive && nextChangeSupervisor.status === 'COMPLETED') {
+      terminalRequested = true;
+      await run.finish({ terminalStatus: 'COMPLETED', finalState: state });
+      return runSummary(runId, 'COMPLETED', 'OBJECTIVE_REACHED', executed, {
+        executed,
+        accepted: accepted + 1,
+        rejected: 0,
+        supervision: state.changeSupervisor,
+      });
+    }
+    if (supervisionActive && nextChangeSupervisor.status === 'HALTED') {
+      terminalRequested = true;
+      await run.finish({ terminalStatus: 'HALTED', finalState: state });
+      return runSummary(runId, 'HALTED', 'MAX_CYCLES', executed, {
+        executed,
+        accepted: accepted + 1,
+        rejected: 0,
+        supervision: state.changeSupervisor,
+      });
+    }
     accepted += 1;
     }
 
@@ -232,6 +265,42 @@ export async function runLab(input) {
   } finally {
     await run.closeLedgerHandle();
   }
+}
+
+export async function runContinuous(input) {
+  const source = requireRecord(input, 'continuous run input');
+  const runs = requireBoundedOptional(source.runs, 1, 10_000, 'runs') ?? 1;
+  const stepsPerRun = requireSteps(source.stepsPerRun ?? source.steps);
+  const results = [];
+
+  for (let index = 0; index < runs; index += 1) {
+    const runId = source.runId === undefined
+      ? randomUUID()
+      : `${requireText(source.runId, 'runId')}-${index + 1}-${randomUUID()}`;
+    const result = await runLab({
+      ...source,
+      runId,
+      steps: stepsPerRun,
+      stepsPerRun: undefined,
+      runs: undefined,
+    });
+    results.push(result);
+    if (result.status === 'HALTED' || result.stopReason === 'OBJECTIVE_REACHED') break;
+  }
+
+  const last = results.at(-1);
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    status: last?.status ?? 'COMPLETED',
+    stopReason: last?.stopReason ?? 'COMPLETED',
+    runs: results.length,
+    metrics: {
+      executed: results.reduce((sum, result) => sum + (result.metrics?.executed ?? 0), 0),
+      accepted: results.reduce((sum, result) => sum + (result.metrics?.accepted ?? 0), 0),
+      rejected: results.reduce((sum, result) => sum + (result.metrics?.rejected ?? 0), 0),
+    },
+    results,
+  };
 }
 
 function preferenceFor(modelDecision) {
@@ -395,15 +464,19 @@ function projectCurrent(current) {
   };
 }
 
-function ensureSupervisor(state, valueSpec, goal) {
-  if (state.changeSupervisor !== undefined) return state;
-  return {
-    ...state,
-    changeSupervisor: createChangeSupervisor({
-      goal: goal ?? '逼近 ValueSpec 目标',
-      valueSpec,
-    }),
-  };
+function ensureSupervisor(state, valueSpec, goal, maxCycles, stagnationLimit) {
+  if (state.changeSupervisor === undefined) {
+    return {
+      ...state,
+      changeSupervisor: createChangeSupervisor({
+        goal: goal ?? '逼近 ValueSpec 目标',
+        valueSpec,
+        maxCycles,
+        stagnationLimit,
+      }),
+    };
+  }
+  return state;
 }
 
 function initialRng(seed) {
@@ -445,6 +518,14 @@ function requireText(value, field) {
 function requireSteps(value) {
   if (!Number.isSafeInteger(value) || value < 1 || value > 10_000) {
     throw new LabStoreError('INVALID_INPUT', 'steps must be an integer from 1 to 10000.', { field: 'steps' });
+  }
+  return value;
+}
+
+function requireBoundedOptional(value, minimum, maximum, field) {
+  if (value === undefined || value === null) return undefined;
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new LabStoreError('INVALID_INPUT', `${field} must be an integer from ${minimum} to ${maximum}.`, { field });
   }
   return value;
 }

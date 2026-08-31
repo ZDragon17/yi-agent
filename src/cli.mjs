@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { inspectLab, initLab, replayLab, recoverLab, runLab } from './application/agent-service.mjs';
+import { inspectLab, initLab, replayLab, recoverLab, runContinuous, runLab } from './application/agent-service.mjs';
 import { challenge } from './application/challenge-service.mjs';
 import { loadExternalWorldRegistry } from './application/external-world-registry.mjs';
 import { restoreEffectBroker } from './effects/effect-broker.mjs';
@@ -53,6 +53,8 @@ async function dispatch(command, options) {
       runId: options['run-id'],
       scenario: options.scenario,
       registry: loadRegistry(options),
+      maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
+      stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
     });
   }
   if (command === 'inspect') {
@@ -92,6 +94,20 @@ async function dispatchAgent(options) {
     model: config.model,
     goal: options.goal ?? null,
   });
+  if (options.agentOperation === 'loop') {
+    return runContinuous({
+      labPath: required(options, 'lab'),
+      stepsPerRun: parseSteps(required(options, 'steps')),
+      runs: options.runs === undefined ? undefined : parseBoundedInt(options.runs, 1, 10_000, 'runs'),
+      runId: options['run-id'],
+      scenario: options.scenario,
+      registry: loadRegistry(options),
+      advisor,
+      goal: options.goal,
+      maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
+      stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
+    });
+  }
   if (options.agentOperation !== 'run') {
     throw cliError('INVALID_INPUT', `Unsupported agent operation: ${options.agentOperation ?? '(missing)'}`, {}, 64);
   }
@@ -103,6 +119,8 @@ async function dispatchAgent(options) {
     registry: loadRegistry(options),
     advisor,
     goal: options.goal,
+    maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
+    stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
   });
 }
 
@@ -169,7 +187,7 @@ function parseArguments(argv) {
   }
   if (command === 'agent') {
     const operation = args.shift();
-    if (operation !== 'run') {
+    if (!['run', 'loop'].includes(operation)) {
       throw cliError('INVALID_INPUT', `Unsupported agent operation: ${operation ?? '(missing)'}`, {}, 64);
     }
     options.agentOperation = operation;
@@ -191,11 +209,11 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'run-id', 'scenario', 'adapter', 'goal'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'run-id', 'scenario', 'adapter', 'goal', 'max-cycles', 'stagnation-limit'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
-    run: ['lab', 'run-id', 'steps', 'scenario', 'adapter'],
+    run: ['lab', 'run-id', 'steps', 'scenario', 'adapter', 'max-cycles', 'stagnation-limit'],
     inspect: ['lab', 'run', 'action', 'adapter'],
     replay: ['lab', 'run', 'adapter'],
     recover: ['lab', 'confirm-lock-owner-dead'],
@@ -282,6 +300,15 @@ function parseSteps(value) {
   return steps;
 }
 
+function parseBoundedInt(value, minimum, maximum, field) {
+  if (!/^-?\d+$/u.test(value)) throw cliError('INVALID_INPUT', `${field} must be an integer from ${minimum} to ${maximum}.`, { field }, 64);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw cliError('INVALID_INPUT', `${field} must be an integer from ${minimum} to ${maximum}.`, { field }, 64);
+  }
+  return parsed;
+}
+
 function required(options, name) {
   if (typeof options[name] !== 'string' || options[name].length === 0) {
     throw cliError('INVALID_INPUT', `Missing required option: --${name}`, { field: name }, 64);
@@ -348,7 +375,7 @@ function helpText() {
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
-    '  yi-agent agent run --lab PATH --steps N [--goal TEXT] [--json]',
+    '  yi-agent agent run|loop --lab PATH --steps N [--runs N] [--goal TEXT] [--max-cycles N] [--stagnation-limit N] [--json]',
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',

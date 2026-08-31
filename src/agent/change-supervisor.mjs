@@ -29,6 +29,7 @@ const STATE_KEYS = [
   'bestDistance',
   'stagnation',
   'replanCount',
+  'strategy',
   'lastChange',
 ];
 const LAST_CHANGE_KEYS = [
@@ -45,6 +46,8 @@ const LAST_CHANGE_KEYS = [
   'stopReason',
   'replanReason',
 ];
+const STRATEGY_KEYS = ['schemaVersion', 'mode', 'revision', 'reason'];
+const STRATEGY_MODES = ['BALANCED', 'EXPLORATORY'];
 
 const STATUS_DECISIONS = Object.freeze({
   ACTIVE: 'CONTINUE',
@@ -81,6 +84,7 @@ export function createChangeSupervisor({
     bestDistance: null,
     stagnation: 0,
     replanCount: 0,
+    strategy: createStrategy(),
     lastChange: null,
   };
 }
@@ -152,15 +156,36 @@ export function acknowledgeReplan(state, reason = 'strategy-change') {
     throw new Error('ChangeSupervisor can acknowledge a replan only after REPLAN_REQUIRED.');
   }
   const normalizedReason = requireGoal(reason);
+  const strategy = nextStrategy(current.strategy ?? createStrategy(), normalizedReason);
   return {
     ...current,
     status: 'ACTIVE',
     stagnation: 0,
     replanCount: current.replanCount + 1,
+    strategy,
     lastChange: {
       ...current.lastChange,
       replanReason: normalizedReason,
     },
+  };
+}
+
+function createStrategy() {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    mode: 'BALANCED',
+    revision: 0,
+    reason: null,
+  };
+}
+
+function nextStrategy(strategy, reason) {
+  const current = normalizeStrategy(strategy, 'strategy');
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    mode: current.mode === 'BALANCED' ? 'EXPLORATORY' : 'BALANCED',
+    revision: current.revision + 1,
+    reason,
   };
 }
 
@@ -200,7 +225,12 @@ export function weightedDistance(vector, objective) {
 }
 
 function normalizeState(value) {
-  const source = snapshotRecord(value, STATE_KEYS, STATE_KEYS, 'state');
+  const source = snapshotRecord(
+    value,
+    STATE_KEYS,
+    STATE_KEYS.filter((key) => key !== 'strategy'),
+    'state',
+  );
   if (source.schemaVersion !== SCHEMA_VERSION ||
       !['ACTIVE', 'REPLAN_REQUIRED', 'COMPLETED', 'HALTED'].includes(source.status)) {
     throw new Error('ChangeSupervisor state is invalid.');
@@ -218,6 +248,23 @@ function normalizeState(value) {
     stagnation: requireBoundedInteger(source.stagnation, 0, MAX_STAGNATION, 'stagnation'),
     replanCount: requireBoundedInteger(source.replanCount, 0, MAX_CYCLES, 'replanCount'),
     lastChange: source.lastChange === null ? null : normalizeLastChange(source.lastChange),
+    ...(source.strategy === undefined ? {} : { strategy: normalizeStrategy(source.strategy, 'state.strategy') }),
+  };
+}
+
+function normalizeStrategy(value, field) {
+  const source = snapshotRecord(value, STRATEGY_KEYS, STRATEGY_KEYS, field);
+  if (source.schemaVersion !== SCHEMA_VERSION ||
+      !STRATEGY_MODES.includes(source.mode) ||
+      !Number.isSafeInteger(source.revision) || source.revision < 0 || source.revision > MAX_CYCLES ||
+      (source.reason !== null && (typeof source.reason !== 'string' || source.reason.length === 0 || source.reason.length > MAX_GOAL_LENGTH))) {
+    throw new Error('ChangeSupervisor strategy is invalid.');
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    mode: source.mode,
+    revision: source.revision,
+    reason: source.reason,
   };
 }
 

@@ -116,6 +116,8 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 可审计运行时：事件账本、快照、锁、恢复和哈希链；
 - 证据闭环：行动前预期、行动回执、复观、验证、学习；
 - 变化监督器：用同一套目标距离、确认进步、停滞、重规划和停止判定约束不同世界；状态随 STEP、快照、终态和恢复账本连续保存，跨进程 CLI 可继续运行；
+- 连续 Runner：`agent loop` 把有限 STEP 批次串成多个已提交 Run；每个边界都可独立 Replay，进程重启后从同一个 current 继续；
+- 证据驱动策略变化：停滞不会只写一条日志，而会把领域无关的 `BALANCED/EXPLORATORY` 策略、版本和原因持久化；探索策略只使用动作样本数/不确定度重新排序安全候选；
 - 模型提议层：通过 OpenAI-compatible API 提出候选 Token；
 - 安全边界：模型不能绕过 Kernel 直接执行动作；
 - 确定性 Replay：回放使用已记录的模型提议摘要，不重新请求模型；
@@ -249,6 +251,7 @@ yi-agent api test --json
 yi-agent api test --json
 yi-agent ask --prompt "请用一句话解释什么是闭环" --json
 yi-agent agent run --lab E:\labs\temperature --steps 3 --goal "保持系统稳定" --json
+yi-agent agent loop --lab E:\labs\temperature --steps 10 --runs 100 --goal "保持系统稳定" --json
 Get-Content .\prompt.txt -Raw | yi-agent ask --prompt - --json
 yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 ```
@@ -256,5 +259,9 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 `api test` 只报告连通状态和模型数量，不会输出 API Key。`ask` 的成功结果和失败结果都使用单行 JSON envelope，便于 PowerShell 或脚本继续处理。
 
 `agent run` 会在每一步把当前观测和可用能力交给模型提出一个 token，再由 Kernel 独立计算预期、复核安全性、执行、验证和学习。模型不能直接执行动作；每一步只保存结构化提议摘要，`replay` 不会再次调用模型。
+
+`agent loop` 是连续运行的 CLI 入口：`--steps` 表示每个可恢复 Run 的步数，`--runs` 表示最多串联多少个 Run。每个 Run 都先完成自己的账本提交，再开始下一个 Run；因此可以在两个 Run 之间退出、重启，随后再次执行同一命令继续当前实验。发生执行拒绝、无安全动作或显式目标达成时，循环会停止并返回原因。进程在一个 Run 内崩溃时，仍须先用 `recover --confirm-lock-owner-dead` 完成明确的恢复卡点，再继续循环。
+
+当监督器检测到达到停滞阈值，它会把 `replanCount`、`strategy.revision`、策略模式和 `replanReason` 写进 STEP 的 `afterState`。`EXPLORATORY` 只改变安全候选的选择顺序，不能改变目标、权限、WorldPort 回执或验证规则；Replay 会重现同一次策略切换。
 
 当前 CLI 不会替你保存密钥；真实连通性需要你在本机配置上述环境变量后执行 `yi-agent api test`。模型调用只负责提出候选 Token，仍由 WorldPort、Kernel、verify、learn 和 replay 闭环裁决。

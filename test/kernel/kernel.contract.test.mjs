@@ -191,6 +191,20 @@ test('step explores an untried safe capability before exploiting learned actions
   assert.equal(result.expectation.sampleCount, 0);
 });
 
+test('exploratory strategy changes the selected action using only opaque evidence', async () => {
+  const { step } = await loadKernel();
+  const input = makeStepInput({
+    capabilities: [capability(TOKEN_A), capability(TOKEN_B)],
+    memory: memoryWithModels([
+      [TOKEN_A, { sampleCount: 10, meanDelta: [0.5, 0], uncertainty: 0.01 }],
+      [TOKEN_B, { sampleCount: 1, meanDelta: [0, 0], uncertainty: 0.8 }],
+    ]),
+  });
+  input.strategy = { schemaVersion: 1, mode: 'EXPLORATORY', revision: 1, reason: 'supervisor-stagnation' };
+  const result = step(input);
+  assert.equal(result.choice.token, TOKEN_B);
+});
+
 test('step converts model uncertainty into the ValueSpec scale before selection', async () => {
   const { step } = await loadKernel();
   const result = step(makeStepInput({

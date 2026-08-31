@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { initLab, inspectLab, replayLab, runLab } from '../../src/application/agent-service.mjs';
+import { initLab, inspectLab, replayLab, runContinuous, runLab } from '../../src/application/agent-service.mjs';
 import { LabStore } from '../../src/runtime/lab-store.mjs';
 import {
   assertExactKeys,
@@ -160,6 +160,101 @@ test('application service runs diverse built-in worlds through one runtime and r
       assert.equal(inspection.inspectView.recent.token.startsWith('tok_'), true);
       assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
       assert.equal(firstStep.payload.beforeObservation.vector.length, observationDimensions);
+    }
+  });
+});
+
+test('application service stops early when an explicit goal is reached', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'goal-lab', worldId: 'temperature', seed: 'goal-seed' });
+    let callCount = 0;
+    const fakeDigest = `sha256:${'a'.repeat(64)}`;
+    const advisor = async ({ capabilities, step }) => {
+      callCount += 1;
+      const safe = capabilities.filter((c) => c.allowed && c.safe);
+      const token = step === 0 ? safe[0].token : safe[1].token;
+      return { model: 'test-advisor', token, responseDigest: fakeDigest };
+    };
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 10,
+      goal: '保持温度在目标值',
+      advisor,
+    });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(result.stopReason, 'OBJECTIVE_REACHED');
+    assert.equal(result.metrics.executed, 2);
+    assert.equal(callCount, 2);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
+test('application service runs full steps when no explicit goal is provided', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'nogoal-lab', worldId: 'temperature', seed: 'nogoal-seed' });
+    let callCount = 0;
+    const fakeDigest = `sha256:${'a'.repeat(64)}`;
+    const advisor = async ({ capabilities, step }) => {
+      callCount += 1;
+      const safe = capabilities.filter((c) => c.allowed && c.safe);
+      const token = step % 2 === 0 ? safe[0].token : safe[1].token;
+      return { model: 'test-advisor', token, responseDigest: fakeDigest };
+    };
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 5,
+      advisor,
+    });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(result.stopReason, 'COMPLETED');
+    assert.equal(result.metrics.executed, 5);
+    assert.equal(callCount, 5);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
+test('continuous runner preserves one state across multiple committed run boundaries', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'continuous-lab', worldId: 'temperature', seed: 'continuous-seed' });
+    const result = await runContinuous({ labPath: lab, stepsPerRun: 2, runs: 3, runId: 'loop' });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(result.runs, 3);
+    assert.equal(result.metrics.executed, 6);
+    const resumed = await runContinuous({ labPath: lab, stepsPerRun: 2, runs: 2, runId: 'loop' });
+    assert.equal(resumed.runs, 2);
+    assert.equal(resumed.metrics.executed, 4);
+    const current = (await inspectLab({ labPath: lab })).current;
+    assert.equal(current.kernelStep, 10);
+    for (const run of result.results) {
+      assert.equal((await replayLab({ labPath: lab, runId: run.runId })).verdict, 'CONSISTENT');
+    }
+  });
+});
+
+test('split and whole runs preserve the same continuity projection across every WorldPort', async () => {
+  await withLab(async (root) => {
+    for (const worldId of ['temperature', 'virtual-desktop', 'inventory', 'grid', 'queue']) {
+      const splitLab = path.join(root, `${worldId}-split`);
+      const wholeLab = path.join(root, `${worldId}-whole`);
+      const init = { worldId, seed: `${worldId}-projection` };
+      await initLab({ labPath: splitLab, labId: `${worldId}-projection`, ...init });
+      await initLab({ labPath: wholeLab, labId: `${worldId}-projection`, ...init });
+      if (worldId === 'grid') {
+        const splitResult = await runLab({ labPath: splitLab, runId: 'run-1', steps: 1 });
+        const wholeResult = await runLab({ labPath: wholeLab, runId: 'run-1', steps: 1 });
+        assert.equal(splitResult.stopReason, wholeResult.stopReason, worldId);
+        assert.deepEqual(project((await inspectLab({ labPath: splitLab })).current), project((await inspectLab({ labPath: wholeLab })).current), worldId);
+        assert.equal((await replayLab({ labPath: splitLab, runId: 'run-1' })).verdict, 'CONSISTENT');
+        continue;
+      }
+      await runLab({ labPath: splitLab, runId: 'run-1', steps: 2 });
+      await runLab({ labPath: splitLab, runId: 'run-2', steps: 3 });
+      await runLab({ labPath: wholeLab, runId: 'run-1', steps: 5 });
+      assert.deepEqual(project((await inspectLab({ labPath: splitLab })).current), project((await inspectLab({ labPath: wholeLab })).current), worldId);
+      assert.equal((await replayLab({ labPath: splitLab, runId: 'run-2' })).verdict, 'CONSISTENT');
+      assert.equal((await replayLab({ labPath: wholeLab, runId: 'run-1' })).verdict, 'CONSISTENT');
     }
   });
 });

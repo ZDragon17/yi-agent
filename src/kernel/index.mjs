@@ -11,7 +11,9 @@ const STEP_INPUT_KEYS = [
   'valueSpec',
   'capabilities',
   'rngState',
+  'strategy',
 ];
+const STEP_INPUT_REQUIRED_KEYS = STEP_INPUT_KEYS.filter((key) => key !== 'strategy');
 const VERIFY_INPUT_KEYS = ['intent', 'receipt', 'postObservation'];
 const LEARN_INPUT_KEYS = [
   'memory',
@@ -54,6 +56,7 @@ const CAPABILITY_KEYS = [
   'safe',
 ];
 const RNG_STATE_KEYS = ['schemaVersion', 'algorithm', 'state'];
+const STRATEGY_KEYS = ['schemaVersion', 'mode', 'revision', 'reason'];
 const INTENT_KEYS = [
   'schemaVersion',
   'status',
@@ -127,7 +130,7 @@ export function stepWithPreference(input, preference = null) {
   const preferred = normalizedPreference === null
     ? null
     : safePredictions.find((item) => item.choice.token === normalizedPreference.token);
-  const selected = preferred ?? selectionPool[choosePredictionIndex(selectionPool, rng.unit)];
+  const selected = preferred ?? chooseByStrategy(selectionPool, normalized.strategy, rng.unit);
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -310,7 +313,7 @@ function assertVerificationMatches(claimed, recomputed) {
 }
 
 function normalizeStepInput(input) {
-  const source = assertPlainRecord(input, 'stepInput', STEP_INPUT_KEYS);
+  const source = assertPlainRecord(input, 'stepInput', STEP_INPUT_KEYS, STEP_INPUT_REQUIRED_KEYS);
   const observation = normalizeObservation(source.observation, 'stepInput.observation');
   const valueSpec = normalizeValueSpec(
     source.valueSpec,
@@ -327,6 +330,7 @@ function normalizeStepInput(input) {
     'stepInput.capabilities',
   );
   const rngState = normalizeRngState(source.rngState, 'stepInput.rngState');
+  const strategy = normalizeStrategy(source.strategy, 'stepInput.strategy');
 
   return {
     observation,
@@ -334,6 +338,29 @@ function normalizeStepInput(input) {
     valueSpec,
     capabilities,
     rngState,
+    strategy,
+  };
+}
+
+function normalizeStrategy(value, field) {
+  if (value === undefined) {
+    return { schemaVersion: SCHEMA_VERSION, mode: 'BALANCED', revision: 0, reason: null };
+  }
+  const source = assertPlainRecord(value, field, STRATEGY_KEYS);
+  if (requireSchemaVersion(source, field) !== SCHEMA_VERSION ||
+      !['BALANCED', 'EXPLORATORY'].includes(source.mode) ||
+      !Number.isSafeInteger(source.revision) || source.revision < 0 ||
+      typeof source.reason !== 'string' && source.reason !== null) {
+    contractViolation('kernel strategy is invalid', { field });
+  }
+  if (source.reason !== null && source.reason.length === 0) {
+    contractViolation('kernel strategy reason must not be empty', { field: `${field}.reason` });
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    mode: source.mode,
+    revision: source.revision,
+    reason: source.reason,
   };
 }
 
@@ -726,6 +753,25 @@ function choosePredictionIndex(predictions, unit) {
   return bestIndexes[Math.floor(unit * bestIndexes.length)];
 }
 
+function chooseByStrategy(predictions, strategy, unit) {
+  if (strategy.mode !== 'EXPLORATORY') {
+    return predictions[choosePredictionIndex(predictions, unit)];
+  }
+  let highestExploration = -Infinity;
+  const candidates = [];
+  predictions.forEach((prediction, index) => {
+    const exploration = prediction.expectation.uncertainty / (1 + prediction.expectation.sampleCount);
+    if (exploration > highestExploration) {
+      highestExploration = exploration;
+      candidates.length = 0;
+      candidates.push(index);
+    } else if (Object.is(exploration, highestExploration)) {
+      candidates.push(index);
+    }
+  });
+  return predictions[candidates[Math.floor(unit * candidates.length)]];
+}
+
 function defaultActionModel(dimensions) {
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -886,7 +932,7 @@ function cloneChoice(value) {
   };
 }
 
-function assertPlainRecord(value, field, allowedKeys) {
+function assertPlainRecord(value, field, allowedKeys, requiredKeys = allowedKeys) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     contractViolation('kernel input field must be a plain record', {
       field,
@@ -925,7 +971,7 @@ function assertPlainRecord(value, field, allowedKeys) {
     names.add(key);
   }
 
-  for (const key of allowedKeys) {
+  for (const key of requiredKeys) {
     if (!names.has(key)) {
       contractViolation('kernel input record is missing a required field', {
         field: `${field}.${key}`,
@@ -933,7 +979,7 @@ function assertPlainRecord(value, field, allowedKeys) {
     }
   }
 
-  if (names.size !== allowedKeys.length) {
+  if (names.size < requiredKeys.length || names.size > allowedKeys.length) {
     contractViolation('kernel input record field count mismatch', { field });
   }
 
