@@ -62,6 +62,45 @@ test('agent run uses model proposals inside the replayable closed loop', async (
   }
 });
 
+test('agent CLI isolates an unavailable HTTP advisor and replays the kernel fallback', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-model-outage-e2e-'));
+  let requestCount = 0;
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) {}
+    requestCount += 1;
+    response.statusCode = 503;
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ error: { message: 'temporary provider outage' } }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'local-outage-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'local-outage-model',
+  };
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'outage-seed', '--json'], process.env)).code, 0);
+    const run = await invoke(['agent', 'run', '--lab', lab, '--steps', '2', '--json'], env);
+    assert.equal(run.code, 0);
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    assert.equal(requestCount, 2);
+    const events = (await (await LabStore.open({ labPath: lab })).readRun(run.stdout[0].data.runId)).events;
+    const stepEvents = events.filter((event) => event.kind === 'STEP');
+    assert.equal(stepEvents.length, 2);
+    assert.equal(stepEvents.every((event) => event.payload.policyEvidence?.reason === 'MODEL_UNAVAILABLE'), true);
+    assert.equal(stepEvents.every((event) => event.payload.policyEvidence?.token === null), true);
+    const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env);
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent loop commits multiple runs and resumes from the persisted current state', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-loop-e2e-'));
   const server = createServer(async (request, response) => {
