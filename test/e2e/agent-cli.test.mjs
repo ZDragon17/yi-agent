@@ -107,6 +107,16 @@ test('agent loop accepts an explicit forever policy without confusing it with a 
   assert.equal(help.stderr.includes('forever and runs are mutually exclusive'), false);
 });
 
+test('a new agent loop still requires model configuration', async () => {
+  const env = { ...process.env };
+  delete env.YI_AGENT_API_KEY;
+  delete env.ZAI_API_KEY;
+  delete env.YI_AGENT_MODEL;
+  const result = await invoke(['agent', 'loop', '--lab', 'missing', '--steps', '1', '--runs', '1', '--json'], env);
+  assert.equal(result.code, 64);
+  assert.match(result.stdout[0].error.message, /YI_AGENT_API_KEY(?: or ZAI_API_KEY)? must be configured/u);
+});
+
 test('agent run rejects the loop-only forever policy', async () => {
   const result = await invoke(['agent', 'run', '--lab', 'missing', '--steps', '1', '--forever', '--json'], {
     ...process.env,

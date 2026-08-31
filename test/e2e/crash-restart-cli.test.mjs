@@ -222,6 +222,10 @@ test('a continuous external loop survives response loss, restart, and replay wit
     YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
     YI_AGENT_MODEL: 'external-loop-model',
   };
+  const offlineEnv = { ...env };
+  delete offlineEnv.YI_AGENT_API_KEY;
+  delete offlineEnv.ZAI_API_KEY;
+  delete offlineEnv.YI_AGENT_MODEL;
   const lab = path.join(root, 'lab');
   const externalState = path.join(root, 'external-world', 'state.json');
   const adapter = path.join(root, 'adapter.json');
@@ -240,7 +244,7 @@ test('a continuous external loop survives response loss, restart, and replay wit
     assert.notEqual(lost.code, 0, JSON.stringify(lost));
     assert.equal(JSON.parse(await readFile(externalState, 'utf8')).effects.length, 1);
 
-    const resumed = await invoke(['agent', 'loop', '--lab', lab, '--resume', '--adapter', adapter, '--json'], env);
+    const resumed = await invoke(['agent', 'loop', '--lab', lab, '--resume', '--adapter', adapter, '--json'], offlineEnv);
     assert.equal(resumed.code, 0, JSON.stringify(resumed));
     assert.equal(resumed.stdout[0].data.runs, 2);
 

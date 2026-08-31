@@ -45,7 +45,7 @@
 | `ask --prompt TEXT|--prompt-file PATH [--json]` | 环境变量中的 API 配置与用户提示 | 模型、回答、可选 usage | 参数 64；API 74；协议 70 | 单次非流式请求；提示文件只读 |
 | `agent run --lab PATH --steps N [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 每步一次模型提议；`--auto-plan` 激活持久化 Planner 策略；停滞时只修订未完成计划；replay 不访问 API |
 | `agent loop --lab PATH --steps N [--runs N|--forever] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间、API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；同一 lab 只允许一条未完成 continuation 持有调度权；SIGINT/SIGTERM 只在 Run 边界停止；loop 身份和预算写入每个 Run start，重启可从 current 继续 |
-| `agent loop --lab PATH --resume [--adapter CONFIG] [--json]` | 已存在的未完成 loop continuation；API 配置 | 从账本重建的剩余 Run 摘要 | 参数 64；不存在 66；冲突 65；API 74；协议 70 | 不重新接受 steps/runs/goal 等控制参数；按 immutable Run start 的 loopId/runIndex/scenario/budget 恢复，已提交 Run 不重复 |
+| `agent loop --lab PATH --resume [--adapter CONFIG] [--json]` | 已存在的未完成 loop continuation；模型配置在需要新提议时可用 | 从账本重建的剩余 Run 摘要 | 参数 64；不存在 66；冲突 65；API 74；协议 70 | 不重新接受 steps/runs/goal 等控制参数；按 immutable Run start 的 loopId/runIndex/scenario/budget 恢复，已提交 Run 不重复；恢复模式可在无 API 配置下使用 Kernel 安全选择继续，未决外部 transition 则复用冻结策略证据 |
 
 标准错误对象：`{code, message, context?, recoverable}`。`--json` 时成功或失败都只在 stdout 输出一个 JSON envelope，stderr 保持空；仅 CLI 启动前的致命错误可写 stderr。人类模式的错误写 stderr。
 

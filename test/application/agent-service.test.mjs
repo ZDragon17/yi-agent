@@ -610,6 +610,80 @@ test('automatic replanning revises only the unfinished plan and is frozen for Re
   });
 });
 
+test('offline continuation records unavailable planner evidence when a persisted plan needs replanning', async () => {
+  await withLab(async (lab) => {
+    const goal = '离线恢复后保留重规划证据';
+    const planner = async ({ plan }) => ({
+      model: 'offline-replanning-planner',
+      responseDigest: `sha256:${'f'.repeat(64)}`,
+      plan: {
+        rootGoal: goal,
+        stages: [{ id: 'active', goal: '保持当前阶段', target: plan === null ? [30] : [25] }],
+      },
+    });
+    await initLab({ labPath: lab, labId: 'offline-replanning-lab', worldId: 'temperature', seed: 'offline-replanning-seed' });
+    await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 1,
+      scenario: 'external-during-step',
+      goal,
+      autoPlan: true,
+      planner,
+      stagnationLimit: 2,
+    });
+    const resumed = await runLab({
+      labPath: lab,
+      runId: 'run-2',
+      steps: 1,
+      scenario: 'external-during-step',
+    });
+    assert.equal(resumed.metrics.executed, 1);
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-2');
+    const replan = run.events.find((event) => event.kind === 'STEP').payload.boundary.goalReplan;
+    assert.equal(replan.planEvidence.applied, false);
+    assert.equal(replan.planEvidence.reason, 'PLANNER_UNAVAILABLE');
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-2' })).verdict, 'CONSISTENT');
+  });
+});
+
+test('an explicit goal plan takes precedence over an inactive persisted planner policy', async () => {
+  await withLab(async (lab) => {
+    const planner = async () => ({
+      model: 'inactive-planner',
+      responseDigest: `sha256:${'a'.repeat(64)}`,
+      plan: {
+        rootGoal: '旧自动目标',
+        stages: [{ id: 'old', goal: '旧自动阶段', target: [30] }],
+      },
+    });
+    await initLab({ labPath: lab, labId: 'explicit-plan-lab', worldId: 'temperature', seed: 'explicit-plan-seed' });
+    await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 1,
+      scenario: 'all-unsafe',
+      goal: '旧自动目标',
+      autoPlan: true,
+      planner,
+    });
+    const explicitPlan = {
+      schemaVersion: 1,
+      rootGoal: '显式目标',
+      stages: [{
+        id: 'explicit',
+        goal: '显式阶段',
+        objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [22], tolerance: 0 },
+      }],
+    };
+    await runLab({ labPath: lab, runId: 'run-2', steps: 1, goalPlan: explicitPlan });
+    const current = (await inspectLab({ labPath: lab })).current.changeSupervisor;
+    assert.equal(current.goal, '显式目标');
+    assert.equal(current.plan.rootGoal, '显式目标');
+    assert.equal(current.plan.stages[0].id, 'explicit');
+  });
+});
+
 test('bounded dynamics memory adapts across scenario boundaries and remains replayable', async () => {
   await withLab(async (lab) => {
     const registry = createGeneratedRegistry({ adaptive: true });

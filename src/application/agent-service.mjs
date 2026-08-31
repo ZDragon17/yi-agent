@@ -129,7 +129,7 @@ export async function runLab(input) {
     initialState = { ...initialState, changeSupervisor: existingSupervisor };
   }
   const requestedGoal = source.goal ?? source.goalPlan?.rootGoal ?? existingSupervisor?.goal ?? '逼近 ValueSpec 目标';
-  const plannerRequested = source.planner !== undefined &&
+  const plannerRequested = source.goalPlan === undefined &&
     (planningExplicitlyRequested || existingSupervisor?.plannerEnabled === true);
   if (current.lastRunId !== null && existingSupervisor?.enabled === true && goalRequested && existingSupervisor.goal !== requestedGoal) {
     throw new LabStoreError('CONFLICT', 'An enabled goal cannot be replaced in an existing lab.', { field: 'goal' });

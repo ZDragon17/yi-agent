@@ -95,17 +95,23 @@ async function dispatchAgent(options) {
   if (options['auto-plan'] === true && options['goal-plan'] !== undefined) {
     throw cliError('INVALID_INPUT', '--auto-plan and --goal-plan are mutually exclusive.', { fields: ['auto-plan', 'goal-plan'] }, 64);
   }
-  const config = loadApiConfig();
-  const client = createOpenAICompatibleClient(config);
-  const advisor = createModelAdvisor({
-    client,
-    model: config.model,
-    goal: options.goal ?? null,
-  });
+  let advisor;
+  let planner;
+  try {
+    const config = loadApiConfig();
+    const client = createOpenAICompatibleClient(config);
+    advisor = createModelAdvisor({
+      client,
+      model: config.model,
+      goal: options.goal ?? null,
+    });
+    planner = createModelPlanner({ client, model: config.model });
+  } catch (error) {
+    if (!canResumeWithoutModel(options, error)) throw error;
+  }
   const goalPlan = options['goal-plan'] === undefined
     ? undefined
     : await readGoalPlanFile(options['goal-plan']);
-  const planner = createModelPlanner({ client, model: config.model });
   if (options.agentOperation === 'loop') {
     if (options.resume === true && (
       options.steps !== undefined || options.runs !== undefined || options.forever === true ||
@@ -351,6 +357,12 @@ function loadRegistry(options, probe = true) {
   return options.adapter === undefined
     ? undefined
     : loadExternalWorldRegistry(required(options, 'adapter'), { probe });
+}
+
+function canResumeWithoutModel(options, error) {
+  if (options.agentOperation !== 'loop' || options.resume !== true) return false;
+  if (error?.code !== 'INVALID_INPUT') return false;
+  return ['YI_AGENT_API_KEY', 'YI_AGENT_API_KEY or ZAI_API_KEY', 'YI_AGENT_MODEL'].includes(error?.context?.field);
 }
 
 function parseSteps(value) {
