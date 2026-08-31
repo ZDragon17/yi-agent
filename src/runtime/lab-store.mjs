@@ -33,6 +33,9 @@ const MAX_JSON_BYTES = 1024 * 1024;
 const MAX_LEDGER_BYTES = 32 * 1024 * 1024;
 const MAX_EVENT_LINE_BYTES = 1024 * 1024;
 const MAX_RECENT_COMMITTED_STEPS = 32;
+const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
+
+export const INTERNAL_RUN_APPEND = Symbol('yi-agent.internal-run-append');
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const LEGACY_WORLD_SCENARIOS = {
   temperature: new Set(['steady', 'regime-shift', 'external-during-step', 'execution-rejected', 'all-unsafe']),
@@ -340,6 +343,10 @@ export class LabStore {
     const initialState = cloneInputJson(requireObject(source.initialState, 'initialState'), 'initialState');
     validateContinuityState(initialState, 'initialState');
     const failpoint = typeof source.failpoint === 'function' ? source.failpoint : undefined;
+    const durability = source.durability ?? 'strict';
+    if (!DURABILITY_MODES.has(durability)) {
+      throw new LabStoreError('INVALID_INPUT', 'durability must be strict or checkpoint.', { field: 'durability' });
+    }
 
     await assertDirectoryIsCanonical(this.root, this.root);
     await ensurePlainDirectory(this.root, 'locks');
@@ -425,7 +432,8 @@ export class LabStore {
         writerLock,
         startedEvent,
         failpoint,
-        source.reuseLedgerHandle === true,
+        source.reuseLedgerHandle === true || durability === 'checkpoint',
+        durability,
         writerLockIdentity,
       );
     } catch (error) {
@@ -439,13 +447,14 @@ export class LabStore {
 }
 
 class ActiveRun {
-  constructor(store, start, writerLock, lastEvent, failpoint, reuseLedgerHandle, writerLockIdentity) {
+  constructor(store, start, writerLock, lastEvent, failpoint, reuseLedgerHandle, durability, writerLockIdentity) {
     this.store = store;
     this.start = start;
     this.writerLock = writerLock;
     this.lastEvent = lastEvent;
     this.failpoint = failpoint;
     this.reuseLedgerHandle = reuseLedgerHandle;
+    this.durability = durability;
     this.writerLockIdentity = writerLockIdentity;
     this.terminal = false;
     this.terminalEvidence = false;
@@ -473,9 +482,18 @@ class ActiveRun {
     if (kind === 'RUN_STARTED' || TERMINAL_KINDS.has(kind)) {
       conflict('Reserved event kind.', { kind });
     }
-    const payload = cloneInputJson(source.payload ?? {}, 'event.payload');
+    const payload = options[INTERNAL_RUN_APPEND] === true
+      ? source.payload
+      : cloneInputJson(source.payload ?? {}, 'event.payload');
     if (kind !== 'STEP') conflict('Unsupported event kind.', { kind });
-    validateStepPayload(payload, 'event.payload', false, this.start, this.store.manifest);
+    validateStepPayload(
+      payload,
+      'event.payload',
+      false,
+      this.start,
+      this.store.manifest,
+      options[INTERNAL_RUN_APPEND] === true,
+    );
     if (this.needsLedgerReconcile) await this.reconcileLedger();
     const executionNonce = payload.receipt.executionNonce;
     let committed = this.committedSteps.get(executionNonce);
@@ -503,6 +521,7 @@ class ActiveRun {
         options.failpoint ?? this.failpoint,
         this.reuseLedgerHandle ? await this.ensureLedgerHandle() : null,
         this.reuseLedgerHandle,
+        this.durability === 'strict',
         this.reuseLedgerHandle ? this : null,
       );
     } catch (error) {
@@ -514,7 +533,7 @@ class ActiveRun {
     this.expectedState = payload.afterState;
     this.rememberCommittedStep(executionNonce, event, payload);
     inject(options.failpoint ?? this.failpoint, `${kind}:appended`);
-    return cloneJson(event);
+    return options.returnReference === true ? event : cloneJson(event);
   }
 
   commitSnapshot(snapshot, options = {}) {
@@ -553,6 +572,14 @@ class ActiveRun {
     }
     const current = withSelfDigest({ ...source, schemaVersion: SCHEMA_VERSION });
     const failpoint = options.failpoint ?? this.failpoint;
+    if (this.durability === 'checkpoint') {
+      try {
+        await this.flushLedgerHandle();
+      } catch (error) {
+        this.needsLedgerReconcile = true;
+        throw error;
+      }
+    }
     await atomicWriteJson(
       this.store.root,
       childPath(this.store.root, 'state', 'current.json'),
@@ -597,6 +624,7 @@ class ActiveRun {
         failpoint,
         this.reuseLedgerHandle ? await this.ensureLedgerHandle() : null,
         this.reuseLedgerHandle,
+        true,
         this.reuseLedgerHandle ? this : null,
       );
     } finally {
@@ -680,6 +708,10 @@ class ActiveRun {
     this.ledgerHandle = null;
     this.ledgerBytes = null;
     if (handle !== null) await handle.close();
+  }
+
+  async flushLedgerHandle() {
+    if (this.ledgerHandle !== null) await this.ledgerHandle.datasync();
   }
 
   rememberCommittedStep(executionNonce, event, payload) {
@@ -845,6 +877,7 @@ async function appendLedgerEvent(
   failpoint,
   existingHandle = null,
   compactStorage = false,
+  syncLedger = true,
   ledgerOwner = null,
 ) {
   const unsigned = {
@@ -855,11 +888,15 @@ async function appendLedgerEvent(
     payload: input.payload,
     prevDigest,
   };
-  const event = { ...unsigned, digest: canonicalDigest(unsigned) };
+  const payloadJson = compactStorage ? canonicalJson(input.payload) : null;
+  const event = {
+    ...unsigned,
+    digest: compactStorage ? digestLedgerEvent(unsigned, payloadJson) : canonicalDigest(unsigned),
+  };
   const eventsPath = childPath(root, 'runs', runId, 'events.jsonl');
   if (existingHandle === null) await assertSafePath(root, eventsPath);
   const storedEvent = compactStorage && input.kind === 'STEP'
-    ? encodeStoredLedgerEvent(event)
+    ? encodeStoredLedgerEvent(event, payloadJson)
     : event;
   const line = `${canonicalJson(storedEvent)}\n`;
   if (Buffer.byteLength(line) > MAX_EVENT_LINE_BYTES) {
@@ -876,7 +913,7 @@ async function appendLedgerEvent(
     }
     await handle.writeFile(line, 'utf8');
     inject(failpoint, 'ledger:after-write-before-sync');
-    await handle.datasync();
+    if (syncLedger) await handle.datasync();
     if (ledgerOwner !== null) ledgerOwner.ledgerBytes += lineBytes;
   } finally {
     if (ownsHandle) await handle.close();
@@ -884,15 +921,22 @@ async function appendLedgerEvent(
   return event;
 }
 
-function encodeStoredLedgerEvent(event) {
-  const rawPayload = Buffer.from(canonicalJson(event.payload), 'utf8');
+function digestLedgerEvent(event, payloadJson) {
+  const unsignedJson = `{"kind":${JSON.stringify(event.kind)},"payload":${payloadJson},"prevDigest":${JSON.stringify(event.prevDigest)},"runId":${JSON.stringify(event.runId)},"schemaVersion":${event.schemaVersion},"sequence":${event.sequence}}`;
+  return `sha256:${createHash('sha256').update(unsignedJson).digest('hex')}`;
+}
+
+function encodeStoredLedgerEvent(event, payloadJson) {
+  const rawPayload = Buffer.from(payloadJson, 'utf8');
   if (rawPayload.byteLength > MAX_JSON_BYTES) {
     throw new LabStoreError('INVALID_INPUT', 'Ledger event payload exceeds the size limit.', {
       runId: event.runId,
       sequence: event.sequence,
     });
   }
-  const compressedPayload = deflateRawSync(rawPayload, { level: 6 });
+  // Long runs favor bounded CPU per step; the ledger size guard remains the
+  // hard limit, and the payload is still losslessly encoded.
+  const compressedPayload = deflateRawSync(rawPayload, { level: 1 });
   return {
     ...event,
     payload: compressedPayload.toString('base64'),
@@ -1135,7 +1179,7 @@ function currentFromState(state, watermark) {
   });
 }
 
-function validateContinuityState(value, field, corruptOnFailure = false) {
+function validateContinuityState(value, field, corruptOnFailure = false, trustedSupervisor = false) {
   const fail = (message) => {
     if (corruptOnFailure) corrupt(message, { field });
     throw new LabStoreError('INVALID_INPUT', message, { field });
@@ -1152,7 +1196,7 @@ function validateContinuityState(value, field, corruptOnFailure = false) {
   ) {
     fail('Continuity state is invalid.');
   }
-  if (value.changeSupervisor !== undefined) {
+  if (value.changeSupervisor !== undefined && !trustedSupervisor) {
     try {
       normalizeChangeSupervisorState(value.changeSupervisor);
     } catch (error) {
@@ -1161,7 +1205,7 @@ function validateContinuityState(value, field, corruptOnFailure = false) {
   }
 }
 
-function validateStepPayload(value, field, corruptOnFailure = false, runStart, manifest) {
+function validateStepPayload(value, field, corruptOnFailure = false, runStart, manifest, trustedSupervisor = false) {
   const fail = (message) => {
     if (corruptOnFailure) corrupt(message, { field });
     throw new LabStoreError('INVALID_INPUT', message, { field });
@@ -1211,7 +1255,7 @@ function validateStepPayload(value, field, corruptOnFailure = false, runStart, m
   if (typeof value.receipt.executionNonce !== 'string' || value.receipt.executionNonce.length === 0) {
     fail('STEP receipt executionNonce is invalid.');
   }
-  validateContinuityState(value.afterState, `${field}.afterState`, corruptOnFailure);
+  validateContinuityState(value.afterState, `${field}.afterState`, corruptOnFailure, trustedSupervisor);
   if (
     value.afterDigest !== canonicalDigest(value.afterState) ||
     canonicalJson(value.rngAfter) !== canonicalJson(value.afterState.rngState)

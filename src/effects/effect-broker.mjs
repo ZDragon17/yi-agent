@@ -55,6 +55,7 @@ export function createEffectBroker({
   if (journal !== null && (typeof journal.append !== 'function' || typeof journal.read !== 'function')) {
     throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker journal does not expose append/read.');
   }
+  let journalHeadDigest = journal === null ? null : journal.read().at(-1)?.digest ?? null;
 
   const records = new Map();
   for (const source of initialRecords) {
@@ -111,7 +112,7 @@ export function createEffectBroker({
     },
 
     execute(executionNonce) {
-      return enqueue(async () => {
+      return enqueue(() => withJournalExclusive(executionNonce, async () => {
         const record = requireRecord(records, executionNonce);
         if (record.phase === 'APPLIED' || record.phase === 'REJECTED' || record.phase === 'REVERSED') {
           return snapshot(record);
@@ -145,11 +146,11 @@ export function createEffectBroker({
           throw error;
         }
         return snapshot(record);
-      });
+      }));
     },
 
     reconcile(executionNonce) {
-      return enqueue(async () => {
+      return enqueue(() => withJournalExclusive(executionNonce, async () => {
         const record = requireRecord(records, executionNonce);
         if (record.phase !== 'RECONCILE_REQUIRED') throw invalidPhase(record, 'reconcile');
         let result;
@@ -188,11 +189,11 @@ export function createEffectBroker({
           throw error;
         }
         return snapshot(record);
-      });
+      }));
     },
 
     compensate(executionNonce) {
-      return enqueue(async () => {
+      return enqueue(() => withJournalExclusive(executionNonce, async () => {
         const record = requireRecord(records, executionNonce);
         if (record.phase !== 'APPLIED') throw invalidPhase(record, 'compensate');
         if (!record.intent.reversible || record.intent.compensation === null) {
@@ -225,11 +226,11 @@ export function createEffectBroker({
           throw error;
         }
         return snapshot(record);
-      });
+      }));
     },
 
     reconcileCompensation(executionNonce) {
-      return enqueue(async () => {
+      return enqueue(() => withJournalExclusive(executionNonce, async () => {
         const record = requireRecord(records, executionNonce);
         if (record.phase !== 'COMPENSATION_UNKNOWN') throw invalidPhase(record, 'reconcileCompensation');
         let result;
@@ -257,7 +258,7 @@ export function createEffectBroker({
         };
         await transition(record, 'REVERSED', receipt, 'RECONCILED_REVERSED', receipt);
         return snapshot(record);
-      });
+      }));
     },
 
     get(executionNonce) {
@@ -269,6 +270,12 @@ export function createEffectBroker({
     const result = operationTail.then(operation, operation);
     operationTail = result.catch(() => undefined);
     return result;
+  }
+
+  function withJournalExclusive(executionNonce, operation) {
+    return journal !== null && typeof journal.withExclusive === 'function'
+      ? journal.withExclusive(executionNonce, operation)
+      : operation();
   }
 
   async function transition(record, phase, receipt, type, detail) {
@@ -290,17 +297,32 @@ export function createEffectBroker({
 
   async function appendEvent(record, type, state) {
     if (journal !== null) {
-      return journal.append({
-        type,
-        executionNonce: record.intent.executionNonce,
-        recordedAt: now(),
-        payload: {
-          phase: state.phase,
-          intent: record.intent,
-          receipt: state.receipt === null ? null : cloneJson(state.receipt),
-          detail: state.detail === undefined ? null : cloneJson(state.detail),
-        },
-      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const event = await journal.append({
+            type,
+            executionNonce: record.intent.executionNonce,
+            recordedAt: now(),
+            expectedPrevDigest: journalHeadDigest,
+            payload: {
+              phase: state.phase,
+              intent: record.intent,
+              receipt: state.receipt === null ? null : cloneJson(state.receipt),
+              detail: state.detail === undefined ? null : cloneJson(state.detail),
+            },
+          });
+          journalHeadDigest = event.digest ?? null;
+          return event;
+        } catch (error) {
+          const sameNonceEvents = journal.read().filter((event) => (
+            event.executionNonce === record.intent.executionNonce
+          ));
+          if (error?.code !== 'CONFLICT' || attempt !== 0 || sameNonceEvents.length > record.events.length) {
+            throw error;
+          }
+          journalHeadDigest = journal.read().at(-1)?.digest ?? null;
+        }
+      }
     }
     return {
       schemaVersion: SCHEMA_VERSION,

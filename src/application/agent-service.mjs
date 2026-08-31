@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { LabStore, LabStoreError } from '../runtime/lab-store.mjs';
+import { INTERNAL_RUN_APPEND, LabStore, LabStoreError } from '../runtime/lab-store.mjs';
 import { canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { learn, stepWithPreference, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
@@ -11,6 +11,7 @@ import { createReplayWorld } from './external-world-registry.mjs';
 import { buildInspectView } from './inspect-view.mjs';
 
 const SNAPSHOT_INTERVAL = 32;
+const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -53,6 +54,10 @@ export async function runLab(input) {
   const scenario = source.scenario ?? 'steady';
   const registry = resolveRegistry(source.registry);
   const failpoint = typeof source.failpoint === 'function' ? source.failpoint : undefined;
+  const durability = source.durability ?? 'strict';
+  if (durability !== 'strict' && durability !== 'checkpoint') {
+    throw new LabStoreError('INVALID_INPUT', 'durability must be strict or checkpoint.', { field: 'durability' });
+  }
   const supervisorMaxCycles = requireBoundedOptional(source.maxCycles, 1, 1_000_000, 'maxCycles') ?? 1_000_000;
   const supervisorStagnationLimit = requireBoundedOptional(source.stagnationLimit, 1, 100_000, 'stagnationLimit') ?? 3;
   if (source.autoPlan !== undefined && typeof source.autoPlan !== 'boolean') {
@@ -73,7 +78,7 @@ export async function runLab(input) {
   const world = registry.createWorld(manifest, scenario);
   const current = (await store.inspect()).current;
   const goalRequested = (source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined;
-  const initialState = current.lastRunId === null
+  let initialState = current.lastRunId === null
     ? {
         worldState: world.initialState(),
         memory: { schemaVersion: SCHEMA_VERSION, actionModels: {}, relationModels: {} },
@@ -93,6 +98,9 @@ export async function runLab(input) {
   const existingSupervisor = initialState.changeSupervisor === undefined
     ? null
     : normalizeChangeSupervisorState(initialState.changeSupervisor);
+  if (existingSupervisor !== null) {
+    initialState = { ...initialState, changeSupervisor: existingSupervisor };
+  }
   const requestedGoal = source.goal ?? source.goalPlan?.rootGoal ?? existingSupervisor?.goal ?? '逼近 ValueSpec 目标';
   const plannerRequested = source.planner !== undefined &&
     (planningExplicitlyRequested || existingSupervisor?.plannerEnabled === true);
@@ -101,7 +109,10 @@ export async function runLab(input) {
   }
   if (current.lastRunId !== null && existingSupervisor?.enabled === true && source.goalPlan !== undefined) {
     try {
-      enableGoal(existingSupervisor, requestedGoal, source.goalPlan);
+      initialState = {
+        ...initialState,
+        changeSupervisor: enableGoal(initialState.changeSupervisor, requestedGoal, source.goalPlan),
+      };
     } catch (error) {
       throw new LabStoreError('CONFLICT', error instanceof Error ? error.message : 'An enabled goal plan cannot be replaced in an existing lab.', { field: 'goalPlan' });
     }
@@ -112,6 +123,7 @@ export async function runLab(input) {
     scenario,
     initialState,
     reuseLedgerHandle: true,
+    durability,
     ...(failpoint === undefined ? {} : { failpoint }),
   });
   let capabilities;
@@ -120,14 +132,21 @@ export async function runLab(input) {
   let accepted = 0;
   let stopReason = 'COMPLETED';
   let terminalRequested = false;
+  const snapshotInterval = durability === 'checkpoint'
+    ? CHECKPOINT_SNAPSHOT_INTERVAL
+    : SNAPSHOT_INTERVAL;
 
   try {
     capabilities = world.actions(worldManifest(manifest));
     for (let index = 0; index < steps; index += 1) {
     const beforeObservation = projectObservation(world.observe(state.worldState));
+    // The state has already crossed the store/kernel validation boundary on
+    // entry and every prior supervisor transition returns a normalized value.
+    // Avoid re-normalizing this immutable internal value on every long-run
+    // step; public/restart inputs are still normalized at their boundaries.
     const previousSupervisor = state.changeSupervisor === undefined
       ? null
-      : normalizeChangeSupervisorState(state.changeSupervisor);
+      : state.changeSupervisor;
     let activationPlan = source.goalPlan;
     let plannerEvidence = null;
     if (plannerRequested && previousSupervisor?.enabled !== true) {
@@ -157,8 +176,9 @@ export async function runLab(input) {
     const supervisor = baseSupervisor === null || !goalRequested
       ? baseSupervisor
       : enableGoal(baseSupervisor, requestedGoal, activationPlan, plannerRequested ? true : undefined);
-    const activatedPlan = supervisor === null ? undefined : goalPlanForActivation(supervisor);
-    const goalActivation = supervisor?.enabled === true && previousSupervisor?.enabled !== true
+    const goalActivates = supervisor?.enabled === true && previousSupervisor?.enabled !== true;
+    const activatedPlan = goalActivates ? goalPlanForActivation(supervisor) : undefined;
+    const goalActivation = goalActivates
       ? {
           schemaVersion: SCHEMA_VERSION,
           goal: supervisor.goal,
@@ -228,11 +248,12 @@ export async function runLab(input) {
     });
     const activeSupervisor = supervisor === null ? null : supervisor.status === 'ACTIVE'
       ? supervisor
-      : resumeChangeSupervisor(supervisor, 'runtime-continuation');
+      : resumeChangeSupervisor(supervisor, 'runtime-continuation', { trusted: true });
     let nextChangeSupervisor = activeSupervisor === null ? null : advanceChangeSupervisor(activeSupervisor, {
       beforeObservation,
       postObservation,
       verification,
+      trusted: true,
     });
     let goalReplan = null;
     if (nextChangeSupervisor?.status === 'REPLAN_REQUIRED') {
@@ -269,7 +290,7 @@ export async function runLab(input) {
           };
         }
       }
-      nextChangeSupervisor = acknowledgeReplan(nextChangeSupervisor, 'supervisor-stagnation');
+      nextChangeSupervisor = acknowledgeReplan(nextChangeSupervisor, 'supervisor-stagnation', { trusted: true });
     }
     const nextState = {
       worldState: transition.nextWorldState,
@@ -310,8 +331,8 @@ export async function runLab(input) {
         afterState: nextState,
         ...(modelDecision === null ? {} : { policyEvidence: policyEvidence(modelDecision, intent, capabilities) }),
       },
-    });
-    const shouldSnapshot = (executed + 1) % SNAPSHOT_INTERVAL === 0 ||
+    }, { returnReference: true, [INTERNAL_RUN_APPEND]: true });
+    const shouldSnapshot = (executed + 1) % snapshotInterval === 0 ||
       receipt.status === 'REJECTED' || index === steps - 1;
     if (shouldSnapshot) {
       await run.commitSnapshot({
@@ -395,6 +416,10 @@ export async function runContinuous(input) {
   }
   const runs = requireBoundedOptional(source.runs, 1, 10_000, 'runs') ?? 1;
   const stepsPerRun = requireSteps(source.stepsPerRun ?? source.steps);
+  const durability = source.durability ?? 'checkpoint';
+  if (durability !== 'strict' && durability !== 'checkpoint') {
+    throw new LabStoreError('INVALID_INPUT', 'durability must be strict or checkpoint.', { field: 'durability' });
+  }
   const results = [];
   let interrupted = false;
   const shouldStop = () => source.shouldStop?.() === true;
@@ -413,6 +438,7 @@ export async function runContinuous(input) {
       steps: stepsPerRun,
       stepsPerRun: undefined,
       runs: undefined,
+      durability,
     });
     results.push(result);
     if (result.status === 'HALTED' || result.stopReason === 'OBJECTIVE_REACHED') break;

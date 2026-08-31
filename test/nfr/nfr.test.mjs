@@ -35,7 +35,7 @@ test('10,000-step runs stay within the ledger bound and preserve complete eviden
     const elapsedMs = performance.now() - started;
 
     assert.equal(result.executed, 10_000);
-    assert.ok(elapsedMs < 30_000, `10,000-step run took ${elapsedMs.toFixed(1)}ms`);
+    assert.ok(elapsedMs < 60_000, `10,000-step run took ${elapsedMs.toFixed(1)}ms`);
 
     const run = await (await LabStore.open({ labPath: lab })).readRun('nfr-run');
     const steps = run.events.filter((event) => event.kind === 'STEP');

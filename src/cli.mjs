@@ -126,6 +126,7 @@ async function dispatchAgent(options) {
         autoPlan: options['auto-plan'] === true,
         goal: options.goal,
         goalPlan,
+        durability: 'checkpoint',
         maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
         stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
       });

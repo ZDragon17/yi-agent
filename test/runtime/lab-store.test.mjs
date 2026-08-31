@@ -338,6 +338,17 @@ test('a stale ActiveRun cannot write after terminal evidence or lock takeover', 
   );
 }));
 
+test('checkpoint durability retains a ledger handle for explicit checkpoint flushes', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun({ ...runInput(), durability: 'checkpoint' });
+  assert.equal(run.durability, 'checkpoint');
+  const event = await run.append(stepEvent());
+  assert.notEqual(run.ledgerHandle, null);
+  await run.commitSnapshot(snapshotFor(event));
+  await run.finish({ terminalStatus: 'COMPLETED', finalState: finalState() });
+}));
+
 test('an active run detects an in-place writer lock mutation', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

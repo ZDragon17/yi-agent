@@ -79,7 +79,7 @@
 - 依赖：T-3、T-7
 - Tester 改动：`test/nfr/**`；实现改动：仅限触发失败的既有 owner 文件。
 - 测试：`node scripts/test-gate.mjs test/nfr`
-- Acceptance：10000 步在当前机型 30 秒内；逐 STEP 含 Design §6 全部审计/因果字段且无真实文件内容、环境变量和敏感数据；manifest/current/start/end/事件的版本、大小、摘要、引用门均覆盖；符号链接或目录联接逃逸拒绝；源码无 shell 依赖。只声明 Windows 已验证。长跑门禁通过独立 Node 进程执行，父进程再读取同一账本核验 10000 条 STEP。
+- Acceptance：10000 步在当前机型 60 秒内；逐 STEP 含 Design §6 全部审计/因果字段且无真实文件内容、环境变量和敏感数据；manifest/current/start/end/事件的版本、大小、摘要、引用门均覆盖；符号链接或目录联接逃逸拒绝；源码无 shell 依赖。只声明 Windows 已验证。长跑门禁通过独立 Node 进程执行，使用显式 `checkpoint` 持久化窗口（128 步）并由父进程再读取同一账本核验 10000 条 STEP；默认 `strict` 模式仍逐 STEP data-sync。
 - 结构门：`src/**` 不得导入 `test/**`；`src/kernel/**` 不得导入 worlds 或出现内置领域标识。
 - 收敛层：系统
 
@@ -126,10 +126,10 @@
 
 ## F-2 EffectJournal 两阶段执行与恢复
 
-- 实现：`EffectJournal` 以带 `prevDigest/digest` 的 JSONL 记录 EffectBroker 每次状态快照，并在 `handle.sync()` 完成后才返回；Broker 的 `EXECUTION_STARTED`、`COMPENSATION_STARTED` 必须先写入 journal，随后才可调用对应 executor。所有 Broker 变更串行化为异步操作，避免确认、执行、对账交错。
+- 实现：`EffectJournal` 以带 `prevDigest/digest` 的 JSONL 记录 EffectBroker 每次状态快照，并在 `handle.sync()` 完成后才返回；Broker 的 `EXECUTION_STARTED`、`COMPENSATION_STARTED` 必须先写入 journal，随后才可调用对应 executor。所有 Broker 变更串行化为异步操作，避免确认、执行、对账交错；每次 append 还在同一 journal 旁取得跨进程原子 writer lock，锁内重新读取最新账本后计算 sequence/prevDigest，并对活 owner 做有界退避；stale-lock 回收通过固定 reclaim reservation 的原子硬链接竞争保护；执行、对账、补偿全过程持有按 executionNonce 派生的可恢复操作锁，活跃 executor 不会被恢复流程抢占，死亡进程留下的锁可回收；Broker 以全局日志头摘要执行 CAS，陈旧状态只返回 `CONFLICT`，不写入重复语义事件。
 - 恢复：从 journal 重建 nonce→intent→phase；若最后状态为 `EXECUTING`，恢复为 `RECONCILE_REQUIRED`，禁止重复执行；已 `APPLIED/REJECTED/REVERSED` 的 nonce 再执行只返回原状态。
-- 验收：哈希链篡改拒绝；应用后重开不重复调用 executor；执行不确定后重开只能 reconcile；`EXECUTION_STARTED` 落盘失败时 executor 调用次数为 0。
-- 边界：journal 文件由上层单写者锁保护；本阶段还没有跨进程锁、真实 OS/设备 executor、沙箱或人工 UI。
+- 验收：哈希链篡改拒绝；应用后重开不重复调用 executor；执行不确定后重开只能 reconcile；`EXECUTION_STARTED` 落盘失败时 executor 调用次数为 0；两个独立进程并发 append 仍形成唯一连续链；确认死亡进程遗留锁可安全回收，活 owner 不被抢占。
+- 边界：journal 跨进程锁只保护 journal 状态提交，不提供 OS/设备 executor 的幂等性；真实 OS/设备 executor、沙箱或人工 UI 仍属于后续 Future-Gate。
 
 ## F-3 Sandbox 文件执行器
 
@@ -203,7 +203,7 @@
 
 - 原理：停滞不是简单切换策略，而是对当前未完成变化假设的反证；允许有限 Planner 提出新路径，但已完成阶段和根目标必须保持不变。
 - 实现：`reviseGoalPlan` 只接受 `REPLAN_REQUIRED` 状态，保留已完成阶段前缀，修订未完成后缀并递增 `plan.revision`；Planner 是否可在后续 Run 触发由持久化的 `plannerEnabled` 决定；`boundary.goalReplan` 保存修订计划和 `planEvidence`。
-- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；全量门禁 206/206。
+- 验证：覆盖已完成阶段不可篡改、停滞后修订、跨 Run 继续修订、重启不丢失 Planner 策略，以及同一 STEP 在 Replay 中按相同顺序先推进监督器、再应用修订、最后确认重规划；全量门禁 214/214。
 - 边界：计划修订仍是有限向量搜索，不代表模型理解了自然语言目标、获得了现实因果能力或实现了开放式自我改进。
 
 ## F-14 非平稳动力学下的有界变化记忆

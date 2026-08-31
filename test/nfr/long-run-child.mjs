@@ -11,5 +11,5 @@ await initLab({
   worldId: 'temperature',
   seed: 'nfr-performance-seed',
 });
-const result = await runLab({ labPath, runId: 'nfr-run', steps: 10_000 });
+const result = await runLab({ labPath, runId: 'nfr-run', steps: 10_000, durability: 'checkpoint' });
 process.stdout.write(JSON.stringify({ executed: result.metrics.executed }));

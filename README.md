@@ -122,6 +122,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 安全边界：模型不能绕过 Kernel 直接执行动作；
 - 确定性 Replay：回放使用已记录的模型提议摘要，不重新请求模型；
 - Effect Broker：对明确声明的副作用提供计划、确认、执行、对账和补偿流程；
+- EffectJournal：跨进程 append 使用原子 writer lock，并在锁内重读账本；stale-lock 回收另有固定 reclaim reservation，避免并发回收者互删或误删新 owner；副作用执行/对账/补偿期间持有可恢复的 nonce 级操作锁；Broker 还以全局日志头摘要做 CAS，陈旧状态不会重复提交语义转换；CLI 重启或并发调用不会各自基于陈旧 sequence 写入；
 - Windows PowerShell CLI：所有核心实验可以脚本化运行。
 
 ### 内置世界的测试面
@@ -263,6 +264,8 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 `agent run` 会在每一步把当前观测和可用能力交给模型提出一个 token，再由 Kernel 独立计算预期、复核安全性、执行、验证和学习。模型不能直接执行动作；每一步只保存结构化提议摘要，`replay` 不会再次调用模型。
 
 `agent loop` 是连续运行的 CLI 入口：`--steps` 表示每个可恢复 Run 的步数，`--runs` 表示最多串联多少个 Run；需要长期守护时使用 `--forever`，它与 `--runs` 互斥。每个 Run 都先完成自己的账本提交，再开始下一个 Run；收到 SIGINT/SIGTERM 时只在当前 Run 提交后停止，返回 `INTERRUPTED`，随后重启同一命令即可从 current 继续。发生执行拒绝、无安全动作或显式目标达成时，循环会停止并返回原因。进程在一个 Run 内崩溃时，仍须先用 `recover --confirm-lock-owner-dead` 完成明确的恢复卡点，再继续循环。
+
+连续 Runner 默认使用 `checkpoint` 持久化：STEP 仍逐条写入完整证据账本，在每 128 步及终态前执行 data-sync；需要每一步都完成物理同步时，应用层可传 `durability: 'strict'`。CLI 的普通 `run` 保持 strict 语义，`agent loop` 采用 checkpoint 语义。
 
 ## 独立晚绑定 Oracle
 

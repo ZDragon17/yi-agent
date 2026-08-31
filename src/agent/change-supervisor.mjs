@@ -107,21 +107,29 @@ export function advanceChangeSupervisor(state, {
   beforeObservation,
   postObservation,
   verification,
+  trusted = false,
 } = {}) {
-  const current = normalizeState(state);
+  const current = trusted ? state : normalizeState(state);
   if (current.status !== 'ACTIVE') {
     throw new Error('ChangeSupervisor can advance only while ACTIVE.');
   }
-  const before = normalizeObservation(beforeObservation, 'beforeObservation', current.objective.target.length);
-  const after = normalizeObservation(postObservation, 'postObservation', current.objective.target.length);
-  const evidence = normalizeVerification(
-    verification,
-    current.objective.target.length,
-  );
+  const before = trusted
+    ? beforeObservation
+    : normalizeObservation(beforeObservation, 'beforeObservation', current.objective.target.length);
+  const after = trusted
+    ? postObservation
+    : normalizeObservation(postObservation, 'postObservation', current.objective.target.length);
+  const evidence = trusted
+    ? verification
+    : normalizeVerification(verification, current.objective.target.length);
   const activeStage = current.plan === undefined ? null : activePlanStage(current.plan);
   const objective = activeStage?.objective ?? current.objective;
-  const beforeDistance = weightedDistance(before.vector, objective);
-  const afterDistance = weightedDistance(after.vector, objective);
+  const beforeDistance = trusted
+    ? weightedDistanceTrusted(before.vector, objective)
+    : weightedDistance(before.vector, objective);
+  const afterDistance = trusted
+    ? weightedDistanceTrusted(after.vector, objective)
+    : weightedDistance(after.vector, objective);
   const currentBest = current.bestDistance ?? beforeDistance;
   const confirmed = evidence.attribution === 'ACTION' && evidence.learnable === true;
   const improved = confirmed && afterDistance < beforeDistance;
@@ -181,8 +189,8 @@ export function advanceChangeSupervisor(state, {
   };
 }
 
-export function acknowledgeReplan(state, reason = 'strategy-change') {
-  const current = normalizeState(state);
+export function acknowledgeReplan(state, reason = 'strategy-change', { trusted = false } = {}) {
+  const current = trusted ? state : normalizeState(state);
   if (current.status !== 'REPLAN_REQUIRED') {
     throw new Error('ChangeSupervisor can acknowledge a replan only after REPLAN_REQUIRED.');
   }
@@ -294,8 +302,8 @@ export function normalizeChangeSupervisorState(value) {
   return normalizeState(value);
 }
 
-export function resumeChangeSupervisor(state, reason = 'runtime-continuation') {
-  const current = normalizeState(state);
+export function resumeChangeSupervisor(state, reason = 'runtime-continuation', { trusted = false } = {}) {
+  const current = trusted ? state : normalizeState(state);
   if (current.status === 'ACTIVE') return current;
   const normalizedReason = requireGoal(reason);
   return {
@@ -320,6 +328,15 @@ export function weightedDistance(vector, objective) {
   for (let index = 0; index < source.length; index += 1) {
     distance += Math.abs(normalizedObjective.weights[index]) *
       Math.abs(source[index] - normalizedObjective.target[index]);
+  }
+  if (!Number.isFinite(distance)) throw new Error('ChangeSupervisor distance overflowed.');
+  return distance;
+}
+
+function weightedDistanceTrusted(vector, objective) {
+  let distance = 0;
+  for (let index = 0; index < vector.length; index += 1) {
+    distance += Math.abs(objective.weights[index]) * Math.abs(vector[index] - objective.target[index]);
   }
   if (!Number.isFinite(distance)) throw new Error('ChangeSupervisor distance overflowed.');
   return distance;
