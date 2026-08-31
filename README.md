@@ -121,6 +121,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 跨 WorldPort 同构回归：独立外部 adapter 在坐标、状态表示和启动身份都不同的情况下，仍通过相同的应用闭环跨进程继续，并让两段 Run 的状态、记忆、监督器和 Replay 保持等价；另有文件持久化 adapter 覆盖多 Run 外部效果在响应丢失后的同 nonce 重试，验证外部效果只提交一次且 Replay 不触发副作用；
 - 证据驱动策略变化：停滞不会只写一条日志，而会把领域无关的 `BALANCED/EXPLORATORY` 策略、版本和原因持久化；探索策略只使用动作样本数/不确定度重新排序安全候选；
 - 模型提议层：通过 OpenAI-compatible API 提出候选 Token；
+- 有界感知上下文：WorldPort 的结构化 observation evidence 只经过大小/深度/数据类型边界后提供给 Advisor/Planner；Kernel 仍只接收数值观测，账本只保存上下文摘要，不把原始证据当作事实或执行权限；
 - 安全边界：模型不能绕过 Kernel 直接执行动作；
 - 确定性 Replay：回放使用已记录的模型提议摘要，不重新请求模型；
 - Effect Broker：对明确声明的副作用提供计划、确认、执行、对账和补偿流程；

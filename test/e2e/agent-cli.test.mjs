@@ -38,17 +38,20 @@ test('agent run uses model proposals inside the replayable closed loop', async (
   try {
     const init = await invoke(['init', '--lab', lab, '--world', 'temperature', '--json'], process.env);
     assert.equal(init.code, 0);
-    const run = await invoke(['agent', 'run', '--lab', lab, '--steps', '2', '--goal', '保持系统稳定', '--json'], env);
+    const run = await invoke(['agent', 'run', '--lab', lab, '--steps', '2', '--scenario', 'regime-shift', '--goal', '保持系统稳定', '--json'], env);
     assert.equal(run.code, 0);
     assert.equal(run.stdout[0].data.status, 'COMPLETED');
     assert.equal(requests.length, 2);
     assert.equal(requests[0].authorization, 'Bearer local-agent-secret');
+    assert.match(requests[0].body.messages[0].content, /observationEvidence/u);
+    assert.match(requests[0].body.messages[0].content, /regime-shift/u);
 
     const events = (await (await LabStore.open({ labPath: lab })).readRun(run.stdout[0].data.runId)).events;
     const policyEvidence = events.find((event) => event.kind === 'STEP').payload.policyEvidence;
     assert.equal(policyEvidence.source, 'model');
     assert.equal(policyEvidence.applied, true);
     assert.equal(policyEvidence.reason, null);
+    assert.match(policyEvidence.observationDigest, /^sha256:[0-9a-f]{64}$/u);
 
     const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env);
     assert.equal(replay.code, 0);

@@ -309,6 +309,7 @@ function validatePlanEvidence(value, sequence) {
   if (!isRecord(value) || value.schemaVersion !== SCHEMA_VERSION || value.source !== 'model' ||
       typeof value.model !== 'string' || value.model.length === 0 || value.model.length > 4096 ||
       typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
+      (value.observationDigest !== undefined && (typeof value.observationDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.observationDigest))) ||
       typeof value.applied !== 'boolean' ||
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
     corrupt('STEP planner evidence is invalid.', { sequence });
@@ -346,6 +347,7 @@ function validatePolicyEvidence(value, sequence) {
       typeof value.model !== 'string' || value.model.length === 0 || value.model.length > 4096 ||
       (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
       typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
+      (value.observationDigest !== undefined && (typeof value.observationDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.observationDigest))) ||
       typeof value.applied !== 'boolean' ||
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
     corrupt('STEP model policy evidence is invalid.', { sequence });

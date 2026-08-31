@@ -253,3 +253,10 @@
 - 实现：`runContinuous` 和 `agent loop` 将有限步数分割为多个独立、可恢复、可 Replay 的 Run；每个 Run 提交完成后才启动下一个，显式目标达成、执行拒绝或无安全动作立即停止；`--forever` 提供长期策略，SIGINT/SIGTERM 只在已提交 Run 边界停止并返回 `INTERRUPTED`，并只在内存保留最近 Run 摘要，累计指标独立维护，完整历史由 lab 账本承载。每个子 Run 的 immutable `start.json` 固化 `loopId/runIndex/scenario/stepsPerRun/mode/maxRuns`，`agent loop --resume` 从完整账本重建同一 continuation 的 `nextRunIndex`，不把 loop 调度控制混入 Kernel 当前状态；同一 lab 的未完成 continuation 在 `LabStore.startRun` 的 writer lock 内排他，且只接受持久化 `nextRunIndex`，避免并发 loop 形成无法选择的多个恢复意图或重复提交同一逻辑 Run；目标达成终止 continuation，幂等外部不确定终态保留可重试 continuation。
 - 验证：同一个 lab 在多个 Run 间持续推进，所有子 Run 可独立 Replay；重新执行 loop 命令从 current 继续，不重置 WorldPort、memory、RNG 或 supervisor strategy；CLI 在真实 API 请求延迟期间注入 SIGINT，仍完成当前 Run 并保持 current 一致；独立 E2E 真实强制终止 CLI 子进程后，显式 recover 并用 `--resume` 接续剩余有限预算，已提交 Run 不重复，current/kernelStep 不回退。
 - 边界：单个 Run 崩溃后的锁接管仍需显式 `recover --confirm-lock-owner-dead`，这是故意保留的人工安全卡点；Windows 下无法用 Node `child.kill('SIGINT')` 模拟控制台 Ctrl+C，真实控制台行为仍需人工在目标终端验证；后台服务编排和真实桌面执行不在本阶段自动开启。
+
+## F-20 有界观测上下文
+
+- 原理：数值观测是 Kernel 可验证的共同尺度，结构化 evidence 是模型理解当前事实与关系的辅助材料；二者必须分开，不能让模型上下文反向成为执行事实或安全权限。
+- 实现：`src/agent/observation-context.mjs` 将 WorldPort observation evidence 投影为有界、可序列化的数据，仅提供给 ModelAdvisor/ModelPlanner；投影超限会显式标记截断。模型结果记录 `observationDigest`，只绑定实际提供给模型的投影摘要；Kernel、WorldPort transition、verify、learn 和 Replay 契约保持不变。
+- 验证：内置带场景 evidence 的 WorldPort 通过真实 CLI 将 evidence 送达模型；Advisor 与 Planner 使用同一投影；超大/非数据 evidence 被截断而不扩大提示；既有多 WorldPort、重启、外部 transition 和 Replay 仍保持一致。
+- 边界：上下文投影不验证 evidence 的现实真实性，也不替代 WorldPort 的状态/权限回执；真实文件、设备和敏感信息的授权仍属于外部 adapter 与人工安全门。

@@ -529,6 +529,52 @@ test('automatic planner is called once, persists its validated plan, and is not 
   });
 });
 
+test('application forwards bounded WorldPort evidence and its truncation marker to custom planners and advisors', async () => {
+  await withLab(async (lab) => {
+    const registry = createGeneratedRegistry({ evidenceCount: 40 });
+    let plannerInput;
+    let advisorInput;
+    const planner = async (input) => {
+      plannerInput = input;
+      return {
+        model: 'boundary-planner',
+        responseDigest: `sha256:${'b'.repeat(64)}`,
+        plan: {
+          rootGoal: input.goal,
+          stages: [{ id: 'advance', goal: '推进到目标', target: [2] }],
+        },
+      };
+    };
+    const advisor = async (input) => {
+      advisorInput = input;
+      return {
+        model: 'boundary-advisor',
+        responseDigest: `sha256:${'c'.repeat(64)}`,
+        observationDigest: `sha256:${'d'.repeat(64)}`,
+        token: 'tok_GENERATED01',
+        reason: null,
+      };
+    };
+    await initLab({ labPath: lab, labId: 'boundary-lab', worldId: 'generated', seed: 'boundary-seed', registry });
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 1,
+      scenario: 'generated',
+      goal: '推进到目标',
+      planner,
+      advisor,
+      registry,
+    });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(plannerInput.observationEvidence.length, 32);
+    assert.equal(plannerInput.observationEvidenceTruncated, true);
+    assert.equal(advisorInput.observationEvidence.length, 32);
+    assert.equal(advisorInput.observationEvidenceTruncated, true);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+  });
+});
+
 test('invalid automatic planner proposals fall back to one validated root stage and remain replayable', async () => {
   await withLab(async (root) => {
     const lab = path.join(root, 'invalid-auto-plan-lab');
@@ -543,6 +589,7 @@ test('invalid automatic planner proposals fall back to one validated root stage 
       planner: async () => ({
         model: 'bad-planner',
         responseDigest: `sha256:${'d'.repeat(64)}`,
+        observationDigest: 'not-a-digest',
         plan: { rootGoal: '拒绝非法自动计划', stages: [{ id: 'wrong', goal: '错误维度', target: [1, 2] }] },
       }),
       registry,
@@ -552,6 +599,7 @@ test('invalid automatic planner proposals fall back to one validated root stage 
     const activation = run.events.find((event) => event.kind === 'STEP').payload.boundary.goalActivation;
     assert.equal(activation.planEvidence.applied, false);
     assert.equal(activation.planEvidence.reason, 'PLAN_REJECTED');
+    assert.equal(Object.hasOwn(activation.planEvidence, 'observationDigest'), false);
     assert.equal((await inspectLab({ labPath: lab, registry })).current.changeSupervisor.plan.stages.length, 1);
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
   });
@@ -795,7 +843,7 @@ function project(current) {
   };
 }
 
-function createGeneratedRegistry({ adaptive = false } = {}) {
+function createGeneratedRegistry({ adaptive = false, evidenceCount = 0 } = {}) {
   const worldId = 'generated';
   const scenarioIds = adaptive ? ['baseline', 'shifted'] : ['generated'];
   const capabilityId = 'generated.advance';
@@ -828,7 +876,7 @@ function createGeneratedRegistry({ adaptive = false } = {}) {
         };
       },
       observeVector: (state) => [state.value],
-      scenarioEvidence: () => [],
+      scenarioEvidence: () => Array.from({ length: evidenceCount }, (_, index) => ({ kind: `signal-${index}` })),
       projectCapability: ({ authority }) => ({ allowed: authority.allowed, safe: authority.safe }),
       applyEffect: ({ state, scenario: activeScenario }) => ({
         accepted: true,

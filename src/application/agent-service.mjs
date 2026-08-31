@@ -9,6 +9,7 @@ import {
 } from './world-registry.mjs';
 import { createReplayWorld } from './external-world-registry.mjs';
 import { buildInspectView } from './inspect-view.mjs';
+import { projectModelObservation } from '../agent/observation-context.mjs';
 
 const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
@@ -166,7 +167,9 @@ export async function runLab(input) {
 
   try {
     for (let index = 0; index < steps; index += 1) {
-    const beforeObservation = projectObservation(world.observe(state.worldState));
+    const observedBefore = world.observe(state.worldState);
+    const beforeObservation = projectObservation(observedBefore);
+    const beforeModelObservation = projectModelObservation(observedBefore);
     const capabilities = world.actions(worldManifest(manifest), state.worldState);
     // The state has already crossed the store/kernel validation boundary on
     // entry and every prior supervisor transition returns a normalized value.
@@ -182,6 +185,8 @@ export async function runLab(input) {
         planner: source.planner,
         goal: requestedGoal,
         observation: beforeObservation,
+        observationEvidence: beforeModelObservation.observationEvidence,
+        observationEvidenceTruncated: beforeModelObservation.observationEvidenceTruncated,
         valueSpec: spec,
         memory: state.memory,
         manifest,
@@ -229,6 +234,8 @@ export async function runLab(input) {
           capabilities,
           manifest,
           step: state.kernelStep,
+          observationEvidence: beforeModelObservation.observationEvidence,
+          observationEvidenceTruncated: beforeModelObservation.observationEvidenceTruncated,
           goal: supervisor?.goal ?? requestedGoal,
         })
       : null;
@@ -291,6 +298,7 @@ export async function runLab(input) {
           confounderCount: Math.max(1, transition.receipt.confounderCount),
         };
     const postObservation = projectObservation(transition.postObservation);
+    const postModelObservation = projectModelObservation(transition.postObservation);
     const verification = verify({ intent, receipt, postObservation });
     const update = learn({
       memory: state.memory,
@@ -315,6 +323,8 @@ export async function runLab(input) {
           planner: source.planner,
           goal: requestedGoal,
           observation: postObservation,
+          observationEvidence: postModelObservation.observationEvidence,
+          observationEvidenceTruncated: postModelObservation.observationEvidenceTruncated,
           valueSpec: spec,
           memory: update.nextMemory,
           manifest,
@@ -618,10 +628,21 @@ function assertExternalTransitionRetry(unresolved, request, state) {
   }
 }
 
-async function requestPlan({ planner, goal, observation, valueSpec, memory, manifest, plan = null, reason = null, step }) {
+async function requestPlan({ planner, goal, observation, observationEvidence, observationEvidenceTruncated, valueSpec, memory, manifest, plan = null, reason = null, step }) {
   let result;
   try {
-    result = await planner({ goal, observation, valueSpec, memory, manifest, plan, reason, step });
+    result = await planner({
+      goal,
+      observation,
+      observationEvidence,
+      observationEvidenceTruncated,
+      valueSpec,
+      memory,
+      manifest,
+      plan,
+      reason,
+      step,
+    });
   } catch {
     return {
       plan: undefined,
@@ -694,11 +715,13 @@ function plannerEvidence(result, applied, reason) {
   const responseDigest = typeof result?.responseDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(result.responseDigest)
     ? result.responseDigest
     : canonicalDigest({ model, reason });
+  const observationDigest = validDigest(result?.observationDigest) ? result.observationDigest : null;
   return {
     schemaVersion: SCHEMA_VERSION,
     source: 'model',
     model,
     responseDigest,
+    ...(observationDigest === null ? {} : { observationDigest }),
     applied,
     reason,
   };
@@ -707,12 +730,14 @@ function plannerEvidence(result, applied, reason) {
 function policyEvidence(modelDecision, intent, capabilities) {
   const safe = capabilities.some((capability) => capability.token === modelDecision.token && capability.allowed && capability.safe);
   const applied = safe && intent.status === 'READY' && intent.choice.token === modelDecision.token;
+  const observationDigest = validDigest(modelDecision.observationDigest) ? modelDecision.observationDigest : null;
   return {
     schemaVersion: SCHEMA_VERSION,
     source: 'model',
     model: modelDecision.model,
     token: modelDecision.token,
     responseDigest: modelDecision.responseDigest,
+    ...(observationDigest === null ? {} : { observationDigest }),
     applied,
     reason: applied ? null : (modelDecision.reason ?? (safe ? 'KERNEL_SELECTION_REJECTED' : 'TOKEN_NOT_SAFE')),
   };
@@ -844,6 +869,10 @@ function projectObservation(observation) {
     stateVersion: observation.stateVersion,
     intervalId: observation.intervalId,
   };
+}
+
+function validDigest(value) {
+  return typeof value === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value);
 }
 
 function kernelValueSpec(valueSpec) {
