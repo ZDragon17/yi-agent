@@ -337,3 +337,10 @@
 - 实现：`ChangeSupervisor.advance` 接收本步是否存在新的 feedback settlement；该标记为真时，即使当前 receipt 自报 clean，也不确认当前动作的进步、不重置停滞或更新最佳距离。重复的已结算收据和纯 `FEEDBACK_TIMEOUT` 不会无端阻断当前动作；Application 与 Replay 使用同一标记。
 - 验证：外部 delayed-feedback adapter 让第一动作保持 pending，第二动作声明窗口已关闭但返回第一动作的反馈；第二 STEP 的反馈仍按 nonce 学习，监督器的 `lastChange` 为 `AMBIGUOUS/confirmed:false/improved:false`，跨进程 Replay 一致；Replay 对降级为 v7 的旧监督语义账本仍保持一致。
 - 边界：这只能对齐本地可见的反馈结算与监督状态；如果 adapter 隐瞒反馈、伪造边界或世界存在不可观测变化，底座仍不能推出严格因果。
+
+## F-33 隐藏状态 WorldPort 的系统级反证
+
+- 原理：同一可见状态或关系位置可能对应多个未暴露的世界状态；底座必须保留有界后验分支，不能把一次观测路径误当成唯一动力学，也不能把隐藏字段泄漏给 Kernel 后再宣称完成了部分可观测验证。
+- 实现：`test/fixtures/hidden-state-world-adapter.mjs` 通过独立 JSONL 子进程持久化 `hiddenMode`、阶段机和效果记录，只把 `value` 投影给 Kernel，并用 `supportsStateDependentActions:true` 暴露每个阶段唯一的安全动作；`test/e2e/hidden-state-world-cli.test.mjs` 以两个独立 CLI Run 完成 `flip→advance→reset` 轨迹，读取 manifest 的 capability 映射确认 `advance` Token，检查 `Token×RelationSignature` 后验分支、外部效果计数、最终状态和每个 Run 的 Replay。
+- 验证：同一可见 `value=0` 与 `r1:+` 关系下，`advance` 交替产生 `-1/+1`，跨 Run 的信念样本为 `[[-1],[1],[-1],[1]]`；11 次外部效果不重复，最终状态为 `value=1/hiddenMode=A`，两个 Run 均为 `CONSISTENT`。
+- 边界：该反例只证明有界信念能保留已验证的多分支，不能证明隐藏状态识别、概率校准、因果识别、全局 POMDP 或现实世界自主性；不能为 adapter 的隐藏字段向 Kernel 增加领域特判。

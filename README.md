@@ -120,6 +120,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 延迟反馈归因：对已接受但尚未完成归因窗口的动作，按 executionNonce 持久保存有界 pending credit；后续 WorldPort 可返回匹配反馈，Kernel 只在证据闭合后学习，混杂反馈不会污染动作模型；该机制已用跨独立 CLI 进程、跨 Run 和 Replay 的外部 WorldPort 回归验证；
 - 反馈投递幂等：在有界已结算收据窗口内，完全相同的重复 feedback 可跨 Run/进程安全忽略；同 nonce 的不同内容仍会 fail-closed，避免把消息重放或篡改变成新的学习样本；
 - 反馈顺序规范化：同一批合法的 nonce-bound feedback 无论由不同 WorldPort 按何种传输顺序返回，Kernel 都按 pending credit 的持久顺序结算，保持 `settled`、已结算收据和信念样本跨进程/Replay 一致；这不等于允许多个动作同时生效，无法归属的重叠变化仍必须由 WorldPort 标记为混杂；
+- 隐藏状态系统反例：`test/fixtures/hidden-state-world-adapter.mjs` 只向 Kernel 暴露一维 `value`，把 `hiddenMode` 和阶段机留在 WorldPort 内部；同一可见目标关系下，`advance` 实际产生 `-1/+1` 两种结果。跨两个独立 CLI Run 后，`beliefModels` 保留两种后验、外部效果不重复，两个 Run 均可 Replay 为 `CONSISTENT`。这证明的是当前信念记忆在该变化轴上没有把未知分支压成单一事实，不是隐藏状态识别或通用智能证明；
 - 共享观测边界保护：v7 还会识别同一 `stateVersion + intervalId` 承载多个新 feedback 的情况，即使 adapter 把它们标为 clean，也全部记为 `AMBIGUOUS` 且不学习，避免一份无法分解的快照被复制到多个动作；旧 v6 账本按旧归因语义 Replay；
 - 监督器证据对齐：`kernelLearningVersion: 8` 的新 STEP 当本步先结算了新的延迟 feedback 时，变化监督器不会把合并观测中的旧动作进步记成当前动作的确认进步；已结算收据仍按 nonce 学习，当前动作和目标监督各自保守处理；旧版本 Replay 保持原监督语义；
 - 变化监督器：用同一套目标距离、确认进步、停滞、重规划和停止判定约束不同世界；状态随 STEP、快照、终态和恢复账本连续保存，跨进程 CLI 可继续运行；

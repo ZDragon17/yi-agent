@@ -211,7 +211,15 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 - RNG 使用可序列化 PRNG，状态进入 start/current/每步前后摘要；时间、UUID、runId 和审计 hash 不进入连续性等价投影；executionNonce 由连续 kernelStep 派生，写入世界的去重轨迹时不因 Run 分段而改变。WorldPort 只保留固定大小的最近 nonce 窗口，避免每个 afterState 复制完整历史；Run 账本对全历史 executionNonce 做精确唯一性校验。
 - inspect 只读原子 current watermark；指定历史 run/action 时从 immutable Run 构造对应 InspectView；replay 只读终态 Run immutable 文件；二者不创建锁。run/challenge/recover 全部只争用 canonical writer lock；pending intent 是空窗期的拒写门，不授予写权限。
 
-## 7. 安全设计
+## 7. 部分可观测 WorldPort 的系统级反例
+
+`beliefModels` 的存在不能只由 Kernel 单元测试支撑；必须让一个外部世界保留 Kernel 不可见的状态，并通过真实 CLI 的进程边界运行。测试 adapter `hidden-state-world-adapter.mjs` 将 `hiddenMode` 与阶段机放在 `worldState` 中，但 `observe` 只投影 `[value]`。它通过状态依赖能力依次完成 `flip → advance → reset`，让两次 `advance` 都在同一个可见 `value=0`、同一个 `r1:+` 关系下发生，却分别产生 `-1` 与 `+1`。
+
+验收边界固定为：两个独立 CLI Run 共完成 11 个外部 transition；`advance` 对应的 `Token×RelationSignature` 信念样本必须保留 `[[-1],[1],[-1],[1]]`，WorldPort 的持久效果计数必须为 11，最终隐藏模式和可见状态必须与 adapter 轨迹一致；两个 Run 都必须能够在不重新调用 adapter transition 的情况下 Replay 为 `CONSISTENT`。任何失败都要区分为 adapter 状态机、外部协议、Kernel 信念、持久化或 Replay 边界，不能直接向 Kernel 添加 hidden-mode 特判。
+
+这个实验支持的共同规律是“同一可见位置可能对应多个尚未辨识的变化分支”；它只证明系统能够保留有限不确定性，不证明已经识别隐藏状态、校准概率、完成 POMDP 搜索或获得现实因果关系。下一步仍需用更复杂的隐藏状态、反馈缺失和真实对照实验继续反证。
+
+## 8. 安全设计
 
 - 所有写路径由单一 LabStore 生成，调用方不能提供内部相对路径。
 - 不跟随实验目录外的符号链接/目录联接；初始化后记录 canonical root。
