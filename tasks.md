@@ -237,7 +237,7 @@
 ## F-18 状态依赖的能力投影
 
 - 原理：约束不是永远静态的；同一世界在变化后可能允许、禁止或暂时不安全不同动作，但这仍是同一状态—关系—约束—变化—反馈底层逻辑的投影。
-- 实现：WorldPort 的 `actions(manifest,state?)` 支持基于当前 immutable worldState 生成能力安全投影；Application 与 Replay 在每个 STEP 前刷新能力，外部 adapter 也可接收当前 state；省略 state 的旧适配器保持兼容。
+- 实现：WorldPort 的 `actions(manifest,state?)` 支持基于当前 immutable worldState 生成能力安全投影；Application 与 Replay 在每个 STEP 前刷新能力；外部 adapter 只有在 `hello` 显式声明 `supportsStateDependentActions:true` 时才接收当前 state，旧 v1 adapter 继续收到原 payload。
 - 验证：最小动态约束世界在第一动作后切换安全动作，跨 Run 与 Replay 仍使用同一 Kernel 契约；既有外部 adapter 回归验证可选 state 字段不破坏协议，五个内置 WorldPort 继续通过原有契约；旧实现反例为能力快照过期后停机。
 - 边界：能力刷新不能预测未被 WorldPort 暴露的约束，也不能替代执行边界的二次校验；真实设备约束变化仍需通过 adapter 回执和人工安全门确认。
 

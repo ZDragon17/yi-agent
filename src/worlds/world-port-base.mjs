@@ -402,8 +402,8 @@ export function assertPlainRecord(value, field) {
   return value;
 }
 
-export function assertExactKeys(value, expectedKeys, field) {
-  return snapshotClosedRecord(value, expectedKeys, expectedKeys, field);
+export function assertExactKeys(value, expectedKeys, field, requiredKeys = expectedKeys) {
+  return snapshotClosedRecord(value, expectedKeys, requiredKeys, field);
 }
 
 export function assertSchemaVersion(value, field) {

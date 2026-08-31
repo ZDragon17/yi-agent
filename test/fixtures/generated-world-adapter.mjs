@@ -46,7 +46,10 @@ function dispatch(op, payload) {
     if (mode === 'bad-state-version') initial.stateVersion = 'state:generated:999';
     return { state: initial };
   }
-  if (op === 'actions') return { actions: [{ schemaVersion: 1, token: payload.manifest.tokenMap.entries[0].token, cost: 1, allowed: true, safe: true }] };
+  if (op === 'actions') {
+    if (Object.hasOwn(payload, 'state')) throw new Error('legacy adapter does not accept state-dependent actions');
+    return { actions: [{ schemaVersion: 1, token: payload.manifest.tokenMap.entries[0].token, cost: 1, allowed: true, safe: true }] };
+  }
   if (op === 'observe') {
     const result = observation(payload.state);
     if (mode === 'bad-observation-dimensions') result.vector = [payload.state.value, payload.state.value + 1];

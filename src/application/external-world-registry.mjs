@@ -296,7 +296,9 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
         worldId: descriptor.worldId,
         scenario,
         manifest: worldManifest,
-        ...(state === undefined ? {} : { state: structuredClone(state) }),
+        ...(descriptor.supportsStateDependentActions === true && state !== undefined
+          ? { state: structuredClone(state) }
+          : {}),
       });
       return normalizeExternalActions(response.actions, worldManifest, descriptor);
     },
@@ -439,12 +441,17 @@ function normalizeExternalReceipt(value, request, field) {
 
 function validateDescriptor(value, config) {
   const source = assertExactKeys(value, [
+    'adapterId', 'worldId', 'worldVersion', 'capabilityIds', 'scenarioIds', 'valueSpec', 'evidencePublicKey',
+    'supportsStateDependentActions', 'descriptorDigest',
+  ], 'hello.result', [
     'adapterId', 'worldId', 'worldVersion', 'capabilityIds', 'scenarioIds', 'valueSpec', 'evidencePublicKey', 'descriptorDigest',
-  ], 'hello.result');
+  ]);
   if (source.adapterId !== config.adapterId || source.worldId !== config.worldId ||
       typeof source.worldVersion !== 'string' || source.worldVersion.length === 0 || source.worldVersion.length > 4096 ||
       !validStringList(source.capabilityIds, 'capabilityIds') || !validStringList(source.scenarioIds, 'scenarioIds') ||
-      !isValueSpec(source.valueSpec) || !isValidEvidencePublicKey(source.evidencePublicKey) || source.descriptorDigest !== canonicalDigest({
+      !isValueSpec(source.valueSpec) || !isValidEvidencePublicKey(source.evidencePublicKey) ||
+      (source.supportsStateDependentActions !== undefined && typeof source.supportsStateDependentActions !== 'boolean') ||
+      source.descriptorDigest !== canonicalDigest({
         adapterId: source.adapterId,
         worldId: source.worldId,
         worldVersion: source.worldVersion,
@@ -452,6 +459,9 @@ function validateDescriptor(value, config) {
         scenarioIds: source.scenarioIds,
         valueSpec: source.valueSpec,
         evidencePublicKey: source.evidencePublicKey,
+        ...(source.supportsStateDependentActions === undefined
+          ? {}
+          : { supportsStateDependentActions: source.supportsStateDependentActions }),
       })) {
     throw new ExternalWorldProtocolError('External WorldPort hello descriptor is invalid.', { op: 'hello' });
   }

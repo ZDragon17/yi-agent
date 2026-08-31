@@ -139,7 +139,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 | `grid` | 4 维位置/目标 | 四方向移动/禁止瞬移 | 离散空间、障碍物和动作集合变化 |
 | `queue` | 3 维队列状态 | 服务/接入/禁止清空 | 排队动态、容量边界和外部到达 |
 
-共同点不是领域名称，而是它们都只通过同一组 `WorldPort` 方法接入：`initialState`、`observe`、`actions(manifest,state?)`、`transition`。能力投影可以随当前状态变化，运行和 Replay 每一步都会重新获取；旧适配器忽略可选 `state` 仍兼容。如果新增世界必须修改 Kernel 才能工作，就说明底座仍然夹带了领域假设。
+共同点不是领域名称，而是它们都只通过同一组 `WorldPort` 方法接入：`initialState`、`observe`、`actions(manifest,state?)`、`transition`。能力投影可以随当前状态变化，运行和 Replay 每一步都会重新获取；外部 adapter 只有在 `hello` 显式声明 `supportsStateDependentActions:true` 时才会收到 `state`，旧 v1 adapter 仍收到原来的 payload。如果新增世界必须修改 Kernel 才能工作，就说明底座仍然夹带了领域假设。
 
 ## 用一个外部世界验证通用性
 

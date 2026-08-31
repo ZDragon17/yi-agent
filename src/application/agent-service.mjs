@@ -596,18 +596,17 @@ export async function inspectLab(input) {
   }
   const manifest = inspection.manifest;
   registry.assertManifest(manifest);
-  const actions = manifest.adapter
-    ? selectedAction?.payload?.boundary?.capabilities ?? manifestCapabilities(manifest)
-    : (() => {
+  const actions = selectedAction?.payload?.boundary?.capabilities
+    ?? (manifest.adapter
+      ? manifestCapabilities(manifest)
+      : (() => {
         const world = registry.createWorld(
           manifest,
           run?.start?.scenario ?? manifest.scenarioIds?.[0] ?? 'steady',
         );
-        const actionState = run?.events?.at(-1)?.payload?.finalState?.worldState
-          ?? inspection.current.worldState
-          ?? world.initialState();
+          const actionState = inspection.current.worldState ?? world.initialState();
         return world.actions(worldManifest(manifest), actionState);
-      })();
+        })());
   return {
     manifest,
     current: inspection.current,

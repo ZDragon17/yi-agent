@@ -314,6 +314,10 @@ test('application refreshes state-dependent capabilities before each step', asyn
     assert.equal(second.metrics.accepted, 1);
     const current = (await inspectLab({ labPath: lab, registry })).current;
     assert.equal(current.worldState.value, 2);
+    const historical = await inspectLab({ labPath: lab, action: 'run-1:2', registry });
+    const historicalActions = historical.inspectView.constraints.actions;
+    assert.equal(historicalActions.find((action) => action.token === registry.firstToken).safe, true);
+    assert.equal(historicalActions.find((action) => action.token === registry.secondToken).safe, false);
     const store = await LabStore.open({ labPath: lab });
     assert.equal((await store.readRun('run-1')).events.find((event) => event.kind === 'STEP').payload.choice.token, registry.firstToken);
     assert.equal((await store.readRun('run-2')).events.find((event) => event.kind === 'STEP').payload.choice.token, registry.secondToken);
