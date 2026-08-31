@@ -8,6 +8,7 @@ import { EffectJournal } from './effects/effect-journal.mjs';
 import { assertSandboxRoot, createSandboxFileExecutor } from './effects/sandbox-file-executor.mjs';
 import { createOpenAICompatibleClient, loadApiConfig } from './api/openai-compatible-client.mjs';
 import { createModelAdvisor } from './agent/model-advisor.mjs';
+import { createModelPlanner } from './agent/model-planner.mjs';
 
 export async function main(argv, io = defaultIo()) {
   const json = argv.includes('--json');
@@ -88,15 +89,25 @@ async function dispatch(command, options) {
 }
 
 async function dispatchAgent(options) {
+  if (options['auto-plan'] === true && options.goal === undefined) {
+    throw cliError('INVALID_INPUT', '--auto-plan requires --goal.', { field: 'goal' }, 64);
+  }
+  if (options['auto-plan'] === true && options['goal-plan'] !== undefined) {
+    throw cliError('INVALID_INPUT', '--auto-plan and --goal-plan are mutually exclusive.', { fields: ['auto-plan', 'goal-plan'] }, 64);
+  }
   const config = loadApiConfig();
+  const client = createOpenAICompatibleClient(config);
   const advisor = createModelAdvisor({
-    client: createOpenAICompatibleClient(config),
+    client,
     model: config.model,
     goal: options.goal ?? null,
   });
   const goalPlan = options['goal-plan'] === undefined
     ? undefined
     : await readGoalPlanFile(options['goal-plan']);
+  const planner = options['auto-plan'] === true
+    ? createModelPlanner({ client, model: config.model })
+    : undefined;
   if (options.agentOperation === 'loop') {
     let interrupted = false;
     const onSignal = () => { interrupted = true; };
@@ -113,6 +124,7 @@ async function dispatchAgent(options) {
         scenario: options.scenario,
         registry: loadRegistry(options),
         advisor,
+        planner,
         goal: options.goal,
         goalPlan,
         maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
@@ -136,6 +148,7 @@ async function dispatchAgent(options) {
     scenario: options.scenario,
     registry: loadRegistry(options),
     advisor,
+    planner,
     goal: options.goal,
     goalPlan,
     maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
@@ -216,7 +229,7 @@ function parseArguments(argv) {
     if (argument === '--json') continue;
     if (!argument.startsWith('--')) throw cliError('INVALID_INPUT', `Unexpected argument: ${argument}`, {}, 64);
     const name = argument.slice(2);
-    if (name === 'confirm-lock-owner-dead' || name === 'forever') {
+    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan') {
       options[name] = true;
       continue;
     }
@@ -228,7 +241,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'auto-plan', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
@@ -409,7 +422,7 @@ function helpText() {
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
-    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--goal TEXT] [--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
+    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',

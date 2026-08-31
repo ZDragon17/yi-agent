@@ -335,6 +335,72 @@ test('continuous runner preserves a goal plan across multiple Run boundaries', a
   });
 });
 
+test('automatic planner is called once, persists its validated plan, and is not needed after restart', async () => {
+  await withLab(async (root) => {
+    const lab = path.join(root, 'auto-planned-lab');
+    const registry = createGeneratedRegistry();
+    let plannerCalls = 0;
+    const planner = async ({ goal, observation }) => {
+      plannerCalls += 1;
+      assert.equal(goal, '自动推进生成计数器');
+      assert.deepEqual(observation.vector, [0]);
+      return {
+        model: 'test-planner',
+        responseDigest: `sha256:${'c'.repeat(64)}`,
+        plan: {
+          rootGoal: goal,
+          stages: [
+            { id: 'first', goal: '先推进一次', target: [1] },
+            { id: 'final', goal: '再推进一次', target: [2] },
+          ],
+        },
+      };
+    };
+    await initLab({ labPath: lab, labId: 'auto-planned-lab', worldId: 'generated', seed: 'auto-planned-seed', registry });
+    const first = await runLab({ labPath: lab, runId: 'run-1', steps: 1, scenario: 'generated', goal: '自动推进生成计数器', planner, registry });
+    assert.equal(first.metrics.executed, 1);
+    assert.equal(plannerCalls, 1);
+    const firstRun = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    assert.equal(firstRun.events.find((event) => event.kind === 'STEP').payload.boundary.goalActivation.planEvidence.applied, true);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+
+    const second = await runLab({ labPath: lab, runId: 'run-2', steps: 1, scenario: 'generated', registry });
+    assert.equal(second.stopReason, 'OBJECTIVE_REACHED');
+    assert.equal(plannerCalls, 1);
+    const current = (await inspectLab({ labPath: lab, registry })).current;
+    assert.equal(current.changeSupervisor.plan.revision, 1);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-2', registry })).verdict, 'CONSISTENT');
+  });
+});
+
+test('invalid automatic planner proposals fall back to one validated root stage and remain replayable', async () => {
+  await withLab(async (root) => {
+    const lab = path.join(root, 'invalid-auto-plan-lab');
+    const registry = createGeneratedRegistry();
+    await initLab({ labPath: lab, labId: 'invalid-auto-plan-lab', worldId: 'generated', seed: 'invalid-auto-plan-seed', registry });
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 1,
+      scenario: 'generated',
+      goal: '拒绝非法自动计划',
+      planner: async () => ({
+        model: 'bad-planner',
+        responseDigest: `sha256:${'d'.repeat(64)}`,
+        plan: { rootGoal: '拒绝非法自动计划', stages: [{ id: 'wrong', goal: '错误维度', target: [1, 2] }] },
+      }),
+      registry,
+    });
+    assert.equal(result.status, 'COMPLETED');
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const activation = run.events.find((event) => event.kind === 'STEP').payload.boundary.goalActivation;
+    assert.equal(activation.planEvidence.applied, false);
+    assert.equal(activation.planEvidence.reason, 'PLAN_REJECTED');
+    assert.equal((await inspectLab({ labPath: lab, registry })).current.changeSupervisor.plan.stages.length, 1);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+  });
+});
+
 test('continuous runner can stop a forever policy only between committed runs', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'forever-lab', worldId: 'temperature', seed: 'forever-seed' });

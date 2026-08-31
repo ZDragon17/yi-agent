@@ -159,6 +159,53 @@ test('agent run loads and persists a multi-stage goal plan from PowerShell-facin
   }
 });
 
+test('agent run uses the bounded automatic planner through the PowerShell-facing CLI', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-auto-plan-e2e-'));
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    requests.push(body.messages[0].content);
+    const content = body.messages[0].content.includes('goal planner')
+      ? JSON.stringify({
+          rootGoal: '自动维持温度',
+          stages: [
+            { id: 'approach', goal: '先接近稳定值', target: [22.5] },
+            { id: 'settle', goal: '再完成稳定值', target: [23] },
+          ],
+        })
+      : JSON.stringify({ token: /tok_[A-Z0-9]{8,128}/u.exec(body.messages[0].content)?.[0] ?? null });
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ id: 'agent-auto-plan', model: body.model, choices: [{ message: { content } }] }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'local-auto-plan-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'local-auto-plan-model',
+  };
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--json'], process.env)).code, 0);
+    const result = await invoke(['agent', 'run', '--lab', lab, '--steps', '2', '--goal', '自动维持温度', '--auto-plan', '--json'], env);
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout[0].data.stopReason, 'OBJECTIVE_REACHED');
+    assert.equal(requests.length, 3);
+    const inspection = await invoke(['inspect', '--lab', lab, '--json'], process.env);
+    assert.equal(inspection.stdout[0].data.current.changeSupervisor.plan.revision, 1);
+    const runId = result.stdout[0].data.runId;
+    const replay = await invoke(['replay', '--lab', lab, '--run', runId, '--json'], process.env);
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent loop handles SIGINT at a committed run boundary', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-signal-e2e-'));
   let signalled = false;

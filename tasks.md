@@ -185,6 +185,13 @@
 - 验证：至少覆盖两阶段目标、阶段切换、终态、计划重启、计划 Replay、无计划旧状态和不同 WorldPort 维度；已激活计划被替换时必须冲突而非静默改变。
 - 边界：阶段目标仍需由用户或未来受约束的 Planner 提供；当前实现证明的是可持久化、可验证的分解机制，不证明模型能正确理解任意自然语言目标。
 
+## F-11 受约束的自动 Planner
+
+- 原理：Planner 不是第二个执行内核，而是对同一根目标提出有限阶段候选；权重、维度、权限、Token 和真实状态仍由 WorldPort、Application、Kernel 与账本拥有。
+- 实现：`src/agent/model-planner.mjs` 生成不可信阶段目标提议；Application 继承当前 ValueSpec 的权重与维度，校验有限数值、阶段数量、根目标一致性和顺序后才激活；首次 STEP 同时记录冻结计划与 `planEvidence`，无效提议回退单阶段根目标。
+- 验证：模型有效提议只请求一次；非法 JSON、错误维度、Planner 异常均不改变执行边界；后续 Run、重启和 Replay 不重新请求 Planner；CLI `--auto-plan` 与显式 `--goal-plan` 互斥。
+- 边界：Planner 仍不能从自然语言证明目标正确，也不能替代长期语义记忆、现实因果识别或人工授权；当前证明的是“模型可提出、宿主可验证、账本可恢复”的自动分解边界。
+
 ## F-9 连续 Run Runner
 
 - 实现：`runContinuous` 和 `agent loop` 将有限步数分割为多个独立、可恢复、可 Replay 的 Run；每个 Run 提交完成后才启动下一个，显式目标达成、执行拒绝或无安全动作立即停止；`--forever` 提供长期策略，SIGINT/SIGTERM 只在已提交 Run 边界停止并返回 `INTERRUPTED`。

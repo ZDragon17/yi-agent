@@ -269,6 +269,17 @@ function validateGoalActivation(value, sequence) {
       !Number.isSafeInteger(value.stagnationLimit) || value.stagnationLimit < 1 || value.stagnationLimit > 100_000) {
     corrupt('STEP goal activation is invalid.', { sequence });
   }
+  if (value.planEvidence !== undefined) validatePlanEvidence(value.planEvidence, sequence);
+}
+
+function validatePlanEvidence(value, sequence) {
+  if (!isRecord(value) || value.schemaVersion !== SCHEMA_VERSION || value.source !== 'model' ||
+      typeof value.model !== 'string' || value.model.length === 0 || value.model.length > 4096 ||
+      typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
+      typeof value.applied !== 'boolean' ||
+      (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
+    corrupt('STEP planner evidence is invalid.', { sequence });
+  }
 }
 
 function preserveLegacyActivationMarker(nextSupervisor, previousSupervisor, activation) {

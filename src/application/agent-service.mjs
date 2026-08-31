@@ -44,6 +44,9 @@ export async function runLab(input) {
   if (source.advisor !== undefined && typeof source.advisor !== 'function') {
     throw new LabStoreError('INVALID_INPUT', 'advisor must be a function.', { field: 'advisor' });
   }
+  if (source.planner !== undefined && typeof source.planner !== 'function') {
+    throw new LabStoreError('INVALID_INPUT', 'planner must be a function.', { field: 'planner' });
+  }
   const labPath = requireText(source.labPath, 'labPath');
   const steps = requireSteps(source.steps);
   const runId = source.runId ?? randomUUID();
@@ -52,6 +55,13 @@ export async function runLab(input) {
   const failpoint = typeof source.failpoint === 'function' ? source.failpoint : undefined;
   const supervisorMaxCycles = requireBoundedOptional(source.maxCycles, 1, 1_000_000, 'maxCycles') ?? 1_000_000;
   const supervisorStagnationLimit = requireBoundedOptional(source.stagnationLimit, 1, 100_000, 'stagnationLimit') ?? 3;
+  const plannerRequested = source.planner !== undefined;
+  if (plannerRequested && (source.goal === undefined || source.goal === null)) {
+    throw new LabStoreError('INVALID_INPUT', 'planner requires an explicit goal.', { field: 'goal' });
+  }
+  if (plannerRequested && source.goalPlan !== undefined) {
+    throw new LabStoreError('INVALID_INPUT', 'planner and goalPlan are mutually exclusive.', { fields: ['planner', 'goalPlan'] });
+  }
   const store = await LabStore.open({ labPath });
   const manifest = store.manifest;
   registry.assertManifest(manifest);
@@ -67,7 +77,7 @@ export async function runLab(input) {
         kernelStep: 0,
         changeSupervisor: createChangeSupervisor({
           goal: source.goal ?? source.goalPlan?.rootGoal ?? '逼近 ValueSpec 目标',
-          enabled: goalRequested,
+          enabled: goalRequested && !plannerRequested,
           plan: source.goalPlan,
           valueSpec: spec,
           maxCycles: supervisorMaxCycles,
@@ -111,27 +121,43 @@ export async function runLab(input) {
     const previousSupervisor = state.changeSupervisor === undefined
       ? null
       : normalizeChangeSupervisorState(state.changeSupervisor);
+    let activationPlan = source.goalPlan;
+    let plannerEvidence = null;
+    if (plannerRequested && previousSupervisor?.enabled !== true) {
+      const plannerResult = await requestPlan({
+        planner: source.planner,
+        goal: requestedGoal,
+        observation: beforeObservation,
+        valueSpec: spec,
+        memory: state.memory,
+        manifest,
+        step: state.kernelStep,
+      });
+      plannerEvidence = plannerResult.evidence;
+      activationPlan = plannerResult.plan;
+    }
     const baseSupervisor = previousSupervisor ?? (!goalRequested
       ? null
       : createChangeSupervisor({
           goal: requestedGoal,
           enabled: true,
-          plan: source.goalPlan,
+          plan: activationPlan,
           valueSpec: spec,
           maxCycles: supervisorMaxCycles,
           stagnationLimit: supervisorStagnationLimit,
         }));
     const supervisor = baseSupervisor === null || !goalRequested
       ? baseSupervisor
-      : enableGoal(baseSupervisor, requestedGoal, source.goalPlan);
-    const activationPlan = supervisor === null ? undefined : goalPlanForActivation(supervisor);
+      : enableGoal(baseSupervisor, requestedGoal, activationPlan);
+    const activatedPlan = supervisor === null ? undefined : goalPlanForActivation(supervisor);
     const goalActivation = supervisor?.enabled === true && previousSupervisor?.enabled !== true
       ? {
           schemaVersion: SCHEMA_VERSION,
           goal: supervisor.goal,
           maxCycles: supervisor.maxCycles,
           stagnationLimit: supervisor.stagnationLimit,
-          ...(activationPlan === undefined ? {} : { plan: activationPlan }),
+          ...(activatedPlan === undefined ? {} : { plan: activatedPlan }),
+          ...(plannerEvidence === null ? {} : { planEvidence: plannerEvidence }),
         }
       : null;
     const stepValueSpec = kernelValueSpec(supervisor?.objective ?? spec);
@@ -371,6 +397,92 @@ function preferenceFor(modelDecision) {
   return modelDecision?.token === null || modelDecision?.token === undefined
     ? null
     : { schemaVersion: SCHEMA_VERSION, token: modelDecision.token };
+}
+
+async function requestPlan({ planner, goal, observation, valueSpec, memory, manifest, step }) {
+  let result;
+  try {
+    result = await planner({ goal, observation, valueSpec, memory, manifest, step });
+  } catch {
+    return {
+      plan: undefined,
+      evidence: plannerEvidence(null, false, 'PLANNER_UNAVAILABLE'),
+    };
+  }
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) {
+    return {
+      plan: undefined,
+      evidence: plannerEvidence(result, false, 'INVALID_PLANNER_RESULT'),
+    };
+  }
+  try {
+    const plan = materializePlannerPlan(result.plan, goal, valueSpec);
+    return {
+      plan,
+      evidence: plannerEvidence(result, true, null),
+    };
+  } catch {
+    return {
+      plan: undefined,
+      evidence: plannerEvidence(result, false, 'PLAN_REJECTED'),
+    };
+  }
+}
+
+function materializePlannerPlan(candidate, rootGoal, valueSpec) {
+  if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate) ||
+      !Array.isArray(candidate.stages) || candidate.stages.length < 1 || candidate.stages.length > 128) {
+    throw new Error('Planner proposal must contain a bounded stage list.');
+  }
+  const base = kernelValueSpec(valueSpec);
+  const plan = {
+    schemaVersion: SCHEMA_VERSION,
+    rootGoal: candidate.rootGoal ?? rootGoal,
+    stages: candidate.stages.map((stage) => {
+      if (stage === null || typeof stage !== 'object' || Array.isArray(stage) ||
+          typeof stage.id !== 'string' || typeof stage.goal !== 'string') {
+        throw new Error('Planner stage identity is invalid.');
+      }
+      const target = stage.target;
+      if (!Array.isArray(target) || target.length !== base.observationDimensions ||
+          target.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
+        throw new Error('Planner stage target is invalid.');
+      }
+      return {
+        id: stage.id,
+        goal: stage.goal,
+        objective: {
+          ...base,
+          target: [...target],
+        },
+      };
+    }),
+  };
+  return createChangeSupervisor({
+    goal: rootGoal,
+    enabled: true,
+    plan,
+    valueSpec,
+    maxCycles: 1,
+    stagnationLimit: 1,
+  }).plan;
+}
+
+function plannerEvidence(result, applied, reason) {
+  const model = typeof result?.model === 'string' && result.model.length > 0 && result.model.length <= 4096
+    ? result.model
+    : 'unknown';
+  const responseDigest = typeof result?.responseDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(result.responseDigest)
+    ? result.responseDigest
+    : canonicalDigest({ model, reason });
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    source: 'model',
+    model,
+    responseDigest,
+    applied,
+    reason,
+  };
 }
 
 function policyEvidence(modelDecision, intent, capabilities) {

@@ -253,6 +253,7 @@ yi-agent ask --prompt "请用一句话解释什么是闭环" --json
 yi-agent agent run --lab E:\labs\temperature --steps 3 --goal "保持系统稳定" --json
 yi-agent agent loop --lab E:\labs\temperature --steps 10 --runs 100 --goal "保持系统稳定" --json
 yi-agent agent run --lab E:\labs\temperature --steps 10 --goal-plan E:\plans\stability.json --json
+yi-agent agent run --lab E:\labs\temperature --steps 10 --goal "自动维持温度" --auto-plan --json
 Get-Content .\prompt.txt -Raw | yi-agent ask --prompt - --json
 yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 ```
@@ -266,5 +267,7 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 当监督器检测到达到停滞阈值，它会把 `replanCount`、`strategy.revision`、策略模式和 `replanReason` 写进 STEP 的 `afterState`。`EXPLORATORY` 只改变安全候选的选择顺序，不能改变目标、权限、WorldPort 回执或验证规则；Replay 会重现同一次策略切换。
 
 复杂目标可以通过 `--goal-plan PATH` 提供阶段序列。每个阶段只声明不透明的阶段 ID、阶段目标文本和可选 `ValueSpec`；运行时仍用同一套观察向量、加权距离、证据和安全约束推进阶段，阶段完成后才切换到下一个阶段。计划会进入 supervisor/current/STEP，Replay 不会重新询问模型或读取计划文件；已激活的计划不能在同一个 lab 中被静默替换。
+
+需要让模型提出阶段序列时，可使用 `--goal TEXT --auto-plan`。Planner 只能返回阶段目标向量，宿主会继承当前 WorldPort 的维度和权重并进行有限性、边界和阶段顺序校验；非法或不可用提议退回单一根目标阶段，不会改变权限、Token 或执行规则。首次激活时，已校验计划和 `planEvidence` 一起写入 STEP；之后的 Run、重启和 Replay 都使用账本中的计划，不再次请求 Planner。`--auto-plan` 与 `--goal-plan` 互斥。
 
 当前 CLI 不会替你保存密钥；真实连通性需要你在本机配置上述环境变量后执行 `yi-agent api test`。模型调用只负责提出候选 Token，仍由 WorldPort、Kernel、verify、learn 和 replay 闭环裁决。
