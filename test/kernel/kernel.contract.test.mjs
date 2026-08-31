@@ -717,6 +717,96 @@ test('accepted incomplete feedback is retained and later settled by its executio
   assert.equal(settled.nextMemory.actionModels[TOKEN_A].sampleCount, 4);
 });
 
+test('missing feedback expires at a bounded window without learning and rejects late evidence', async () => {
+  const { step, verify, learn } = await loadKernel();
+  const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });
+  input.memory = {
+    schemaVersion: 1,
+    actionModels: {},
+    pendingCredits: [],
+    pendingCreditPolicy: { schemaVersion: 1, maxAge: 2 },
+  };
+  const firstIntent = step(input);
+  const firstRequest = actionRequest({ token: TOKEN_A });
+  const firstReceipt = receiptForRequest(firstRequest, {
+    attributionWindowComplete: false,
+    confounderCount: 0,
+  });
+  const firstPostObservation = observation([1.5, 0.75], 'state-2');
+  const firstVerification = verify({ intent: firstIntent, receipt: firstReceipt, postObservation: firstPostObservation });
+  const firstDeferred = learn({
+    memory: input.memory,
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPostObservation,
+    verification: firstVerification,
+  });
+  assert.equal(firstDeferred.nextMemory.pendingCredits[0].age, 0);
+
+  const secondRequest = actionRequest({ basedOnVersion: 'state-2', executionNonce: 'nonce:00000002' });
+  const secondIntent = intentForRequest(secondRequest);
+  const secondReceipt = receiptForRequest(secondRequest, { attributionWindowComplete: false });
+  const secondPostObservation = observation([1.5, 0.75], 'state-3');
+  const secondVerification = verify({ intent: secondIntent, receipt: secondReceipt, postObservation: secondPostObservation });
+  const secondDeferred = learn({
+    memory: firstDeferred.nextMemory,
+    intent: secondIntent,
+    receipt: secondReceipt,
+    postObservation: secondPostObservation,
+    verification: secondVerification,
+  });
+  assert.equal(secondDeferred.nextMemory.pendingCredits[0].executionNonce, firstRequest.executionNonce);
+  assert.equal(secondDeferred.nextMemory.pendingCredits[0].age, 1);
+
+  const thirdRequest = actionRequest({ basedOnVersion: 'state-3', executionNonce: 'nonce:00000003' });
+  const thirdIntent = intentForRequest(thirdRequest);
+  const thirdReceipt = receiptForRequest(thirdRequest);
+  const thirdPostObservation = observation([1.5, 0.75], 'state-4');
+  const thirdVerification = verify({ intent: thirdIntent, receipt: thirdReceipt, postObservation: thirdPostObservation });
+  const expired = learn({
+    memory: secondDeferred.nextMemory,
+    intent: thirdIntent,
+    receipt: thirdReceipt,
+    postObservation: thirdPostObservation,
+    verification: thirdVerification,
+  });
+  assert.equal(expired.status, 'UPDATED');
+  assert.equal(expired.settled[0].executionNonce, firstRequest.executionNonce);
+  assert.equal(expired.settled[0].attribution, 'UNRESOLVED');
+  assert.equal(expired.settled[0].learnable, false);
+  assert.equal(expired.settled[0].reason, 'FEEDBACK_TIMEOUT');
+  assert.equal(expired.nextMemory.actionModels[TOKEN_A].sampleCount, 1);
+  assert.equal(expired.nextMemory.pendingCredits.length, 1);
+  assert.equal(expired.nextMemory.pendingCredits[0].executionNonce, secondRequest.executionNonce);
+  assert.equal(expired.nextMemory.pendingCredits[0].age, 1);
+
+  const lateRequest = actionRequest({ basedOnVersion: 'state-4', executionNonce: 'nonce:00000004' });
+  const lateIntent = intentForRequest(lateRequest);
+  const lateReceipt = receiptForRequest(lateRequest);
+  const latePostObservation = {
+    ...observation([1.5, 0.75], 'state-5'),
+    feedback: [{
+      schemaVersion: 1,
+      executionNonce: firstRequest.executionNonce,
+      stateVersion: 'state-4',
+      intervalId: 'interval:state-4',
+      vector: [1.5, 0.75],
+      confounderCount: 0,
+    }],
+  };
+  const lateVerification = verify({ intent: lateIntent, receipt: lateReceipt, postObservation: latePostObservation });
+  assertContractViolation(
+    () => learn({
+      memory: expired.nextMemory,
+      intent: lateIntent,
+      receipt: lateReceipt,
+      postObservation: latePostObservation,
+      verification: lateVerification,
+    }),
+    'late feedback after timeout',
+  );
+});
+
 test('delayed credit uses the action-before vector even when the first post-observation is partial', async () => {
   const { step, verify, learn } = await loadKernel();
   const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });

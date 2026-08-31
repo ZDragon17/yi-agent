@@ -225,6 +225,39 @@ test('CLI carries delayed and repeated feedback across WorldPort processes and r
   });
 });
 
+test('CLI closes a missing-feedback window without learning and survives repeated restarts', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'missing-feedback-lab');
+    const adapter = await writeDelayedFeedbackAdapterConfig(root, false, true);
+    const init = await invoke('init', '--lab', lab, '--world', 'delayed-feedback', '--seed', 'missing-feedback-seed', '--lab-id', 'missing-feedback-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    for (let index = 1; index <= 10; index += 1) {
+      const run = await invoke('run', '--lab', lab, '--run-id', `run-${index}`, '--steps', '1', '--scenario', 'delayed', '--adapter', adapter, '--json');
+      assert.equal(run.code, 0, `run-${index}`);
+      assert.equal(run.stdout[0].data.status, 'COMPLETED', `run-${index} status`);
+      const replay = await invoke('replay', '--lab', lab, '--run', `run-${index}`, '--adapter', adapter, '--json');
+      assert.equal(replay.code, 0, `run-${index} replay`);
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT', `run-${index} replay verdict`);
+    }
+
+    const timeoutStep = decodeStoredEvent(
+      (await readFile(path.join(lab, 'runs', 'run-9', 'events.jsonl'), 'utf8'))
+        .trim().split(/\r?\n/u).map(JSON.parse).find((event) => event.kind === 'STEP'),
+    );
+    assert.equal(timeoutStep.payload.update.settled[0].attribution, 'UNRESOLVED');
+    assert.equal(timeoutStep.payload.update.settled[0].reason, 'FEEDBACK_TIMEOUT');
+    assert.equal(timeoutStep.payload.update.settled[0].learnable, false);
+    assert.equal(timeoutStep.payload.update.nextMemory.actionModels && Object.keys(timeoutStep.payload.update.nextMemory.actionModels).length, 0);
+    assert.equal(timeoutStep.payload.update.nextMemory.pendingCredits.length, 8);
+
+    const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+    assert.equal(current.memory.pendingCreditPolicy.maxAge, 8);
+    assert.equal(current.memory.pendingCredits.length, 8);
+    assert.equal(current.worldState.revision, 10);
+  });
+});
+
 test('CLI preserves state-dependent external capabilities across restarts, replay, and historical inspect', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'stateful-lab');
@@ -728,11 +761,11 @@ async function writeAdapterConfig(root, args = []) {
   return config;
 }
 
-async function writeDelayedFeedbackAdapterConfig(root, repeatFeedback = false) {
+async function writeDelayedFeedbackAdapterConfig(root, repeatFeedback = false, dropFeedback = false) {
   const config = path.join(root, 'delayed-feedback-adapter.json');
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
-    args: [DELAYED_FEEDBACK_ADAPTER_FIXTURE, ...(repeatFeedback ? ['--repeat-feedback'] : [])],
+    args: [DELAYED_FEEDBACK_ADAPTER_FIXTURE, ...(repeatFeedback ? ['--repeat-feedback'] : []), ...(dropFeedback ? ['--drop-feedback'] : [])],
     adapterId: 'delayed-feedback-adapter-v1',
     worldId: 'delayed-feedback',
     timeoutMs: 2000,

@@ -18,6 +18,7 @@ const MAX_SCENARIO_IDS = 256;
 const MAX_SCENARIO_ID_LENGTH = 4096;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const SETTLED_FEEDBACK_LEARNING_VERSION = 3;
+const PENDING_CREDIT_EXPIRY_LEARNING_VERSION = 4;
 
 export class ReplayError extends Error {
   constructor(code, message, context = {}) {
@@ -226,9 +227,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       verification,
     });
     const learningVersion = payload.boundary.kernelLearningVersion ?? 1;
-    const replayLearned = learningVersion < SETTLED_FEEDBACK_LEARNING_VERSION
-      ? withoutSettledFeedback(learned)
-      : learned;
+    const replayLearned = projectLearningForVersion(learned, learningVersion);
     update = payload.boundary.kernelLearningVersion === undefined &&
       payload.update?.status === 'SKIPPED' &&
       verification.attribution === 'EXECUTION_REJECTED'
@@ -306,6 +305,33 @@ function withoutSettledFeedback(update) {
   if (update.nextMemory?.settledFeedback === undefined) return update;
   const { settledFeedback: _ignored, ...nextMemory } = update.nextMemory;
   return { ...update, nextMemory };
+}
+
+function projectLearningForVersion(update, learningVersion) {
+  const withoutReceipts = learningVersion < SETTLED_FEEDBACK_LEARNING_VERSION
+    ? withoutSettledFeedback(update)
+    : update;
+  return learningVersion < PENDING_CREDIT_EXPIRY_LEARNING_VERSION
+    ? withoutPendingCreditExpiry(withoutReceipts)
+    : withoutReceipts;
+}
+
+function withoutPendingCreditExpiry(update) {
+  const memory = update.nextMemory;
+  if (memory?.pendingCreditPolicy === undefined &&
+      !memory?.pendingCredits?.some((credit) => credit.age !== undefined)) return update;
+  const { pendingCreditPolicy: _ignoredPolicy, ...withoutPolicy } = memory;
+  const pendingCredits = withoutPolicy.pendingCredits?.map((credit) => {
+    const { age: _ignoredAge, ...withoutAge } = credit;
+    return withoutAge;
+  });
+  return {
+    ...update,
+    nextMemory: {
+      ...withoutPolicy,
+      ...(pendingCredits === undefined ? {} : { pendingCredits }),
+    },
+  };
 }
 
 function validateGoalActivation(value, sequence) {

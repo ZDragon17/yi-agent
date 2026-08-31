@@ -6,6 +6,7 @@ const WORLD_ID = 'delayed-feedback';
 const CAPABILITY_ID = 'delayed-feedback.advance';
 const VALUE_SPEC = { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1] };
 const REPEAT_FEEDBACK = process.argv.includes('--repeat-feedback');
+const DROP_FEEDBACK = process.argv.includes('--drop-feedback');
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (line) => {
@@ -74,7 +75,7 @@ function transition(prior, request) {
     [...prior.usedExecutionNonces, request.executionNonce].slice(-8),
     feedback,
   );
-  const feedbackItems = feedback === null ? [] : [feedback];
+  const feedbackItems = DROP_FEEDBACK || feedback === null ? [] : [feedback];
   if (REPEAT_FEEDBACK && prior.lastFeedback !== null) feedbackItems.push(prior.lastFeedback);
   const result = {
     nextWorldState: next,

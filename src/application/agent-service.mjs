@@ -15,7 +15,7 @@ const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
-const KERNEL_LEARNING_VERSION = 3;
+const KERNEL_LEARNING_VERSION = 4;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -130,7 +130,14 @@ export async function runLab(input) {
   let initialState = current.lastRunId === null
     ? {
         worldState: world.initialState(),
-        memory: { schemaVersion: SCHEMA_VERSION, actionModels: {}, relationModels: {}, pendingCredits: [], settledFeedback: [] },
+        memory: {
+          schemaVersion: SCHEMA_VERSION,
+          actionModels: {},
+          relationModels: {},
+          pendingCredits: [],
+          settledFeedback: [],
+          pendingCreditPolicy: { schemaVersion: SCHEMA_VERSION, maxAge: 8 },
+        },
         rngState: initialRng(manifest.seed),
         kernelStep: 0,
         changeSupervisor: createChangeSupervisor({

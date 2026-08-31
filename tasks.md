@@ -195,7 +195,7 @@
 ## F-12 关系条件长期记忆
 
 - 原理：单一 Token 的全局平均会把不同上下文中的变化混在一起；用观测向量相对当前 ValueSpec 的三态关系签名作为共同上下文轴，形成 `Token×RelationSignature` 条件模型，不引入领域标签。
-- 实现：Kernel 在 StepIntent 中记录可选关系签名；经 `ACTION && learnable` 验证后，同时更新总体 `actionModels` 和条件 `relationModels`；执行拒绝则更新不含领域文本的 `rejectionModels`，仅绑定 Token、最近关系签名、拒绝次数和当前拒绝状态。新 STEP 以 `kernelLearningVersion: 3` 标记反馈收据幂等语义；Replay 对缺少标记或旧版本 STEP 保持历史 Memory 形状和既有拒绝兼容。Application 只为新实验启用收据窗口，旧实验继续沿用原始 Memory 形状，避免破坏精确连续性对账；InspectView 暴露关系模型和拒绝模型数量及每个 action 的条件证据。
+- 实现：Kernel 在 StepIntent 中记录可选关系签名；经 `ACTION && learnable` 验证后，同时更新总体 `actionModels` 和条件 `relationModels`；执行拒绝则更新不含领域文本的 `rejectionModels`，仅绑定 Token、最近关系签名、拒绝次数和当前拒绝状态。新 STEP 以 `kernelLearningVersion: 4` 标记反馈收据幂等与反馈窗口语义；Replay 对缺少标记或旧版本 STEP 保持历史 Memory 形状和既有拒绝兼容。Application 只为新实验启用收据窗口与有界 pending credit age，旧实验继续沿用原始 Memory 形状，避免破坏精确连续性对账；InspectView 暴露关系模型和拒绝模型数量及每个 action 的条件证据。
 - 验证：相同 Token 在两个关系签名下采用不同已验证模型；关系模型只在可归因变化时增长，拒绝会跨 Run 持久化并使同关系下的动作降出探索池，关系变化后仍可重新验证；跨 Run、重启、Replay、五个 WorldPort 和外部 WorldPort 保持同一关系签名和预测结果。
 - 边界：关系签名和拒绝证据是数值层的有限抽象，不等于自然语言语义、因果模型或跨世界 Token 对齐；拒绝不会自动证明永久约束，下一步仍需验证多次拒绝、动态约束变化和多目标迁移中的实际收益。
 
@@ -292,6 +292,13 @@
 ## F-25 延迟反馈与有界信用归因
 
 - 原理：真实变化的结果不一定在同一个 transition 内可见；如果把“当前没有完整证据”永久等同于“什么也没有发生”，底座无法处理跨时间反馈。反馈仍属于同一套状态—关系—约束—变化—反馈逻辑，必须用稳定 executionNonce 重新闭合而不是依赖调用顺序猜测。
-- 实现：Observation 可携带有界 `feedback[]`，每项绑定 executionNonce、后验状态版本、区间、向量和 confounderCount。Kernel 对 accepted、归因窗口未完成且无已知混杂的动作保存 pending credit，基线从动作前观测推导；若同一步结算旧 clean feedback，只把该旧 nonce 的实际变化叠加到新 pending 基线，不把当前动作的部分即时变化重复归因；同一步出现 settled feedback 时当前动作保守跳过学习。后续匹配反馈更新总体/关系模型并返回 `settled`，混杂反馈只记录 AMBIGUOUS；有界 settled feedback 收据使完全相同的重复投递幂等忽略，同 nonce 矛盾内容、未知 nonce 以及超限数据 fail-closed。Application、外部 WorldPort 协议、STEP 账本和 Replay 保持同一投影。
+- 实现：Observation 可携带有界 `feedback[]`，每项绑定 executionNonce、后验状态版本、区间、向量和 confounderCount。Kernel 对 accepted、归因窗口未完成且无已知混杂的动作保存 pending credit，基线从动作前观测推导；若同一步结算旧 clean feedback，只把该旧 nonce 的实际变化叠加到新 pending 基线，不把当前动作的部分即时变化重复归因；同一步出现 settled feedback 时当前动作保守跳过学习。后续匹配反馈更新总体/关系模型并返回 `settled`，混杂反馈只记录 AMBIGUOUS；有界 settled feedback 收据使完全相同的重复投递幂等忽略，同 nonce 矛盾内容、未知 nonce 以及超限数据 fail-closed。新账本还以有界观察机会推进 pending credit 的 age，超过策略窗口仍无证据时移出 pending，返回 `UNRESOLVED/FEEDBACK_TIMEOUT` 且不学习，之后的晚到反馈按未知 nonce 拒绝。Application、外部 WorldPort 协议、STEP 账本和 Replay 保持同一投影。
 - 验证：Kernel 覆盖延迟闭合、混杂不学习、未知 nonce、重复投递和矛盾投递；独立外部 adapter 让第一 Run 产生 pending，后续新的 adapter 进程返回反馈并重复返回历史反馈，多个 Run 都可 Replay 为 CONSISTENT，状态和 Memory 跨进程恢复。
-- 边界：这只是显式后验快照的有界信用归因，不是部分可观测环境的信念状态、完整因果识别、跨世界语义对齐或长期自主性；收据窗口之外的旧重复反馈仍会被拒绝，后续反例需要检验反馈丢失、反馈乱序、隐藏状态和多动作同时生效。
+- 边界：这只是显式后验快照的有界信用归因，不是部分可观测环境的信念状态、完整因果识别、跨世界语义对齐或长期自主性；收据窗口之外的旧重复反馈仍会被拒绝，旧账本没有被静默迁移到新窗口；后续反例需要检验反馈乱序、隐藏状态和多动作同时生效。
+
+## F-27 反馈窗口关闭与未闭合结果
+
+- 原理：持续闭环不能把“等待更多证据”变成无限增长的隐含状态；当一个变化在有限观察机会内没有返回可归因反馈，底座必须记录“证据缺失”而不是制造学习结论。
+- 实现：新 Lab 的 Kernel memory 携带 `pendingCreditPolicy.maxAge=8`。每个无反馈的 STEP 推进 pending credit 的 age；到达窗口边界时返回 `UNRESOLVED` 与 `FEEDBACK_TIMEOUT`，移出 pending 且不更新动作/关系模型。窗口之后抵达的反馈没有 pending 或 settled receipt，继续按未知 nonce fail-closed。旧 Lab 不注入该策略，以保留既有账本的精确连续性；Replay 以 `kernelLearningVersion=4` 区分两种投影。
+- 验证：Kernel 覆盖窗口内保留、边界过期、无学习和晚到反馈拒绝；CLI 通过反馈永久缺失的独立 WorldPort 进程连续启动十个 Run，检查 pending 有界、重启恢复、每个 Run Replay 为 CONSISTENT。
+- 边界：观察机会不是物理时间，也不是因果效应已经不存在的证明；它只是底座对等待成本的明确策略。下一步需要在隐藏状态下引入可检验的信念/不确定性表示，并继续验证乱序反馈和多动作并发。

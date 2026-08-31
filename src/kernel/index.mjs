@@ -13,6 +13,7 @@ const MAX_PENDING_CREDITS = 64;
 const MAX_FEEDBACK_ITEMS = 64;
 const MAX_EXECUTION_NONCE_LENGTH = 256;
 const MAX_SETTLED_FEEDBACK = 64;
+const MAX_PENDING_CREDIT_AGE = 8;
 
 const STEP_INPUT_KEYS = [
   'observation',
@@ -55,7 +56,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -128,7 +129,9 @@ const PENDING_CREDIT_KEYS = [
   'beforeVector',
   'expectedDelta',
   'relationKey',
+  'age',
 ];
+const PENDING_CREDIT_POLICY_KEYS = ['schemaVersion', 'maxAge'];
 
 export function step(input) {
   return stepWithPreference(input, null);
@@ -382,7 +385,7 @@ export function learn(input) {
     };
   }
 
-  if (settled.length > 0) {
+  if (settlement.hasFeedbackSettlement) {
     return {
       schemaVersion: SCHEMA_VERSION,
       status: 'SKIPPED',
@@ -434,9 +437,30 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
   const cleanDeltas = [];
   const remaining = [];
   const settledNonces = new Set();
+  const feedbackNonces = new Set(feedback.map((item) => item.executionNonce));
+  let hasFeedbackSettlement = false;
 
   for (const credit of pendingCredits) {
-    if (!feedback.some((item) => item.executionNonce === credit.executionNonce)) remaining.push(credit);
+    if (feedbackNonces.has(credit.executionNonce)) continue;
+    if (memory.pendingCreditPolicy === undefined) {
+      remaining.push(credit);
+      continue;
+    }
+    const age = (credit.age ?? 0) + 1;
+    if (age >= memory.pendingCreditPolicy.maxAge) {
+      settled.push({
+        schemaVersion: SCHEMA_VERSION,
+        executionNonce: credit.executionNonce,
+        token: credit.token,
+        attribution: 'UNRESOLVED',
+        confidence: 0,
+        learnable: false,
+        error: null,
+        reason: 'FEEDBACK_TIMEOUT',
+      });
+      continue;
+    }
+    remaining.push({ ...credit, age });
   }
 
   for (const item of feedback) {
@@ -463,6 +487,7 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
       });
     }
     if (item.confounderCount > 0) {
+      hasFeedbackSettlement = true;
       rememberSettledFeedback(memory, item);
       settled.push({
         schemaVersion: SCHEMA_VERSION,
@@ -496,6 +521,7 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
       dimensions,
       field: `learnOutput.nextMemory.settled.${item.executionNonce}`,
     });
+    hasFeedbackSettlement = true;
     rememberSettledFeedback(memory, item);
     cleanDeltas.push(actualDelta);
     settled.push({
@@ -510,7 +536,7 @@ function settlePendingCredits(memory, postObservation, dimensions, field) {
   }
 
   if (memory.pendingCredits !== undefined || feedback.length > 0) memory.pendingCredits = remaining;
-  return { entries: settled, cleanDeltas };
+  return { entries: settled, cleanDeltas, hasFeedbackSettlement };
 }
 
 function rememberSettledFeedback(memory, feedback) {
@@ -564,6 +590,7 @@ function addPendingCredit(memory, intent, executionNonce, baselineObservation, f
     beforeVector: cloneVector(baselineObservation.vector),
     expectedDelta: cloneVector(intent.expectation.expectedDelta),
     ...(intent.expectation.relationKey === undefined ? {} : { relationKey: intent.expectation.relationKey }),
+    ...(memory.pendingCreditPolicy === undefined ? {} : { age: 0 }),
   });
 }
 
@@ -796,6 +823,9 @@ function normalizeMemory(value, field, dimensions) {
   const normalizedSettledFeedback = source.settledFeedback === undefined
     ? undefined
     : normalizeSettledFeedback(source.settledFeedback, `${field}.settledFeedback`, dimensions);
+  const normalizedPendingCreditPolicy = source.pendingCreditPolicy === undefined
+    ? undefined
+    : normalizePendingCreditPolicy(source.pendingCreditPolicy, `${field}.pendingCreditPolicy`);
   return {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
@@ -803,6 +833,23 @@ function normalizeMemory(value, field, dimensions) {
     ...(normalizedRejections === undefined ? {} : { rejectionModels: normalizedRejections }),
     ...(normalizedPendingCredits === undefined ? {} : { pendingCredits: normalizedPendingCredits }),
     ...(normalizedSettledFeedback === undefined ? {} : { settledFeedback: normalizedSettledFeedback }),
+    ...(normalizedPendingCreditPolicy === undefined ? {} : { pendingCreditPolicy: normalizedPendingCreditPolicy }),
+  };
+}
+
+function normalizePendingCreditPolicy(value, field) {
+  const source = assertPlainRecord(value, field, PENDING_CREDIT_POLICY_KEYS, PENDING_CREDIT_POLICY_KEYS);
+  const maxAge = assertPositiveInteger(source.maxAge, `${field}.maxAge`);
+  if (maxAge > MAX_PENDING_CREDIT_AGE) {
+    contractViolation('kernel pending-credit policy exceeds its age limit', {
+      field: `${field}.maxAge`,
+      max: MAX_PENDING_CREDIT_AGE,
+      actual: maxAge,
+    });
+  }
+  return {
+    schemaVersion: requireSchemaVersion(source, field),
+    maxAge,
   };
 }
 
@@ -823,7 +870,7 @@ function normalizePendingCredits(value, field, dimensions) {
       item,
       itemField,
       PENDING_CREDIT_KEYS,
-      PENDING_CREDIT_KEYS.filter((key) => key !== 'relationKey'),
+      PENDING_CREDIT_KEYS.filter((key) => key !== 'relationKey' && key !== 'age'),
     );
     const executionNonce = assertBoundedString(source.executionNonce, `${itemField}.executionNonce`, MAX_EXECUTION_NONCE_LENGTH);
     if (seen.has(executionNonce)) {
@@ -833,6 +880,16 @@ function normalizePendingCredits(value, field, dimensions) {
     const relationKey = source.relationKey === undefined
       ? undefined
       : assertRelationKey(source.relationKey, `${itemField}.relationKey`, dimensions);
+    const age = source.age === undefined
+      ? undefined
+      : assertNonNegativeInteger(source.age, `${itemField}.age`);
+    if (age !== undefined && age >= MAX_PENDING_CREDIT_AGE) {
+      contractViolation('kernel pending-credit age exceeds its limit', {
+        field: `${itemField}.age`,
+        max: MAX_PENDING_CREDIT_AGE - 1,
+        actual: age,
+      });
+    }
     return {
       schemaVersion: requireSchemaVersion(source, itemField),
       executionNonce,
@@ -842,6 +899,7 @@ function normalizePendingCredits(value, field, dimensions) {
       beforeVector: assertFiniteVector(source.beforeVector, `${itemField}.beforeVector`, dimensions),
       expectedDelta: assertFiniteVector(source.expectedDelta, `${itemField}.expectedDelta`, dimensions),
       ...(relationKey === undefined ? {} : { relationKey }),
+      ...(age === undefined ? {} : { age }),
     };
   });
 }
@@ -1551,6 +1609,12 @@ function cloneMemory(value) {
     schemaVersion: SCHEMA_VERSION,
     actionModels,
   };
+  if (value.pendingCreditPolicy !== undefined) {
+    cloned.pendingCreditPolicy = {
+      schemaVersion: SCHEMA_VERSION,
+      maxAge: value.pendingCreditPolicy.maxAge,
+    };
+  }
   if (value.relationModels !== undefined) {
     cloned.relationModels = Object.fromEntries(
       Object.entries(value.relationModels).map(([token, relations]) => [
@@ -1584,6 +1648,7 @@ function cloneMemory(value) {
       beforeVector: cloneVector(credit.beforeVector),
       expectedDelta: cloneVector(credit.expectedDelta),
       ...(credit.relationKey === undefined ? {} : { relationKey: credit.relationKey }),
+      ...(credit.age === undefined ? {} : { age: credit.age }),
     }));
   }
   if (value.settledFeedback !== undefined) {
