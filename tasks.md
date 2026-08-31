@@ -220,6 +220,13 @@
 - 验证：随机维度、动作数量、目标、权重、总体/关系模型和 RNG 输入均通过同构比较；当前 96/96 通过。
 - 边界：这是项目内的随机性质测试，不等于隔离宿主持有的未知 Oracle；候选源码摘要冻结后的真正独立晚绑定 Tester 仍是更强的下一道反证门。
 
+## F-16 候选外独立晚绑定 Oracle
+
+- 原理：候选代码不能自己决定测试世界、随机种子和判别器后再宣称通用；更强的证据必须来自候选源码之外，并绑定被检验的源码摘要。
+- 实现：仓库外 `E:\demo\yi-agent-oracle\late-bound-oracle.mjs` 作为独立 Node 进程，只加载 Kernel 公共入口；在运行时生成 48 个未知有限世界输入和坐标/Token 置换，比较 `step → verify → learn` 的状态、预测、归因和记忆关系。
+- 验证：输出 `candidateDigest/oracleRevision/generatedWorldCount/caseCount/verdict/failures` 单行 JSON；当前 48/48 为 `PASS`。同一候选摘要通过，伪造摘要返回 `INCONCLUSIVE` 且 exit code 非零。
+- 边界：这是本机外部验证工件，不是随仓库分发的第三方审计；Oracle 自身仍需由独立组织重新实现才能进一步提高独立性。它只说明当前关系契约未被该输入集合证伪。
+
 ## F-9 连续 Run Runner
 
 - 实现：`runContinuous` 和 `agent loop` 将有限步数分割为多个独立、可恢复、可 Replay 的 Run；每个 Run 提交完成后才启动下一个，显式目标达成、执行拒绝或无安全动作立即停止；`--forever` 提供长期策略，SIGINT/SIGTERM 只在已提交 Run 边界停止并返回 `INTERRUPTED`。

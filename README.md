@@ -264,6 +264,19 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 
 `agent loop` 是连续运行的 CLI 入口：`--steps` 表示每个可恢复 Run 的步数，`--runs` 表示最多串联多少个 Run；需要长期守护时使用 `--forever`，它与 `--runs` 互斥。每个 Run 都先完成自己的账本提交，再开始下一个 Run；收到 SIGINT/SIGTERM 时只在当前 Run 提交后停止，返回 `INTERRUPTED`，随后重启同一命令即可从 current 继续。发生执行拒绝、无安全动作或显式目标达成时，循环会停止并返回原因。进程在一个 Run 内崩溃时，仍须先用 `recover --confirm-lock-owner-dead` 完成明确的恢复卡点，再继续循环。
 
+## 独立晚绑定 Oracle
+
+仓库内的性质测试只能证明候选代码在已知测试装置上没有发现反例。更强的检查应由候选仓库之外的 Tester 完成：它只依赖 Kernel 公共入口，运行在独立 Node 进程中，在执行前生成未知维度、未知不透明 Token、随机有限模型和置换关系，并检查 `step → verify → learn` 是否保持同构。
+
+当前开发环境的 Oracle 位于仓库外的 `E:\demo\yi-agent-oracle\late-bound-oracle.mjs`，可在 PowerShell 中运行：
+
+```powershell
+node E:\demo\yi-agent-oracle\late-bound-oracle.mjs `
+  --candidate-root E:\demo\yi-agent
+```
+
+输出是单行 JSON，包含 `candidateDigest`、`oracleRevision`、`generatedWorldCount`、`caseCount`、`verdict` 和 `failures`。将第一次输出的摘要作为 `--expected-candidate-digest` 再运行，可以确认验证结果绑定到本次候选源码；摘要不匹配时只返回 `INCONCLUSIVE`，不会误报通过。当前本机证据为 48/48 通过。该 Oracle 是本地外部验证工件，不随候选仓库提交；它证明的是本轮公共 Kernel 关系未被这组未知输入证伪，不等于通用智能或独立组织审计。
+
 当监督器检测到达到停滞阈值，它会把 `replanCount`、`strategy.revision`、策略模式和 `replanReason` 写进 STEP 的 `afterState`。`EXPLORATORY` 只改变安全候选的选择顺序，不能改变目标、权限、WorldPort 回执或验证规则；Replay 会重现同一次策略切换。若启用了持久化 Planner 策略，停滞还会把新的有限计划写入同一步的 `boundary.goalReplan`：已完成阶段不可改写，只能修订未完成后缀；Planner 不可用或提议不合法时，保留原计划并记录拒绝证据。
 
 Memory 现在同时保留两层证据：`actionModels` 记录 Token 的总体变化，`relationModels` 记录同一 Token 在观测相对当前目标的关系签名（每个维度为接近、相等或远离）下的变化。Kernel 优先使用关系条件模型，缺失时回退总体模型；关系签名只由数值观测和 ValueSpec 计算，不读取领域名称。每个模型使用有界变化窗口，让近期已验证证据能够修正过时动力学，同时保留总样本数审计；旧账本没有关系字段时仍按旧模型 Replay，新实验会把关系模型随 current/STEP 持久化。
