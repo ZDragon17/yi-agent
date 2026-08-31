@@ -216,6 +216,25 @@ test('application service runs full steps when no explicit goal is provided', as
   });
 });
 
+test('lab continuation does not silently accept a different WorldPort implementation', async () => {
+  await withLab(async (lab) => {
+    const worldA = createGeneratedRegistry({ stepDelta: 1, worldVersion: 'generated.v1' });
+    const worldB = createGeneratedRegistry({ stepDelta: 2, worldVersion: 'generated.v2' });
+    await initLab({ labPath: lab, labId: 'world-identity-lab', worldId: 'generated', seed: 'world-identity-seed', registry: worldA });
+    await runLab({ labPath: lab, runId: 'world-a', steps: 1, scenario: 'generated', registry: worldA });
+
+    await assert.rejects(
+      () => runLab({ labPath: lab, runId: 'world-b', steps: 1, scenario: 'generated', registry: worldB }),
+      (error) => error.code === 'CONFLICT' && error.context.field === 'worldVersion',
+    );
+    assert.equal((await inspectLab({ labPath: lab, registry: worldA })).current.worldState.value, 1);
+    await assert.rejects(
+      () => replayLab({ labPath: lab, runId: 'world-a', registry: worldB }),
+      (error) => error.code === 'CONFLICT' && error.context.field === 'worldVersion',
+    );
+  });
+});
+
 test('application persists rejection feedback and selects another action after a rejected Run', async () => {
   await withLab(async (lab) => {
     const registry = createRejectionRegistry();
@@ -924,7 +943,7 @@ function project(current) {
   };
 }
 
-function createGeneratedRegistry({ adaptive = false, evidenceCount = 0 } = {}) {
+function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelta = 1, worldVersion } = {}) {
   const worldId = 'generated';
   const scenarioIds = adaptive ? ['baseline', 'shifted'] : ['generated'];
   const capabilityId = 'generated.advance';
@@ -961,7 +980,7 @@ function createGeneratedRegistry({ adaptive = false, evidenceCount = 0 } = {}) {
       projectCapability: ({ authority }) => ({ allowed: authority.allowed, safe: authority.safe }),
       applyEffect: ({ state, scenario: activeScenario }) => ({
         accepted: true,
-        patch: { value: state.value + (adaptive && activeScenario === 'shifted' ? 10 : 1) },
+        patch: { value: state.value + (adaptive && activeScenario === 'shifted' ? 10 : stepDelta) },
       }),
     });
   }
@@ -969,7 +988,7 @@ function createGeneratedRegistry({ adaptive = false, evidenceCount = 0 } = {}) {
   return {
     worldDefinition(requestedWorldId) {
       if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
-      return { scenarioIds: [...scenarioIds] };
+      return { scenarioIds: [...scenarioIds], ...(worldVersion === undefined ? {} : { worldVersion }) };
     },
     createWorld,
     createManifestParts({ labId, seed, worldId: requestedWorldId }) {
@@ -982,6 +1001,7 @@ function createGeneratedRegistry({ adaptive = false, evidenceCount = 0 } = {}) {
       };
       return {
         scenarioIds: [...scenarioIds],
+        ...(worldVersion === undefined ? {} : { worldVersion }),
         tokenMap,
         authorityPolicy: {
           schemaVersion: 1,

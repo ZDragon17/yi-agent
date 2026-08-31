@@ -36,6 +36,7 @@ const MAX_RECENT_COMMITTED_STEPS = 32;
 const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
 const MAX_PLANNING_HORIZON = 8;
+const MAX_WORLD_VERSION_LENGTH = 4096;
 
 export const INTERNAL_RUN_APPEND = Symbol('yi-agent.internal-run-append');
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
@@ -64,6 +65,9 @@ export class LabStore {
     const labId = requireText(input.labId, 'labId');
     const worldId = requireText(input.worldId, 'worldId');
     const seed = requireText(input.seed, 'seed');
+    const worldVersion = input.worldVersion === undefined
+      ? null
+      : requireWorldVersion(input.worldVersion, 'worldVersion');
     const scenarioIds = input.scenarioIds === undefined
       ? null
       : normalizeScenarioIds(input.scenarioIds, 'scenarioIds');
@@ -89,6 +93,9 @@ export class LabStore {
         if (manifest[field] !== value) {
           conflict('Existing lab configuration differs.', { field });
         }
+      }
+      if (worldVersion !== null && manifest.worldVersion !== undefined && manifest.worldVersion !== worldVersion) {
+        conflict('Existing lab world contract differs.', { field: 'worldVersion' });
       }
       if (scenarioIds !== null
         && manifest.scenarioIds !== undefined
@@ -130,6 +137,7 @@ export class LabStore {
         labId,
         worldId,
         seed,
+        ...(worldVersion === null ? {} : { worldVersion }),
         createdAt: marker.createdAt,
         canonicalRoot: root,
         tokenMap: manifestTokenMap,
@@ -1772,6 +1780,17 @@ function isValidScenarioIds(value) {
     new Set(value).size === value.length;
 }
 
+function isValidWorldVersion(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_WORLD_VERSION_LENGTH;
+}
+
+function requireWorldVersion(value, field) {
+  if (!isValidWorldVersion(value)) {
+    throw new LabStoreError('INVALID_INPUT', `${field} must be a non-empty string.`, { field });
+  }
+  return value;
+}
+
 function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
   const fail = (message) => {
     if (corruptOnFailure) corrupt(message, { field });
@@ -1911,6 +1930,9 @@ function validateInitializationMarker(marker) {
 
 async function validateInitializedLab(root, manifest) {
   await validateManifestRoot(root, manifest);
+  if (manifest.worldVersion !== undefined && !isValidWorldVersion(manifest.worldVersion)) {
+    corrupt('World version contract is invalid.', { field: 'worldVersion' });
+  }
   if (manifest.scenarioIds !== undefined && !isValidScenarioIds(manifest.scenarioIds)) {
     corrupt('Scenario contract is invalid.', {});
   }

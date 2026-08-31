@@ -23,6 +23,7 @@ const BELIEF_LEARNING_VERSION = 5;
 const CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION = 6;
 const SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION = 7;
 const SUPERVISOR_FEEDBACK_ALIGNMENT_LEARNING_VERSION = 8;
+const MAX_WORLD_VERSION_LENGTH = 4096;
 
 export class ReplayError extends Error {
   constructor(code, message, context = {}) {
@@ -423,6 +424,10 @@ function validateManifest(manifest) {
   }
   if (!isRecord(manifest.tokenMap) || !isRecord(manifest.authorityPolicy) || typeof manifest.tokenMap.digest !== 'string') {
     corrupt('Replay manifest is incomplete.');
+  }
+  if (manifest.worldVersion !== undefined &&
+      (typeof manifest.worldVersion !== 'string' || manifest.worldVersion.length === 0 || manifest.worldVersion.length > MAX_WORLD_VERSION_LENGTH)) {
+    corrupt('Replay manifest world version contract is invalid.');
   }
   if (manifest.scenarioIds !== undefined && !isValidScenarioIds(manifest.scenarioIds)) {
     corrupt('Replay manifest scenario contract is invalid.');

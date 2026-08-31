@@ -23,8 +23,15 @@ export async function initLab(input) {
   const worldId = requireText(source.worldId, 'worldId');
   const seed = requireText(source.seed ?? 'seed-1', 'seed');
   const registry = resolveRegistry(source.registry);
-  registry.worldDefinition(worldId);
+  const definition = registry.worldDefinition(worldId);
   const manifestParts = registry.createManifestParts({ labId, seed, worldId });
+  if (definition?.worldVersion !== undefined && manifestParts.worldVersion !== definition.worldVersion) {
+    throw new LabStoreError('CONFLICT', 'World registry did not persist its declared world contract version.', {
+      field: 'worldVersion',
+      expected: definition.worldVersion,
+      actual: manifestParts.worldVersion ?? null,
+    });
+  }
   const store = await LabStore.init({
     labPath: requireText(source.labPath, 'labPath'),
     labId,
@@ -36,6 +43,8 @@ export async function initLab(input) {
   if (
     canonicalJson(store.manifest.tokenMap) !== canonicalJson(manifestParts.tokenMap) ||
     canonicalJson(store.manifest.authorityPolicy) !== canonicalJson(manifestParts.authorityPolicy) ||
+    (store.manifest.worldVersion !== undefined &&
+      canonicalJson(store.manifest.worldVersion) !== canonicalJson(manifestParts.worldVersion)) ||
     (store.manifest.scenarioIds !== undefined &&
       canonicalJson(store.manifest.scenarioIds) !== canonicalJson(manifestParts.scenarioIds))
   ) {
@@ -940,7 +949,18 @@ function resolveRegistry(value) {
   if (typeof registry.assertManifest === 'function') return registry;
   return {
     ...registry,
-    assertManifest() {},
+    assertManifest(manifest) {
+      const definition = registry.worldDefinition(manifest?.worldId);
+      if (manifest?.worldVersion === undefined) return;
+      if (typeof definition?.worldVersion !== 'string' || definition.worldVersion.length === 0 ||
+          manifest.worldVersion !== definition.worldVersion) {
+        throw new LabStoreError('CONFLICT', 'The supplied WorldPort does not match the lab world contract.', {
+          field: 'worldVersion',
+          expected: definition?.worldVersion ?? null,
+          actual: manifest.worldVersion,
+        });
+      }
+    },
   };
 }
 

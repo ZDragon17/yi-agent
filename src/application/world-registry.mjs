@@ -8,30 +8,35 @@ import { createVirtualDesktopWorld } from '../worlds/virtual-desktop.mjs';
 
 const WORLD_DEFINITIONS = {
   temperature: {
+    worldVersion: 'temperature.v1',
     factory: createTemperatureWorld,
     capabilities: ['temperature.increase', 'temperature.decrease'],
     scenarioIds: ['steady', 'regime-shift', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 1, weights: [1], target: [22] },
   },
   'virtual-desktop': {
+    worldVersion: 'virtual-desktop.v1',
     factory: createVirtualDesktopWorld,
     capabilities: ['desktop.move-report', 'desktop.move-protected'],
     scenarioIds: ['steady', 'new-files', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 5, weights: [1, 1, 1, 1, 1], target: [0, 0, 9, 9, 2] },
   },
   inventory: {
+    worldVersion: 'inventory.v1',
     factory: createInventoryWorld,
     capabilities: ['inventory.restock-a', 'inventory.restock-b', 'inventory.fulfill'],
     scenarioIds: ['steady', 'supply-shock', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 3, weights: [1, 1, 1], target: [8, 8, 0] },
   },
   grid: {
+    worldVersion: 'grid.v1',
     factory: createGridWorld,
     capabilities: ['grid.move-south', 'grid.move-east', 'grid.move-north', 'grid.move-west', 'grid.teleport'],
     scenarioIds: ['steady', 'blocked-route', 'external-during-step', 'execution-rejected', 'all-unsafe'],
     valueSpec: { observationDimensions: 4, weights: [1, 1, 1, 1], target: [2, 2, 2, 2] },
   },
   queue: {
+    worldVersion: 'queue.v1',
     factory: createQueueWorld,
     capabilities: ['queue.serve', 'queue.admit', 'queue.clear'],
     scenarioIds: ['steady', 'burst', 'external-during-step', 'execution-rejected', 'all-unsafe'],
@@ -56,6 +61,7 @@ export function createWorldRegistry(definitions = WORLD_DEFINITIONS) {
           context: { field: 'adapter' },
         });
       }
+      assertWorldVersion(manifest, definition(manifest.worldId));
     },
     worldDefinition: definition,
     createWorld(manifest, scenario = 'steady') {
@@ -87,6 +93,7 @@ export function createWorldRegistry(definitions = WORLD_DEFINITIONS) {
         ]),
       );
       return {
+        worldVersion: requireWorldVersion(worldDefinition.worldVersion, worldId),
         scenarioIds: [...worldDefinition.scenarioIds],
         tokenMap,
         authorityPolicy: {
@@ -119,6 +126,24 @@ export function createWorldRegistry(definitions = WORLD_DEFINITIONS) {
       return [];
     },
   });
+}
+
+function requireWorldVersion(value, worldId) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 4096) {
+    throw new Error(`World ${worldId} must declare a non-empty worldVersion.`);
+  }
+  return value;
+}
+
+function assertWorldVersion(manifest, worldDefinition) {
+  if (manifest?.worldVersion === undefined) return;
+  const expected = requireWorldVersion(worldDefinition.worldVersion, manifest.worldId);
+  if (manifest.worldVersion !== expected) {
+    throw Object.assign(new Error('The supplied WorldPort does not match the lab world contract.'), {
+      code: 'CONFLICT',
+      context: { field: 'worldVersion', expected, actual: manifest.worldVersion },
+    });
+  }
 }
 
 export const builtInWorldRegistry = createWorldRegistry();
