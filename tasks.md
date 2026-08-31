@@ -153,7 +153,7 @@
 ## F-5 Windows CLI API 接缝
 
 - 实现：通过 npm `bin` 暴露 `yi-agent` 命令；提供 `api test` 与 `ask`，使用环境变量配置 OpenAI-compatible API，不把密钥持久化到项目目录。
-- 验证：本地 HTTP 模拟服务覆盖 Bearer 认证、`/models`、`/chat/completions`、错误映射和缺失配置；`npm install --global E:\demo\yi-agent` 通过 npm dry-run 检查安装入口。
+- 验证：本地 HTTP 模拟服务覆盖 Bearer 认证、`/models`、`/chat/completions`、错误映射和缺失配置；在隔离 global prefix 中实际安装本地包，并从生成的 Windows PowerShell 入口完成 CLI 闭环。
 - 边界：当前不自动保存密钥、不调用真实供应商、不包含桌面 UI；真实供应商连通性由用户配置后在本机执行 `yi-agent api test`。
 
 ## F-6 模型提议与可重放 Agent CLI
