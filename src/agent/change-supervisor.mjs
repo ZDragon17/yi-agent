@@ -107,6 +107,7 @@ export function advanceChangeSupervisor(state, {
   beforeObservation,
   postObservation,
   verification,
+  hasFreshFeedbackSettlement = false,
   trusted = false,
 } = {}) {
   const current = trusted ? state : normalizeState(state);
@@ -122,6 +123,9 @@ export function advanceChangeSupervisor(state, {
   const evidence = trusted
     ? verification
     : normalizeVerification(verification, current.objective.target.length);
+  const feedbackSettled = trusted
+    ? hasFreshFeedbackSettlement
+    : requireBoolean(hasFreshFeedbackSettlement, 'hasFreshFeedbackSettlement');
   const activeStage = current.plan === undefined ? null : activePlanStage(current.plan);
   const objective = activeStage?.objective ?? current.objective;
   const beforeDistance = trusted
@@ -131,7 +135,7 @@ export function advanceChangeSupervisor(state, {
     ? weightedDistanceTrusted(after.vector, objective)
     : weightedDistance(after.vector, objective);
   const currentBest = current.bestDistance ?? beforeDistance;
-  const confirmed = evidence.attribution === 'ACTION' && evidence.learnable === true;
+  const confirmed = !feedbackSettled && evidence.attribution === 'ACTION' && evidence.learnable === true;
   const improved = confirmed && afterDistance < beforeDistance;
   const nextCycle = current.cycle + 1;
   let nextStagnation = improved ? 0 : current.stagnation + 1;
@@ -180,7 +184,7 @@ export function advanceChangeSupervisor(state, {
       beforeDistance,
       afterDistance,
       progress: beforeDistance - afterDistance,
-      evidence: evidenceKind(evidence),
+      evidence: feedbackSettled ? 'AMBIGUOUS' : evidenceKind(evidence),
       confirmed,
       improved,
       decision: STATUS_DECISIONS[status],

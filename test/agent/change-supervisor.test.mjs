@@ -54,6 +54,21 @@ test('ambiguous change cannot reset stagnation or claim confirmed improvement', 
   assert.equal(next.bestDistance, null);
 });
 
+test('fresh feedback settlement cannot confirm progress for the current action', () => {
+  const supervisor = createChangeSupervisor({ goal: '达到目标', valueSpec });
+  const next = advanceChangeSupervisor(supervisor, {
+    beforeObservation: observation('state:0', [8, 9]),
+    postObservation: observation('state:1', [9, 9]),
+    verification: verification('ACTION', true),
+    hasFreshFeedbackSettlement: true,
+  });
+  assert.equal(next.lastChange.evidence, 'AMBIGUOUS');
+  assert.equal(next.lastChange.confirmed, false);
+  assert.equal(next.lastChange.improved, false);
+  assert.equal(next.stagnation, 1);
+  assert.equal(next.bestDistance, null);
+});
+
 test('a confirmed action that reverses a prior ambiguous change counts as stagnation', () => {
   const supervisor = createChangeSupervisor({ goal: '达到目标', valueSpec, stagnationLimit: 3 });
   const ambiguous = advanceChangeSupervisor(supervisor, {

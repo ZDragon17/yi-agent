@@ -22,6 +22,7 @@ const PENDING_CREDIT_EXPIRY_LEARNING_VERSION = 4;
 const BELIEF_LEARNING_VERSION = 5;
 const CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION = 6;
 const SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION = 7;
+const SUPERVISOR_FEEDBACK_ALIGNMENT_LEARNING_VERSION = 8;
 
 export class ReplayError extends Error {
   constructor(code, message, context = {}) {
@@ -220,9 +221,9 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
 
   let verification;
   let update;
+  const learningVersion = payload.boundary.kernelLearningVersion ?? 1;
   try {
     verification = kernel.verify({ intent, receipt, postObservation });
-    const learningVersion = payload.boundary.kernelLearningVersion ?? 1;
     const learned = kernel.learn({
       memory: state.memory,
       intent,
@@ -287,6 +288,8 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
         beforeObservation,
         postObservation,
         verification,
+        hasFreshFeedbackSettlement: learningVersion >= SUPERVISOR_FEEDBACK_ALIGNMENT_LEARNING_VERSION &&
+          update.settled?.some((item) => item.attribution === 'ACTION' || item.attribution === 'AMBIGUOUS') === true,
       });
       if (nextSupervisor.status === 'REPLAN_REQUIRED') {
         if (payload.boundary.goalReplan !== undefined) {

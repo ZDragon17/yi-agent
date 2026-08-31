@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { canonicalDigest, canonicalJson, withSelfDigest } from '../../src/runtime/schema.mjs';
+import { advanceChangeSupervisor } from '../../src/agent/change-supervisor.mjs';
 import { ED25519_PUBLIC_KEY, verifyAttestation } from '../fixtures/ed25519-proof.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
@@ -223,6 +224,50 @@ test('CLI carries delayed and repeated feedback across WorldPort processes and r
     assert.equal(learned.sampleCount, 3);
     assert.equal(learned.meanDelta[0], 1);
     assert.equal(persisted.memory.settledFeedback.length, 3);
+  });
+});
+
+test('CLI does not credit delayed feedback as progress of the current action', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'delayed-progress-lab');
+    const adapter = await writeDelayedFeedbackAdapterConfig(root, false, false, true);
+    const init = await invoke('init', '--lab', lab, '--world', 'delayed-feedback', '--seed', 'delayed-progress-seed', '--lab-id', 'delayed-progress-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const run = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--scenario', 'delayed', '--goal', 'reach target', '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0);
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    const steps = (await readFile(path.join(lab, 'runs', 'run-1', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map(JSON.parse).filter((event) => event.kind === 'STEP').map(decodeStoredEvent);
+    assert.equal(steps.length, 2);
+    assert.equal(steps[1].payload.postObservation.feedback.length, 1);
+    assert.equal(steps[1].payload.receipt.attributionWindowComplete, true);
+    assert.equal(steps[1].payload.verification.attribution, 'ACTION');
+    assert.equal(steps[1].payload.verification.learnable, true);
+    assert.equal(steps[1].payload.afterState.changeSupervisor.lastChange.confirmed, false);
+    assert.equal(steps[1].payload.afterState.changeSupervisor.lastChange.improved, false);
+    assert.equal(Object.values(steps[1].payload.update.nextMemory.actionModels)[0].sampleCount, 1);
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('CLI replays a pre-v8 delayed-feedback supervisor ledger with its historical semantics', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'legacy-supervisor-lab');
+    const adapter = await writeDelayedFeedbackAdapterConfig(root, false, false, true);
+    const init = await invoke('init', '--lab', lab, '--world', 'delayed-feedback', '--seed', 'legacy-supervisor-seed', '--lab-id', 'legacy-supervisor-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const run = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--scenario', 'delayed', '--goal', 'reach target', '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0);
+    await rewriteDelayedRunAsV7(lab);
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
   });
 });
 
@@ -815,11 +860,11 @@ async function writeAdapterConfig(root, args = []) {
   return config;
 }
 
-async function writeDelayedFeedbackAdapterConfig(root, repeatFeedback = false, dropFeedback = false) {
+async function writeDelayedFeedbackAdapterConfig(root, repeatFeedback = false, dropFeedback = false, completeAfterPending = false) {
   const config = path.join(root, 'delayed-feedback-adapter.json');
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
-    args: [DELAYED_FEEDBACK_ADAPTER_FIXTURE, ...(repeatFeedback ? ['--repeat-feedback'] : []), ...(dropFeedback ? ['--drop-feedback'] : [])],
+    args: [DELAYED_FEEDBACK_ADAPTER_FIXTURE, ...(repeatFeedback ? ['--repeat-feedback'] : []), ...(dropFeedback ? ['--drop-feedback'] : []), ...(completeAfterPending ? ['--complete-after-pending'] : [])],
     adapterId: 'delayed-feedback-adapter-v1',
     worldId: 'delayed-feedback',
     timeoutMs: 2000,
@@ -918,6 +963,55 @@ async function rewriteExternalInputEvidence(lab) {
   delete current.selfDigest;
   current.eventsDigest = terminal.digest;
   await writeFile(currentPath, `${canonicalJson(withSelfDigest(current))}\n`);
+}
+
+async function rewriteDelayedRunAsV7(lab) {
+  const runPath = path.join(lab, 'runs', 'run-1');
+  const eventsPath = path.join(runPath, 'events.jsonl');
+  const events = (await readFile(eventsPath, 'utf8')).trim().split(/\r?\n/u).map(JSON.parse);
+  const steps = events
+    .map((event, index) => ({ event, index }))
+    .filter(({ event }) => event.kind === 'STEP')
+    .map(({ event, index }) => ({ event: decodeStoredEvent(event), index }));
+  assert.equal(steps.length, 2);
+  const previous = steps[0].event.payload.afterState.changeSupervisor;
+  const current = steps[1].event.payload;
+  const legacySupervisor = advanceChangeSupervisor(previous, {
+    beforeObservation: current.beforeObservation,
+    postObservation: current.postObservation,
+    verification: current.verification,
+  });
+  current.boundary = { ...current.boundary, kernelLearningVersion: 7 };
+  current.afterState = { ...current.afterState, changeSupervisor: legacySupervisor };
+  current.afterDigest = canonicalDigest(current.afterState);
+  steps[1].event.digest = digestEvent(steps[1].event);
+  events[steps[1].index] = encodeStoredEvent(steps[1].event);
+
+  const terminalIndex = events.findIndex((event) => event.kind === 'RUN_COMPLETED' || event.kind === 'RUN_HALTED');
+  const terminal = events[terminalIndex];
+  terminal.payload = {
+    ...terminal.payload,
+    finalState: current.afterState,
+    finalStateDigest: canonicalDigest(current.afterState),
+  };
+  terminal.prevDigest = steps[1].event.digest;
+  terminal.digest = digestEvent(terminal);
+  events[terminalIndex] = terminal;
+  await writeFile(eventsPath, `${events.map(canonicalJson).join('\n')}\n`);
+
+  const endPath = path.join(runPath, 'end.json');
+  const end = JSON.parse(await readFile(endPath, 'utf8'));
+  delete end.selfDigest;
+  end.finalEventDigest = terminal.digest;
+  end.finalStateDigest = canonicalDigest(current.afterState);
+  await writeFile(endPath, `${canonicalJson(withSelfDigest(end))}\n`);
+
+  const currentPath = path.join(lab, 'state', 'current.json');
+  const currentState = JSON.parse(await readFile(currentPath, 'utf8'));
+  delete currentState.selfDigest;
+  currentState.changeSupervisor = legacySupervisor;
+  currentState.eventsDigest = terminal.digest;
+  await writeFile(currentPath, `${canonicalJson(withSelfDigest(currentState))}\n`);
 }
 
 function decodeStoredEvent(event) {

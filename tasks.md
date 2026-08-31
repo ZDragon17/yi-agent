@@ -330,3 +330,10 @@
 - 实现：外部适配器宿主只要求版本/区间标识为非空字符串，并继续校验 revision 单调性、nonce 窗口、观测前后绑定和反馈边界；不再检查 stateVersion 的字符串模板。内置世界保留自身内部格式，旧外部 adapter 的正常格式保持兼容。
 - 验证：独立外部 adapter 使用 `opaque-v7/<revision>` 与 `boundary-v7/<revision>` 完成 init、跨进程 Run 和 Replay；非法 revision 仍在写入 STEP 前被拒绝。
 - 边界：不透明标识不能证明适配器没有伪造现实版本；真实外部系统仍需提供可审计的版本/对账语义，宿主只验证它能观察到的连续性。
+
+## F-32 延迟反馈与变化监督器的证据对齐
+
+- 原理：一个合并 observation 同时携带旧动作的后验 feedback 和当前动作的回执时，Kernel 可以把旧 nonce 独立结算，但监督器若只读取当前 `Verification`，会把旧动作造成的距离下降冒领为当前动作进步。
+- 实现：`ChangeSupervisor.advance` 接收本步是否存在新的 feedback settlement；该标记为真时，即使当前 receipt 自报 clean，也不确认当前动作的进步、不重置停滞或更新最佳距离。重复的已结算收据和纯 `FEEDBACK_TIMEOUT` 不会无端阻断当前动作；Application 与 Replay 使用同一标记。
+- 验证：外部 delayed-feedback adapter 让第一动作保持 pending，第二动作声明窗口已关闭但返回第一动作的反馈；第二 STEP 的反馈仍按 nonce 学习，监督器的 `lastChange` 为 `AMBIGUOUS/confirmed:false/improved:false`，跨进程 Replay 一致；Replay 对降级为 v7 的旧监督语义账本仍保持一致。
+- 边界：这只能对齐本地可见的反馈结算与监督状态；如果 adapter 隐瞒反馈、伪造边界或世界存在不可观测变化，底座仍不能推出严格因果。

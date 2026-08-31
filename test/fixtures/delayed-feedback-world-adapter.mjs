@@ -7,6 +7,7 @@ const CAPABILITY_ID = 'delayed-feedback.advance';
 const VALUE_SPEC = { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1] };
 const REPEAT_FEEDBACK = process.argv.includes('--repeat-feedback');
 const DROP_FEEDBACK = process.argv.includes('--drop-feedback');
+const COMPLETE_AFTER_PENDING = process.argv.includes('--complete-after-pending');
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (line) => {
@@ -85,7 +86,7 @@ function transition(prior, request) {
       status: 'ACCEPTED',
       rejectionReason: null,
       effectDigest: canonicalDigest(next),
-      attributionWindowComplete: false,
+      attributionWindowComplete: COMPLETE_AFTER_PENDING && delayedNonce !== null,
       confounderCount: 0,
     },
     postObservation: observation(next, feedbackItems),
