@@ -301,4 +301,11 @@
 - 原理：持续闭环不能把“等待更多证据”变成无限增长的隐含状态；当一个变化在有限观察机会内没有返回可归因反馈，底座必须记录“证据缺失”而不是制造学习结论。
 - 实现：新 Lab 的 Kernel memory 携带 `pendingCreditPolicy.maxAge=8`。每个无反馈的 STEP 推进 pending credit 的 age；到达窗口边界时返回 `UNRESOLVED` 与 `FEEDBACK_TIMEOUT`，移出 pending 且不更新动作/关系模型。窗口之后抵达的反馈没有 pending 或 settled receipt，继续按未知 nonce fail-closed。旧 Lab 不注入该策略，以保留既有账本的精确连续性；Replay 以 `kernelLearningVersion=4` 区分两种投影。
 - 验证：Kernel 覆盖窗口内保留、边界过期、无学习和晚到反馈拒绝；CLI 通过反馈永久缺失的独立 WorldPort 进程连续启动十个 Run，检查 pending 有界、重启恢复、每个 Run Replay 为 CONSISTENT。
-- 边界：观察机会不是物理时间，也不是因果效应已经不存在的证明；它只是底座对等待成本的明确策略。下一步需要在隐藏状态下引入可检验的信念/不确定性表示，并继续验证乱序反馈和多动作并发。
+- 边界：观察机会不是物理时间，也不是因果效应已经不存在的证明；它只是底座对等待成本的明确策略。F-28 已引入可检验的后验分支信念，但乱序反馈、多动作并发和真实隐藏状态辨识仍待验证。
+
+## F-28 部分可观测变化的有界预测信念
+
+- 原理：同一数值观测可能对应多个未显露的真实状态；底座不能把后验均值冒充唯一变化，也不能读取领域内部字段来强行辨识。共同能力应保存可观察后验的有限分支，并将分支离散度反馈到不确定性。
+- 实现：新 Lab 的 Kernel memory 携带可选 `beliefModels`，按 `Token×RelationSignature` 保存最近最多 8 个已验证后验变化样本；样本只由 `ACTION && learnable` 的当前动作或已闭合的 clean feedback 写入。Kernel 用样本相对当前预测均值的平均绝对离散度提升不确定性，安全筛选、WorldPort 回执和模型权限不变；旧 Lab 不注入该字段，Replay 以 `kernelLearningVersion=5` 保持历史 Memory 形状。
+- 验证：同一 manifest、token、数值观测和 RNG 下，两个隐藏动力学分别产生 `+1/-1`，WorldPort 观测输入相同但后验不同；Kernel 必须保留两条样本、提升后续不确定性。样本上限、跨 Run、重启和 Replay 保持一致，既有五个内置 WorldPort、外部 adapter 和晚绑定 Oracle 继续通过。
+- 边界：这是预测结果的有界信念，不是隐藏状态识别、概率校准、全局 POMDP 求解、严格因果模型或长期自主性；同一观测且没有额外证据时只能保持不确定，后续需用反馈乱序、多动作并发和真实部分可观测 WorldPort 继续证伪。

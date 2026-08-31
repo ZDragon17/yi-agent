@@ -42,7 +42,8 @@ HTML 原型证明了“预期—行动—验证—修正”能够运行，但状
 - 输出：每步完整记录界、感、存、预、择、动、验、化，以及最终状态和退出原因。
 - 可选推演：`planning.horizon` 为 1～8 的有界模型推演步数，默认 1；仅使用 Kernel 已持久化的经验模型，不把推演状态送入 WorldPort，且必须随 STEP boundary 固化以供 Replay 重建。候选与未来模拟能力受固定窗口限制，避免能力面扩大导致平方级展开。
 - 延迟反馈：WorldPort 可在后续 observation 的 `feedback[]` 中，按 `executionNonce` 返回此前动作的结果快照；Kernel 对已接受但 `attributionWindowComplete=false` 且无已知混杂的动作暂存有界 pending credit，基线从动作前观测推导；同一步先结算旧 feedback 时，当前新动作的 pending 基线只叠加已明确归属于旧 nonce 的变化，不把当前动作的部分即时变化算进旧 credit。收到匹配反馈后才学习，混杂反馈只结算为 `AMBIGUOUS` 而不学习；若当前动作与旧反馈同一步产生证据，当前动作保守跳过学习。新 Lab 对未匹配反馈按有界观察机会推进 pending credit age，窗口耗尽时标记 `UNRESOLVED/FEEDBACK_TIMEOUT`、移出 pending 且不学习；晚到反馈不再有可归因 credit。反馈必须经过 stateVersion、intervalId、向量维度、nonce 唯一性和数量上限校验，并随 STEP/Replay 重建。
-- 版本边界：带 `kernelLearningVersion: 3` 的 STEP 启用有界已结算反馈收据，带 `kernelLearningVersion: 4` 的新 STEP 还启用有界 pending credit 窗口；缺少标记或标记为旧版本的历史 STEP 在 Replay 时保持旧 Memory 形状，不凭空补写收据字段或窗口策略。
+- 版本边界：带 `kernelLearningVersion: 3` 的 STEP 启用有界已结算反馈收据，带 `kernelLearningVersion: 4` 的 STEP 还启用有界 pending credit 窗口，带 `kernelLearningVersion: 5` 的新 STEP 还启用有界预测信念样本；缺少标记或标记为旧版本的历史 STEP 在 Replay 时保持旧 Memory 形状，不凭空补写新字段。
+- 预测信念：新 Lab 可在 `Memory.beliefModels` 中按 `Token×RelationSignature` 保存最近最多 8 个已验证后验变化样本。样本只表达可观察结果的多分支不确定性；Kernel 将其离散度并入不确定性惩罚，但不把样本当作隐藏状态事实、权限或执行依据。无可观察区分时必须保留多分支，不能声称识别 latent state；旧 Lab 不注入该字段，Replay 不补写。
 - 边界：没有安全行动或模拟 transition 拒绝时记录 HALTED；世界代码异常为内部错误，持久层异常为 I/O 错误，均立即停止且不得记为一次已执行行动。
 - 验收：每个已执行动作都能找到先验预测、执行回执、后验观测、误差归因和学习结果；越过目标的动作不能仅因带符号方向而被判定为更优，旧账本仍可按其固化的兼容语义 Replay。
 

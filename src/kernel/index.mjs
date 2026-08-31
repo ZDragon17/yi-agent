@@ -14,6 +14,9 @@ const MAX_FEEDBACK_ITEMS = 64;
 const MAX_EXECUTION_NONCE_LENGTH = 256;
 const MAX_SETTLED_FEEDBACK = 64;
 const MAX_PENDING_CREDIT_AGE = 8;
+const MAX_BELIEF_MODELS = 8192;
+const MAX_BELIEF_SAMPLES = 8;
+const OVERALL_BELIEF_CONTEXT = 'overall';
 
 const STEP_INPUT_KEYS = [
   'observation',
@@ -56,7 +59,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -132,6 +135,7 @@ const PENDING_CREDIT_KEYS = [
   'age',
 ];
 const PENDING_CREDIT_POLICY_KEYS = ['schemaVersion', 'maxAge'];
+const BELIEF_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'samples'];
 
 export function step(input) {
   return stepWithPreference(input, null);
@@ -826,6 +830,9 @@ function normalizeMemory(value, field, dimensions) {
   const normalizedPendingCreditPolicy = source.pendingCreditPolicy === undefined
     ? undefined
     : normalizePendingCreditPolicy(source.pendingCreditPolicy, `${field}.pendingCreditPolicy`);
+  const normalizedBeliefs = source.beliefModels === undefined
+    ? undefined
+    : normalizeBeliefModels(source.beliefModels, `${field}.beliefModels`, dimensions);
   return {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
@@ -834,6 +841,46 @@ function normalizeMemory(value, field, dimensions) {
     ...(normalizedPendingCredits === undefined ? {} : { pendingCredits: normalizedPendingCredits }),
     ...(normalizedSettledFeedback === undefined ? {} : { settledFeedback: normalizedSettledFeedback }),
     ...(normalizedPendingCreditPolicy === undefined ? {} : { pendingCreditPolicy: normalizedPendingCreditPolicy }),
+    ...(normalizedBeliefs === undefined ? {} : { beliefModels: normalizedBeliefs }),
+  };
+}
+
+function normalizeBeliefModels(value, field, dimensions) {
+  const source = assertDynamicRecord(value, field, MAX_ACTION_MODELS);
+  const normalized = Object.create(null);
+  let modelCount = 0;
+  for (const [token, contexts] of Object.entries(source)) {
+    assertOpaqueToken(token, `${field} token`);
+    const contextSource = assertDynamicRecord(contexts, `${field}.${token}`, MAX_RELATION_MODELS);
+    const normalizedContexts = Object.create(null);
+    for (const [contextKey, model] of Object.entries(contextSource)) {
+      modelCount += 1;
+      if (modelCount > MAX_BELIEF_MODELS) {
+        contractViolation('kernel belief memory exceeds its size limit', { field });
+      }
+      assertBeliefContextKey(contextKey, `${field}.${token}.${contextKey}`, dimensions);
+      normalizedContexts[contextKey] = normalizeBeliefModel(
+        model,
+        `${field}.${token}.${contextKey}`,
+        dimensions,
+      );
+    }
+    normalized[token] = normalizedContexts;
+  }
+  return normalized;
+}
+
+function normalizeBeliefModel(value, field, dimensions) {
+  const source = assertPlainRecord(value, field, BELIEF_MODEL_KEYS);
+  const samples = assertArray(source.samples, `${field}.samples`);
+  if (samples.length > MAX_BELIEF_SAMPLES) {
+    contractViolation('kernel belief samples exceed their size limit', { field });
+  }
+  return {
+    schemaVersion: requireSchemaVersion(source, field),
+    sampleCount: assertNonNegativeInteger(source.sampleCount, `${field}.sampleCount`),
+    samples: samples.map((sample, index) =>
+      cloneVector(assertFiniteVector(sample, `${field}.samples[${index}]`, dimensions))),
   };
 }
 
@@ -990,6 +1037,23 @@ function updateActionModel(current, actualDelta, errorMagnitude, dimensions, fie
   };
 }
 
+function updateBeliefModel(current, actualDelta, dimensions, field) {
+  const sampleCount = current?.sampleCount ?? 0;
+  if (sampleCount === Number.MAX_SAFE_INTEGER) {
+    contractViolation('kernel belief sample count cannot be incremented safely', {
+      field: `${field}.sampleCount`,
+    });
+  }
+  const samples = (current?.samples ?? []).map(cloneVector);
+  if (samples.length >= MAX_BELIEF_SAMPLES) samples.shift();
+  samples.push(cloneVector(assertFiniteVector(actualDelta, `${field}.samples`, dimensions)));
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    sampleCount: sampleCount + 1,
+    samples,
+  };
+}
+
 function updateRejectionModel(current, rejected, relationKey, field) {
   const sampleCount = current?.sampleCount ?? 0;
   if (rejected && sampleCount === Number.MAX_SAFE_INTEGER) {
@@ -1041,6 +1105,13 @@ function recordActionEvidence(memory, {
     dimensions,
     `${field}.actionModels.${token}`,
   );
+  recordBeliefEvidence(memory, {
+    token,
+    relationKey,
+    actualDelta,
+    dimensions,
+    field,
+  });
   if (relationKey === undefined) return;
 
   const relationModels = memory.relationModels ?? {};
@@ -1062,6 +1133,36 @@ function recordActionEvidence(memory, {
     ...relationModels,
     [token]: tokenRelations,
   };
+}
+
+function recordBeliefEvidence(memory, {
+  token,
+  relationKey,
+  actualDelta,
+  dimensions,
+  field,
+}) {
+  if (memory.beliefModels === undefined) return;
+  const contextKey = relationKey ?? OVERALL_BELIEF_CONTEXT;
+  const beliefs = memory.beliefModels;
+  const tokenBeliefs = { ...(beliefs[token] ?? {}) };
+  const existing = tokenBeliefs[contextKey];
+  if (existing === undefined && countBeliefModels(beliefs) >= MAX_BELIEF_MODELS) {
+    contractViolation('kernel learning would exceed the belief-model limit', {
+      field: `${field}.beliefModels.${token}.${contextKey}`,
+    });
+  }
+  tokenBeliefs[contextKey] = updateBeliefModel(
+    existing,
+    actualDelta,
+    dimensions,
+    `${field}.beliefModels.${token}.${contextKey}`,
+  );
+  memory.beliefModels = { ...beliefs, [token]: tokenBeliefs };
+}
+
+function countBeliefModels(value) {
+  return Object.values(value).reduce((sum, contexts) => sum + Object.keys(contexts).length, 0);
 }
 
 function normalizeCapabilities(value, field) {
@@ -1323,6 +1424,14 @@ function buildPredictions(input) {
       input.memory.relationModels?.[capability.token]?.[relationKey] ??
       input.memory.actionModels[capability.token] ??
       defaultActionModel(input.observation.vector.length);
+    const beliefModel = input.memory.beliefModels?.[capability.token]?.[
+      relationKey ?? OVERALL_BELIEF_CONTEXT
+    ];
+    const uncertainty = beliefUncertainty(
+      model,
+      beliefModel,
+      input.observation.vector.length,
+    );
     const expectedDelta = cloneVector(model.meanDelta);
     const predictedVector = addVectors(
       input.observation.vector,
@@ -1339,7 +1448,7 @@ function buildPredictions(input) {
     const score = assertComputedFiniteNumber(
       expectedValue -
       capability.cost -
-      uncertaintyPenalty(model.uncertainty, input.valueSpec.weights),
+      uncertaintyPenalty(uncertainty, input.valueSpec.weights),
       'stepOutput.choice.score',
     );
 
@@ -1352,7 +1461,7 @@ function buildPredictions(input) {
         ...(relationKey === undefined ? {} : { relationKey }),
         score,
         sampleCount: model.sampleCount,
-        uncertainty: model.uncertainty,
+        uncertainty,
       },
       choice: {
         schemaVersion: SCHEMA_VERSION,
@@ -1366,6 +1475,26 @@ function buildPredictions(input) {
       rejectedRecently,
     };
   });
+}
+
+function beliefUncertainty(model, beliefModel, dimensions) {
+  if (beliefModel === undefined || beliefModel.samples.length === 0) {
+    return model.uncertainty;
+  }
+  let spread = 0;
+  for (const sample of beliefModel.samples) {
+    for (let index = 0; index < dimensions; index += 1) {
+      spread = assertComputedFiniteNumber(
+        spread + Math.abs(sample[index] - model.meanDelta[index]),
+        'stepOutput.expectation.beliefSpread',
+      );
+    }
+  }
+  spread = assertComputedFiniteNumber(
+    spread / (beliefModel.samples.length * dimensions),
+    'stepOutput.expectation.beliefUncertainty',
+  );
+  return Math.max(model.uncertainty, spread);
 }
 
 function choosePredictionIndex(predictions, unit) {
@@ -1653,6 +1782,18 @@ function cloneMemory(value) {
   }
   if (value.settledFeedback !== undefined) {
     cloned.settledFeedback = value.settledFeedback.map(cloneFeedback);
+  }
+  if (value.beliefModels !== undefined) {
+    cloned.beliefModels = Object.fromEntries(
+      Object.entries(value.beliefModels).map(([token, contexts]) => [
+        token,
+        Object.fromEntries(Object.entries(contexts).map(([contextKey, model]) => [contextKey, {
+          schemaVersion: SCHEMA_VERSION,
+          sampleCount: model.sampleCount,
+          samples: model.samples.map(cloneVector),
+        }])),
+      ]),
+    );
   }
   return cloned;
 }
@@ -2015,6 +2156,11 @@ function assertRelationKey(value, field, dimensions) {
     contractViolation('kernel relation key is invalid', { field });
   }
   return value;
+}
+
+function assertBeliefContextKey(value, field, dimensions) {
+  if (value === OVERALL_BELIEF_CONTEXT) return value;
+  return assertRelationKey(value, field, dimensions);
 }
 
 function assertOneOf(value, options, field) {

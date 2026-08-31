@@ -19,6 +19,7 @@ const MAX_SCENARIO_ID_LENGTH = 4096;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const SETTLED_FEEDBACK_LEARNING_VERSION = 3;
 const PENDING_CREDIT_EXPIRY_LEARNING_VERSION = 4;
+const BELIEF_LEARNING_VERSION = 5;
 
 export class ReplayError extends Error {
   constructor(code, message, context = {}) {
@@ -308,12 +309,21 @@ function withoutSettledFeedback(update) {
 }
 
 function projectLearningForVersion(update, learningVersion) {
-  const withoutReceipts = learningVersion < SETTLED_FEEDBACK_LEARNING_VERSION
-    ? withoutSettledFeedback(update)
+  const withoutBeliefs = learningVersion < BELIEF_LEARNING_VERSION
+    ? withoutBeliefModels(update)
     : update;
+  const withoutReceipts = learningVersion < SETTLED_FEEDBACK_LEARNING_VERSION
+    ? withoutSettledFeedback(withoutBeliefs)
+    : withoutBeliefs;
   return learningVersion < PENDING_CREDIT_EXPIRY_LEARNING_VERSION
     ? withoutPendingCreditExpiry(withoutReceipts)
     : withoutReceipts;
+}
+
+function withoutBeliefModels(update) {
+  if (update.nextMemory?.beliefModels === undefined) return update;
+  const { beliefModels: _ignored, ...nextMemory } = update.nextMemory;
+  return { ...update, nextMemory };
 }
 
 function withoutPendingCreditExpiry(update) {

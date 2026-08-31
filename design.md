@@ -8,7 +8,7 @@
 
 - 电平高低、二进制、数值向量、不透明 Token 和领域对象属于不同表达层；不能把某一表达层误认为智能本身；
 - 所有领域必须通过同一套观察—行动—验证—学习闭环接入；金融、医疗、组织、设备和软件的差异只能由 WorldPort 的状态、观测、能力和约束表达；
-- Kernel、Memory、Replay 和智能判据必须保持领域中立；新增领域特判、孤立维度或单独一套底层逻辑，均视为架构偏移；Memory 可以按观测相对 ValueSpec 的关系签名条件化，但不能按领域标签条件化；变化模型必须允许有界近期证据修正过时历史，不能把世界假定为永久静态；
+- Kernel、Memory、Replay 和智能判据必须保持领域中立；新增领域特判、孤立维度或单独一套底层逻辑，均视为架构偏移；Memory 可以按观测相对 ValueSpec 的关系签名条件化，但不能按领域标签条件化；变化模型必须允许有界近期证据修正过时历史，不能把世界假定为永久静态；对部分可观测变化，只能保存有界的后验分支信念，不能把隐藏状态猜测提升为事实；
 - 每一项扩展必须回答：它对应哪条共同变化规律、如何被反例检验、如何在另一个领域复用；不能只用模型提示词或演示结果宣称成立；
 - 易经思想是架构公理和可证伪的工程方向，不把卦象、数字或哲学判断直接冒充为科学定律。
 
@@ -16,7 +16,7 @@
 
 ## 1. 系统边界
 
-- 内核负责：闭环时序、候选预测、安全筛选、探索、执行回执处理、验证归因、学习和停止。它只看到数值向量、ValueSpec 和不透明 action token；学习同时维护 Token 总体变化模型与 `Token×RelationSignature` 条件变化模型。ValueSpec 的 `distance-v2` 语义以带权绝对距离评价候选，并允许 `tolerance` 表达目标可接受带；缺少 `valueMode` 的旧输入仍按 `signed-v1` 回放。
+- 内核负责：闭环时序、候选预测、安全筛选、探索、执行回执处理、验证归因、学习和停止。它只看到数值向量、ValueSpec 和不透明 action token；学习同时维护 Token 总体变化模型、`Token×RelationSignature` 条件变化模型和可选的有界预测信念样本。ValueSpec 的 `distance-v2` 语义以带权绝对距离评价候选，并允许 `tolerance` 表达目标可接受带；缺少 `valueMode` 的旧输入仍按 `signed-v1` 回放。
 - Runtime 负责：实验空间、单 writer 锁、事件追加、快照、恢复和重放。
 - WorldPort 负责：领域观测向量、实验空间初始化时随机生成且在该空间内稳定的 action token、纯状态 transition、独立 AuthorityPolicy 安全兜底、场景扰动和可延迟的反馈快照。v0.1 的内置世界没有真实外部副作用。
 - Application 通过显式 `WorldRegistry` 注入 `worldDefinition/createManifestParts/createWorld/valueSpec/scenarioExternalInputs`；默认 registry 注册五个内置世界，测试或宿主可在进程内注入第三方适配器，CLI 不开放动态代码发现。
