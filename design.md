@@ -92,7 +92,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `Replay.decision(run)` | immutable start、事件、外部输入 | 首差异或一致 | 只读；按 start 的 world/scenario 重建纯 World+Kernel+RNG；每个 STEP 的 `boundary.valueSpec` 是不可变决策输入 |
 | `Challenge.evaluate(case)` | 隔离 run 证据、预注册判别器 | 演示性三态结论+invalidator | 不读主实验 memory，不合并状态；不得作为自主证明 |
 
-外部 adapter 的 `hello`、`initialState`、`actions`、`observe`、`externalInputs`、`transition` 均以单次 JSONL 请求响应完成；运行期由宿主把外部输入视为潜在混杂，强制 accepted action 标记为 `AMBIGUOUS` 且不可学习。协议 v1 要求 accepted receipt 的 `effectDigest` 等于 `canonicalDigest(nextWorldState)`，rejected receipt 等于 `canonicalDigest(state)`，从而把回执绑定到连续性状态。外部 Run 的 Replay 使用 STEP 中冻结的 capabilities、观测、回执和 afterState 证据磁带，inspect/replay 只校验本地 adapter 启动摘要，不启动 adapter 子进程，不读取实时环境。
+外部 adapter 的 `hello`、`initialState`、`actions`、`observe`、`externalInputs`、`transition` 均以单次 JSONL 请求响应完成；运行期由宿主把外部输入视为潜在混杂，强制 accepted action 标记为 `AMBIGUOUS` 且不可学习。协议 v1 要求 accepted receipt 的 `effectDigest` 等于 `canonicalDigest(nextWorldState)`，rejected receipt 等于 `canonicalDigest(state)`，从而把回执绑定到连续性状态。外部 Run 的 Replay 使用 STEP 中冻结的 before/after capabilities、观测、回执和 afterState 证据磁带，inspect/replay 只校验本地 adapter 启动摘要，不启动 adapter 子进程，不读取实时环境。
 
 EffectBroker 是 WorldPort 与真实副作用之间的第二道边界。Kernel 只能产生行动选择，应用层把它封装为带 `effectId/actionToken/target/precondition/risk/requiresConfirmation/reversible/compensation/executionNonce/planDigest` 的 EffectIntent。Broker 先登记计划和授权，再执行；执行器返回 `APPLIED/REJECTED/UNKNOWN`，其中 `UNKNOWN` 进入 `RECONCILE_REQUIRED`，禁止用新 nonce 重试。`APPLIED` 只有在存在声明式补偿方案时才允许进入补偿流程；补偿未知进入独立 `COMPENSATION_UNKNOWN`。持久化模式下，`EffectJournal` 先以 `handle.sync()` 刷新状态快照，`EXECUTION_STARTED` 或 `COMPENSATION_STARTED` 落盘后才允许调用对应 executor；恢复看到未完成边界时只能进入对账。每次 journal append 还要在同一文件旁取得跨进程原子 writer lock，锁内重新读取最新账本后再计算 sequence/prevDigest；stale-lock 回收使用固定 reclaim reservation，以原子硬链接竞争避免回收者互删或误删新 owner；执行、对账、补偿全过程再持有按 executionNonce 派生的可恢复操作锁，活跃 executor 不会被恢复流程抢占，进程死亡后才可回收；Broker 以共享日志头摘要作为 CAS 前置条件，陈旧 Broker 快照只返回 `CONFLICT` 而不追加语义事件；活 owner 在有界退避后仍返回 BUSY，确认死亡的 owner 才能回收，避免多个 CLI 进程各自从旧内存状态追加。当前 `src/effects/dry-run-executor.mjs` 只在内存中模拟状态变化，不能被解释为真实文件或设备安全。
 
@@ -102,7 +102,7 @@ ModelAdvisor 的结果是外部非确定输入，不进入连续性状态。每�
 
 为验证“真实执行器仍可被同一底座约束”，`src/effects/sandbox-file-executor.mjs` 提供了临时目录级文件移动：它拒绝路径穿越和符号链接，只在沙箱根内操作，并复用 Broker 的确认、executionNonce、durable journal、reconcile 与 compensation。它是安全实验执行器，不是用户桌面授权层。
 
-`InspectView` 固定包含：lab/run 状态、boundary、goal、constraints、facts、hypotheses、每 action 的 token/model mean/sampleCount/uncertainty/rejectionModel、最近 attribution/confidence、stopReason、evidence locator。运行时每个 STEP 都用当前 worldState 刷新一次能力投影；拒绝证据不保存领域拒绝文本，只保存有限计数、最近关系签名和当前是否仍在该关系下被拒绝。
+`InspectView` 固定包含：lab/run 状态、boundary、goal、constraints、facts、hypotheses、每 action 的 token/model mean/sampleCount/uncertainty/rejectionModel、最近 attribution/confidence、stopReason、evidence locator。运行时每个 STEP 都用动作前和动作后的 worldState 刷新能力投影，分别保存到 `boundary.capabilities` 与 `boundary.afterCapabilities`；历史 Run 的最终状态使用后者，Replay 仍只重放动作前快照。拒绝证据不保存领域拒绝文本，只保存有限计数、最近关系签名和当前是否仍在该关系下被拒绝。
 
 ## 3. 主逻辑链路
 

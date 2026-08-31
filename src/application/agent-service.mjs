@@ -229,6 +229,7 @@ export async function runLab(input) {
       beforeObservation.stateVersion,
     );
     const transition = world.transition(state.worldState, receiptRequest);
+    const afterCapabilities = world.actions(worldManifest(manifest), transition.nextWorldState);
     const receipt = externalInputs.length === 0
       ? transition.receipt
       : {
@@ -307,6 +308,7 @@ export async function runLab(input) {
           kernelLearningVersion: 2,
           valueSpec: stepValueSpec,
           capabilities,
+          afterCapabilities,
           ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
           ...(goalActivation === null ? {} : { goalActivation }),
           ...(goalReplan === null ? {} : { goalReplan }),
@@ -596,9 +598,11 @@ export async function inspectLab(input) {
   }
   const manifest = inspection.manifest;
   registry.assertManifest(manifest);
+  const recordedBoundary = run?.events?.findLast((event) => event.kind === 'STEP')?.payload?.boundary;
+  const recordedCapabilities = recordedBoundary?.afterCapabilities ?? recordedBoundary?.capabilities;
   const actions = selectedAction?.payload?.boundary?.capabilities
     ?? (manifest.adapter
-      ? manifestCapabilities(manifest)
+      ? recordedCapabilities ?? manifestCapabilities(manifest)
       : (() => {
         const world = registry.createWorld(
           manifest,

@@ -11,6 +11,7 @@ import { ED25519_PUBLIC_KEY, verifyAttestation } from '../fixtures/ed25519-proof
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const ADAPTER_FIXTURE = path.resolve('test/fixtures/generated-world-adapter.mjs');
+const STATEFUL_ADAPTER_FIXTURE = path.resolve('test/fixtures/stateful-capabilities-world-adapter.mjs');
 
 test('generated adapter exposes a fixed Ed25519 key for its hello descriptor', async () => {
   const response = await invokeAdapter([], { protocol: 'yi-world-cli', version: 1, id: '1', op: 'hello', payload: {} });
@@ -158,6 +159,46 @@ test('CLI runs and replays an unknown generated world through an external adapte
 
     const steps = await countLedgerSteps(lab, 'run-1');
     assert.equal(steps, 2);
+  });
+});
+
+test('CLI preserves state-dependent external capabilities across restarts, replay, and historical inspect', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'stateful-lab');
+    const adapter = await writeStatefulAdapterConfig(root, path.join(root, 'stateful-first-token.txt'));
+    const init = await invoke('init', '--lab', lab, '--world', 'stateful-capabilities', '--seed', 'stateful-seed', '--lab-id', 'stateful-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const firstRun = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'stateful', '--adapter', adapter, '--json');
+    assert.equal(firstRun.code, 0);
+    assert.equal(firstRun.stdout[0].data.status, 'COMPLETED');
+
+    const secondRun = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'stateful', '--adapter', adapter, '--json');
+    assert.equal(secondRun.code, 0);
+    assert.equal(secondRun.stdout[0].data.status, 'COMPLETED');
+
+    const current = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
+    assert.equal(current.code, 0);
+    assert.equal(current.stdout[0].data.inspectView.facts.worldState.value, 2);
+    assert.equal(current.stdout[0].data.inspectView.constraints.actions.filter((action) => action.safe).length, 1);
+    assert.equal(current.stdout[0].data.inspectView.constraints.actions[1].safe, true);
+
+    const historicalRun = await invoke('inspect', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(historicalRun.code, 0);
+    assert.equal(historicalRun.stdout[0].data.inspectView.facts.worldState.value, 1);
+    assert.equal(historicalRun.stdout[0].data.inspectView.constraints.actions[0].safe, false);
+    assert.equal(historicalRun.stdout[0].data.inspectView.constraints.actions[1].safe, true);
+
+    const historicalAction = await invoke('inspect', '--lab', lab, '--action', 'run-1:2', '--adapter', adapter, '--json');
+    assert.equal(historicalAction.code, 0);
+    assert.equal(historicalAction.stdout[0].data.inspectView.constraints.actions[0].safe, true);
+    assert.equal(historicalAction.stdout[0].data.inspectView.constraints.actions[1].safe, false);
+
+    for (const runId of ['run-1', 'run-2']) {
+      const replay = await invoke('replay', '--lab', lab, '--run', runId, '--adapter', adapter, '--json');
+      assert.equal(replay.code, 0, `${runId}: replay`);
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT', `${runId}: replay verdict`);
+    }
   });
 });
 
@@ -336,6 +377,18 @@ async function writeAdapterConfig(root, args = []) {
     args: [ADAPTER_FIXTURE, ...args],
     adapterId: 'generated-adapter-v1',
     worldId: 'generated',
+    timeoutMs: 2000,
+  }));
+  return config;
+}
+
+async function writeStatefulAdapterConfig(root, memoryFile) {
+  const config = path.join(root, 'stateful-adapter.json');
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [STATEFUL_ADAPTER_FIXTURE, '--memory-file', memoryFile],
+    adapterId: 'stateful-capabilities-adapter-v1',
+    worldId: 'stateful-capabilities',
     timeoutMs: 2000,
   }));
   return config;
