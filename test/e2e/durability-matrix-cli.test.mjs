@@ -238,9 +238,10 @@ async function invokeUntilExternalEffectThenKill(args, environment, stateFile, l
     }
   }, timeoutMs, 'durable external effect');
 
+  const closedPromise = waitForClose(child, timeoutMs);
   assert.equal(child.kill(), true, 'the first CLI process must be terminable while the response is withheld');
   await writeFile(releaseFile, 'release-response-loss');
-  const closed = await waitForClose(child, timeoutMs);
+  const closed = await closedPromise;
   return {
     code: closed.code,
     timedOut: false,
