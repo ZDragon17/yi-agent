@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -141,6 +141,100 @@ test('durable-counter survives a lost response across recover, resume, and repla
   }
 });
 
+test('durable-counter keeps a four-Run loop consistent across repeated crash, recover, and resume cycles', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-durable-counter-continuous-'));
+  const lab = path.join(root, 'lab');
+  const stateFile = path.join(root, 'world', 'state.json');
+  const adapter = path.join(root, 'adapter.json');
+  const responseLossAdapter = path.join(root, 'response-loss-every-transition.mjs');
+  const controlDir = path.join(root, 'response-loss-control');
+  const environment = kernelOnlyEnvironment();
+  const runs = 4;
+
+  await writeFile(responseLossAdapter, repeatedResponseLossAdapterSource());
+  await writeFile(adapter, JSON.stringify({
+    executable: process.execPath,
+    args: [responseLossAdapter, DURABLE_ADAPTER, '--state-file', stateFile, '--control-dir', controlDir],
+    adapterId: 'durable-counter-adapter-v1',
+    worldId: 'durable-counter',
+    timeoutMs: 10_000,
+  }));
+
+  try {
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'durable-counter', '--seed', 'durability-continuous',
+      '--adapter', adapter, '--json',
+    ], environment);
+    assert.equal(init.code, 0, `durable-counter init: ${describeResult(init)}`);
+
+    for (let effect = 1; effect <= runs; effect += 1) {
+      const command = effect === 1
+        ? [
+            'agent', 'loop', '--lab', lab, '--steps', '1', '--runs', String(runs),
+            '--kernel-only', '--adapter', adapter, '--json',
+          ]
+        : [
+            'agent', 'loop', '--lab', lab, '--resume', '--kernel-only', '--adapter', adapter, '--json',
+          ];
+      const lost = await invokeUntilNewExternalEffectThenKill(
+        command,
+        environment,
+        stateFile,
+        controlDir,
+        effect,
+      );
+      assert.notEqual(lost.code, 0, `effect ${effect} loss must interrupt its CLI: ${describeResult(lost)}`);
+      assert.equal(lost.timedOut, false, `effect ${effect} loss process timed out: ${describeResult(lost)}`);
+
+      const afterLoss = JSON.parse(await readFile(stateFile, 'utf8'));
+      assert.equal(afterLoss.value, effect, `effect ${effect} must be durable before its response is lost`);
+      assert.equal(afterLoss.effects.length, effect, `effect ${effect} must be recorded exactly once`);
+
+      const recovered = await invoke([
+        'recover', '--lab', lab, '--confirm-lock-owner-dead', '--json',
+      ], environment);
+      assert.equal(recovered.code, 0, `effect ${effect} recover: ${describeResult(recovered)}`);
+      assert.equal(
+        recovered.stdout[0]?.data?.reason,
+        'EXTERNAL_TRANSITION_UNKNOWN',
+        `effect ${effect} recovery must preserve the external uncertainty boundary`,
+      );
+    }
+
+    const resumed = await invoke([
+      'agent', 'loop', '--lab', lab, '--resume', '--kernel-only', '--adapter', adapter, '--json',
+    ], environment);
+    assert.equal(resumed.code, 0, `final resume: ${describeResult(resumed)}`);
+    assert.equal(resumed.stdout[0]?.data?.status, 'COMPLETED', 'the finite loop must complete after repeated recovery');
+
+    const afterResume = JSON.parse(await readFile(stateFile, 'utf8'));
+    assert.equal(afterResume.value, runs, 'the external state must advance exactly once per Run');
+    assert.equal(afterResume.effects.length, runs, 'the external effect ledger must contain exactly four effects');
+
+    const inspection = await invoke([
+      'inspect', '--lab', lab, '--adapter', adapter, '--json',
+    ], environment);
+    assert.equal(inspection.code, 0, `continuous inspect: ${describeResult(inspection)}`);
+    assert.equal(inspection.stdout[0]?.data?.current?.kernelStep, runs, 'inspect must expose all four committed steps');
+
+    const runIds = await latestLogicalRunIds(lab);
+    assert.equal(runIds.length, runs, 'the recovered loop must retain one final Run per logical Run index');
+    for (const runId of runIds) {
+      const replay = await invoke([
+        'replay', '--lab', lab, '--run', runId, '--adapter', adapter, '--json',
+      ], environment);
+      assert.equal(replay.code, 0, `${runId} replay: ${describeResult(replay)}`);
+      assert.equal(replay.stdout[0]?.data?.verdict, 'CONSISTENT', `${runId} replay must be consistent`);
+    }
+
+    const afterReplay = JSON.parse(await readFile(stateFile, 'utf8'));
+    assert.equal(afterReplay.value, runs, 'replay must not change the external state');
+    assert.equal(afterReplay.effects.length, runs, 'replay must not add an external effect');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function kernelOnlyEnvironment() {
   const environment = { ...process.env };
   delete environment.YI_AGENT_API_KEY;
@@ -178,6 +272,49 @@ if (request.op === 'transition' && !existsSync(lossMarker) && result.status === 
 } else {
   process.stdout.write(result.stdout ?? '');
   process.exit(result.status ?? 17);
+}
+`;
+}
+
+function repeatedResponseLossAdapterSource() {
+  return `import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+
+const fixture = process.argv[2];
+const stateFile = process.argv[process.argv.indexOf('--state-file') + 1];
+const controlDir = process.argv[process.argv.indexOf('--control-dir') + 1];
+const requestText = readFileSync(0, 'utf8');
+const request = JSON.parse(requestText);
+const beforeEffects = effectsCount();
+const result = spawnSync(process.execPath, [fixture, '--state-file', stateFile], {
+  input: requestText,
+  encoding: 'utf8',
+  windowsHide: true,
+  stdio: ['pipe', 'pipe', 'pipe'],
+});
+
+const afterEffects = effectsCount();
+if (request.op === 'transition' && result.status === 0 && afterEffects > beforeEffects) {
+  mkdirSync(controlDir, { recursive: true });
+  const marker = join(controlDir, 'effect-' + afterEffects + '.lost');
+  const release = join(controlDir, 'effect-' + afterEffects + '.release');
+  writeFileSync(marker, request.executionNonce ?? 'response-lost');
+  const deadline = Date.now() + 15_000;
+  const timer = setInterval(() => {
+    if (existsSync(release) || Date.now() >= deadline) {
+      clearInterval(timer);
+      process.exit(17);
+    }
+  }, 25);
+} else {
+  process.stdout.write(result.stdout ?? '');
+  process.exit(result.status ?? 17);
+}
+
+function effectsCount() {
+  if (!existsSync(stateFile)) return 0;
+  return JSON.parse(readFileSync(stateFile, 'utf8')).effects?.length ?? 0;
 }
 `;
 }
@@ -248,6 +385,78 @@ async function invokeUntilExternalEffectThenKill(args, environment, stateFile, l
     stdout: parseJsonLines(stdout),
     stderr,
   };
+}
+
+async function invokeUntilNewExternalEffectThenKill(args, environment, stateFile, controlDir, effect, timeoutMs = 20_000) {
+  const child = spawn(process.execPath, [CLI, ...args], {
+    env: environment,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const marker = path.join(controlDir, `effect-${effect}.lost`);
+  const release = path.join(controlDir, `effect-${effect}.release`);
+  let closedPromise = null;
+
+  try {
+    await waitFor(async () => {
+      try {
+        const state = JSON.parse(await readFile(stateFile, 'utf8'));
+        await readFile(marker, 'utf8');
+        return state.effects?.length === effect;
+      } catch {
+        return false;
+      }
+    }, timeoutMs, `durable external effect ${effect}`);
+
+    // Register the close listener before kill(): Windows can deliver close
+    // synchronously when the child is already in a terminated tree.
+    closedPromise = waitForClose(child, timeoutMs);
+    assert.equal(child.kill(), true, `effect ${effect} CLI must be terminable while its response is withheld`);
+    await writeFile(release, 'release-response-loss');
+    const closed = await closedPromise;
+    return {
+      code: closed.code,
+      timedOut: false,
+      stdout: parseJsonLines(stdout),
+      stderr,
+    };
+  } catch (error) {
+    child.kill();
+    await writeFile(release, 'release-response-loss').catch(() => {});
+    if (closedPromise === null) await waitForClose(child, timeoutMs).catch(() => {});
+    else await closedPromise.catch(() => {});
+    throw error;
+  }
+}
+
+async function latestLogicalRunIds(lab) {
+  const entries = await readdir(path.join(lab, 'runs'), { withFileTypes: true });
+  const latest = new Map();
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const runId = entry.name;
+    let start;
+    let end;
+    try {
+      start = JSON.parse(await readFile(path.join(lab, 'runs', runId, 'start.json'), 'utf8'));
+      end = JSON.parse(await readFile(path.join(lab, 'runs', runId, 'end.json'), 'utf8'));
+    } catch {
+      continue;
+    }
+    const runIndex = start.continuation?.runIndex;
+    if (!Number.isInteger(runIndex)) continue;
+    const previous = latest.get(runIndex);
+    if (previous === undefined || start.startedAt > previous.start.startedAt) {
+      latest.set(runIndex, { runId, start, end });
+    }
+  }
+  return [...latest.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, run]) => run.runId);
 }
 
 function parseJsonLines(value) {
