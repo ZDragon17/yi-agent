@@ -1879,11 +1879,15 @@ function chooseByStrategy(predictions, strategy, unit) {
   if (strategy.mode !== 'EXPLORATORY') {
     return predictions[choosePredictionIndex(predictions, unit)];
   }
-  if (strategy.explorationMode === 'coverage-v1') {
-    const leastSampleCount = Math.min(...predictions.map((prediction) => prediction.expectation.sampleCount));
-    predictions = predictions.filter((prediction) => prediction.expectation.sampleCount === leastSampleCount);
+  return chooseByUncertainty(strategyCandidatePool(predictions, strategy), unit);
+}
+
+function strategyCandidatePool(predictions, strategy) {
+  if (strategy.mode !== 'EXPLORATORY' || strategy.explorationMode !== 'coverage-v1') {
+    return predictions;
   }
-  return chooseByUncertainty(predictions, unit);
+  const leastSampleCount = Math.min(...predictions.map((prediction) => prediction.expectation.sampleCount));
+  return predictions.filter((prediction) => prediction.expectation.sampleCount === leastSampleCount);
 }
 
 function chooseByUncertainty(predictions, unit) {
@@ -1911,7 +1915,9 @@ function chooseByUncertainty(predictions, unit) {
 // hidden-state model or move speculative state across the WorldPort safety
 // boundary.
 function chooseByPlanning(predictions, input, unit) {
-  const candidatePool = boundedPlanningPredictions(predictions);
+  const candidatePool = boundedPlanningPredictions(
+    strategyCandidatePool(predictions, input.strategy),
+  );
   const rolloutInput = {
     ...input,
     capabilities: boundedPlanningCapabilities(input.capabilities, candidatePool),
