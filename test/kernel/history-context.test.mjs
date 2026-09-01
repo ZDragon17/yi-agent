@@ -195,6 +195,31 @@ test('recent history preserves action chronology when feedback arrives after a l
   assert.deepEqual(afterThird.recentHistory.map((entry) => entry.token), [tokenA, tokenB]);
 });
 
+test('ordered history rejects duplicate or future action orders', () => {
+  const memory = {
+    schemaVersion: 1,
+    actionModels: {},
+    relationModels: {},
+    contextModels: {},
+    recentHistory: [
+      { schemaVersion: 1, token: 'tok_ORDERA123', actualDelta: [1], historyOrder: 1 },
+      { schemaVersion: 1, token: 'tok_ORDERB123', actualDelta: [-1], historyOrder: 1 },
+    ],
+    historyClock: 1,
+  };
+  const input = {
+    observation: observation([0], 'state:order:0'),
+    memory,
+    valueSpec: VALUE_SPEC,
+    capabilities: [{ schemaVersion: 1, token: 'tok_ORDERC123', cost: 1, allowed: true, safe: true }],
+    rngState: rng(31),
+  };
+  assert.throws(() => step(input), { code: 'KERNEL_CONTRACT_VIOLATION' });
+
+  input.memory.recentHistory[1].historyOrder = 2;
+  assert.throws(() => step(input), { code: 'KERNEL_CONTRACT_VIOLATION' });
+});
+
 function model(meanDelta) {
   return { schemaVersion: 1, sampleCount: 1, meanDelta, uncertainty: 0 };
 }

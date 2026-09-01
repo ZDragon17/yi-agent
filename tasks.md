@@ -358,3 +358,10 @@
 - 实现：新 Memory 增加 `historyClock`；每个可学习或进入 pending 的动作携带单调 `historyOrder`，近期历史按该序号保留最近两个；旧 Memory 没有时钟时保持旧形状。
 - 兼容：`kernelLearningVersion: 10` 固化新顺序语义；Replay 低于 v10 时剥离时钟和序号，不改写旧账本。
 - 验证：Kernel 反例测试必须先观察旧实现失败，再确认 `[A,B]`；随后补充外部 WorldPort 的真实 CLI、重启和 Replay 证据。
+
+## F-36 有序历史状态的 fail-closed 约束
+
+- 反例：新 Memory 曾接受两个相同 `historyOrder`，或接受大于 `historyClock` 的历史条目；排序结果会依赖输入排列，破坏持久上下文的唯一性。
+- 实现：带 `historyClock` 的 Memory 要求 recent/pending 中的动作序号存在、唯一且不超过时钟；没有时钟的旧 Memory 继续走旧语义。
+- 边界：这只保证当前两步历史表示的内部一致性，不解决固定窗口对三阶及更长依赖的表达上限；三阶反例已确认需要重新设计上下文表示，而不是继续堆叠常数。
+- 验证：Kernel 拒绝重复/超前序号；全量旧账本、跨进程重启、Replay 和 late-bound Oracle 保持一致。

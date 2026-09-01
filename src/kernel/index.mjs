@@ -901,6 +901,15 @@ function normalizeMemory(value, field, dimensions) {
   const normalizedRecentHistory = source.recentHistory === undefined
     ? undefined
     : normalizeRecentHistory(source.recentHistory, `${field}.recentHistory`, dimensions);
+  const historyClock = source.historyClock === undefined
+    ? undefined
+    : assertNonNegativeInteger(source.historyClock, `${field}.historyClock`);
+  validateHistoryOrdering(
+    normalizedRecentHistory,
+    normalizedPendingCredits,
+    historyClock,
+    field,
+  );
   return {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
@@ -912,9 +921,7 @@ function normalizeMemory(value, field, dimensions) {
     ...(normalizedBeliefs === undefined ? {} : { beliefModels: normalizedBeliefs }),
     ...(normalizedContextModels === undefined ? {} : { contextModels: normalizedContextModels }),
     ...(normalizedRecentHistory === undefined ? {} : { recentHistory: normalizedRecentHistory }),
-    ...(source.historyClock === undefined ? {} : {
-      historyClock: assertNonNegativeInteger(source.historyClock, `${field}.historyClock`),
-    }),
+    ...(historyClock === undefined ? {} : { historyClock }),
   };
 }
 
@@ -969,6 +976,30 @@ function normalizeRecentHistory(value, field, dimensions) {
       }),
     };
   });
+}
+
+function validateHistoryOrdering(history, pendingCredits, historyClock, field) {
+  if (historyClock === undefined) return;
+  const seen = new Set();
+  for (const entry of [...(history ?? []), ...(pendingCredits ?? [])]) {
+    if (entry.historyOrder === undefined) {
+      contractViolation('kernel ordered history requires an action order', { field });
+    }
+    if (seen.has(entry.historyOrder)) {
+      contractViolation('kernel history contains a duplicate action order', {
+        field,
+        historyOrder: entry.historyOrder,
+      });
+    }
+    if (entry.historyOrder > historyClock) {
+      contractViolation('kernel history action order exceeds its clock', {
+        field,
+        historyOrder: entry.historyOrder,
+        historyClock,
+      });
+    }
+    seen.add(entry.historyOrder);
+  }
 }
 
 function normalizeBeliefModels(value, field, dimensions) {
