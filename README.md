@@ -130,7 +130,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 连续 Runner：`agent loop` 把有限 STEP 批次串成多个已提交 Run；每个边界都可独立 Replay，进程重启后从同一个 current 继续；每个子 Run 的 `loopId/runIndex/scenario/budget` 都写入 immutable start，使用 `--resume` 时从账本重建剩余预算，不重复已提交 Run；
 - 进程级恢复回归：E2E 真实启动 CLI 子进程，在第二个模型请求挂起期间强制终止进程，显式回收死亡 owner 后继续下一 Run，验证 current 和 execution 链不回退；
 - 跨 WorldPort 同构回归：独立外部 adapter 在坐标、状态表示和启动身份都不同的情况下，仍通过相同的应用闭环跨进程继续，并让两段 Run 的状态、记忆、监督器和 Replay 保持等价；另有文件持久化 adapter 覆盖多 Run 外部效果在响应丢失后的同 nonce 重试，验证外部效果只提交一次且 Replay 不触发副作用；
-- 证据驱动策略变化：停滞不会只写一条日志，而会把领域无关的 `BALANCED/EXPLORATORY` 策略、版本和原因持久化；探索策略只使用动作样本数/不确定度重新排序安全候选；
+- 证据驱动策略变化：停滞不会只写一条日志，而会把领域无关的 `BALANCED/EXPLORATORY` 策略、版本、探索覆盖策略和原因持久化；新的 `coverage-v1` 先覆盖样本更少的安全候选，再在同样本数内按不确定度排序，避免高残差动作垄断探索；旧策略缺少该字段时仍按历史 `uncertainty-v1` 回放；
 - 模型提议层：通过 OpenAI-compatible API 提出候选 Token；
 - 有界感知上下文：WorldPort 的结构化 observation evidence 只经过大小/深度/数据类型边界后提供给 Advisor/Planner；Kernel 仍只接收数值观测，账本只保存上下文摘要，不把原始证据当作事实或执行权限；
 - 模型故障隔离：Advisor 不可用、返回非法能力 Token 或破坏输出契约时，应用边界回退到 Kernel 的确定性选择，并把故障证据写入 STEP；不会因为模型暂时不可用而扩大权限，也不会让模型成为连续运行的单点故障；

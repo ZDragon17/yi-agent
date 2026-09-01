@@ -119,6 +119,7 @@ test('stagnation requests replanning and acknowledgement resumes without changin
   assert.equal(resumed.replanCount, 1);
   assert.equal(resumed.strategy.mode, 'EXPLORATORY');
   assert.equal(resumed.strategy.revision, 1);
+  assert.equal(resumed.strategy.explorationMode, 'coverage-v1');
   assert.deepEqual(resumed.objective, supervisor.objective);
 });
 

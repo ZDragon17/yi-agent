@@ -50,8 +50,9 @@ const LAST_CHANGE_KEYS = [
   'stopReason',
   'replanReason',
 ];
-const STRATEGY_KEYS = ['schemaVersion', 'mode', 'revision', 'reason'];
+const STRATEGY_KEYS = ['schemaVersion', 'mode', 'revision', 'reason', 'explorationMode'];
 const STRATEGY_MODES = ['BALANCED', 'EXPLORATORY'];
+const EXPLORATION_MODES = ['uncertainty-v1', 'coverage-v1'];
 const PLAN_KEYS = ['schemaVersion', 'rootGoal', 'revision', 'activeStageId', 'stages'];
 const STAGE_KEYS = ['schemaVersion', 'id', 'goal', 'objective', 'status', 'attempts'];
 const STAGE_STATUSES = ['PENDING', 'ACTIVE', 'COMPLETED'];
@@ -289,6 +290,7 @@ function createStrategy() {
     mode: 'BALANCED',
     revision: 0,
     reason: null,
+    explorationMode: 'coverage-v1',
   };
 }
 
@@ -299,6 +301,7 @@ function nextStrategy(strategy, reason) {
     mode: current.mode === 'BALANCED' ? 'EXPLORATORY' : 'BALANCED',
     revision: current.revision + 1,
     reason,
+    explorationMode: 'coverage-v1',
   };
 }
 
@@ -528,11 +531,17 @@ function requireStageId(value) {
 }
 
 function normalizeStrategy(value, field) {
-  const source = snapshotRecord(value, STRATEGY_KEYS, STRATEGY_KEYS, field);
+  const source = snapshotRecord(
+    value,
+    STRATEGY_KEYS,
+    STRATEGY_KEYS.filter((key) => key !== 'explorationMode'),
+    field,
+  );
   if (source.schemaVersion !== SCHEMA_VERSION ||
       !STRATEGY_MODES.includes(source.mode) ||
       !Number.isSafeInteger(source.revision) || source.revision < 0 || source.revision > MAX_CYCLES ||
-      (source.reason !== null && (typeof source.reason !== 'string' || source.reason.length === 0 || source.reason.length > MAX_GOAL_LENGTH))) {
+      (source.reason !== null && (typeof source.reason !== 'string' || source.reason.length === 0 || source.reason.length > MAX_GOAL_LENGTH)) ||
+      (source.explorationMode !== undefined && !EXPLORATION_MODES.includes(source.explorationMode))) {
     throw new Error('ChangeSupervisor strategy is invalid.');
   }
   return {
@@ -540,6 +549,7 @@ function normalizeStrategy(value, field) {
     mode: source.mode,
     revision: source.revision,
     reason: source.reason,
+    ...(source.explorationMode === undefined ? {} : { explorationMode: source.explorationMode }),
   };
 }
 

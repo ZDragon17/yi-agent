@@ -471,6 +471,40 @@ test('exploratory strategy changes the selected action using only opaque evidenc
   assert.equal(result.choice.token, TOKEN_B);
 });
 
+test('coverage exploration prevents a stale high-uncertainty action from monopolizing retries', async () => {
+  const { step } = await loadKernel();
+  const stale = 'tok_STALEA01';
+  const alternate = 'tok_ALTERNATE01';
+  const input = makeStepInput({
+    observation: observation([0], 'state-exploration-coverage'),
+    valueSpec: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [10], tolerance: 0, valueMode: 'distance-v2' },
+    capabilities: [stale, alternate].map((token) => capability(token)),
+  });
+  input.strategy = {
+    schemaVersion: 1,
+    mode: 'EXPLORATORY',
+    revision: 1,
+    reason: 'supervisor-stagnation',
+    explorationMode: 'coverage-v1',
+  };
+  input.memory = {
+    schemaVersion: 1,
+    actionModels: {
+      [stale]: { schemaVersion: 1, sampleCount: 69, meanDelta: [0.75], uncertainty: 1.75 },
+      [alternate]: { schemaVersion: 1, sampleCount: 64, meanDelta: [0.2], uncertainty: 0 },
+    },
+  };
+
+  const covered = step(input);
+  const historical = step({
+    ...input,
+    strategy: { ...input.strategy, explorationMode: 'uncertainty-v1' },
+  });
+
+  assert.equal(covered.choice.token, alternate);
+  assert.equal(historical.choice.token, stale);
+});
+
 test('step converts model uncertainty into the ValueSpec scale before selection', async () => {
   const { step } = await loadKernel();
   const result = step(makeStepInput({

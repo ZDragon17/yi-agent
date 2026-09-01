@@ -93,7 +93,8 @@ const CAPABILITY_KEYS = [
   'safe',
 ];
 const RNG_STATE_KEYS = ['schemaVersion', 'algorithm', 'state'];
-const STRATEGY_KEYS = ['schemaVersion', 'mode', 'revision', 'reason'];
+const STRATEGY_KEYS = ['schemaVersion', 'mode', 'revision', 'reason', 'explorationMode'];
+const EXPLORATION_MODES = ['uncertainty-v1', 'coverage-v1'];
 const INTENT_KEYS = [
   'schemaVersion',
   'status',
@@ -752,11 +753,12 @@ function normalizeStrategy(value, field) {
   if (value === undefined) {
     return { schemaVersion: SCHEMA_VERSION, mode: 'BALANCED', revision: 0, reason: null };
   }
-  const source = assertPlainRecord(value, field, STRATEGY_KEYS);
+  const source = assertPlainRecord(value, field, STRATEGY_KEYS, ['schemaVersion', 'mode', 'revision', 'reason']);
   if (requireSchemaVersion(source, field) !== SCHEMA_VERSION ||
       !['BALANCED', 'EXPLORATORY'].includes(source.mode) ||
       !Number.isSafeInteger(source.revision) || source.revision < 0 ||
-      typeof source.reason !== 'string' && source.reason !== null) {
+      typeof source.reason !== 'string' && source.reason !== null ||
+      source.explorationMode !== undefined && !EXPLORATION_MODES.includes(source.explorationMode)) {
     contractViolation('kernel strategy is invalid', { field });
   }
   if (source.reason !== null && source.reason.length === 0) {
@@ -767,6 +769,8 @@ function normalizeStrategy(value, field) {
     mode: source.mode,
     revision: source.revision,
     reason: source.reason,
+    explorationMode: source.explorationMode === undefined ? 'uncertainty-v1' :
+      assertOneOf(source.explorationMode, EXPLORATION_MODES, `${field}.explorationMode`),
   };
 }
 
@@ -1875,6 +1879,14 @@ function chooseByStrategy(predictions, strategy, unit) {
   if (strategy.mode !== 'EXPLORATORY') {
     return predictions[choosePredictionIndex(predictions, unit)];
   }
+  if (strategy.explorationMode === 'coverage-v1') {
+    const leastSampleCount = Math.min(...predictions.map((prediction) => prediction.expectation.sampleCount));
+    predictions = predictions.filter((prediction) => prediction.expectation.sampleCount === leastSampleCount);
+  }
+  return chooseByUncertainty(predictions, unit);
+}
+
+function chooseByUncertainty(predictions, unit) {
   let highestExploration = -Infinity;
   const candidates = [];
   predictions.forEach((prediction, index) => {

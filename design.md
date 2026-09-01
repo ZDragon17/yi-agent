@@ -86,7 +86,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `ChangeSupervisor.advance(state,input)` | 当前监督状态、完整 `Verification`、前后含 `stateVersion/intervalId` 的观察及本步新 feedback 结算标记 | 新监督状态，或 `REPLAN_REQUIRED`/终止状态 | 纯函数；只承认没有新 feedback 结算且满足 `ACTION && learnable` 的即时目标距离下降为确认进步，避免旧动作后验冒领当前动作进步；不接触领域标签、模型、WorldPort 或 I/O |
 | `ChangeSupervisor.resume(state)` | 上一周期的持久化状态 | 下一变化周期的 `ACTIVE` 状态 | 记录 `runtime-continuation` 原因并清零当前停滞；不重置目标、周期计数、最佳距离或历史变化证据 |
 | `ChangeSupervisor.acknowledgeReplan(state,reason)` | `REPLAN_REQUIRED` 状态、有限原因 | 恢复为 `ACTIVE` 的监督状态 | 清零停滞、增加 `replanCount`，并在 `strategy` 中以版本化方式切换 `BALANCED/EXPLORATORY`；不改变目标、权重或历史周期 |
-| `Kernel.step(...,strategy)` | 观察、记忆、ValueSpec、能力、RNG 和可选策略 | 确定性 `StepIntent` | `BALANCED` 延续价值排序；`EXPLORATORY` 只按样本数/不确定度选择安全候选，不能绕过 allowed/safe |
+| `Kernel.step(...,strategy)` | 观察、记忆、ValueSpec、能力、RNG 和可选策略 | 确定性 `StepIntent` | `BALANCED` 延续价值排序；新的 `EXPLORATORY + coverage-v1` 先按样本数覆盖安全候选、再按不确定度选择，旧策略缺少该字段时保持 `uncertainty-v1`；任何模式都不能绕过 allowed/safe |
 | `runContinuous(input)` | lab、每 Run 步数、Run 数上限或 persisted continuation | 多个已提交 Run 的汇总 | 每个 Run 的 loopId/runIndex/scenario/budget 固化在 immutable start；同一 lab 的未完成 continuation 在 writer lock 内原子地排他，且只接受与持久化 `nextRunIndex` 相等的下一逻辑 Run；resume 从完整账本重建 nextRunIndex；当前调用遇到终止原因即停止串联，目标达成完成 continuation，崩溃和可幂等外部不确定保留恢复入口，不把失败伪装成持续成功；forever 模式只保留最近 Run 摘要，累计指标与完整历史分离，避免内存随 Run 数增长 |
 | `LabStore.append(event)` | 完整事件、预期 run sequence/digest | 已 flush 的 sequence/digest | 单 writer；冲突拒绝；只追加 |
 | `LabStore.commit(snapshot)` | 与已追加事件同 sequence 的快照 | 原子替换结果 | 可重复；快照只能追平账本，不能领先 |
