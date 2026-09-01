@@ -225,6 +225,12 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 
 `verificationAge` 进入 Expectation，供账本和 Inspect 解释选择。该机制是固定成本的再验证策略，不是隐藏状态检测、变化点证明或概率校准；如果变化在再验证周期内发生，或 WorldPort 永远不给出可归因反馈，底座仍只能保留不确定性。外部漂移 WorldPort 必须通过独立子进程、跨 Run、幂等 transition 和 Replay 证明这条边界；旧版本 Replay 显式剥离 freshness 字段。
 
+## 7.2 有界序列规划与假设记忆
+
+单步预测之外，规划器必须能够回答“如果这一步发生，下一步会处于什么关系中”。v16 的 bounded planning 为每个候选分支复制一份临时 Memory，把预测的 `Token+actualDelta` 写入近期历史和顺序累积摘要，再用同一 `buildPredictions` 生成下一步候选。该临时状态只存在于纯规划计算中，不写入真实 Lab，也不授予任何额外安全或执行权限；真实状态仍必须经过 WorldPort 回执、`verify` 和 `learn` 才能改变。
+
+这使已验证的历史条件模型能够影响多步假设，而不是只在真实下一轮才生效。它仍是固定 horizon、模型驱动的有限序列投影，不是完整搜索、反事实因果证明或无限期计划；v15 及以前的 Replay 通过 `contextMode: legacy-v1` 保留旧的静态规划语义。外部 transition 的 durable marker 也保存该模式；旧 marker 缺少字段时默认恢复为 `legacy-v1`，从而在程序升级后仍能用原选择重试同一个 execution nonce。
+
 ## 8. 安全设计
 
 - 所有写路径由单一 LabStore 生成，调用方不能提供内部相对路径。

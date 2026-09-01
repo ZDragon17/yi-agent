@@ -396,6 +396,7 @@ test('CLI resumes a response-lost external transition through the same execution
       .trim().split(/\r?\n/u).map(JSON.parse);
     const recoveryTerminal = recoveredEvents.find((event) => event.kind === 'RUN_HALTED');
     assert.equal(recoveryTerminal.payload.externalTransition.planning.horizon, 2);
+    assert.equal(recoveryTerminal.payload.externalTransition.planning.contextMode, 'context-v1');
     const afterLoss = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
     assert.equal(afterLoss.code, 0);
     assert.equal(afterLoss.stdout[0].data.current.status, 'HALTED');
@@ -408,6 +409,7 @@ test('CLI resumes a response-lost external transition through the same execution
       .trim().split(/\r?\n/u).map(JSON.parse);
     const resumedStep = decodeStoredEvent(resumedEvents.find((event) => event.kind === 'STEP'));
     assert.equal(resumedStep.payload.boundary.planning.horizon, 2);
+    assert.equal(resumedStep.payload.boundary.planning.contextMode, 'context-v1');
 
     const current = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
     assert.equal(current.code, 0);
@@ -418,6 +420,47 @@ test('CLI resumes a response-lost external transition through the same execution
     assert.equal(replay.code, 0);
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
     assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+  });
+});
+
+test('CLI treats an external transition marker without contextMode as legacy-v1 during recovery', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'legacy-planning-marker-lab');
+    const effectFile = path.join(root, 'legacy-planning-marker-effect.json');
+    const adapter = await writeTransitionAdapterConfig(root, effectFile, [], false);
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'legacy-planning-marker-seed', '--lab-id', 'legacy-planning-marker-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+
+    const crashed = await crashAfterExternalTransitionReturn(lab, adapter);
+    assert.equal(crashed, 17);
+    await rewriteExternalTransitionMarkerWithoutContextMode(lab, 'crashed-external-run');
+
+    const recovered = await invoke('recover', '--lab', lab, '--confirm-lock-owner-dead', '--json');
+    assert.equal(recovered.code, 0);
+    assert.equal(recovered.stdout[0].data.reason, 'EXTERNAL_TRANSITION_UNKNOWN');
+
+    const recoveredEvents = (await readFile(path.join(lab, 'runs', 'crashed-external-run', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map(JSON.parse);
+    const recoveryTerminal = recoveredEvents.find((event) => event.kind === 'RUN_HALTED');
+    const originalToken = recoveryTerminal.payload.externalTransition.token;
+    assert.deepEqual(recoveryTerminal.payload.externalTransition.planning, {
+      schemaVersion: 1,
+      horizon: 1,
+      contextMode: 'legacy-v1',
+    });
+
+    const resumed = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(resumed.code, 0);
+    const resumedEvents = (await readFile(path.join(lab, 'runs', 'run-2', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map(JSON.parse);
+    const resumedStep = decodeStoredEvent(resumedEvents.find((event) => event.kind === 'STEP'));
+    assert.equal(resumedStep.payload.choice.token, originalToken);
+    assert.equal(resumedStep.payload.boundary.planning.contextMode, 'legacy-v1');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
   });
 });
 
@@ -963,6 +1006,17 @@ async function rewriteExternalInputEvidence(lab) {
   delete current.selfDigest;
   current.eventsDigest = terminal.digest;
   await writeFile(currentPath, `${canonicalJson(withSelfDigest(current))}\n`);
+}
+
+async function rewriteExternalTransitionMarkerWithoutContextMode(lab, runId) {
+  const markerPath = path.join(lab, 'runs', runId, 'external-transition.json');
+  const marker = JSON.parse(await readFile(markerPath, 'utf8'));
+  const { contextMode: _ignored, ...legacyPlanning } = marker.planning;
+  delete marker.selfDigest;
+  await writeFile(markerPath, `${canonicalJson(withSelfDigest({
+    ...marker,
+    planning: legacyPlanning,
+  }))}\n`);
 }
 
 async function rewriteDelayedRunAsV7(lab) {

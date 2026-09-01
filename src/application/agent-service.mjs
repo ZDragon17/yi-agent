@@ -15,7 +15,7 @@ const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
-const KERNEL_LEARNING_VERSION = 15;
+const KERNEL_LEARNING_VERSION = 16;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -87,6 +87,7 @@ export async function runLab(input) {
     ? undefined
     : requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon');
   let planningHorizon = requestedPlanningHorizon ?? 1;
+  let planningContextMode = 'context-v1';
   if (source.autoPlan !== undefined && typeof source.autoPlan !== 'boolean') {
     throw new LabStoreError('INVALID_INPUT', 'autoPlan must be a boolean.', { field: 'autoPlan' });
   }
@@ -144,6 +145,7 @@ export async function runLab(input) {
       );
     }
     planningHorizon = recoveredPlanningHorizon;
+    planningContextMode = unresolved.evidence.planning?.contextMode ?? 'legacy-v1';
   }
   const goalRequested = (source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined;
   let initialState = current.lastRunId === null
@@ -301,7 +303,7 @@ export async function runLab(input) {
       capabilities,
       rngState: state.rngState,
       ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
-      planning: { schemaVersion: SCHEMA_VERSION, horizon: planningHorizon },
+      planning: planningEvidence(planningHorizon, planningContextMode),
     }, preferenceFor(retryPreference ?? modelDecision, retryPreference !== null));
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
@@ -319,7 +321,13 @@ export async function runLab(input) {
       executionNonce: `execution:step:${state.kernelStep + 1}`,
     };
     if (unresolvedExternalTransition !== null) {
-      assertExternalTransitionRetry(unresolvedExternalTransition, receiptRequest, state, planningHorizon);
+      assertExternalTransitionRetry(
+        unresolvedExternalTransition,
+        receiptRequest,
+        state,
+        planningHorizon,
+        planningContextMode,
+      );
     }
     const externalInputs = registry.scenarioExternalInputs(
       manifest.worldId,
@@ -332,7 +340,7 @@ export async function runLab(input) {
         token: receiptRequest.token,
         basedOnVersion: receiptRequest.basedOnVersion,
         beforeState: state,
-        planning: { schemaVersion: SCHEMA_VERSION, horizon: planningHorizon },
+        planning: planningEvidence(planningHorizon, planningContextMode),
         ...(retryPolicyEvidence === null && modelDecision === null
           ? {}
           : { policyEvidence: retryPolicyEvidence ?? policyEvidence(modelDecision, intent, capabilities) }),
@@ -431,7 +439,7 @@ export async function runLab(input) {
           schemaVersion: SCHEMA_VERSION,
           kernelLearningVersion: KERNEL_LEARNING_VERSION,
           valueSpec: stepValueSpec,
-          planning: { schemaVersion: SCHEMA_VERSION, horizon: planningHorizon },
+          planning: planningEvidence(planningHorizon, planningContextMode),
           capabilities,
           afterCapabilities,
           ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
@@ -736,7 +744,15 @@ function fallbackAdvice(reason) {
   };
 }
 
-function assertExternalTransitionRetry(unresolved, request, state, planningHorizon) {
+function planningEvidence(horizon, contextMode) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    horizon,
+    ...(horizon > 1 || contextMode === 'legacy-v1' ? { contextMode } : {}),
+  };
+}
+
+function assertExternalTransitionRetry(unresolved, request, state, planningHorizon, planningContextMode) {
   const evidence = unresolved.evidence;
   const mismatches = [];
   if (request.executionNonce !== evidence.executionNonce) mismatches.push('executionNonce');
@@ -744,6 +760,7 @@ function assertExternalTransitionRetry(unresolved, request, state, planningHoriz
   if (request.basedOnVersion !== evidence.basedOnVersion) mismatches.push('basedOnVersion');
   if (canonicalDigest(state) !== evidence.beforeDigest) mismatches.push('beforeDigest');
   if ((evidence.planning?.horizon ?? 1) !== planningHorizon) mismatches.push('planningHorizon');
+  if ((evidence.planning?.contextMode ?? 'legacy-v1') !== planningContextMode) mismatches.push('planningContextMode');
   if (mismatches.length > 0) {
     throw new LabStoreError(
       'CONFLICT',

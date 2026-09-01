@@ -396,3 +396,11 @@
 - 兼容：`kernelLearningVersion: 15` 启用新鲜度字段和周期再验证；v15 之前的 Replay 剥离该字段，保持旧账本选择语义。没有 `historyClock` 的旧 Memory 不启用该策略。
 - 验证：`test/kernel/history-context.test.mjs` 验证过期安全动作被重新选择并更新序号；`test/fixtures/drifting-choice-world-adapter.mjs` 在独立子进程中隐藏地反转一个动作效果；`test/e2e/drifting-choice-world.test.mjs` 验证跨两个 CLI Run、持久外部效果和 Replay 一致。
 - 边界：周期再验证只能在固定间隔内获得新证据，不能感知未执行动作的即时变化、证明变化点、校准概率或解决无反馈/混杂；它是统一的证据获取策略，不是领域特判。
+
+## F-41 有界序列规划的假设记忆传播
+
+- 反例：当前 horizon=2 规划只推进预测观测，不推进历史记忆；一个动作的直接收益较低，但它会让下一动作进入已验证的高收益上下文，规划器仍会选择直接收益较高的动作。
+- 实现：v16 在每个候选分支内复制临时 Memory，将首步和后续预测动作的 `Token+actualDelta` 写入近期历史/顺序摘要，再生成下一步预测；临时记忆不写回真实状态，不越过 WorldPort 安全边界。
+- 兼容：`contextMode: context-v1` 为新语义；v15 及以前 Replay 强制 `contextMode: legacy-v1`，防止历史规划选择因代码升级而漂移；外部 transition marker 持久化该模式，缺少字段的旧 marker 按 `legacy-v1` 恢复并保持同 nonce 重试身份。
+- 验证：一维上下文反例中，静态规划选择直接收益动作 B，传播假设记忆后选择序列入口 A；输入 Memory 保持不变，旧模式仍选择 B。
+- 边界：只覆盖固定 horizon 内的模型投影，不能证明长期计划、反事实因果或真实结果必然遵循预测；预测错误仍需真实闭环反馈纠正。

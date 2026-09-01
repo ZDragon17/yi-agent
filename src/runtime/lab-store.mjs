@@ -36,6 +36,7 @@ const MAX_RECENT_COMMITTED_STEPS = 32;
 const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
 const MAX_PLANNING_HORIZON = 8;
+const PLANNING_CONTEXT_MODES = ['context-v1', 'legacy-v1'];
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -1370,20 +1371,29 @@ function validateExternalTransitionEvidence(value, runId, scenario = undefined) 
 function isValidPlanningEvidence(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value) &&
     value.schemaVersion === SCHEMA_VERSION &&
-    Number.isSafeInteger(value.horizon) && value.horizon >= 1 && value.horizon <= MAX_PLANNING_HORIZON;
+    Number.isSafeInteger(value.horizon) && value.horizon >= 1 && value.horizon <= MAX_PLANNING_HORIZON &&
+    (value.contextMode === undefined || PLANNING_CONTEXT_MODES.includes(value.contextMode));
 }
 
 function validatePlanningEvidence(value, field) {
   if (!isValidPlanningEvidence(value)) {
     throw new LabStoreError('INVALID_INPUT', 'Planning evidence is invalid.', { field });
   }
-  return { schemaVersion: SCHEMA_VERSION, horizon: value.horizon };
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    horizon: value.horizon,
+    contextMode: value.contextMode === undefined ? 'legacy-v1' : value.contextMode,
+  };
 }
 
 function normalizePlanningEvidence(value) {
   return value === undefined
-    ? { schemaVersion: SCHEMA_VERSION, horizon: 1 }
-    : { schemaVersion: SCHEMA_VERSION, horizon: value.horizon };
+    ? { schemaVersion: SCHEMA_VERSION, horizon: 1, contextMode: 'legacy-v1' }
+    : {
+        schemaVersion: SCHEMA_VERSION,
+        horizon: value.horizon,
+        contextMode: value.contextMode === undefined ? 'legacy-v1' : value.contextMode,
+      };
 }
 
 function validateExternalPolicyEvidence(value, runId) {

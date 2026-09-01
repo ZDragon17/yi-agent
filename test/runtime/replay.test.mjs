@@ -110,6 +110,47 @@ test('replay rejects a kernel learning version newer than the supported contract
   }
 });
 
+test('replay preserves an explicit contextMode at the v16 STEP boundary', async () => {
+  const fixture = await createRunFixture();
+  try {
+    const events = fixture.events.map((event) => JSON.parse(JSON.stringify(event)));
+    events[1].payload.boundary.kernelLearningVersion = 16;
+    events[1].payload.boundary.planning = {
+      schemaVersion: SCHEMA_VERSION,
+      horizon: 2,
+      contextMode: 'legacy-v1',
+    };
+    events[1].digest = canonicalDigest(omit(events[1], 'digest'));
+    events[2].prevDigest = events[1].digest;
+    events[2].digest = canonicalDigest(omit(events[2], 'digest'));
+    const end = { ...fixture.end, finalEventDigest: events[2].digest };
+    end.selfDigest = canonicalDigest(omit(end, 'selfDigest'));
+    let seenContextMode = false;
+
+    const result = replayRun({
+      manifest: fixture.manifest,
+      start: fixture.start,
+      events,
+      end,
+      worldFactories: { temperature: createTemperatureWorld },
+      kernel: {
+        step(input) {
+          assert.equal(input.planning.contextMode, 'legacy-v1');
+          seenContextMode = true;
+          return step(input);
+        },
+        verify,
+        learn,
+      },
+    });
+
+    assert.equal(result.verdict, 'CONSISTENT');
+    assert.equal(seenContextMode, true);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('replay locates a tampered event even when its digest chain is recomputed', async () => {
   const fixture = await createRunFixture();
   try {

@@ -13,6 +13,7 @@ const REVALIDATION_INTERVAL = 8;
 const MAX_PLANNING_HORIZON = 8;
 const MAX_PLANNING_CANDIDATES = 64;
 const PLANNING_INFORMATION_MODES = ['belief-v1', 'belief-v2', 'belief-v3', 'legacy-v1'];
+const PLANNING_CONTEXT_MODES = ['context-v1', 'legacy-v1'];
 const MAX_PENDING_CREDITS = 64;
 const MAX_FEEDBACK_ITEMS = 64;
 const MAX_EXECUTION_NONCE_LENGTH = 256;
@@ -738,12 +739,17 @@ function normalizeStepInput(input) {
 
 function normalizePlanning(value, field) {
   if (value === undefined) {
-    return { schemaVersion: SCHEMA_VERSION, horizon: 1, informationMode: 'belief-v3' };
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      horizon: 1,
+      informationMode: 'belief-v3',
+      contextMode: 'context-v1',
+    };
   }
   const source = assertPlainRecord(
     value,
     field,
-    ['schemaVersion', 'horizon', 'informationMode'],
+    ['schemaVersion', 'horizon', 'informationMode', 'contextMode'],
     ['schemaVersion', 'horizon'],
   );
   const horizon = assertPositiveInteger(source.horizon, `${field}.horizon`);
@@ -759,6 +765,8 @@ function normalizePlanning(value, field) {
     horizon,
     informationMode: source.informationMode === undefined ? 'belief-v3' :
       assertOneOf(source.informationMode, PLANNING_INFORMATION_MODES, `${field}.informationMode`),
+    contextMode: source.contextMode === undefined ? 'context-v1' :
+      assertOneOf(source.contextMode, PLANNING_CONTEXT_MODES, `${field}.contextMode`),
   };
 }
 
@@ -2040,11 +2048,25 @@ function rolloutUtility(firstPrediction, input, horizon, unit) {
 
   for (const outcomeVector of outcomeVectors) {
     let predictedVector = outcomeVector;
+    let planningMemory = input.memory;
+    if (input.planning.contextMode !== 'legacy-v1' && horizon > 1) {
+      planningMemory = planningMemoryAfterAction(
+        input.memory,
+        firstPrediction.choice.token,
+        subtractVectors(
+          outcomeVector,
+          input.observation.vector,
+          'stepOutput.planning.firstActionDelta',
+        ),
+        input.observation.vector.length,
+      );
+    }
     let totalCost = firstPrediction.choice.cost + firstUncertaintyCost;
     let nextUncertainty = firstPrediction.expectation.uncertainty;
     for (let depth = 1; depth < horizon; depth += 1) {
       const futurePredictions = buildPredictions({
         ...input,
+        memory: planningMemory,
         observation: {
           ...input.observation,
           vector: predictedVector,
@@ -2059,6 +2081,14 @@ function rolloutUtility(firstPrediction, input, horizon, unit) {
         nextUncertainties.push(nextUncertainty);
       }
       predictedVector = future.expectation.predictedObservation.vector;
+      if (input.planning.contextMode !== 'legacy-v1') {
+        planningMemory = planningMemoryAfterAction(
+          planningMemory,
+          future.choice.token,
+          future.expectation.expectedDelta,
+          input.observation.vector.length,
+        );
+      }
       totalCost += future.choice.cost +
         uncertaintyPenalty(future.expectation.uncertainty, input.valueSpec.weights);
     }
@@ -2101,6 +2131,25 @@ function rolloutUtility(firstPrediction, input, horizon, unit) {
   }
 
   return assertComputedFiniteNumber(expectedUtility, 'stepOutput.planning.utility');
+}
+
+function planningMemoryAfterAction(memory, token, actualDelta, dimensions) {
+  const projected = cloneMemory(memory);
+  const historyOrder = nextHistoryOrder(projected);
+  appendRecentHistory(projected, {
+    token,
+    actualDelta,
+    historyOrder,
+    dimensions,
+    field: 'stepOutput.planning.history',
+  });
+  appendHistoryAccumulator(projected, {
+    token,
+    actualDelta,
+    historyOrder,
+    field: 'stepOutput.planning.history',
+  });
+  return projected;
 }
 
 function hasDiverseNextDecisions(decisions) {
