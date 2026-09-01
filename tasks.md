@@ -424,6 +424,6 @@
 ## F-44 连续 loop 的规划语义恢复
 
 - 反例：v17 的 loop continuation 只保存 planningHorizon；程序升级到 v18 后执行 `--resume`，如果只按当前默认值恢复，就会把历史 `recursive-v1` 静默替换成 `tree-v1`，同一 loop 的后续选择与 Replay 语义不再一致。
-- 实现：新 continuation 固化 `planningBranchingMode`，`runContinuous` 在每个 Run start 和恢复调用中沿用该字段；读取旧 continuation 时扫描已提交 STEP 的 `kernelLearningVersion`/planning marker 推断 v17 `recursive-v1`、v18 `tree-v1` 或更早 `legacy-v1`，多模式混合直接判为 CORRUPT。
+- 实现：新 continuation 固化 `planningBranchingMode`，`runContinuous` 在每个 Run start 和恢复调用中沿用该字段；读取旧 continuation 时扫描已提交 STEP 的 `kernelLearningVersion`/planning marker 及终态 `externalTransition.planning` 证据，推断 v17 `recursive-v1`、v18 `tree-v1` 或更早 `legacy-v1`，多模式混合直接判为 CORRUPT。
 - 验证：新 loop 读回 `tree-v1`；缺少字段但已有 v17 STEP 的 loop 读回 `recursive-v1`，后续 Run 继续保存该模式；连续运行、重启恢复、Replay、外部 transition 和 Oracle 保持一致。
 - 边界：没有任何 STEP 证据的古老 continuation 无法知道曾使用的规划实现，只能保守 legacy；这不会伪造历史确定性，必要时应由人工重新确认。
