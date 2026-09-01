@@ -130,12 +130,109 @@ test('history context keys stay bounded for the maximum observation dimension', 
   }));
 });
 
+test('recent history preserves action chronology when feedback arrives after a later action', () => {
+  const tokenA = 'tok_HISTORYDELAYEDA1';
+  const tokenB = 'tok_HISTORYDELAYEDB1';
+  const tokenC = 'tok_HISTORYDELAYEDC1';
+  const memory = {
+    schemaVersion: 1,
+    actionModels: {},
+    relationModels: {},
+    contextModels: {},
+    recentHistory: [],
+    pendingCredits: [],
+    pendingCreditPolicy: { schemaVersion: 1, maxAge: 8 },
+    settledFeedback: [],
+    historyClock: 0,
+  };
+  const firstBefore = observation([0], 'state:delayed:0');
+  const firstIntent = choose(tokenA, firstBefore, memory, 21);
+  const firstReceipt = receipt(tokenA, firstBefore, 'execution:delayed:a', false);
+  const firstPost = observation([0], 'state:delayed:1');
+  const firstVerification = verify({ intent: firstIntent, receipt: firstReceipt, postObservation: firstPost });
+  const afterFirst = learn({
+    memory,
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPost,
+    verification: firstVerification,
+  }).nextMemory;
+
+  const secondBefore = observation([0], 'state:delayed:1');
+  const secondIntent = choose(tokenB, secondBefore, afterFirst, 22);
+  const secondReceipt = receipt(tokenB, secondBefore, 'execution:delayed:b', true);
+  const secondPost = observation([0], 'state:delayed:2');
+  const secondVerification = verify({ intent: secondIntent, receipt: secondReceipt, postObservation: secondPost });
+  const afterSecond = learn({
+    memory: afterFirst,
+    intent: secondIntent,
+    receipt: secondReceipt,
+    postObservation: secondPost,
+    verification: secondVerification,
+  }).nextMemory;
+
+  const thirdBefore = observation([0], 'state:delayed:2');
+  const thirdIntent = choose(tokenC, thirdBefore, afterSecond, 23);
+  const thirdReceipt = receipt(tokenC, thirdBefore, 'execution:delayed:c', true);
+  const delayedFeedback = {
+    schemaVersion: 1,
+    executionNonce: 'execution:delayed:a',
+    stateVersion: 'state:delayed:3',
+    intervalId: 'state:delayed:3:interval',
+    vector: [1],
+    confounderCount: 0,
+  };
+  const thirdPost = observation([1], 'state:delayed:3', [delayedFeedback]);
+  const thirdVerification = verify({ intent: thirdIntent, receipt: thirdReceipt, postObservation: thirdPost });
+  const afterThird = learn({
+    memory: afterSecond,
+    intent: thirdIntent,
+    receipt: thirdReceipt,
+    postObservation: thirdPost,
+    verification: thirdVerification,
+  }).nextMemory;
+
+  assert.deepEqual(afterThird.recentHistory.map((entry) => entry.token), [tokenA, tokenB]);
+});
+
 function model(meanDelta) {
   return { schemaVersion: 1, sampleCount: 1, meanDelta, uncertainty: 0 };
 }
 
-function observation(vector, stateVersion) {
-  return { schemaVersion: 1, vector, stateVersion, intervalId: `${stateVersion}:interval` };
+function observation(vector, stateVersion, feedback = undefined) {
+  return {
+    schemaVersion: 1,
+    vector,
+    stateVersion,
+    intervalId: `${stateVersion}:interval`,
+    ...(feedback === undefined ? {} : { feedback }),
+  };
+}
+
+function choose(token, before, memory, state) {
+  return step({
+    observation: before,
+    memory,
+    valueSpec: VALUE_SPEC,
+    capabilities: [{ schemaVersion: 1, token, cost: 1, allowed: true, safe: true }],
+    rngState: rng(state),
+  });
+}
+
+function receipt(token, before, executionNonce, attributionWindowComplete) {
+  return {
+    schemaVersion: 1,
+    status: 'ACCEPTED',
+    token,
+    basedOnVersion: before.stateVersion,
+    policyVersion: 'policy:history:delayed',
+    constraintsDigest: 'sha256:history-delayed',
+    executionNonce,
+    effectDigest: 'sha256:effect-delayed',
+    rejectionReason: null,
+    attributionWindowComplete,
+    confounderCount: 0,
+  };
 }
 
 function rng(state) {

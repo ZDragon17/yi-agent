@@ -351,3 +351,10 @@
 - 实现：新 Lab 的 Memory 增加有界 `recentHistory` 与 `contextModels`；最近两个已验证的 `{Token,actualDelta}` 形成稳定 `h1:` 上下文签名，Kernel 按 `context×Token` 预测，缺少上下文样本时回退到关系模型和总体模型。未闭合 feedback、混杂和拒绝不进入历史；旧 Memory 不注入新字段，Replay 继续按账本中的字段形状运行。
 - 验证：`history-conditioned-world-adapter.mjs` 将模式 A/B 留在外部持久状态，只投影一维 value；探针后 value 恢复为零，训练四组目标动作，再在相同可见输入下验证模式 A/B 是否分别选择 `target-a/target-b`。外部 28 次效果、上下文模型、重启边界和 Replay 必须一致。
 - 边界：窗口 2 只是当前可证伪的最小历史尺度，不是完整状态估计、因果识别或长期记忆；若真实世界需要更长依赖，必须用新的外部反例证明并重新选择公共上下文契约，不能偷偷扩大窗口或添加领域特判。
+
+## F-35 延迟反馈不改变历史发生顺序
+
+- 反例：动作 A 先执行但反馈延迟，动作 B 的即时结果先完成；A 的反馈在 B 之后到达。旧实现按学习/反馈到达顺序写入 `[B,A]`，与真实动作顺序 `[A,B]` 相反。
+- 实现：新 Memory 增加 `historyClock`；每个可学习或进入 pending 的动作携带单调 `historyOrder`，近期历史按该序号保留最近两个；旧 Memory 没有时钟时保持旧形状。
+- 兼容：`kernelLearningVersion: 10` 固化新顺序语义；Replay 低于 v10 时剥离时钟和序号，不改写旧账本。
+- 验证：Kernel 反例测试必须先观察旧实现失败，再确认 `[A,B]`；随后补充外部 WorldPort 的真实 CLI、重启和 Replay 证据。

@@ -69,7 +69,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -143,11 +143,12 @@ const PENDING_CREDIT_KEYS = [
   'expectedDelta',
   'relationKey',
   'contextKey',
+  'historyOrder',
   'age',
 ];
 const PENDING_CREDIT_POLICY_KEYS = ['schemaVersion', 'maxAge'];
 const BELIEF_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'samples'];
-const HISTORY_ENTRY_KEYS = ['schemaVersion', 'token', 'actualDelta'];
+const HISTORY_ENTRY_KEYS = ['schemaVersion', 'token', 'actualDelta', 'historyOrder'];
 
 export function step(input) {
   return stepWithPreference(input, null);
@@ -383,6 +384,7 @@ export function learn(input) {
         source.receipt.executionNonce,
         pendingBaselineObservation(intent, settlement.cleanDeltas),
         contextKey,
+        nextHistoryOrder(nextMemory),
         'learnOutput.nextMemory.pendingCredits',
       );
       return {
@@ -422,6 +424,7 @@ export function learn(input) {
   }
 
   const token = intent.choice.token;
+  const historyOrder = nextHistoryOrder(nextMemory);
   const actualDelta = addVectors(
     intent.expectation.expectedDelta,
     verification.error,
@@ -439,6 +442,7 @@ export function learn(input) {
     token,
     relationKey: intent.expectation.relationKey,
     contextKey,
+    historyOrder,
     actualDelta,
     errorMagnitude,
     dimensions,
@@ -571,6 +575,7 @@ function settlePendingCredits(
       token: pending.token,
       relationKey: pending.relationKey,
       contextKey: pending.contextKey,
+      historyOrder: pending.historyOrder,
       actualDelta,
       errorMagnitude,
       dimensions,
@@ -631,7 +636,7 @@ function pendingBaselineObservation(intent, cleanDeltas) {
   };
 }
 
-function addPendingCredit(memory, intent, executionNonce, baselineObservation, contextKey, field) {
+function addPendingCredit(memory, intent, executionNonce, baselineObservation, contextKey, historyOrder, field) {
   const pendingCredits = memory.pendingCredits ?? [];
   if (pendingCredits.some((item) => item.executionNonce === executionNonce)) {
     contractViolation('kernel pending credits contain a reused execution nonce', { field });
@@ -650,6 +655,7 @@ function addPendingCredit(memory, intent, executionNonce, baselineObservation, c
     expectedDelta: cloneVector(intent.expectation.expectedDelta),
     ...(intent.expectation.relationKey === undefined ? {} : { relationKey: intent.expectation.relationKey }),
     ...(contextKey === undefined ? {} : { contextKey }),
+    ...(historyOrder === undefined ? {} : { historyOrder }),
     ...(memory.pendingCreditPolicy === undefined ? {} : { age: 0 }),
   });
 }
@@ -906,6 +912,9 @@ function normalizeMemory(value, field, dimensions) {
     ...(normalizedBeliefs === undefined ? {} : { beliefModels: normalizedBeliefs }),
     ...(normalizedContextModels === undefined ? {} : { contextModels: normalizedContextModels }),
     ...(normalizedRecentHistory === undefined ? {} : { recentHistory: normalizedRecentHistory }),
+    ...(source.historyClock === undefined ? {} : {
+      historyClock: assertNonNegativeInteger(source.historyClock, `${field}.historyClock`),
+    }),
   };
 }
 
@@ -945,11 +954,19 @@ function normalizeRecentHistory(value, field, dimensions) {
   }
   return items.map((item, index) => {
     const itemField = `${field}[${index}]`;
-    const source = assertPlainRecord(item, itemField, HISTORY_ENTRY_KEYS);
+    const source = assertPlainRecord(
+      item,
+      itemField,
+      HISTORY_ENTRY_KEYS,
+      HISTORY_ENTRY_KEYS.filter((key) => key !== 'historyOrder'),
+    );
     return {
       schemaVersion: requireSchemaVersion(source, itemField),
       token: assertOpaqueToken(source.token, `${itemField}.token`),
       actualDelta: cloneVector(assertFiniteVector(source.actualDelta, `${itemField}.actualDelta`, dimensions)),
+      ...(source.historyOrder === undefined ? {} : {
+        historyOrder: assertPositiveInteger(source.historyOrder, `${itemField}.historyOrder`),
+      }),
     };
   });
 }
@@ -1026,7 +1043,7 @@ function normalizePendingCredits(value, field, dimensions) {
       item,
       itemField,
       PENDING_CREDIT_KEYS,
-      PENDING_CREDIT_KEYS.filter((key) => key !== 'relationKey' && key !== 'contextKey' && key !== 'age'),
+      PENDING_CREDIT_KEYS.filter((key) => key !== 'relationKey' && key !== 'contextKey' && key !== 'historyOrder' && key !== 'age'),
     );
     const executionNonce = assertBoundedString(source.executionNonce, `${itemField}.executionNonce`, MAX_EXECUTION_NONCE_LENGTH);
     if (seen.has(executionNonce)) {
@@ -1059,6 +1076,9 @@ function normalizePendingCredits(value, field, dimensions) {
       expectedDelta: assertFiniteVector(source.expectedDelta, `${itemField}.expectedDelta`, dimensions),
       ...(relationKey === undefined ? {} : { relationKey }),
       ...(contextKey === undefined ? {} : { contextKey }),
+      ...(source.historyOrder === undefined ? {} : {
+        historyOrder: assertPositiveInteger(source.historyOrder, `${itemField}.historyOrder`),
+      }),
       ...(age === undefined ? {} : { age }),
     };
   });
@@ -1193,6 +1213,7 @@ function recordActionEvidence(memory, {
   token,
   relationKey,
   contextKey,
+  historyOrder,
   actualDelta,
   errorMagnitude,
   dimensions,
@@ -1234,7 +1255,7 @@ function recordActionEvidence(memory, {
     dimensions,
     field,
   });
-  appendRecentHistory(memory, { token, actualDelta, dimensions, field });
+  appendRecentHistory(memory, { token, actualDelta, historyOrder, dimensions, field });
   if (relationKey === undefined) return;
 
   const relationModels = memory.relationModels ?? {};
@@ -1289,17 +1310,21 @@ function countContextModels(value) {
   return Object.values(value).reduce((sum, models) => sum + Object.keys(models).length, 0);
 }
 
-function appendRecentHistory(memory, { token, actualDelta, dimensions, field }) {
+function appendRecentHistory(memory, { token, actualDelta, historyOrder, dimensions, field }) {
   if (memory.recentHistory === undefined) return;
-  const recentHistory = memory.recentHistory.length >= MAX_RECENT_HISTORY
-    ? memory.recentHistory.slice(-MAX_RECENT_HISTORY + 1)
-    : [...memory.recentHistory];
-  recentHistory.push({
+  const entry = {
     schemaVersion: SCHEMA_VERSION,
     token,
     actualDelta: cloneVector(assertFiniteVector(actualDelta, `${field}.recentHistory.actualDelta`, dimensions)),
-  });
-  memory.recentHistory = recentHistory;
+    ...(historyOrder === undefined ? {} : { historyOrder }),
+  };
+  if (historyOrder === undefined || memory.recentHistory.some((item) => item.historyOrder === undefined)) {
+    memory.recentHistory = [...memory.recentHistory.slice(-MAX_RECENT_HISTORY + 1), entry];
+    return;
+  }
+  memory.recentHistory = [...memory.recentHistory, entry]
+    .sort((left, right) => left.historyOrder - right.historyOrder)
+    .slice(-MAX_RECENT_HISTORY);
 }
 
 function recordBeliefEvidence(memory, {
@@ -1947,6 +1972,7 @@ function cloneMemory(value) {
       expectedDelta: cloneVector(credit.expectedDelta),
       ...(credit.relationKey === undefined ? {} : { relationKey: credit.relationKey }),
       ...(credit.contextKey === undefined ? {} : { contextKey: credit.contextKey }),
+      ...(credit.historyOrder === undefined ? {} : { historyOrder: credit.historyOrder }),
       ...(credit.age === undefined ? {} : { age: credit.age }),
     }));
   }
@@ -1983,8 +2009,10 @@ function cloneMemory(value) {
       schemaVersion: SCHEMA_VERSION,
       token: entry.token,
       actualDelta: cloneVector(entry.actualDelta),
+      ...(entry.historyOrder === undefined ? {} : { historyOrder: entry.historyOrder }),
     }));
   }
+  if (value.historyClock !== undefined) cloned.historyClock = value.historyClock;
   return cloned;
 }
 
@@ -2355,10 +2383,30 @@ function assertBeliefContextKey(value, field, dimensions) {
 
 function contextKeyForHistory(history) {
   if (history === undefined) return undefined;
-  return `h1:${canonicalDigest(history.map((entry) => ({
+  return `h1:${canonicalDigest(orderedHistory(history).map((entry) => ({
     token: entry.token,
     actualDelta: entry.actualDelta,
   })))}`;
+}
+
+function orderedHistory(history) {
+  if (!history.some((entry) => entry.historyOrder !== undefined)) return history;
+  return history
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => (left.entry.historyOrder ?? left.index) -
+      (right.entry.historyOrder ?? right.index))
+    .map(({ entry }) => entry);
+}
+
+function nextHistoryOrder(memory) {
+  if (memory.historyClock === undefined) return undefined;
+  if (memory.historyClock === Number.MAX_SAFE_INTEGER) {
+    contractViolation('kernel history clock cannot be incremented safely', {
+      field: 'learnOutput.nextMemory.historyClock',
+    });
+  }
+  memory.historyClock += 1;
+  return memory.historyClock;
 }
 
 function assertContextKey(value, field) {

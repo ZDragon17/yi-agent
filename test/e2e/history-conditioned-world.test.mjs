@@ -9,6 +9,7 @@ import { LabStore } from '../../src/runtime/lab-store.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const ADAPTER = path.resolve('test/fixtures/history-conditioned-world-adapter.mjs');
+const DELAYED_ADAPTER = path.resolve('test/fixtures/history-delayed-world-adapter.mjs');
 
 test('history evidence changes the target action without exposing hidden mode', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-history-conditioned-e2e-'));
@@ -87,6 +88,49 @@ test('history evidence changes the target action without exposing hidden mode', 
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('delayed feedback keeps recent history in action order across CLI restart and replay', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-history-delayed-e2e-'));
+  const adapter = path.join(root, 'adapter.json');
+  const lab = path.join(root, 'lab');
+  await writeFile(adapter, JSON.stringify({
+    executable: process.execPath,
+    args: [DELAYED_ADAPTER],
+    adapterId: 'history-delayed-adapter-v1',
+    worldId: 'history-delayed',
+    timeoutMs: 2000,
+  }));
+
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'history-delayed', '--seed', 'history-delayed-seed', '--lab-id', 'history-delayed-lab', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const result = await invoke(['agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '3', '--scenario', 'delayed-history', '--kernel-only', '--adapter', adapter, '--json']);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    assert.equal(result.stdout[0].data.status, 'COMPLETED');
+
+    const store = await LabStore.open({ labPath: lab });
+    const run = await store.readRun(result.stdout[0].data.runId);
+    const steps = run.events.filter((event) => event.kind === 'STEP');
+    assert.deepEqual(steps.map((event) => event.payload.update.status), ['DEFERRED', 'UPDATED', 'SKIPPED']);
+    assert.equal(steps[2].payload.update.settled[0].attribution, 'ACTION');
+    assert.deepEqual(steps[2].payload.afterState.memory.recentHistory.map((entry) => entry.token), [
+      steps[0].payload.choice.token,
+      steps[1].payload.choice.token,
+    ]);
+    assert.equal(steps[2].payload.afterState.memory.historyClock, 2);
+
+    const replay = await invoke(['replay', '--lab', lab, '--run', result.stdout[0].data.runId, '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+
+    const continued = await invoke(['agent', 'run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'delayed-history', '--kernel-only', '--adapter', adapter, '--json']);
+    assert.equal(continued.code, 0, JSON.stringify(continued));
+    assert.equal(continued.stdout[0].data.status, 'COMPLETED');
+    assert.equal((await LabStore.open({ labPath: lab })).manifest.worldId, 'history-delayed');
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

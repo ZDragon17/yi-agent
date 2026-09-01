@@ -15,7 +15,7 @@ const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
-const KERNEL_LEARNING_VERSION = 9;
+const KERNEL_LEARNING_VERSION = 10;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -159,6 +159,7 @@ export async function runLab(input) {
           beliefModels: {},
           contextModels: {},
           recentHistory: [],
+          historyClock: 0,
         },
         rngState: initialRng(manifest.seed),
         kernelStep: 0,
@@ -1050,12 +1051,9 @@ function manifestCapabilities(manifest) {
 }
 
 function projectCurrent(current) {
-  const memory = current.memory?.relationModels === undefined
-    ? { ...current.memory, relationModels: {} }
-    : current.memory;
   return {
     worldState: current.worldState,
-    memory,
+    memory: current.memory,
     rngState: current.rngState,
     kernelStep: current.kernelStep,
     ...(current.changeSupervisor === undefined ? {} : { changeSupervisor: current.changeSupervisor }),

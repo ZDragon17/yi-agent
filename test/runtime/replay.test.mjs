@@ -84,6 +84,32 @@ test('replay reports the first run-local sequence when deterministic kernel outp
   }
 });
 
+test('replay rejects a kernel learning version newer than the supported contract', async () => {
+  const fixture = await createRunFixture();
+  try {
+    const events = fixture.events.map((event) => JSON.parse(JSON.stringify(event)));
+    events[1].payload.boundary.kernelLearningVersion = 999;
+    events[1].digest = canonicalDigest(omit(events[1], 'digest'));
+    events[2].prevDigest = events[1].digest;
+    events[2].digest = canonicalDigest(omit(events[2], 'digest'));
+    const end = { ...fixture.end, finalEventDigest: events[2].digest };
+    end.selfDigest = canonicalDigest(omit(end, 'selfDigest'));
+
+    assert.throws(
+      () => replayRun({
+        manifest: fixture.manifest,
+        start: fixture.start,
+        events,
+        end,
+        worldFactories: { temperature: createTemperatureWorld },
+      }),
+      (error) => error instanceof ReplayError && error.code === 'CORRUPT',
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('replay locates a tampered event even when its digest chain is recomputed', async () => {
   const fixture = await createRunFixture();
   try {

@@ -122,6 +122,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 反馈顺序规范化：同一批合法的 nonce-bound feedback 无论由不同 WorldPort 按何种传输顺序返回，Kernel 都按 pending credit 的持久顺序结算，保持 `settled`、已结算收据和信念样本跨进程/Replay 一致；这不等于允许多个动作同时生效，无法归属的重叠变化仍必须由 WorldPort 标记为混杂；
 - 隐藏状态系统反例：`test/fixtures/hidden-state-world-adapter.mjs` 只向 Kernel 暴露一维 `value`，把 `hiddenMode` 和阶段机留在 WorldPort 内部；同一可见目标关系下，`advance` 实际产生 `-1/+1` 两种结果。跨两个独立 CLI Run 后，`beliefModels` 保留两种后验、外部效果不重复，两个 Run 均可 Replay 为 `CONSISTENT`。这证明的是当前信念记忆在该变化轴上没有把未知分支压成单一事实，不是隐藏状态识别或通用智能证明；
 - 有界历史上下文：在新 Lab 中，Kernel 还保存最近两个已验证的 `Token+actualDelta`，以领域中立的上下文签名条件化动作模型；历史探针结果可在可见状态恢复相同后改变下一步安全动作。上下文只来自已闭合证据，大小固定，旧 Lab 不注入该字段；这证明了有限历史条件化，不等于完整隐藏状态推断或长期规划；
+- 历史顺序稳定：`kernelLearningVersion: 10` 的新 Lab 为动作分配单调序号，并在延迟 feedback 晚到时按动作发生顺序重排近期历史；反馈传输顺序不会改变上下文签名。没有新时钟的旧 Lab 保持原有 Memory 形状和 Replay 语义；
 - 共享观测边界保护：v7 还会识别同一 `stateVersion + intervalId` 承载多个新 feedback 的情况，即使 adapter 把它们标为 clean，也全部记为 `AMBIGUOUS` 且不学习，避免一份无法分解的快照被复制到多个动作；旧 v6 账本按旧归因语义 Replay；
 - 监督器证据对齐：`kernelLearningVersion: 9` 的新 STEP 当本步先结算了新的延迟 feedback 时，变化监督器不会把合并观测中的旧动作进步记成当前动作的确认进步；已结算收据仍按 nonce 学习，当前动作和目标监督各自保守处理；旧版本 Replay 保持原监督语义；
 - 变化监督器：用同一套目标距离、确认进步、停滞、重规划和停止判定约束不同世界；状态随 STEP、快照、终态和恢复账本连续保存，跨进程 CLI 可继续运行；
@@ -303,7 +304,7 @@ node E:\demo\yi-agent-oracle\late-bound-oracle.mjs `
 
 当监督器检测到达到停滞阈值，它会把 `replanCount`、`strategy.revision`、策略模式和 `replanReason` 写进 STEP 的 `afterState`。`EXPLORATORY` 只改变安全候选的选择顺序，不能改变目标、权限、WorldPort 回执或验证规则；Replay 会重现同一次策略切换。若启用了持久化 Planner 策略，停滞还会把新的有限计划写入同一步的 `boundary.goalReplan`：已完成阶段不可改写，只能修订未完成后缀；Planner 不可用或提议不合法时，保留原计划并记录拒绝证据。
 
-Memory 现在同时保留四类基础模型和一条有界历史轨迹：`actionModels` 记录 Token 的总体变化，`relationModels` 记录同一 Token 在观测相对当前目标的关系签名（每个维度为接近、相等或远离）下的变化，`rejectionModels` 记录同一 Token 在最近关系位置是否遭到执行拒绝，`beliefModels` 保存同一条件下最近最多 8 个已验证后验变化样本，`contextModels` 则按最近两个已验证 `Token+actualDelta` 的上下文签名记录条件变化。Kernel 优先使用历史上下文模型，再回退关系模型和总体模型；信念样本不宣称知道隐藏状态，只在分支离散时提高不确定性惩罚，从而避免把均值误当成唯一现实；拒绝反馈只在同一关系签名下暂时降权，关系改变或所有候选都被拒绝时仍允许重新验证。上下文和关系签名都只由不透明 Token、数值观测、ValueSpec 与已验证变化构成，不读取领域名称；所有窗口固定大小并保留样本总数审计，旧账本没有新字段时仍按旧模型 Replay。
+Memory 现在同时保留四类基础模型和一条有界历史轨迹：`actionModels` 记录 Token 的总体变化，`relationModels` 记录同一 Token 在观测相对当前目标的关系签名（每个维度为接近、相等或远离）下的变化，`rejectionModels` 记录同一 Token 在最近关系位置是否遭到执行拒绝，`beliefModels` 保存同一条件下最近最多 8 个已验证后验变化样本，`contextModels` 则按最近两个已验证 `Token+actualDelta` 的上下文签名记录条件变化；新 Memory 用 `historyClock` 和动作序号保持延迟反馈下的真实发生顺序。Kernel 优先使用历史上下文模型，再回退关系模型和总体模型；信念样本不宣称知道隐藏状态，只在分支离散时提高不确定性惩罚，从而避免把均值误当成唯一现实；拒绝反馈只在同一关系签名下暂时降权，关系改变或所有候选都被拒绝时仍允许重新验证。上下文和关系签名都只由不透明 Token、数值观测、ValueSpec 与已验证变化构成，不读取领域名称；所有窗口固定大小并保留样本总数审计，旧账本没有新字段时仍按旧模型 Replay。
 
 目标评价现在也固定在同一底层几何上：新 Run 的 `valueMode=distance-v2` 用每个观测维度到目标的带权绝对距离打分，`tolerance` 把目标从一个点扩展为可接受带；因此越过目标不会被错误奖励，带内状态可被视为满足该维度。`valueMode` 不进入领域逻辑，旧 STEP 缺少它时 Replay 保持 `signed-v1`，避免演化破坏历史连续性。
 

@@ -23,6 +23,7 @@ const BELIEF_LEARNING_VERSION = 5;
 const CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION = 6;
 const SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION = 7;
 const SUPERVISOR_FEEDBACK_ALIGNMENT_LEARNING_VERSION = 8;
+const MAX_SUPPORTED_LEARNING_VERSION = 10;
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -224,6 +225,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   let verification;
   let update;
   const learningVersion = payload.boundary.kernelLearningVersion ?? 1;
+  assertLearningVersion(learningVersion, event.sequence);
   try {
     verification = kernel.verify({ intent, receipt, postObservation });
     const learned = kernel.learn({
@@ -313,6 +315,16 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       ?? compareValue(payload.afterState, nextState, 'payload.afterState', event.sequence);
   }
   return difference ? { difference } : { nextState };
+}
+
+function assertLearningVersion(value, sequence) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_SUPPORTED_LEARNING_VERSION) {
+    corrupt('STEP declares an unsupported kernel learning version.', {
+      sequence,
+      learningVersion: value,
+      maxSupported: MAX_SUPPORTED_LEARNING_VERSION,
+    });
+  }
 }
 
 function withoutSettledFeedback(update) {
