@@ -14,6 +14,8 @@ const MAX_PLANNING_HORIZON = 8;
 const MAX_PLANNING_CANDIDATES = 64;
 const PLANNING_INFORMATION_MODES = ['belief-v1', 'belief-v2', 'belief-v3', 'legacy-v1'];
 const PLANNING_CONTEXT_MODES = ['context-v1', 'legacy-v1'];
+const PLANNING_BRANCHING_MODES = ['recursive-v1', 'legacy-v1'];
+const MAX_PLANNING_ROLLOUTS = 128;
 const MAX_PENDING_CREDITS = 64;
 const MAX_FEEDBACK_ITEMS = 64;
 const MAX_EXECUTION_NONCE_LENGTH = 256;
@@ -744,12 +746,13 @@ function normalizePlanning(value, field) {
       horizon: 1,
       informationMode: 'belief-v3',
       contextMode: 'context-v1',
+      branchingMode: 'recursive-v1',
     };
   }
   const source = assertPlainRecord(
     value,
     field,
-    ['schemaVersion', 'horizon', 'informationMode', 'contextMode'],
+    ['schemaVersion', 'horizon', 'informationMode', 'contextMode', 'branchingMode'],
     ['schemaVersion', 'horizon'],
   );
   const horizon = assertPositiveInteger(source.horizon, `${field}.horizon`);
@@ -767,6 +770,8 @@ function normalizePlanning(value, field) {
       assertOneOf(source.informationMode, PLANNING_INFORMATION_MODES, `${field}.informationMode`),
     contextMode: source.contextMode === undefined ? 'context-v1' :
       assertOneOf(source.contextMode, PLANNING_CONTEXT_MODES, `${field}.contextMode`),
+    branchingMode: source.branchingMode === undefined ? 'recursive-v1' :
+      assertOneOf(source.branchingMode, PLANNING_BRANCHING_MODES, `${field}.branchingMode`),
   };
 }
 
@@ -2032,6 +2037,13 @@ function boundedPlanningCapabilities(capabilities, predictions) {
 }
 
 function rolloutUtility(firstPrediction, input, horizon, unit) {
+  if (input.planning.branchingMode === 'recursive-v1') {
+    return rolloutUtilityRecursive(firstPrediction, input, horizon, unit);
+  }
+  return rolloutUtilityStatic(firstPrediction, input, horizon, unit);
+}
+
+function rolloutUtilityStatic(firstPrediction, input, horizon, unit) {
   const firstUncertaintyCost = uncertaintyPenalty(
     firstPrediction.expectation.uncertainty,
     input.valueSpec.weights,
@@ -2131,6 +2143,164 @@ function rolloutUtility(firstPrediction, input, horizon, unit) {
   }
 
   return assertComputedFiniteNumber(expectedUtility, 'stepOutput.planning.utility');
+}
+
+function rolloutUtilityRecursive(firstPrediction, input, horizon, unit) {
+  const firstUncertaintyCost = uncertaintyPenalty(
+    firstPrediction.expectation.uncertainty,
+    input.valueSpec.weights,
+  );
+  const outcomes = predictionOutcomeVectors(
+    firstPrediction,
+    input,
+    input.planning.informationMode !== 'legacy-v1',
+  );
+  const outcomeVectors = boundedPlanningOutcomeVectors(
+    outcomes.vectors,
+    MAX_PLANNING_ROLLOUTS,
+  );
+  let expectedUtility = 0;
+  const nextDecisions = [];
+  const nextUncertainties = [];
+
+  for (const outcomeVector of outcomeVectors) {
+    let planningMemory = input.memory;
+    if (input.planning.contextMode !== 'legacy-v1' && horizon > 1) {
+      planningMemory = planningMemoryAfterAction(
+        input.memory,
+        firstPrediction.choice.token,
+        subtractVectors(
+          outcomeVector,
+          input.observation.vector,
+          'stepOutput.planning.firstActionDelta',
+        ),
+        input.observation.vector.length,
+      );
+    }
+    const rollout = rolloutFutureUtility({
+      input,
+      predictedVector: outcomeVector,
+      planningMemory,
+      depth: 1,
+      horizon,
+      totalCost: firstPrediction.choice.cost + firstUncertaintyCost,
+      unit,
+      budget: MAX_PLANNING_ROLLOUTS,
+    });
+    expectedUtility += rollout.utility / outcomeVectors.length;
+    if (rollout.firstDecision !== null) {
+      nextDecisions.push(rollout.firstDecision);
+      nextUncertainties.push(rollout.firstUncertainty);
+    }
+  }
+
+  if (outcomes.sampled && input.planning.informationMode === 'belief-v1' &&
+      nextUncertainties.length > 0) {
+    expectedUtility += uncertaintyReduction(
+      firstPrediction.expectation.uncertainty,
+      nextUncertainties.reduce((total, value) => total + value, 0) / nextUncertainties.length,
+      input.valueSpec.weights,
+    );
+  }
+
+  if (outcomes.sampled && input.planning.informationMode === 'belief-v2' &&
+      hasDiverseNextDecisions(nextDecisions)) {
+    expectedUtility += uncertaintyReduction(
+      firstPrediction.expectation.uncertainty,
+      nextUncertainties.reduce((total, value) => total + value, 0) / nextUncertainties.length,
+      input.valueSpec.weights,
+    );
+  }
+
+  if (outcomes.sampled && input.planning.informationMode === 'belief-v3' &&
+      hasValueRelevantNextDecisions(nextDecisions, input.valueSpec)) {
+    expectedUtility += uncertaintyReduction(
+      firstPrediction.expectation.uncertainty,
+      nextUncertainties.reduce((total, value) => total + value, 0) / nextUncertainties.length,
+      input.valueSpec.weights,
+    );
+  }
+
+  return assertComputedFiniteNumber(expectedUtility, 'stepOutput.planning.utility');
+}
+
+function rolloutFutureUtility({ input, predictedVector, planningMemory, depth, horizon, totalCost, unit, budget }) {
+  if (depth >= horizon) {
+    return {
+      utility: valueObservation(predictedVector, input.valueSpec) - totalCost,
+      firstDecision: null,
+      firstUncertainty: null,
+    };
+  }
+
+  const futureInput = {
+    ...input,
+    memory: planningMemory,
+    observation: {
+      ...input.observation,
+      vector: predictedVector,
+    },
+  };
+  const futurePredictions = buildPredictions(futureInput).filter(
+    (item) => item.choice.allowed && item.choice.safe,
+  );
+  if (futurePredictions.length === 0) {
+    return {
+      utility: valueObservation(predictedVector, input.valueSpec) - totalCost,
+      firstDecision: null,
+      firstUncertainty: null,
+    };
+  }
+
+  const future = chooseByStrategy(selectionPoolFor(futurePredictions), input.strategy, unit);
+  const outcomes = predictionOutcomeVectors(
+    future,
+    futureInput,
+    input.planning.informationMode !== 'legacy-v1',
+  );
+  const outcomeVectors = boundedPlanningOutcomeVectors(outcomes.vectors, budget);
+  const childBudget = Math.max(1, Math.floor(budget / outcomeVectors.length));
+  let expectedUtility = 0;
+
+  for (const outcomeVector of outcomeVectors) {
+    let nextMemory = planningMemory;
+    if (input.planning.contextMode !== 'legacy-v1') {
+      nextMemory = planningMemoryAfterAction(
+        planningMemory,
+        future.choice.token,
+        subtractVectors(
+          outcomeVector,
+          predictedVector,
+          'stepOutput.planning.futureActionDelta',
+        ),
+        input.observation.vector.length,
+      );
+    }
+    expectedUtility += rolloutFutureUtility({
+      input,
+      predictedVector: outcomeVector,
+      planningMemory: nextMemory,
+      depth: depth + 1,
+      horizon,
+      totalCost: totalCost + future.choice.cost +
+        uncertaintyPenalty(future.expectation.uncertainty, input.valueSpec.weights),
+      unit,
+      budget: childBudget,
+    }).utility / outcomeVectors.length;
+  }
+
+  return {
+    utility: expectedUtility,
+    firstDecision: future,
+    firstUncertainty: future.expectation.uncertainty,
+  };
+}
+
+function boundedPlanningOutcomeVectors(vectors, limit) {
+  if (vectors.length <= limit) return vectors;
+  return Array.from({ length: limit }, (_, index) =>
+    vectors[Math.floor(index * vectors.length / limit)],
+  );
 }
 
 function planningMemoryAfterAction(memory, token, actualDelta, dimensions) {

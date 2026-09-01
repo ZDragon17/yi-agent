@@ -404,3 +404,11 @@
 - 兼容：`contextMode: context-v1` 为新语义；v15 及以前 Replay 强制 `contextMode: legacy-v1`，防止历史规划选择因代码升级而漂移；外部 transition marker 持久化该模式，缺少字段的旧 marker 按 `legacy-v1` 恢复并保持同 nonce 重试身份。
 - 验证：一维上下文反例中，静态规划选择直接收益动作 B，传播假设记忆后选择序列入口 A；输入 Memory 保持不变，旧模式仍选择 B。
 - 边界：只覆盖固定 horizon 内的模型投影，不能证明长期计划、反事实因果或真实结果必然遵循预测；预测错误仍需真实闭环反馈纠正。
+
+## F-42 后续 belief 的有界递归规划
+
+- 反例：horizon=3 时，首步 A 进入已验证上下文后选择 B；B 的后验有两个结果，只有其中一个结果会让第三步 C 直接抵达目标。只把 B 的均值写入临时历史会选择短期动作 X，按后验分支评估则应选择 A。
+- 实现：v17 在首步之后继续对每个未来动作的已验证 belief 结果建立临时观测和临时历史分支；每个候选的递归 rollout 使用固定预算，并保持安全候选筛选、WorldPort 边界和真实 `verify → learn` 记忆转移不变。
+- 兼容：v16 及以前 Replay 使用 `branchingMode: legacy-v1` 回放非递归算法；v17 STEP boundary 和外部 marker 固化 `branchingMode: recursive-v1`，缺失字段的旧 marker 按 legacy 恢复。
+- 验证：Kernel 三步 opaque-token 反例必须从 X 分化为 A，输入 Memory 不得改变；既有规划、旧版本 Replay、跨进程 E2E 和随机 WorldPort 继续通过。
+- 边界：分支预算和 horizon 都是有限启发式，不等价于完整树搜索、概率校准、因果推断或长期自主性。

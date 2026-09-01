@@ -123,7 +123,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 隐藏状态系统反例：`test/fixtures/hidden-state-world-adapter.mjs` 只向 Kernel 暴露一维 `value`，把 `hiddenMode` 和阶段机留在 WorldPort 内部；同一可见目标关系下，`advance` 实际产生 `-1/+1` 两种结果。跨两个独立 CLI Run 后，`beliefModels` 保留两种后验、外部效果不重复，两个 Run 均可 Replay 为 `CONSISTENT`。这证明的是当前信念记忆在该变化轴上没有把未知分支压成单一事实，不是隐藏状态识别或通用智能证明；
 - 隐藏状态可辨识性边界：当两个隐藏动力学的公开输入完全相同时，Kernel 必须先做同一选择；只有收到不同的可验证结果后，经验模型和后续策略才允许分化。该不变量由 `test/kernel/belief-memory.test.mjs` 固化，防止把隐藏字段、模型猜测或领域标签冒充为事实；
 - 有界周期再验证：新 Lab 在 `Memory.lastVerifiedSteps` 保存每个不透明 Token 最近一次已验证的逻辑序号；已知安全动作超过 8 个已验证动作未复核时，Kernel 在没有未尝试动作的前提下优先重新取证，并在 `Expectation.verificationAge` 中留下可审计年龄。它能在受控动力学漂移中重新发现旧模型失效，但不等于感知隐藏变化、变化点检测或现实因果证明；v15 以前的 Replay 保持旧选择语义；
-- 有界序列规划：`kernelLearningVersion: 16` 的 horizon 规划会把每个假设动作的预测变化写入临时、不可持久化的规划记忆，使已验证的历史上下文能影响后续假设动作；真实记忆仍只由 `verify → learn` 更新，v15 及以前的 Replay 显式保持旧的静态上下文规划语义；
+- 有界序列规划：`kernelLearningVersion: 17` 的 horizon 规划会把每个假设动作的预测变化写入临时、不可持久化的规划记忆，并在每个后续动作的已验证 belief 结果上继续有界分支，使已验证的历史上下文能影响后续假设动作；真实记忆仍只由 `verify → learn` 更新，v16 及以前的 Replay 显式保持非递归规划语义；
 - 有界历史上下文：在新 Lab 中，Kernel 还保存最近两个已验证的 `Token+actualDelta`，以领域中立的上下文签名条件化动作模型；历史探针结果可在可见状态恢复相同后改变下一步安全动作。上下文只来自已闭合证据，大小固定，旧 Lab 不注入该字段；这证明了有限历史条件化，不等于完整隐藏状态推断或长期规划；
 - 历史顺序稳定：`kernelLearningVersion: 10` 的新 Lab 为动作分配单调序号，并在延迟 feedback 晚到时按动作发生顺序重排近期历史；反馈传输顺序不会改变上下文签名。带时钟的 Memory 还会拒绝重复、超前或缺失动作序号，避免不可能的持久状态重新引入顺序歧义。没有新时钟的旧 Lab 保持原有 Memory 形状和 Replay 语义；
 - 可压缩长期上下文：`kernelLearningVersion: 11` 的新 Lab 另保存固定大小的顺序敏感 `historyAccumulator`。它按动作序号吸收已验证变化，允许延迟 feedback 补入旧位置而不依赖到达顺序；`recentHistory` 仍只用于可读的最近两条审计轨迹。预测同时尝试 h2 长期指纹和 h1 近期上下文，缺少 h2 样本时回退到 h1；由于 h2 是精确指纹，Kernel 只保留极小的长期模型缓存，避免连续运行把持久化快照膨胀成随历史线性增长。该机制支持有限的长程重复证据，但不等于无限语义记忆，仍受摘要碰撞和缓存容量约束；

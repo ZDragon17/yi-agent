@@ -397,6 +397,7 @@ test('CLI resumes a response-lost external transition through the same execution
     const recoveryTerminal = recoveredEvents.find((event) => event.kind === 'RUN_HALTED');
     assert.equal(recoveryTerminal.payload.externalTransition.planning.horizon, 2);
     assert.equal(recoveryTerminal.payload.externalTransition.planning.contextMode, 'context-v1');
+    assert.equal(recoveryTerminal.payload.externalTransition.planning.branchingMode, 'recursive-v1');
     const afterLoss = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
     assert.equal(afterLoss.code, 0);
     assert.equal(afterLoss.stdout[0].data.current.status, 'HALTED');
@@ -410,6 +411,7 @@ test('CLI resumes a response-lost external transition through the same execution
     const resumedStep = decodeStoredEvent(resumedEvents.find((event) => event.kind === 'STEP'));
     assert.equal(resumedStep.payload.boundary.planning.horizon, 2);
     assert.equal(resumedStep.payload.boundary.planning.contextMode, 'context-v1');
+    assert.equal(resumedStep.payload.boundary.planning.branchingMode, 'recursive-v1');
 
     const current = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
     assert.equal(current.code, 0);

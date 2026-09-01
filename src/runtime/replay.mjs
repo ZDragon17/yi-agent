@@ -29,7 +29,8 @@ const DECISION_DIVERGENCE_INFORMATION_PLANNING_LEARNING_VERSION = 13;
 const VALUE_RELEVANT_INFORMATION_PLANNING_LEARNING_VERSION = 14;
 const REVALIDATION_LEARNING_VERSION = 15;
 const CONTEXT_PLANNING_LEARNING_VERSION = 16;
-const MAX_SUPPORTED_LEARNING_VERSION = 16;
+const RECURSIVE_PLANNING_LEARNING_VERSION = 17;
+const MAX_SUPPORTED_LEARNING_VERSION = 17;
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -197,6 +198,9 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
           contextMode: learningVersion < CONTEXT_PLANNING_LEARNING_VERSION
             ? 'legacy-v1'
             : payload.boundary.planning.contextMode ?? 'context-v1',
+          branchingMode: learningVersion < RECURSIVE_PLANNING_LEARNING_VERSION
+            ? 'legacy-v1'
+            : payload.boundary.planning.branchingMode ?? 'recursive-v1',
         };
     const stepInput = {
       observation: beforeObservation,

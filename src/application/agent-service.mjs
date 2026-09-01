@@ -15,7 +15,7 @@ const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
-const KERNEL_LEARNING_VERSION = 16;
+const KERNEL_LEARNING_VERSION = 17;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -88,6 +88,7 @@ export async function runLab(input) {
     : requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon');
   let planningHorizon = requestedPlanningHorizon ?? 1;
   let planningContextMode = 'context-v1';
+  let planningBranchingMode = 'recursive-v1';
   if (source.autoPlan !== undefined && typeof source.autoPlan !== 'boolean') {
     throw new LabStoreError('INVALID_INPUT', 'autoPlan must be a boolean.', { field: 'autoPlan' });
   }
@@ -146,6 +147,7 @@ export async function runLab(input) {
     }
     planningHorizon = recoveredPlanningHorizon;
     planningContextMode = unresolved.evidence.planning?.contextMode ?? 'legacy-v1';
+    planningBranchingMode = unresolved.evidence.planning?.branchingMode ?? 'legacy-v1';
   }
   const goalRequested = (source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined;
   let initialState = current.lastRunId === null
@@ -303,7 +305,7 @@ export async function runLab(input) {
       capabilities,
       rngState: state.rngState,
       ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
-      planning: planningEvidence(planningHorizon, planningContextMode),
+      planning: planningEvidence(planningHorizon, planningContextMode, planningBranchingMode),
     }, preferenceFor(retryPreference ?? modelDecision, retryPreference !== null));
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
@@ -327,6 +329,7 @@ export async function runLab(input) {
         state,
         planningHorizon,
         planningContextMode,
+        planningBranchingMode,
       );
     }
     const externalInputs = registry.scenarioExternalInputs(
@@ -340,7 +343,7 @@ export async function runLab(input) {
         token: receiptRequest.token,
         basedOnVersion: receiptRequest.basedOnVersion,
         beforeState: state,
-        planning: planningEvidence(planningHorizon, planningContextMode),
+        planning: planningEvidence(planningHorizon, planningContextMode, planningBranchingMode),
         ...(retryPolicyEvidence === null && modelDecision === null
           ? {}
           : { policyEvidence: retryPolicyEvidence ?? policyEvidence(modelDecision, intent, capabilities) }),
@@ -439,7 +442,7 @@ export async function runLab(input) {
           schemaVersion: SCHEMA_VERSION,
           kernelLearningVersion: KERNEL_LEARNING_VERSION,
           valueSpec: stepValueSpec,
-          planning: planningEvidence(planningHorizon, planningContextMode),
+          planning: planningEvidence(planningHorizon, planningContextMode, planningBranchingMode),
           capabilities,
           afterCapabilities,
           ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
@@ -744,15 +747,16 @@ function fallbackAdvice(reason) {
   };
 }
 
-function planningEvidence(horizon, contextMode) {
+function planningEvidence(horizon, contextMode, branchingMode) {
   return {
     schemaVersion: SCHEMA_VERSION,
     horizon,
-    ...(horizon > 1 || contextMode === 'legacy-v1' ? { contextMode } : {}),
+    ...(horizon > 1 ? { contextMode, branchingMode } :
+      contextMode === 'legacy-v1' ? { contextMode } : {}),
   };
 }
 
-function assertExternalTransitionRetry(unresolved, request, state, planningHorizon, planningContextMode) {
+function assertExternalTransitionRetry(unresolved, request, state, planningHorizon, planningContextMode, planningBranchingMode) {
   const evidence = unresolved.evidence;
   const mismatches = [];
   if (request.executionNonce !== evidence.executionNonce) mismatches.push('executionNonce');
@@ -761,6 +765,7 @@ function assertExternalTransitionRetry(unresolved, request, state, planningHoriz
   if (canonicalDigest(state) !== evidence.beforeDigest) mismatches.push('beforeDigest');
   if ((evidence.planning?.horizon ?? 1) !== planningHorizon) mismatches.push('planningHorizon');
   if ((evidence.planning?.contextMode ?? 'legacy-v1') !== planningContextMode) mismatches.push('planningContextMode');
+  if ((evidence.planning?.branchingMode ?? 'legacy-v1') !== planningBranchingMode) mismatches.push('planningBranchingMode');
   if (mismatches.length > 0) {
     throw new LabStoreError(
       'CONFLICT',

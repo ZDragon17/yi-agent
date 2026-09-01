@@ -136,6 +136,7 @@ test('replay preserves an explicit contextMode at the v16 STEP boundary', async 
       kernel: {
         step(input) {
           assert.equal(input.planning.contextMode, 'legacy-v1');
+          assert.equal(input.planning.branchingMode, 'legacy-v1');
           seenContextMode = true;
           return step(input);
         },

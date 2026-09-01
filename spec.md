@@ -47,6 +47,7 @@ HTML 原型证明了“预期—行动—验证—修正”能够运行，但状
 - 预测信念：新 Lab 可在 `Memory.beliefModels` 中按 `Token×RelationSignature` 保存最近最多 8 个已验证后验变化样本。样本只表达可观察结果的多分支不确定性；Kernel 将其离散度并入不确定性惩罚，并在 `kernelLearningVersion: 14` 的有限规划中按样本估计第一步的信息价值，但不把样本当作隐藏状态事实、权限或执行依据。若后验分支不改变价值相关的下一步预期变化，必须保留多分支但不声称产生信息增益；旧 Lab 不注入该字段，Replay 不补写。
 - v15 版本边界：新 STEP 还持久化每个 Token 的验证新鲜度，并在已知安全行动超过固定 8 个已验证动作未复核时进行周期再验证；v15 之前的 Replay 不启用该策略并移除该字段，保持历史选择语义。
 - v16 版本边界：horizon 规划还启用临时假设记忆传播，将首步及后续预测动作的变化用于历史上下文条件化；v16 之前的 Replay 强制 `contextMode: legacy-v1`，不改变既有账本的静态上下文规划语义。外部 transition marker 同时绑定该规划模式；缺少模式字段的历史 marker 按 `legacy-v1` 恢复，不静默采用当前版本语义。
+- v17 版本边界：horizon 规划还对后续动作的已验证 belief 结果递归分支，并以固定 rollout 预算限制展开规模；v16 及以前的 Replay 强制 `branchingMode: legacy-v1`，保持非递归规划语义。外部 transition marker 同时绑定该分支模式；缺少模式字段的历史 marker 按 `legacy-v1` 恢复，不静默采用当前版本语义。
 - 历史上下文：新 Lab 可在 `Memory.recentHistory` 中保存最近最多 2 个已验证的 `{Token,actualDelta}`，并在 `Memory.contextModels` 中按 h1 规范化签名条件化动作模型；`kernelLearningVersion: 11` 另以 `historyAccumulator` 和 h2 精确指纹保存有序长期证据，预测按 h2→h1→关系→总体模型回退。h2 缓存保持极小且有界，以保证连续运行的持久化快照不会随历史线性膨胀。上下文不是领域语义、隐藏状态事实或权限依据；未闭合 feedback、混杂和拒绝不进入历史；旧 Lab 不注入新字段，Replay 不补写。
 - 历史顺序：新 Lab 额外保存有界 `historyClock`，并将动作序号写入 pending credit 与近期历史；反馈晚到时按动作序号重排近期历史，而不是按反馈到达顺序重排。旧 Memory 没有时钟则保持原有历史形状和语义，不强行迁移。
 - 验证新鲜度：新 Lab 在 `Memory.lastVerifiedSteps` 中按不透明 Token 保存最近一次已验证证据的逻辑序号；当一个仍然安全的已知行动距上次验证达到固定 8 个已验证动作时，Kernel 在没有未尝试行动时优先重新验证最久未验证的行动。该策略只获取新证据，不修改安全/授权边界；`Expectation.verificationAge` 让选择理由可审计。旧 Memory 没有该字段时保持原有选择语义，Replay 以 `kernelLearningVersion: 15` 区分。

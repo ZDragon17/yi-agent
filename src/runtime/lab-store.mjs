@@ -37,6 +37,7 @@ const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
 const MAX_PLANNING_HORIZON = 8;
 const PLANNING_CONTEXT_MODES = ['context-v1', 'legacy-v1'];
+const PLANNING_BRANCHING_MODES = ['recursive-v1', 'legacy-v1'];
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -1372,7 +1373,8 @@ function isValidPlanningEvidence(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value) &&
     value.schemaVersion === SCHEMA_VERSION &&
     Number.isSafeInteger(value.horizon) && value.horizon >= 1 && value.horizon <= MAX_PLANNING_HORIZON &&
-    (value.contextMode === undefined || PLANNING_CONTEXT_MODES.includes(value.contextMode));
+    (value.contextMode === undefined || PLANNING_CONTEXT_MODES.includes(value.contextMode)) &&
+    (value.branchingMode === undefined || PLANNING_BRANCHING_MODES.includes(value.branchingMode));
 }
 
 function validatePlanningEvidence(value, field) {
@@ -1383,16 +1385,22 @@ function validatePlanningEvidence(value, field) {
     schemaVersion: SCHEMA_VERSION,
     horizon: value.horizon,
     contextMode: value.contextMode === undefined ? 'legacy-v1' : value.contextMode,
+    ...(value.branchingMode === undefined && value.horizon <= 1 ? {} : {
+      branchingMode: value.branchingMode === undefined ? 'legacy-v1' : value.branchingMode,
+    }),
   };
 }
 
 function normalizePlanningEvidence(value) {
   return value === undefined
-    ? { schemaVersion: SCHEMA_VERSION, horizon: 1, contextMode: 'legacy-v1' }
+    ? { schemaVersion: SCHEMA_VERSION, horizon: 1, contextMode: 'legacy-v1', branchingMode: 'legacy-v1' }
     : {
         schemaVersion: SCHEMA_VERSION,
         horizon: value.horizon,
         contextMode: value.contextMode === undefined ? 'legacy-v1' : value.contextMode,
+        ...(value.branchingMode === undefined && value.horizon <= 1 ? {} : {
+          branchingMode: value.branchingMode === undefined ? 'legacy-v1' : value.branchingMode,
+        }),
       };
 }
 
