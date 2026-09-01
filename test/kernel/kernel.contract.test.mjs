@@ -284,6 +284,47 @@ test('active information planning ignores variance that does not change the next
 
   assert.equal(planned.choice.token, exploit);
   assert.equal(historicalV12.choice.token, probe);
+
+  const branchNoiseInput = makeStepInput({
+    observation: observation([0, 0], 'state-branch-noise'),
+    valueSpec: { schemaVersion: 1, observationDimensions: 2, weights: [1, 0], target: [1, 2], tolerance: 0, valueMode: 'distance-v2' },
+    capabilities: [probe, exploit, goal].map((token) => capability(token, { cost: 0.05 })),
+  });
+  branchNoiseInput.memory = {
+    schemaVersion: 1,
+    actionModels: {
+      [probe]: model([-0.5, 0]),
+      [exploit]: model([0.1, 0]),
+      [goal]: model([0, 0]),
+    },
+    relationModels: {
+      [goal]: {
+        'r1:0-': model([0, 0]),
+        'r1:0+': model([0, 0.5]),
+      },
+    },
+    beliefModels: {
+      [probe]: {
+        'r1:++': {
+          schemaVersion: 1,
+          sampleCount: 2,
+          samples: [[1, 3], [1, 1]],
+        },
+      },
+    },
+  };
+
+  const valueRelevant = step({
+    ...branchNoiseInput,
+    planning: { schemaVersion: 1, horizon: 2 },
+  });
+  const historicalV13 = step({
+    ...branchNoiseInput,
+    planning: { schemaVersion: 1, horizon: 2, informationMode: 'belief-v2' },
+  });
+
+  assert.equal(valueRelevant.choice.token, exploit);
+  assert.equal(historicalV13.choice.token, probe);
 });
 
 test('step is deterministic with an explicit rngState and does not require policy metadata', async () => {

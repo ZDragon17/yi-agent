@@ -11,7 +11,7 @@ const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
 const ADAPTATION_WINDOW = 8;
 const MAX_PLANNING_HORIZON = 8;
 const MAX_PLANNING_CANDIDATES = 64;
-const PLANNING_INFORMATION_MODES = ['belief-v1', 'belief-v2', 'legacy-v1'];
+const PLANNING_INFORMATION_MODES = ['belief-v1', 'belief-v2', 'belief-v3', 'legacy-v1'];
 const MAX_PENDING_CREDITS = 64;
 const MAX_FEEDBACK_ITEMS = 64;
 const MAX_EXECUTION_NONCE_LENGTH = 256;
@@ -724,7 +724,7 @@ function normalizeStepInput(input) {
 
 function normalizePlanning(value, field) {
   if (value === undefined) {
-    return { schemaVersion: SCHEMA_VERSION, horizon: 1, informationMode: 'belief-v2' };
+    return { schemaVersion: SCHEMA_VERSION, horizon: 1, informationMode: 'belief-v3' };
   }
   const source = assertPlainRecord(
     value,
@@ -743,7 +743,7 @@ function normalizePlanning(value, field) {
   return {
     schemaVersion: requireSchemaVersion(source, field),
     horizon,
-    informationMode: source.informationMode === undefined ? 'belief-v2' :
+    informationMode: source.informationMode === undefined ? 'belief-v3' :
       assertOneOf(source.informationMode, PLANNING_INFORMATION_MODES, `${field}.informationMode`),
   };
 }
@@ -1893,10 +1893,11 @@ function chooseByStrategy(predictions, strategy, unit) {
 // Planning is deliberately bounded and model-only. It projects the current
 // learned transition model forward, and when verified belief samples exist it
 // branches only on the first action's bounded outcomes. The current information
-// rule also requires those branches to produce different next decisions; raw
-// variance is not evidence that the observation can change what the agent
-// should do. This does not claim a hidden-state model or move speculative state
-// across the WorldPort safety boundary.
+// rule also requires those branches to produce different value-relevant next
+// effects; raw variance or an irrelevant-coordinate change is not evidence that
+// the observation can change what the agent should do. This does not claim a
+// hidden-state model or move speculative state across the WorldPort safety
+// boundary.
 function chooseByPlanning(predictions, input, unit) {
   const candidatePool = boundedPlanningPredictions(predictions);
   const rolloutInput = {
@@ -1995,6 +1996,19 @@ function rolloutUtility(firstPrediction, input, horizon, unit) {
     );
   }
 
+  if (outcomes.sampled && input.planning.informationMode === 'belief-v3' &&
+      hasValueRelevantNextDecisions(nextDecisions, input.valueSpec)) {
+    const averageNextUncertainty = nextUncertainties.reduce(
+      (total, value) => total + value,
+      0,
+    ) / nextUncertainties.length;
+    expectedUtility += uncertaintyReduction(
+      firstPrediction.expectation.uncertainty,
+      averageNextUncertainty,
+      input.valueSpec.weights,
+    );
+  }
+
   return assertComputedFiniteNumber(expectedUtility, 'stepOutput.planning.utility');
 }
 
@@ -2004,6 +2018,18 @@ function hasDiverseNextDecisions(decisions) {
     token: decision.expectation.token,
     expectedDelta: decision.expectation.expectedDelta,
   })));
+  return signatures.size > 1;
+}
+
+function hasValueRelevantNextDecisions(decisions, valueSpec) {
+  if (decisions.length < 2) return false;
+  const signatures = new Set(decisions.map((decision) => canonicalDigest(
+    decision.expectation.expectedDelta.map((delta, index) => delta * (
+      valueSpec.valueMode === 'distance-v2'
+        ? Math.abs(valueSpec.weights[index])
+        : valueSpec.weights[index]
+    )),
+  )));
   return signatures.size > 1;
 }
 
