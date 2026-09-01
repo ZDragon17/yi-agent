@@ -929,6 +929,43 @@ test('loop continuation infers the historical planning mode before v18', async (
   assert.equal((await store.readLoopContinuation()).planningBranchingMode, 'recursive-v1');
 }));
 
+test('loop continuation infers planning mode from an unresolved external transition without a STEP', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const continuation = {
+    schemaVersion: SCHEMA_VERSION,
+    loopId: '00000000-0000-4000-8000-000000000005',
+    scenario: 'steady',
+    runIndex: 0,
+    stepsPerRun: 1,
+    planningHorizon: 2,
+    mode: 'finite',
+    maxRuns: 2,
+  };
+  const initialState = finalState();
+  const run = await store.startRun(runInput({ runId: 'external-loop-run-1', continuation, initialState }));
+  await run.markExternalTransition({
+    executionNonce: 'execution:step:1',
+    token: 'tok_EXTERNAL01',
+    basedOnVersion: initialState.worldState.stateVersion,
+    beforeState: initialState,
+    planning: {
+      schemaVersion: SCHEMA_VERSION,
+      horizon: 2,
+      contextMode: 'context-v1',
+      branchingMode: 'tree-v1',
+    },
+  });
+  await run.finish({
+    terminalStatus: 'HALTED',
+    reason: 'EXTERNAL_TRANSITION_UNKNOWN',
+    finalState: initialState,
+  });
+
+  const recovered = await store.readLoopContinuation();
+  assert.equal(recovered.planningBranchingMode, 'tree-v1');
+}));
+
 test('inspect and startRun reject current state that disagrees with its valid ledger watermark', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

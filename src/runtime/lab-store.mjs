@@ -1513,12 +1513,14 @@ function inferLoopPlanningBranchingMode(group) {
   const declared = uniquePlanningBranchingModes(group.runs.map((run) =>
     run.start.continuation.planningBranchingMode,
   ));
-  const observed = uniquePlanningBranchingModes(group.runs.flatMap((run) =>
-    run.events
+  const observed = uniquePlanningBranchingModes(group.runs.flatMap((run) => [
+    ...run.events
       .filter((event) => event.kind === 'STEP')
-      .map(planningBranchingModeForStep)
-      .filter((mode) => mode !== null),
-  ));
+      .map(planningBranchingModeForStep),
+    ...run.events
+      .filter((event) => event.kind === 'RUN_HALTED' || event.kind === 'RUN_COMPLETED')
+      .map(planningBranchingModeForTerminal),
+  ].filter((mode) => mode !== null)));
   if (declared.length > 1 || observed.length > 1 ||
       (declared.length === 1 && observed.length === 1 && declared[0] !== observed[0])) {
     corrupt('Loop continuation planning branching mode differs across runs.', {
@@ -1541,6 +1543,11 @@ function planningBranchingModeForStep(event) {
   if (learningVersion === 17) return 'recursive-v1';
   if (Number.isSafeInteger(learningVersion) && learningVersion < 17) return 'legacy-v1';
   return null;
+}
+
+function planningBranchingModeForTerminal(event) {
+  const explicit = event.payload?.externalTransition?.planning?.branchingMode;
+  return PLANNING_BRANCHING_MODES.includes(explicit) ? explicit : null;
 }
 
 function loopContract(continuation, fallbackPlanningBranchingMode = 'legacy-v1') {
