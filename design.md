@@ -248,3 +248,24 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 历史隐藏状态反例进一步区分出：保存“同一动作可能有多个结果”并不等于能够利用已验证历史选择动作。新 Lab 的 Memory 可选保存最近两个已验证变化条目 `{token,actualDelta}`，以固定顺序形成 `h1:` 上下文签名；`contextModels` 按该签名和不透明 Token 保存动作模型。Kernel 在当前上下文已有样本时优先使用它，再回退到关系模型和总体模型；学习只在 `ACTION && learnable` 或已闭合 clean feedback 时把变化写入上下文，拒绝、混杂和未闭合反馈不写入。
 
 这个上下文是跨领域的“最近已验证变化”，不是领域字段、自然语言语义或隐藏模式标签。它只提供有限历史条件化：窗口固定为 2，模型和上下文数量有上限，旧 Memory 不带字段时保持旧行为。外部 `history-conditioned` WorldPort 以探针结果在可见状态恢复为零后验证：经过有限训练，模式 A 选择 `target-a`，模式 B 选择 `target-b`；28 次外部效果只提交一次，Replay 仍为 `CONSISTENT`。这证明了历史证据可以改变策略，但不证明长期记忆、隐藏状态完全辨识、概率校准或通用规划。
+
+## 10. Future-Gate：外部对账回执的签名证明草案
+
+当前 v0.1 的 `reconcile` 只验证回执的结构、原始请求身份、前后状态和 `effectDigest`；它能防止宿主误把不同动作拼接起来，却不能证明回执来自真实的 WorldPort。签名不能证明现实系统本身诚实，但能把“谁声明了这个事实”从无来源文本提升为可验证的来源声明。
+
+该能力只允许作为独立 adapter 的 opt-in 契约，不改变未声明能力的旧 adapter。建议在 `hello.result` 和 manifest adapter metadata 中增加 `reconciliationAttestation: "ed25519-v1"`。声明后，`reconcile` 的 `APPLIED`、`ABSENT` 和 `UNKNOWN` 都必须携带：
+
+```json
+{
+  "schemaVersion": 1,
+  "type": "world-reconciliation",
+  "algorithm": "ed25519-v1",
+  "requestDigest": "sha256:<canonical reconcile request>",
+  "resultDigest": "sha256:<canonical status and transition>",
+  "signature": "<base64 Ed25519 signature>"
+}
+```
+
+签名输入固定为规范化对象 `{schemaVersion,type,algorithm,worldId,scenario,state,request,status,transition,requestDigest,resultDigest}`；`requestDigest` 覆盖本次世界身份、场景、完整 before state 和 execution request，`resultDigest` 覆盖 status 及可选 transition。宿主先验签并重新计算两个摘要，再执行现有的 `APPLIED` 状态/回执校验；验签失败、摘要错配、跨 nonce 或跨状态复用均为协议错误。签名的 `ABSENT`/`UNKNOWN` 仍然只证明“adapter 的否定声明”，不能自动升级为可执行重试。Replay 永不调用 `reconcile`，而是继续只消费已提交证据。
+
+这项草案尚未进入运行时协议。正式实现前必须由独立 WorldPort 的拥有者确认字段命名、签名覆盖范围、密钥轮换和“同一 nonce 的签名结果是否可缓存”语义；确认后再同步协议校验、manifest 版本边界、测试 adapter 和伪造/重放反例。
