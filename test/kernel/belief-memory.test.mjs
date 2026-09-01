@@ -18,6 +18,14 @@ const CAPABILITIES = [{
   allowed: true,
   safe: true,
 }];
+const LATENT_TOKENS = ['tok_LATENTA01', 'tok_LATENTB01'];
+const LATENT_CAPABILITIES = LATENT_TOKENS.map((token) => ({
+  schemaVersion: 1,
+  token,
+  cost: 1,
+  allowed: true,
+  safe: true,
+}));
 
 test('belief memory preserves multiple verified outcomes under one observable condition', () => {
   const first = execute({
@@ -76,6 +84,16 @@ test('belief memory remains bounded and is independent of WorldPort field names'
   assert.deepEqual(model.samples.at(-1), [11]);
 });
 
+test('identical public prefixes make the same choice until verified outcomes separate latent dynamics', () => {
+  const worldA = runLatentWorld('A');
+  const worldB = runLatentWorld('B');
+
+  assert.equal(worldA.choices[0], worldB.choices[0]);
+  assert.notDeepEqual(worldA.choices, worldB.choices);
+  assert.equal(worldA.choices[2], LATENT_TOKENS[0]);
+  assert.equal(worldB.choices[2], LATENT_TOKENS[1]);
+});
+
 function execute({ memory, vector, stateVersion, nonce, actualVector, rngState }) {
   const before = observation(vector, stateVersion);
   const intent = step({
@@ -102,6 +120,50 @@ function execute({ memory, vector, stateVersion, nonce, actualVector, rngState }
   const verification = verify({ intent, receipt, postObservation });
   const update = learn({ memory, intent, receipt, postObservation, verification });
   return { intent, update };
+}
+
+function runLatentWorld(hiddenMode) {
+  let memory = { schemaVersion: 1, actionModels: {}, relationModels: {}, beliefModels: {} };
+  let vector = [0];
+  let rngState = 7;
+  const choices = [];
+  for (let index = 0; index < 8; index += 1) {
+    const before = observation(vector, `state:latent:${index}`);
+    const intent = step({
+      observation: before,
+      memory,
+      valueSpec: VALUE_SPEC,
+      capabilities: LATENT_CAPABILITIES,
+      rngState: rng(rngState),
+    });
+    const tokenIndex = LATENT_TOKENS.indexOf(intent.choice.token);
+    const actualDelta = hiddenMode === 'A'
+      ? (tokenIndex === 0 ? 1 : -1)
+      : (tokenIndex === 0 ? -1 : 1);
+    const postObservation = observation(
+      [vector[0] + actualDelta],
+      `state:latent:${index + 1}`,
+    );
+    const receipt = {
+      schemaVersion: 1,
+      status: 'ACCEPTED',
+      token: intent.choice.token,
+      basedOnVersion: before.stateVersion,
+      policyVersion: 'policy:latent:1',
+      constraintsDigest: 'sha256:latent',
+      executionNonce: `execution:latent:${hiddenMode}:${index}`,
+      effectDigest: 'sha256:latent-effect',
+      rejectionReason: null,
+      attributionWindowComplete: true,
+      confounderCount: 0,
+    };
+    const verification = verify({ intent, receipt, postObservation });
+    memory = learn({ memory, intent, receipt, postObservation, verification }).nextMemory;
+    vector = postObservation.vector;
+    rngState = intent.nextRngState.state;
+    choices.push(intent.choice.token);
+  }
+  return { choices };
 }
 
 function emptyMemory() {
