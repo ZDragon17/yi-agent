@@ -15,7 +15,7 @@ const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
-const KERNEL_LEARNING_VERSION = 12;
+const KERNEL_LEARNING_VERSION = 13;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');

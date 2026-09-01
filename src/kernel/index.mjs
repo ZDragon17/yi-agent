@@ -11,7 +11,7 @@ const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
 const ADAPTATION_WINDOW = 8;
 const MAX_PLANNING_HORIZON = 8;
 const MAX_PLANNING_CANDIDATES = 64;
-const PLANNING_INFORMATION_MODES = ['belief-v1', 'legacy-v1'];
+const PLANNING_INFORMATION_MODES = ['belief-v1', 'belief-v2', 'legacy-v1'];
 const MAX_PENDING_CREDITS = 64;
 const MAX_FEEDBACK_ITEMS = 64;
 const MAX_EXECUTION_NONCE_LENGTH = 256;
@@ -724,7 +724,7 @@ function normalizeStepInput(input) {
 
 function normalizePlanning(value, field) {
   if (value === undefined) {
-    return { schemaVersion: SCHEMA_VERSION, horizon: 1, informationMode: 'belief-v1' };
+    return { schemaVersion: SCHEMA_VERSION, horizon: 1, informationMode: 'belief-v2' };
   }
   const source = assertPlainRecord(
     value,
@@ -743,7 +743,7 @@ function normalizePlanning(value, field) {
   return {
     schemaVersion: requireSchemaVersion(source, field),
     horizon,
-    informationMode: source.informationMode === undefined ? 'belief-v1' :
+    informationMode: source.informationMode === undefined ? 'belief-v2' :
       assertOneOf(source.informationMode, PLANNING_INFORMATION_MODES, `${field}.informationMode`),
   };
 }
@@ -1892,10 +1892,11 @@ function chooseByStrategy(predictions, strategy, unit) {
 
 // Planning is deliberately bounded and model-only. It projects the current
 // learned transition model forward, and when verified belief samples exist it
-// branches only on the first action's bounded outcomes. This lets a safe
-// observation earn value when it lowers the next decision's uncertainty; it
-// does not claim a hidden-state model or move speculative state across the
-// WorldPort safety boundary.
+// branches only on the first action's bounded outcomes. The current information
+// rule also requires those branches to produce different next decisions; raw
+// variance is not evidence that the observation can change what the agent
+// should do. This does not claim a hidden-state model or move speculative state
+// across the WorldPort safety boundary.
 function chooseByPlanning(predictions, input, unit) {
   const candidatePool = boundedPlanningPredictions(predictions);
   const rolloutInput = {
@@ -1938,10 +1939,12 @@ function rolloutUtility(firstPrediction, input, horizon, unit) {
   const outcomes = predictionOutcomeVectors(
     firstPrediction,
     input,
-    input.planning.informationMode === 'belief-v1',
+    input.planning.informationMode !== 'legacy-v1',
   );
   const outcomeVectors = outcomes.vectors;
   let expectedUtility = 0;
+  const nextDecisions = [];
+  const nextUncertainties = [];
 
   for (const outcomeVector of outcomeVectors) {
     let predictedVector = outcomeVector;
@@ -1958,12 +1961,16 @@ function rolloutUtility(firstPrediction, input, horizon, unit) {
       if (futurePredictions.length === 0) break;
       const futurePool = selectionPoolFor(futurePredictions);
       const future = chooseByStrategy(futurePool, input.strategy, unit);
-      if (depth === 1) nextUncertainty = future.expectation.uncertainty;
+      if (depth === 1) {
+        nextUncertainty = future.expectation.uncertainty;
+        nextDecisions.push(future);
+        nextUncertainties.push(nextUncertainty);
+      }
       predictedVector = future.expectation.predictedObservation.vector;
       totalCost += future.choice.cost +
         uncertaintyPenalty(future.expectation.uncertainty, input.valueSpec.weights);
     }
-    const informationValue = outcomes.sampled
+    const informationValue = outcomes.sampled && input.planning.informationMode === 'belief-v1'
       ? uncertaintyReduction(
           firstPrediction.expectation.uncertainty,
           nextUncertainty,
@@ -1975,7 +1982,29 @@ function rolloutUtility(firstPrediction, input, horizon, unit) {
     ) / outcomeVectors.length;
   }
 
+  if (outcomes.sampled && input.planning.informationMode === 'belief-v2' &&
+      hasDiverseNextDecisions(nextDecisions)) {
+    const averageNextUncertainty = nextUncertainties.reduce(
+      (total, value) => total + value,
+      0,
+    ) / nextUncertainties.length;
+    expectedUtility += uncertaintyReduction(
+      firstPrediction.expectation.uncertainty,
+      averageNextUncertainty,
+      input.valueSpec.weights,
+    );
+  }
+
   return assertComputedFiniteNumber(expectedUtility, 'stepOutput.planning.utility');
+}
+
+function hasDiverseNextDecisions(decisions) {
+  if (decisions.length < 2) return false;
+  const signatures = new Set(decisions.map((decision) => canonicalDigest({
+    token: decision.expectation.token,
+    expectedDelta: decision.expectation.expectedDelta,
+  })));
+  return signatures.size > 1;
 }
 
 function predictionOutcomeVectors(prediction, input, allowBeliefBranches) {

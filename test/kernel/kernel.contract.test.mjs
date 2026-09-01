@@ -236,6 +236,56 @@ test('bounded planning values a safe observation that reduces future uncertainty
   assert.deepEqual(planned.expectation.expectedDelta, [0, 0]);
 });
 
+test('active information planning ignores variance that does not change the next decision', async () => {
+  const { step } = await loadKernel();
+  const probe = 'tok_PROBE0001';
+  const exploit = 'tok_EXPLOIT01';
+  const goal = 'tok_GOAL0001';
+  const model = (meanDelta, uncertainty = 0) => ({
+    schemaVersion: 1,
+    sampleCount: 8,
+    meanDelta,
+    uncertainty,
+  });
+  const input = makeStepInput({
+    observation: observation([0, 0], 'state-noise'),
+    valueSpec: { schemaVersion: 1, observationDimensions: 2, weights: [1, 0], target: [1, 1], tolerance: 0, valueMode: 'distance-v2' },
+    capabilities: [probe, exploit, goal].map((token) => capability(token, { cost: 0.05 })),
+  });
+  input.memory = {
+    schemaVersion: 1,
+    actionModels: {
+      [probe]: model([0, 0]),
+      [exploit]: model([0.25, 0]),
+      [goal]: model([0, 0]),
+    },
+    relationModels: {
+      [goal]: {
+        'r1:0+': model([0, 0]),
+        'r1:0-': model([0, 0]),
+      },
+    },
+    beliefModels: {
+      [probe]: {
+        'r1:++': {
+          schemaVersion: 1,
+          sampleCount: 2,
+          samples: [[1, 1], [1, -1]],
+        },
+      },
+    },
+  };
+
+  const planned = step({ ...input, planning: { schemaVersion: 1, horizon: 2 } });
+  const historicalV12 = step({
+    ...input,
+    planning: { schemaVersion: 1, horizon: 2, informationMode: 'belief-v1' },
+  });
+
+  assert.equal(planned.choice.token, exploit);
+  assert.equal(historicalV12.choice.token, probe);
+});
+
 test('step is deterministic with an explicit rngState and does not require policy metadata', async () => {
   const { step } = await loadKernel();
   const input = makeStepInput({
