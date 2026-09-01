@@ -1004,6 +1004,37 @@ test('external inputs must match the immutable world and scenario schema', async
   await run.finish({ terminalStatus: 'HALTED', finalState: runInput().initialState });
 }));
 
+test('external transition decision boundaries reject semantically malformed recovery evidence', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  const boundary = {
+    schemaVersion: SCHEMA_VERSION,
+    goalRequested: true,
+    requestedGoal: '完成一个可重放目标',
+    valueSpec: { schemaVersion: SCHEMA_VERSION, observationDimensions: 1, weights: [1], target: [21], valueMode: 'distance-v2' },
+    supervisor: null,
+    goalActivation: null,
+  };
+  for (const malformed of [
+    { ...boundary, valueSpec: { ...boundary.valueSpec, weights: ['not-finite'] } },
+    { ...boundary, supervisor: {} },
+    { ...boundary, goalActivation: {} },
+  ]) {
+    await assert.rejects(
+      run.markExternalTransition({
+        executionNonce: 'execution:step:1',
+        token: 'tok_EXTERNAL01',
+        basedOnVersion: '1',
+        beforeState: runInput().initialState,
+        decisionBoundary: malformed,
+      }),
+      (error) => assertCode(error, 'CORRUPT'),
+    );
+  }
+  await run.finish({ terminalStatus: 'HALTED', finalState: runInput().initialState });
+}));
+
 test('blocked contender archive resumes when its intent exists before lock rename', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

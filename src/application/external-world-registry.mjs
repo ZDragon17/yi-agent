@@ -66,6 +66,9 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
     ...(descriptor.supportsIdempotentTransitions === undefined
       ? {}
       : { supportsIdempotentTransitions: descriptor.supportsIdempotentTransitions }),
+    ...(descriptor.supportsReconciliation === undefined
+      ? {}
+      : { supportsReconciliation: descriptor.supportsReconciliation }),
   };
 
   const definition = {
@@ -292,6 +295,7 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
 
   return {
     supportsIdempotentTransitions: descriptor.supportsIdempotentTransitions === true,
+    supportsExternalReconciliation: descriptor.supportsReconciliation === true,
     initialState() {
       const response = client.request('initialState', {
         worldId: descriptor.worldId,
@@ -333,6 +337,24 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
         request,
       });
       return normalizeExternalTransition(
+        response,
+        state,
+        request,
+        descriptor.worldId,
+        descriptor.valueSpec.observationDimensions,
+      );
+    },
+    reconcile(state, request) {
+      if (descriptor.supportsReconciliation !== true) {
+        throw new ExternalWorldProtocolError('External WorldPort does not support reconciliation.', { op: 'reconcile' });
+      }
+      const response = client.request('reconcile', {
+        worldId: descriptor.worldId,
+        scenario,
+        state,
+        request,
+      });
+      return normalizeExternalReconciliation(
         response,
         state,
         request,
@@ -468,6 +490,36 @@ function normalizeExternalTransition(value, state, request, worldId, expectedDim
   return { nextWorldState, receipt, postObservation };
 }
 
+function normalizeExternalReconciliation(value, state, request, worldId, expectedDimensions) {
+  const source = assertExactKeys(value, ['status', 'transition'], 'reconcile', ['status']);
+  if (!['APPLIED', 'ABSENT', 'UNKNOWN'].includes(source.status)) {
+    throw new ExternalWorldProtocolError('External WorldPort reconciliation status is invalid.', { op: 'reconcile' });
+  }
+  if (source.status !== 'APPLIED') {
+    if (source.transition !== undefined) {
+      throw new ExternalWorldProtocolError('A non-applied reconciliation cannot contain a transition result.', { op: 'reconcile' });
+    }
+    return { status: source.status };
+  }
+  if (source.transition === null || typeof source.transition !== 'object' || Array.isArray(source.transition)) {
+    throw new ExternalWorldProtocolError('Applied reconciliation must contain a transition result.', { op: 'reconcile' });
+  }
+  const transition = normalizeExternalTransition(
+    source.transition,
+    state,
+    request,
+    worldId,
+    expectedDimensions,
+  );
+  if (transition.receipt.status !== 'ACCEPTED') {
+    throw new ExternalWorldProtocolError('Applied reconciliation must contain an accepted transition.', { op: 'reconcile' });
+  }
+  return {
+    status: 'APPLIED',
+    transition,
+  };
+}
+
 function hasNonceWindowPrefix(previous, next) {
   if (next.length < 1 || next.at(-1) === undefined) return false;
   const expected = [...previous, next.at(-1)].slice(-8);
@@ -495,7 +547,7 @@ function normalizeExternalReceipt(value, request, field) {
 function validateDescriptor(value, config) {
   const source = assertExactKeys(value, [
     'adapterId', 'worldId', 'worldVersion', 'capabilityIds', 'scenarioIds', 'valueSpec', 'evidencePublicKey',
-    'supportsStateDependentActions', 'supportsIdempotentTransitions', 'descriptorDigest',
+    'supportsStateDependentActions', 'supportsIdempotentTransitions', 'supportsReconciliation', 'descriptorDigest',
   ], 'hello.result', [
     'adapterId', 'worldId', 'worldVersion', 'capabilityIds', 'scenarioIds', 'valueSpec', 'evidencePublicKey', 'descriptorDigest',
   ]);
@@ -505,6 +557,7 @@ function validateDescriptor(value, config) {
       !isValueSpec(source.valueSpec) || !isValidEvidencePublicKey(source.evidencePublicKey) ||
       (source.supportsStateDependentActions !== undefined && typeof source.supportsStateDependentActions !== 'boolean') ||
       (source.supportsIdempotentTransitions !== undefined && typeof source.supportsIdempotentTransitions !== 'boolean') ||
+      (source.supportsReconciliation !== undefined && typeof source.supportsReconciliation !== 'boolean') ||
       source.descriptorDigest !== canonicalDigest({
         adapterId: source.adapterId,
         worldId: source.worldId,
@@ -519,6 +572,9 @@ function validateDescriptor(value, config) {
         ...(source.supportsIdempotentTransitions === undefined
           ? {}
           : { supportsIdempotentTransitions: source.supportsIdempotentTransitions }),
+        ...(source.supportsReconciliation === undefined
+          ? {}
+          : { supportsReconciliation: source.supportsReconciliation }),
       })) {
     throw new ExternalWorldProtocolError('External WorldPort hello descriptor is invalid.', { op: 'hello' });
   }

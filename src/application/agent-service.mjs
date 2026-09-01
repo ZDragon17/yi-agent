@@ -129,11 +129,40 @@ export async function runLab(input) {
         { runId: unresolved.runId, previousScenario: unresolved.scenario, scenario },
       );
     }
-    if (world.supportsIdempotentTransitions !== true) {
+    if (world.supportsIdempotentTransitions !== true && world.supportsExternalReconciliation !== true) {
       throw new LabStoreError(
         'CONFLICT',
-        'The previous external transition is unresolved and its adapter does not declare idempotent transitions.',
+        'The previous external transition is unresolved and its adapter declares neither idempotent transitions nor reconciliation.',
         { runId: unresolved.runId, executionNonce: unresolved.evidence.executionNonce },
+      );
+    }
+    if (world.supportsIdempotentTransitions !== true && unresolved.evidence.intent === undefined) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'An unresolved external transition lacks the original kernel intent required for reconciliation.',
+        { runId: unresolved.runId, executionNonce: unresolved.evidence.executionNonce },
+      );
+    }
+    if (world.supportsIdempotentTransitions !== true && unresolved.evidence.capabilities === undefined) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'An unresolved external transition lacks the original capability projection required for reconciliation.',
+        { runId: unresolved.runId, executionNonce: unresolved.evidence.executionNonce },
+      );
+    }
+    if (world.supportsIdempotentTransitions !== true && unresolved.evidence.decisionBoundary === undefined) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'An unresolved external transition lacks the original decision boundary required for deterministic recovery.',
+        { runId: unresolved.runId, executionNonce: unresolved.evidence.executionNonce },
+      );
+    }
+    if (world.supportsIdempotentTransitions !== true &&
+        (source.goal !== undefined || source.goalPlan !== undefined || source.autoPlan === true || source.planner !== undefined)) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'An unresolved external transition must resume with its persisted goal decision boundary.',
+        { runId: unresolved.runId, fields: ['goal', 'goalPlan', 'autoPlan', 'planner'] },
       );
     }
     const recoveredPlanningHorizon = unresolved.evidence.planning?.horizon ?? 1;
@@ -167,7 +196,14 @@ export async function runLab(input) {
     planningContextMode = unresolved.evidence.planning?.contextMode ?? 'legacy-v1';
     planningBranchingMode = recoveredPlanningBranchingMode;
   }
-  const goalRequested = (source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined;
+  const recoveredDecisionBoundary = unresolvedExternalTransition !== null &&
+    world.supportsIdempotentTransitions !== true
+    ? unresolvedExternalTransition.evidence.decisionBoundary
+    : null;
+  const recoveredGoalActivation = recoveredDecisionBoundary?.goalActivation ?? null;
+  const recoveredSupervisor = recoveredDecisionBoundary?.supervisor ?? null;
+  const goalRequested = recoveredDecisionBoundary?.goalRequested ??
+    ((source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined);
   let initialState = current.lastRunId === null
     ? {
         worldState: world.initialState(),
@@ -204,8 +240,9 @@ export async function runLab(input) {
   if (existingSupervisor !== null) {
     initialState = { ...initialState, changeSupervisor: existingSupervisor };
   }
-  const requestedGoal = source.goal ?? source.goalPlan?.rootGoal ?? existingSupervisor?.goal ?? '逼近 ValueSpec 目标';
-  const plannerRequested = source.goalPlan === undefined &&
+  const requestedGoal = recoveredDecisionBoundary?.requestedGoal ??
+    (source.goal ?? source.goalPlan?.rootGoal ?? existingSupervisor?.goal ?? '逼近 ValueSpec 目标');
+  const plannerRequested = recoveredDecisionBoundary === null && source.goalPlan === undefined &&
     (planningExplicitlyRequested || existingSupervisor?.plannerEnabled === true);
   if (current.lastRunId !== null && existingSupervisor?.enabled === true && goalRequested && existingSupervisor.goal !== requestedGoal) {
     throw new LabStoreError('CONFLICT', 'An enabled goal cannot be replaced in an existing lab.', { field: 'goal' });
@@ -231,6 +268,22 @@ export async function runLab(input) {
     ...(failpoint === undefined ? {} : { failpoint }),
   });
   let state = initialState;
+  let persistedRecoveryIntent = world.supportsIdempotentTransitions === true
+    ? null
+    : unresolvedExternalTransition?.evidence.intent ?? null;
+  let persistedRecoveryCapabilities = world.supportsIdempotentTransitions === true
+    ? null
+    : unresolvedExternalTransition?.evidence.capabilities ?? null;
+  let persistedRecoveryRequest = persistedRecoveryIntent === null
+    ? null
+    : {
+        schemaVersion: SCHEMA_VERSION,
+        token: unresolvedExternalTransition.evidence.token,
+        basedOnVersion: unresolvedExternalTransition.evidence.basedOnVersion,
+        policyVersion: manifest.authorityPolicy.policyVersion,
+        constraintsDigest: manifest.authorityPolicy.constraintsDigest,
+        executionNonce: unresolvedExternalTransition.evidence.executionNonce,
+      };
   let executed = 0;
   let accepted = 0;
   let stopReason = 'COMPLETED';
@@ -246,7 +299,7 @@ export async function runLab(input) {
     const beforeObservation = projectObservation(observedBefore);
     validateObservationFeedback(state.memory, beforeObservation);
     const beforeModelObservation = projectModelObservation(observedBefore);
-    const capabilities = world.actions(worldManifest(manifest), state.worldState);
+    const capabilities = persistedRecoveryCapabilities ?? world.actions(worldManifest(manifest), state.worldState);
     // The state has already crossed the store/kernel validation boundary on
     // entry and every prior supervisor transition returns a normalized value.
     // Avoid re-normalizing this immutable internal value on every long-run
@@ -256,7 +309,11 @@ export async function runLab(input) {
       : state.changeSupervisor;
     let activationPlan = source.goalPlan;
     let plannerEvidence = null;
-    if (plannerRequested && previousSupervisor?.enabled !== true) {
+    const recoveringDecisionBoundary = index === 0 && unresolvedExternalTransition !== null &&
+      recoveredDecisionBoundary !== null;
+    if (recoveringDecisionBoundary) {
+      activationPlan = recoveredGoalActivation?.plan;
+    } else if (plannerRequested && previousSupervisor?.enabled !== true) {
       const plannerResult = await requestPlan({
         planner: source.planner,
         goal: requestedGoal,
@@ -271,7 +328,9 @@ export async function runLab(input) {
       plannerEvidence = plannerResult.evidence;
       activationPlan = plannerResult.plan;
     }
-    const baseSupervisor = previousSupervisor ?? (!goalRequested
+    const baseSupervisor = recoveringDecisionBoundary
+      ? recoveredSupervisor
+      : previousSupervisor ?? (!goalRequested
       ? null
       : createChangeSupervisor({
           goal: requestedGoal,
@@ -282,12 +341,16 @@ export async function runLab(input) {
           maxCycles: supervisorMaxCycles,
           stagnationLimit: supervisorStagnationLimit,
         }));
-    const supervisor = baseSupervisor === null || !goalRequested
+    const supervisor = recoveringDecisionBoundary
+      ? baseSupervisor
+      : baseSupervisor === null || !goalRequested
       ? baseSupervisor
       : enableGoal(baseSupervisor, requestedGoal, activationPlan, plannerRequested ? true : undefined);
-    const goalActivates = supervisor?.enabled === true && previousSupervisor?.enabled !== true;
+    const goalActivates = !recoveringDecisionBoundary && supervisor?.enabled === true && previousSupervisor?.enabled !== true;
     const activatedPlan = goalActivates ? goalPlanForActivation(supervisor) : undefined;
-    const goalActivation = goalActivates
+    const goalActivation = recoveringDecisionBoundary
+      ? recoveredGoalActivation
+      : goalActivates
       ? {
           schemaVersion: SCHEMA_VERSION,
           goal: supervisor.goal,
@@ -298,7 +361,9 @@ export async function runLab(input) {
           ...(plannerEvidence === null ? {} : { planEvidence: plannerEvidence }),
         }
       : null;
-    const stepValueSpec = kernelValueSpec(supervisor?.objective ?? spec);
+    const stepValueSpec = recoveringDecisionBoundary
+      ? recoveredDecisionBoundary.valueSpec
+      : kernelValueSpec(supervisor?.objective ?? spec);
     const retryPolicyEvidence = unresolvedExternalTransition?.evidence.policyEvidence ?? null;
     const retryPreference = retryPolicyEvidence?.applied === true ? retryPolicyEvidence : null;
     const modelDecision = retryPolicyEvidence === null &&
@@ -316,7 +381,7 @@ export async function runLab(input) {
           goal: supervisor?.goal ?? requestedGoal,
         })
       : null;
-    const intent = stepWithPreference({
+    const intent = persistedRecoveryIntent ?? stepWithPreference({
       observation: beforeObservation,
       memory: state.memory,
       valueSpec: stepValueSpec,
@@ -332,7 +397,7 @@ export async function runLab(input) {
       return runSummary(runId, 'HALTED', stopReason, index, { executed, accepted, rejected: 0 });
     }
 
-    const receiptRequest = {
+    const receiptRequest = persistedRecoveryRequest ?? {
       schemaVersion: SCHEMA_VERSION,
       token: intent.choice.token,
       basedOnVersion: beforeObservation.stateVersion,
@@ -362,13 +427,40 @@ export async function runLab(input) {
         basedOnVersion: receiptRequest.basedOnVersion,
         beforeState: state,
         planning: planningEvidence(planningHorizon, planningContextMode, planningBranchingMode),
+        capabilities,
+        intent,
+        decisionBoundary: {
+          schemaVersion: SCHEMA_VERSION,
+          goalRequested,
+          requestedGoal,
+          valueSpec: stepValueSpec,
+          supervisor,
+          goalActivation,
+        },
         ...(retryPolicyEvidence === null && modelDecision === null
           ? {}
           : { policyEvidence: retryPolicyEvidence ?? policyEvidence(modelDecision, intent, capabilities) }),
       });
     }
     externalTransitionUncertain = manifest.adapter !== undefined;
-    const transition = world.transition(state.worldState, receiptRequest);
+    let transition;
+    if (unresolvedExternalTransition !== null && world.supportsIdempotentTransitions !== true) {
+      const reconciliation = world.reconcile(state.worldState, receiptRequest);
+      if (reconciliation.status !== 'APPLIED') {
+        throw new LabStoreError(
+          'CONFLICT',
+          `The previous external transition could not be reconciled: ${reconciliation.status}.`,
+          {
+            runId: unresolvedExternalTransition.runId,
+            executionNonce: receiptRequest.executionNonce,
+            reconciliationStatus: reconciliation.status,
+          },
+        );
+      }
+      transition = reconciliation.transition;
+    } else {
+      transition = world.transition(state.worldState, receiptRequest);
+    }
     externalTransitionUncertain = externalTransitionUncertain && transition.receipt.status === 'ACCEPTED';
     if (typeof failpoint === 'function' && failpoint('external-transition:returned')) {
       throw new LabStoreError('INJECTED_FAILURE', 'Injected failure at external-transition:returned.', {
@@ -494,6 +586,9 @@ export async function runLab(input) {
       if (durability === 'checkpoint') await run.flushLedger();
       await run.clearExternalTransition();
       unresolvedExternalTransition = null;
+      persistedRecoveryIntent = null;
+      persistedRecoveryRequest = null;
+      persistedRecoveryCapabilities = null;
       externalTransitionUncertain = false;
     }
     const shouldSnapshot = (executed + 1) % snapshotInterval === 0 ||

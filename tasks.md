@@ -433,4 +433,24 @@
 - 反例：单个内置世界的一次 loop 通过，不能推出公共底座在不同状态形状、能力投影和外部副作用边界上都能连续运行；一次响应丢失通过，也不能推出恢复后 Replay 不会重复现实效果。
 - 实现：新增独立 CLI E2E 矩阵，使用多个内置 WorldPort 验证相同的 loop、inspect、Run 账本和 Replay 契约；使用可持久化外部 WorldPort 注入“效果已提交、响应丢失、宿主进程终止”，再经过显式 recover、跨进程 resume 和 Replay 检查 nonce 幂等与现实效果计数。
 - 验证：`node scripts/test-gate.mjs test/e2e/durability-matrix-cli.test.mjs` 执行 3/3；相关 agent CLI、crash/restart、packaged CLI 与该矩阵合计 19/19；外部效果在四次连续强杀恢复后恰好为四次，Replay 后不增加。
-- 边界：当前矩阵覆盖三种内置 WorldPort、一个幂等外部 adapter 和四次连续响应丢失；尚未证明非幂等外部系统、无限运行、并发多写者或现实世界对账语义，后续必须沿这些轴继续构造反例。
+- 边界：当前矩阵覆盖三种内置 WorldPort、一个幂等外部 adapter 和四次连续响应丢失；它本身不覆盖非幂等对账，真实设备、无限运行、并发多写者和现实世界对账语义仍需沿各自边界继续构造反例。
+
+## F-46 非幂等 WorldPort 的对账接续
+
+- 原理：外部动作可能已经发生而响应丢失时，本地账本不能把“没有响应”解释成“没有效果”；非幂等 adapter 也不能通过换 nonce 或重试执行来碰运气。只有外部世界明确返回已应用的原始结果，宿主才允许把同一动作写入 STEP。
+- 实现：`hello` 可声明 `supportsReconciliation:true`；外部 transition marker 同时固化原始 Kernel intent、能力投影、action request 身份和完整决策边界（目标、监督器、ValueSpec）。恢复未决 external transition 时，宿主向同一 adapter 发出只读 `reconcile` 请求，携带原始 scenario、状态和 action request；即使现实效果改变了当前能力投影，也不重新选择动作。`APPLIED` 必须提供经过同一 state/request/receipt 校验的 accepted transition，宿主不再调用 `transition`；`ABSENT` 与 `UNKNOWN` 都保持 `CONFLICT`/未决状态，不写 STEP；恢复调用不能注入新的 goal/goalPlan/planner。能力声明进入 descriptor digest 和 manifest，旧 adapter 不受影响。
+- 验证：独立 CLI E2E 覆盖非幂等 adapter 的响应丢失后 `APPLIED` 接续、`ABSENT` 阻断、`UNKNOWN` 阻断，以及连续 loop 的重启恢复和宿主强杀→显式 recover→resume；APPLIED 效果计数保持一次，完成 Run 的 Replay 不调用外部动作，旧 adapter 的既有恢复回归继续通过。
+- 边界：对账结果仍是 adapter 对现实系统的声明，宿主只能验证其结构、原始动作绑定和状态连续性，不能证明外部系统没有伪造结果；真实设备的查询权限、签名、人工复核和“未找到后是否允许再次执行”仍属于外部契约与人工安全门。本协议暂不把 `ABSENT` 自动升级为可执行。
+
+## F-47 非幂等 loop 的并发恢复
+
+- 反例：单个 `--resume` 成功不能推出两个独立 CLI 同时恢复同一未决 loop 时不会重复副作用，尤其是对账与下一逻辑 Run 可能交错。
+- 验证：两个真实 CLI 进程同时恢复同一个可对账非幂等 loop；必须保持每个逻辑 Run 至多一次、外部效果计数精确为逻辑 Run 数，且 lab 只保留一个未决 Run 加三个完成 Run。
+- 边界：当前证明的是本地文件账本和单 writer lock 下的跨进程排他；分布式存储、网络分区和真实设备的原子查询/执行仍不在本地实验范围内。
+
+## F-48 恢复决策边界语义校验
+
+- 原则：恢复不是重新推理，账本中的原始决策边界必须能被当前 Runtime 语义化验证后才能再次进入 Kernel。
+- 实现：`external-transition.json` 的 ValueSpec、ChangeSupervisor、目标激活计划和 Planner 证据均经过完整边界校验；摘要可被重新计算但内容语义畸形时，统一判为 `CORRUPT`。
+- 验证：覆盖畸形 ValueSpec、监督器和目标激活计划，且连续运行、强杀恢复、并发接续、跨 WorldPort 回归与 Oracle 均保持通过。
+- 边界：这仍是本地账本完整性与语义校验，不等价于外部 WorldPort 对现实回执的密码学认证；签名对账回执需要后续协调协议契约。

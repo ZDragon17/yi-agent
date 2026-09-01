@@ -26,7 +26,7 @@ import {
   isValidEvidencePublicKey,
   verifyExternalInputAttestation,
 } from './external-evidence.mjs';
-import { normalizeChangeSupervisorState } from '../agent/change-supervisor.mjs';
+import { createChangeSupervisor, normalizeChangeSupervisorState } from '../agent/change-supervisor.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
 const MAX_JSON_BYTES = 1024 * 1024;
@@ -837,6 +837,15 @@ class ActiveRun {
     if (source.policyEvidence !== undefined) {
       validateExternalPolicyEvidence(source.policyEvidence, this.start.runId);
     }
+    if (source.intent !== undefined) {
+      validateExternalIntentEvidence(source.intent, this.start.runId);
+    }
+    if (source.capabilities !== undefined) {
+      validateExternalCapabilitiesEvidence(source.capabilities, this.start.runId);
+    }
+    if (source.decisionBoundary !== undefined) {
+      validateExternalDecisionBoundaryEvidence(source.decisionBoundary, this.start.runId);
+    }
     const marker = withSelfDigest({
       schemaVersion: SCHEMA_VERSION,
       runId: this.start.runId,
@@ -849,6 +858,9 @@ class ActiveRun {
       planning,
       markedAt: now(),
       ...(source.policyEvidence === undefined ? {} : { policyEvidence: cloneJson(source.policyEvidence) }),
+      ...(source.intent === undefined ? {} : { intent: cloneJson(source.intent) }),
+      ...(source.capabilities === undefined ? {} : { capabilities: cloneJson(source.capabilities) }),
+      ...(source.decisionBoundary === undefined ? {} : { decisionBoundary: cloneJson(source.decisionBoundary) }),
     });
     const result = await publishImmutableJson(
       this.store.root,
@@ -1345,6 +1357,9 @@ function externalTransitionEvidence(marker, start) {
     beforeDigest: marker.beforeDigest,
     planning: normalizePlanningEvidence(marker.planning),
     ...(marker.policyEvidence === undefined ? {} : { policyEvidence: cloneJson(marker.policyEvidence) }),
+    ...(marker.intent === undefined ? {} : { intent: cloneJson(marker.intent) }),
+    ...(marker.capabilities === undefined ? {} : { capabilities: cloneJson(marker.capabilities) }),
+    ...(marker.decisionBoundary === undefined ? {} : { decisionBoundary: cloneJson(marker.decisionBoundary) }),
   };
 }
 
@@ -1374,6 +1389,119 @@ function validateExternalTransitionEvidence(value, runId, scenario = undefined) 
     corrupt('External transition planning evidence is invalid.', { runId });
   }
   if (value.policyEvidence !== undefined) validateExternalPolicyEvidence(value.policyEvidence, runId);
+  if (value.intent !== undefined) validateExternalIntentEvidence(value.intent, runId);
+  if (value.capabilities !== undefined) validateExternalCapabilitiesEvidence(value.capabilities, runId);
+  if (value.decisionBoundary !== undefined) validateExternalDecisionBoundaryEvidence(value.decisionBoundary, runId);
+}
+
+function validateExternalDecisionBoundaryEvidence(value, runId) {
+  if (
+    value === null || typeof value !== 'object' || Array.isArray(value) ||
+    value.schemaVersion !== SCHEMA_VERSION || typeof value.goalRequested !== 'boolean' ||
+    typeof value.requestedGoal !== 'string' || value.requestedGoal.length === 0 || value.requestedGoal.length > 4096 ||
+    !isValidValueSpec(value.valueSpec) ||
+    (value.supervisor !== null && (typeof value.supervisor !== 'object' || Array.isArray(value.supervisor))) ||
+    (value.goalActivation !== null && (typeof value.goalActivation !== 'object' || Array.isArray(value.goalActivation)))
+  ) {
+    corrupt('External transition decision boundary evidence is invalid.', { runId });
+  }
+  if (value.supervisor !== null) {
+    try {
+      normalizeChangeSupervisorState(value.supervisor);
+    } catch (error) {
+      corrupt('External transition decision boundary supervisor is invalid.', {
+        runId,
+        cause: error instanceof Error ? error.message : 'unknown error',
+      });
+    }
+  }
+  if (value.goalActivation !== null) {
+    validateExternalGoalActivationEvidence(value.goalActivation, value.valueSpec, runId);
+  }
+}
+
+function validateExternalGoalActivationEvidence(value, valueSpec, runId) {
+  if (
+    value.schemaVersion !== SCHEMA_VERSION ||
+    typeof value.goal !== 'string' || value.goal.length === 0 || value.goal.length > 4096 ||
+    !Number.isSafeInteger(value.maxCycles) || value.maxCycles < 1 || value.maxCycles > 1_000_000 ||
+    !Number.isSafeInteger(value.stagnationLimit) || value.stagnationLimit < 1 || value.stagnationLimit > 100_000 ||
+    (value.plannerEnabled !== undefined && typeof value.plannerEnabled !== 'boolean') ||
+    (value.plan !== undefined && (value.plan === null || typeof value.plan !== 'object' || Array.isArray(value.plan)))
+  ) {
+    corrupt('External transition decision boundary goal activation is invalid.', { runId });
+  }
+  if (value.planEvidence !== undefined) {
+    if (
+      value.planEvidence === null || typeof value.planEvidence !== 'object' || Array.isArray(value.planEvidence) ||
+      value.planEvidence.schemaVersion !== SCHEMA_VERSION || value.planEvidence.source !== 'model' ||
+      typeof value.planEvidence.model !== 'string' || value.planEvidence.model.length === 0 || value.planEvidence.model.length > 4096 ||
+      !/^sha256:[0-9a-f]{64}$/u.test(value.planEvidence.responseDigest) ||
+      typeof value.planEvidence.applied !== 'boolean' ||
+      (value.planEvidence.reason !== null &&
+        (typeof value.planEvidence.reason !== 'string' || value.planEvidence.reason.length === 0 || value.planEvidence.reason.length > 256))
+    ) {
+      corrupt('External transition decision boundary plan evidence is invalid.', { runId });
+    }
+    if ((value.planEvidence.applied && value.planEvidence.reason !== null) ||
+        (!value.planEvidence.applied && value.planEvidence.reason === null) ||
+        value.planEvidence.applied !== (value.plan !== undefined)) {
+      corrupt('External transition decision boundary plan evidence does not match its plan.', { runId });
+    }
+  }
+  try {
+    createChangeSupervisor({
+      goal: value.goal,
+      plannerEnabled: value.plannerEnabled === true,
+      plan: value.plan,
+      valueSpec,
+      maxCycles: value.maxCycles,
+      stagnationLimit: value.stagnationLimit,
+    });
+  } catch (error) {
+    corrupt('External transition decision boundary goal activation plan is invalid.', {
+      runId,
+      cause: error instanceof Error ? error.message : 'unknown error',
+    });
+  }
+}
+
+function validateExternalCapabilitiesEvidence(value, runId) {
+  if (
+    !Array.isArray(value) || value.length === 0 || value.length > 1024 ||
+    value.some((item) => item === null || typeof item !== 'object' || Array.isArray(item) ||
+      item.schemaVersion !== SCHEMA_VERSION || typeof item.token !== 'string' || !TOKEN_PATTERN.test(item.token) ||
+      !Number.isFinite(item.cost) || item.cost < 0 ||
+      typeof item.allowed !== 'boolean' || typeof item.safe !== 'boolean')
+  ) {
+    corrupt('External transition capability evidence is invalid.', { runId });
+  }
+}
+
+function validateExternalIntentEvidence(value, runId) {
+  if (
+    value === null || typeof value !== 'object' || Array.isArray(value) ||
+    value.schemaVersion !== SCHEMA_VERSION || value.status !== 'READY' ||
+    value.expectation === null || typeof value.expectation !== 'object' || Array.isArray(value.expectation) ||
+    value.choice === null || typeof value.choice !== 'object' || Array.isArray(value.choice) ||
+    value.nextRngState === null || typeof value.nextRngState !== 'object' || Array.isArray(value.nextRngState) ||
+    typeof value.expectation.token !== 'string' || !TOKEN_PATTERN.test(value.expectation.token) ||
+    value.choice.token !== value.expectation.token ||
+    value.choice.allowed !== true || value.choice.safe !== true ||
+    !Array.isArray(value.expectation.expectedDelta) ||
+    !value.expectation.expectedDelta.every((item) => Number.isFinite(item)) ||
+    value.expectation.predictedObservation === null ||
+    typeof value.expectation.predictedObservation !== 'object' ||
+    Array.isArray(value.expectation.predictedObservation) ||
+    !Array.isArray(value.expectation.predictedObservation.vector) ||
+    value.expectation.predictedObservation.vector.length !== value.expectation.expectedDelta.length ||
+    !value.expectation.predictedObservation.vector.every((item) => Number.isFinite(item)) ||
+    value.nextRngState.schemaVersion !== SCHEMA_VERSION ||
+    typeof value.nextRngState.algorithm !== 'string' ||
+    !Number.isSafeInteger(value.nextRngState.state) || value.nextRngState.state < 0 || value.nextRngState.state > 0xffffffff
+  ) {
+    corrupt('External transition intent evidence is invalid.', { runId });
+  }
 }
 
 function isValidPlanningEvidence(value) {
@@ -1898,6 +2026,9 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
   if (value.supportsIdempotentTransitions !== undefined && typeof value.supportsIdempotentTransitions !== 'boolean') {
     fail('Adapter metadata idempotency declaration is invalid.');
   }
+  if (value.supportsReconciliation !== undefined && typeof value.supportsReconciliation !== 'boolean') {
+    fail('Adapter metadata reconciliation declaration is invalid.');
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
     protocol: 'yi-world-cli',
@@ -1911,6 +2042,9 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
     ...(value.supportsIdempotentTransitions === undefined
       ? {}
       : { supportsIdempotentTransitions: value.supportsIdempotentTransitions }),
+    ...(value.supportsReconciliation === undefined
+      ? {}
+      : { supportsReconciliation: value.supportsReconciliation }),
   };
 }
 

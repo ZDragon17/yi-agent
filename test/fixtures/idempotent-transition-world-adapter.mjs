@@ -1,5 +1,5 @@
 import readline from 'node:readline';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { canonicalDigest } from '../../src/runtime/schema.mjs';
 import { ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
 
@@ -8,7 +8,11 @@ const CAPABILITY_ID = 'idempotent-transition.advance';
 const SECOND_CAPABILITY_ID = 'idempotent-transition.alternate';
 const VALUE_SPEC = { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1] };
 const dropResponse = process.argv.includes('--drop-response');
+const holdResponse = process.argv.includes('--hold-response');
+const releaseFileIndex = process.argv.indexOf('--release-file');
+const releaseFile = releaseFileIndex === -1 ? null : process.argv[releaseFileIndex + 1] ?? null;
 const supportsIdempotentTransitions = !process.argv.includes('--non-idempotent');
+const supportsReconciliation = process.argv.includes('--reconcilable');
 const twoActions = process.argv.includes('--two-actions');
 const bothSafe = process.argv.includes('--both-safe');
 const effectFileIndex = process.argv.indexOf('--effect-file');
@@ -46,6 +50,7 @@ function dispatch(op, payload) {
       evidencePublicKey: ED25519_PUBLIC_KEY,
       supportsStateDependentActions: true,
       ...(supportsIdempotentTransitions ? { supportsIdempotentTransitions: true } : {}),
+      ...(supportsReconciliation ? { supportsReconciliation: true } : {}),
     };
     return { ...descriptor, descriptorDigest: canonicalDigest(descriptor) };
   }
@@ -75,6 +80,7 @@ function dispatch(op, payload) {
   if (op === 'observe') return { observation: observation(payload.state) };
   if (op === 'externalInputs') return { inputs: [] };
   if (op === 'transition') return transition(payload.state, payload.request);
+  if (op === 'reconcile') return reconcile(payload.state, payload.request);
   throw new Error(`unsupported operation: ${op}`);
 }
 
@@ -107,7 +113,27 @@ function transition(prior, request) {
     result,
   }));
   if (dropResponse && stored === null) process.exit(17);
+  if (holdResponse && stored === null) holdResponseUntilReleased();
   return result;
+}
+
+function holdResponseUntilReleased() {
+  if (releaseFile === null) throw new Error('--release-file is required with --hold-response');
+  const deadline = Date.now() + 15_000;
+  const timer = setInterval(() => {
+    if (existsSync(releaseFile) || Date.now() >= deadline) {
+      clearInterval(timer);
+      process.exit(17);
+    }
+  }, 25);
+}
+
+function reconcile(prior, request) {
+  if (!supportsReconciliation) throw new Error('reconciliation is not supported');
+  const stored = readEffect();
+  if (stored === null) return { status: 'ABSENT' };
+  if (stored.executionNonce !== request.executionNonce) return { status: 'UNKNOWN' };
+  return { status: 'APPLIED', transition: stored.result };
 }
 
 function readEffect() {

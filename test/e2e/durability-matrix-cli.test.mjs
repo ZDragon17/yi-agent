@@ -387,7 +387,7 @@ async function invokeUntilExternalEffectThenKill(args, environment, stateFile, l
   };
 }
 
-async function invokeUntilNewExternalEffectThenKill(args, environment, stateFile, controlDir, effect, timeoutMs = 20_000) {
+async function invokeUntilNewExternalEffectThenKill(args, environment, stateFile, controlDir, effect, timeoutMs = 60_000) {
   const child = spawn(process.execPath, [CLI, ...args], {
     env: environment,
     windowsHide: true,
