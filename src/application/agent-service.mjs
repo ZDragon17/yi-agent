@@ -15,7 +15,7 @@ const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
-const KERNEL_LEARNING_VERSION = 14;
+const KERNEL_LEARNING_VERSION = 15;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -161,6 +161,7 @@ export async function runLab(input) {
           recentHistory: [],
           historyClock: 0,
           historyAccumulator: '0000000000000000000000000000000000000000000000000000000000000000',
+          lastVerifiedSteps: {},
         },
         rngState: initialRng(manifest.seed),
         kernelStep: 0,
@@ -301,7 +302,7 @@ export async function runLab(input) {
       rngState: state.rngState,
       ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
       planning: { schemaVersion: SCHEMA_VERSION, horizon: planningHorizon },
-    }, preferenceFor(retryPreference ?? modelDecision));
+    }, preferenceFor(retryPreference ?? modelDecision, retryPreference !== null));
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
       terminalRequested = true;
@@ -670,10 +671,14 @@ export async function runContinuous(input) {
   };
 }
 
-function preferenceFor(modelDecision) {
+function preferenceFor(modelDecision, required = false) {
   return modelDecision?.token === null || modelDecision?.token === undefined
     ? null
-    : { schemaVersion: SCHEMA_VERSION, token: modelDecision.token };
+    : {
+        schemaVersion: SCHEMA_VERSION,
+        token: modelDecision.token,
+        ...(required ? { required: true } : {}),
+      };
 }
 
 async function requestAdvice({ advisor, ...input }) {

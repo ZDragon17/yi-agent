@@ -27,7 +27,8 @@ const HISTORY_ACCUMULATOR_LEARNING_VERSION = 11;
 const ACTIVE_INFORMATION_PLANNING_LEARNING_VERSION = 12;
 const DECISION_DIVERGENCE_INFORMATION_PLANNING_LEARNING_VERSION = 13;
 const VALUE_RELEVANT_INFORMATION_PLANNING_LEARNING_VERSION = 14;
-const MAX_SUPPORTED_LEARNING_VERSION = 14;
+const REVALIDATION_LEARNING_VERSION = 15;
+const MAX_SUPPORTED_LEARNING_VERSION = 15;
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -204,7 +205,12 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
     };
     intent = decision === undefined
       ? kernel.step(stepInput)
-      : kernel.stepWithPreference(stepInput, decision.applied ? { schemaVersion: SCHEMA_VERSION, token: decision.token } : null);
+      : kernel.stepWithPreference(
+          stepInput,
+          decision.applied
+            ? { schemaVersion: SCHEMA_VERSION, token: decision.token, required: true }
+            : null,
+        );
   } catch (error) {
     corrupt('Replay kernel.step failed.', { sequence: event.sequence, cause: errorName(error) });
   }
@@ -362,9 +368,19 @@ function projectLearningForVersion(update, learningVersion) {
   const withoutAccumulator = learningVersion < HISTORY_ACCUMULATOR_LEARNING_VERSION
     ? withoutHistoryAccumulator(withoutExpiry)
     : withoutExpiry;
-  return learningVersion < HISTORY_ACCUMULATOR_LEARNING_VERSION
-    ? withoutPendingContextKeys(withoutAccumulator)
+  const withoutRevalidation = learningVersion < REVALIDATION_LEARNING_VERSION
+    ? withoutLastVerifiedSteps(withoutAccumulator)
     : withoutAccumulator;
+  return learningVersion < HISTORY_ACCUMULATOR_LEARNING_VERSION
+    ? withoutPendingContextKeys(withoutRevalidation)
+    : withoutRevalidation;
+}
+
+function withoutLastVerifiedSteps(update) {
+  const memory = update.nextMemory;
+  if (memory?.lastVerifiedSteps === undefined) return update;
+  const { lastVerifiedSteps: _ignored, ...nextMemory } = memory;
+  return { ...update, nextMemory };
 }
 
 function withoutHistoryAccumulator(update) {

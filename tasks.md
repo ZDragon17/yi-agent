@@ -388,3 +388,11 @@
 - 边界：这证明的是“未知时保持不可辨识、证据到达后更新”，不是隐藏状态识别、概率校准或完整 POMDP；若公开反馈永远相同，必须保持不确定或请求新的可验证观测/人工确认。
 
 - 外部验证：`test/fixtures/latent-choice-world-adapter.mjs` 让两个全部动作均安全的独立 adapter 只在隐藏动力学上相反；`test/e2e/latent-choice-world.test.mjs` 验证相同公开首步、反馈后的动作分化、效果不重复、进程边界和 Replay。
+
+## F-40 隐藏动力学漂移的有界周期再验证
+
+- 反例：一个已验证动作在 WorldPort 内部发生动力学反转，但由于当前目标下的旧模型仍然占优，Kernel 长期不再选择它；没有新的执行就没有新的反转证据，其他动作会持续把状态带离目标。
+- 实现：新 Lab 的 Memory 增加有界 `lastVerifiedSteps`，记录每个不透明 Token 最近一次 `ACTION && learnable` 证据的逻辑序号；当已知安全动作超过 8 个已验证动作未复核且不存在未尝试动作时，Kernel 优先选择最久未验证的候选。`Expectation.verificationAge` 固化选择依据；模型提议不能绕过该安全再验证策略，外部 transition 重试则保留原 Token。
+- 兼容：`kernelLearningVersion: 15` 启用新鲜度字段和周期再验证；v15 之前的 Replay 剥离该字段，保持旧账本选择语义。没有 `historyClock` 的旧 Memory 不启用该策略。
+- 验证：`test/kernel/history-context.test.mjs` 验证过期安全动作被重新选择并更新序号；`test/fixtures/drifting-choice-world-adapter.mjs` 在独立子进程中隐藏地反转一个动作效果；`test/e2e/drifting-choice-world.test.mjs` 验证跨两个 CLI Run、持久外部效果和 Replay 一致。
+- 边界：周期再验证只能在固定间隔内获得新证据，不能感知未执行动作的即时变化、证明变化点、校准概率或解决无反馈/混杂；它是统一的证据获取策略，不是领域特判。

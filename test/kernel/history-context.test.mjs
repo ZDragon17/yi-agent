@@ -240,6 +240,56 @@ test('history accumulator preserves longer ordered context beyond the recent win
   }));
 });
 
+test('periodic revalidation revisits stale safe actions without domain fields', () => {
+  const stale = 'tok_REVALIDATESTAL1';
+  const fresh = 'tok_REVALIDATEFRE1';
+  const memory = {
+    schemaVersion: 1,
+    actionModels: {
+      [stale]: model([4]),
+      [fresh]: model([1]),
+    },
+    relationModels: {},
+    beliefModels: {},
+    contextModels: {},
+    recentHistory: [],
+    historyClock: 9,
+    historyAccumulator: zeroAccumulator(),
+    lastVerifiedSteps: { [stale]: 1, [fresh]: 9 },
+  };
+  const before = observation([12], 'state:revalidation:before');
+  const capabilities = [stale, fresh].map((token) => ({
+    schemaVersion: 1,
+    token,
+    cost: 1,
+    allowed: true,
+    safe: true,
+  }));
+  const intent = step({
+    observation: before,
+    memory,
+    valueSpec: { ...VALUE_SPEC, target: [5] },
+    capabilities,
+    rngState: rng(47),
+  });
+
+  assert.equal(intent.choice.token, stale);
+  assert.equal(intent.expectation.verificationAge, 8);
+
+  const postObservation = observation([10], 'state:revalidation:after');
+  const receiptValue = receipt(stale, before, 'execution:revalidation:1', true);
+  const verification = verify({ intent, receipt: receiptValue, postObservation });
+  const update = learn({
+    memory,
+    intent,
+    receipt: receiptValue,
+    postObservation,
+    verification,
+  });
+  assert.equal(update.nextMemory.lastVerifiedSteps[stale], 10);
+  assert.equal(update.nextMemory.historyClock, 10);
+});
+
 function newMemory() {
   return {
     schemaVersion: 1,

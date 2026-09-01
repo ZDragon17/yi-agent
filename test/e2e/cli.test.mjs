@@ -1023,7 +1023,7 @@ async function rewriteDelayedRunAsV7(lab) {
 }
 
 function withoutHistoryAccumulator(memory) {
-  const { historyAccumulator: _ignored, ...withoutAccumulator } = memory;
+  const { historyAccumulator: _ignored, lastVerifiedSteps: _ignoredFreshness, ...withoutAccumulator } = memory;
   return {
     ...withoutAccumulator,
     ...(memory.contextModels === undefined ? {} : {

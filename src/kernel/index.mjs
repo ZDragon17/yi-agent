@@ -9,6 +9,7 @@ const MAX_ACTION_MODELS = 8192;
 const MAX_RELATION_MODELS = 8192;
 const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
 const ADAPTATION_WINDOW = 8;
+const REVALIDATION_INTERVAL = 8;
 const MAX_PLANNING_HORIZON = 8;
 const MAX_PLANNING_CANDIDATES = 64;
 const PLANNING_INFORMATION_MODES = ['belief-v1', 'belief-v2', 'belief-v3', 'legacy-v1'];
@@ -77,7 +78,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -111,6 +112,7 @@ const EXPECTATION_KEYS = [
   'score',
   'sampleCount',
   'uncertainty',
+  'verificationAge',
 ];
 const CHOICE_KEYS = [
   'schemaVersion',
@@ -236,9 +238,19 @@ export function stepWithPreference(input, preference = null) {
     ? null
     : safePredictions.find((item) => item.choice.token === normalizedPreference.token &&
       (!item.rejectedRecently || nonRejectedPredictions.length === 0));
-  const selected = preferred ?? (normalized.planning.horizon > 1 && untriedPredictions.length === 0
-    ? chooseByPlanning(selectionPool, normalized, rng.unit)
-    : chooseByStrategy(selectionPool, normalized.strategy, rng.unit));
+  const revalidationPool = untriedPredictions.length === 0
+    ? revalidationCandidatePool(
+        nonRejectedPredictions.length > 0 ? nonRejectedPredictions : safePredictions,
+        normalized.memory,
+      )
+    : [];
+  const selected = normalizedPreference?.required === true
+    ? preferred ?? chooseByStrategy(selectionPool, normalized.strategy, rng.unit)
+    : revalidationPool.length > 0
+      ? chooseByStrategy(revalidationPool, normalized.strategy, rng.unit)
+      : preferred ?? (normalized.planning.horizon > 1 && untriedPredictions.length === 0
+        ? chooseByPlanning(selectionPool, normalized, rng.unit)
+        : chooseByStrategy(selectionPool, normalized.strategy, rng.unit));
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -251,10 +263,11 @@ export function stepWithPreference(input, preference = null) {
 
 function normalizePreference(value) {
   if (value === null || value === undefined) return null;
-  const source = assertPlainRecord(value, 'stepPreference', ['schemaVersion', 'token']);
+  const source = assertPlainRecord(value, 'stepPreference', ['schemaVersion', 'token', 'required'], ['schemaVersion', 'token']);
   return {
     schemaVersion: requireSchemaVersion(source, 'stepPreference'),
     token: assertOpaqueToken(source.token, 'stepPreference.token'),
+    required: source.required === undefined ? false : assertBoolean(source.required, 'stepPreference.required'),
   };
 }
 
@@ -930,9 +943,22 @@ function normalizeMemory(value, field, dimensions) {
   const historyAccumulator = source.historyAccumulator === undefined
     ? undefined
     : assertHistoryAccumulator(source.historyAccumulator, `${field}.historyAccumulator`);
+  const lastVerifiedSteps = source.lastVerifiedSteps === undefined
+    ? undefined
+    : normalizeLastVerifiedSteps(source.lastVerifiedSteps, `${field}.lastVerifiedSteps`);
   if (historyAccumulator !== undefined && historyClock === undefined) {
     contractViolation('kernel history accumulator requires a history clock', {
       field: `${field}.historyAccumulator`,
+    });
+  }
+  if (lastVerifiedSteps !== undefined && historyClock === undefined) {
+    contractViolation('kernel verification freshness requires a history clock', {
+      field: `${field}.lastVerifiedSteps`,
+    });
+  }
+  if (lastVerifiedSteps !== undefined && Object.values(lastVerifiedSteps).some((step) => step > historyClock)) {
+    contractViolation('kernel verification freshness cannot point beyond the history clock', {
+      field: `${field}.lastVerifiedSteps`,
     });
   }
   validateHistoryOrdering(
@@ -954,7 +980,18 @@ function normalizeMemory(value, field, dimensions) {
     ...(normalizedRecentHistory === undefined ? {} : { recentHistory: normalizedRecentHistory }),
     ...(historyClock === undefined ? {} : { historyClock }),
     ...(historyAccumulator === undefined ? {} : { historyAccumulator }),
+    ...(lastVerifiedSteps === undefined ? {} : { lastVerifiedSteps }),
   };
+}
+
+function normalizeLastVerifiedSteps(value, field) {
+  const source = assertDynamicRecord(value, field, MAX_ACTION_MODELS);
+  const normalized = Object.create(null);
+  for (const [token, step] of Object.entries(source)) {
+    assertOpaqueToken(token, `${field} token`);
+    normalized[token] = assertPositiveInteger(step, `${field}.${token}`);
+  }
+  return normalized;
 }
 
 function normalizeContextModels(value, field, dimensions) {
@@ -1246,6 +1283,11 @@ function normalizeActionModel(value, field, dimensions) {
       source.uncertainty,
       `${field}.uncertainty`,
     ),
+    ...(source.verificationAge === undefined
+      ? {}
+      : { verificationAge: source.verificationAge === null
+          ? null
+          : assertNonNegativeInteger(source.verificationAge, `${field}.verificationAge`) }),
   };
 }
 
@@ -1366,6 +1408,12 @@ function recordActionEvidence(memory, {
   }
   appendRecentHistory(memory, { token, actualDelta, historyOrder, dimensions, field });
   appendHistoryAccumulator(memory, { token, actualDelta, historyOrder, field });
+  if (memory.lastVerifiedSteps !== undefined) {
+    if (historyOrder === undefined) {
+      contractViolation('kernel verification freshness requires an action order', { field });
+    }
+    memory.lastVerifiedSteps[token] = historyOrder;
+  }
   if (relationKey === undefined) return;
 
   const relationModels = memory.relationModels ?? {};
@@ -1607,7 +1655,12 @@ function normalizeVerification(value, field, dimensions) {
 }
 
 function normalizeExpectation(value, field) {
-  const source = assertPlainRecord(value, field, EXPECTATION_KEYS, EXPECTATION_KEYS.filter((key) => key !== 'relationKey'));
+  const source = assertPlainRecord(
+    value,
+    field,
+    EXPECTATION_KEYS,
+    EXPECTATION_KEYS.filter((key) => key !== 'relationKey' && key !== 'verificationAge'),
+  );
   const predictedObservation = normalizeObservation(
     source.predictedObservation,
     `${field}.predictedObservation`,
@@ -1805,6 +1858,7 @@ function buildPredictions(input) {
       uncertaintyPenalty(uncertainty, input.valueSpec.weights),
       'stepOutput.choice.score',
     );
+    const verificationAge = verificationAgeFor(input.memory, capability.token);
 
     return {
       expectation: {
@@ -1816,6 +1870,7 @@ function buildPredictions(input) {
         score,
         sampleCount: model.sampleCount,
         uncertainty,
+        ...(verificationAge === undefined ? {} : { verificationAge }),
       },
       choice: {
         schemaVersion: SCHEMA_VERSION,
@@ -1829,6 +1884,24 @@ function buildPredictions(input) {
       rejectedRecently,
     };
   });
+}
+
+function verificationAgeFor(memory, token) {
+  if (memory.lastVerifiedSteps === undefined) return undefined;
+  const lastVerifiedStep = memory.lastVerifiedSteps[token];
+  return lastVerifiedStep === undefined ? null : memory.historyClock - lastVerifiedStep;
+}
+
+function revalidationCandidatePool(predictions, memory) {
+  if (memory.lastVerifiedSteps === undefined || memory.historyClock === undefined) return [];
+  const overdue = predictions.filter((prediction) =>
+    prediction.expectation.verificationAge !== null &&
+    prediction.expectation.verificationAge !== undefined &&
+    prediction.expectation.verificationAge >= REVALIDATION_INTERVAL,
+  );
+  if (overdue.length === 0) return [];
+  const oldestAge = Math.max(...overdue.map((prediction) => prediction.expectation.verificationAge));
+  return overdue.filter((prediction) => prediction.expectation.verificationAge === oldestAge);
 }
 
 function beliefUncertainty(model, beliefModel, dimensions) {
@@ -2294,6 +2367,7 @@ function cloneMemory(value) {
   }
   if (value.historyClock !== undefined) cloned.historyClock = value.historyClock;
   if (value.historyAccumulator !== undefined) cloned.historyAccumulator = value.historyAccumulator;
+  if (value.lastVerifiedSteps !== undefined) cloned.lastVerifiedSteps = { ...value.lastVerifiedSteps };
   return cloned;
 }
 
@@ -2327,6 +2401,7 @@ function cloneExpectation(value) {
     score: value.score,
     sampleCount: value.sampleCount,
     uncertainty: value.uncertainty,
+    ...(value.verificationAge === undefined ? {} : { verificationAge: value.verificationAge }),
   };
 }
 
