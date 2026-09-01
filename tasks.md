@@ -344,3 +344,10 @@
 - 实现：`test/fixtures/hidden-state-world-adapter.mjs` 通过独立 JSONL 子进程持久化 `hiddenMode`、阶段机和效果记录，只把 `value` 投影给 Kernel，并用 `supportsStateDependentActions:true` 暴露每个阶段唯一的安全动作；`test/e2e/hidden-state-world-cli.test.mjs` 以两个独立 CLI Run 完成 `flip→advance→reset` 轨迹，读取 manifest 的 capability 映射确认 `advance` Token，检查 `Token×RelationSignature` 后验分支、外部效果计数、最终状态和每个 Run 的 Replay。
 - 验证：同一可见 `value=0` 与 `r1:+` 关系下，`advance` 交替产生 `-1/+1`，跨 Run 的信念样本为 `[[-1],[1],[-1],[1]]`；11 次外部效果不重复，最终状态为 `value=1/hiddenMode=A`，两个 Run 均为 `CONSISTENT`。
 - 边界：该反例只证明有界信念能保留已验证的多分支，不能证明隐藏状态识别、概率校准、因果识别、全局 POMDP 或现实世界自主性；不能为 adapter 的隐藏字段向 Kernel 增加领域特判。
+
+## F-34 有界近期变化上下文的策略适应
+
+- 原理：仅保存同一动作的多分支后验，不能回答“刚刚发生的已验证变化如何改变当前行动条件”；底座需要把有限历史作为可复用上下文，但不能把 WorldPort 的 hidden mode、领域名称或自然语言标签写进 Kernel。
+- 实现：新 Lab 的 Memory 增加有界 `recentHistory` 与 `contextModels`；最近两个已验证的 `{Token,actualDelta}` 形成稳定 `h1:` 上下文签名，Kernel 按 `context×Token` 预测，缺少上下文样本时回退到关系模型和总体模型。未闭合 feedback、混杂和拒绝不进入历史；旧 Memory 不注入新字段，Replay 继续按账本中的字段形状运行。
+- 验证：`history-conditioned-world-adapter.mjs` 将模式 A/B 留在外部持久状态，只投影一维 value；探针后 value 恢复为零，训练四组目标动作，再在相同可见输入下验证模式 A/B 是否分别选择 `target-a/target-b`。外部 28 次效果、上下文模型、重启边界和 Replay 必须一致。
+- 边界：窗口 2 只是当前可证伪的最小历史尺度，不是完整状态估计、因果识别或长期记忆；若真实世界需要更长依赖，必须用新的外部反例证明并重新选择公共上下文契约，不能偷偷扩大窗口或添加领域特判。

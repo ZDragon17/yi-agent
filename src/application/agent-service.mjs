@@ -15,7 +15,7 @@ const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
-const KERNEL_LEARNING_VERSION = 8;
+const KERNEL_LEARNING_VERSION = 9;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -157,6 +157,8 @@ export async function runLab(input) {
           settledFeedback: [],
           pendingCreditPolicy: { schemaVersion: SCHEMA_VERSION, maxAge: 8 },
           beliefModels: {},
+          contextModels: {},
+          recentHistory: [],
         },
         rngState: initialRng(manifest.seed),
         kernelStep: 0,

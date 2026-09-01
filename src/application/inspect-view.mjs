@@ -8,6 +8,7 @@ export function buildInspectView({ manifest, current, run = null, actions, value
   const relationModels = viewState.memory?.relationModels ?? {};
   const rejectionModels = viewState.memory?.rejectionModels ?? {};
   const beliefModels = viewState.memory?.beliefModels ?? {};
+  const contextModels = viewState.memory?.contextModels ?? {};
   const viewRunId = run?.start?.runId ?? current.lastRunId;
   const viewStatus = run === null ? current.status : terminal?.payload?.terminalStatus === 'COMPLETED' ? 'READY' : 'HALTED';
   return {
@@ -37,6 +38,8 @@ export function buildInspectView({ manifest, current, run = null, actions, value
       relationModelCount: countRelationModels(relationModels),
       rejectionModelCount: Object.keys(rejectionModels).length,
       beliefModelCount: countBeliefModels(beliefModels),
+      contextModelCount: countContextModels(contextModels),
+      recentHistory: viewState.memory?.recentHistory === undefined ? null : cloneJson(viewState.memory.recentHistory),
       changeSupervisor: viewRunId === null ? null : cloneJson(viewState.changeSupervisor ?? null),
     },
     hypotheses: Object.fromEntries(
@@ -44,6 +47,7 @@ export function buildInspectView({ manifest, current, run = null, actions, value
         model: actionModels[action.token] ? cloneJson(actionModels[action.token]) : null,
         relationModels: relationModels[action.token] ? cloneJson(relationModels[action.token]) : {},
         beliefModels: beliefModels[action.token] ? cloneJson(beliefModels[action.token]) : {},
+        contextModels: contextModelsForToken(contextModels, action.token),
         rejectionModel: rejectionModels[action.token] ? cloneJson(rejectionModels[action.token]) : null,
         sampleCount: actionModels[action.token]?.sampleCount ?? 0,
         uncertainty: actionModels[action.token]?.uncertainty ?? null,
@@ -79,4 +83,16 @@ function countRelationModels(value) {
 
 function countBeliefModels(value) {
   return Object.values(value).reduce((sum, contexts) => sum + Object.keys(contexts).length, 0);
+}
+
+function countContextModels(value) {
+  return Object.values(value).reduce((sum, models) => sum + Object.keys(models).length, 0);
+}
+
+function contextModelsForToken(value, token) {
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, models]) => models[token] !== undefined)
+      .map(([contextKey, models]) => [contextKey, cloneJson(models[token])]),
+  );
 }

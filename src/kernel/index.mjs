@@ -1,3 +1,5 @@
+import { canonicalDigest } from '../runtime/schema.mjs';
+
 const SCHEMA_VERSION = 1;
 const CONTRACT_ERROR_CODE = 'KERNEL_CONTRACT_VIOLATION';
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
@@ -16,6 +18,9 @@ const MAX_SETTLED_FEEDBACK = 64;
 const MAX_PENDING_CREDIT_AGE = 8;
 const MAX_BELIEF_MODELS = 8192;
 const MAX_BELIEF_SAMPLES = 8;
+const MAX_RECENT_HISTORY = 2;
+const MAX_CONTEXT_MODELS = 8192;
+const MAX_CONTEXT_KEY_LENGTH = 4096;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const FEEDBACK_ORDER_MODES = ['arrival-v1', 'pending-v2'];
 const FEEDBACK_CAUSALITY_MODES = ['legacy-v1', 'boundary-v2'];
@@ -64,7 +69,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -137,10 +142,12 @@ const PENDING_CREDIT_KEYS = [
   'beforeVector',
   'expectedDelta',
   'relationKey',
+  'contextKey',
   'age',
 ];
 const PENDING_CREDIT_POLICY_KEYS = ['schemaVersion', 'maxAge'];
 const BELIEF_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'samples'];
+const HISTORY_ENTRY_KEYS = ['schemaVersion', 'token', 'actualDelta'];
 
 export function step(input) {
   return stepWithPreference(input, null);
@@ -332,6 +339,7 @@ export function learn(input) {
   assertIntentIsExecutable(intent, 'learnInput.intent.choice');
 
   const nextMemory = cloneMemory(memory);
+  const contextKey = contextKeyForHistory(memory.recentHistory);
   const settlement = settlePendingCredits(
     nextMemory,
     postObservation,
@@ -374,6 +382,7 @@ export function learn(input) {
         intent,
         source.receipt.executionNonce,
         pendingBaselineObservation(intent, settlement.cleanDeltas),
+        contextKey,
         'learnOutput.nextMemory.pendingCredits',
       );
       return {
@@ -429,6 +438,7 @@ export function learn(input) {
   recordActionEvidence(nextMemory, {
     token,
     relationKey: intent.expectation.relationKey,
+    contextKey,
     actualDelta,
     errorMagnitude,
     dimensions,
@@ -560,6 +570,7 @@ function settlePendingCredits(
     recordActionEvidence(memory, {
       token: pending.token,
       relationKey: pending.relationKey,
+      contextKey: pending.contextKey,
       actualDelta,
       errorMagnitude,
       dimensions,
@@ -620,7 +631,7 @@ function pendingBaselineObservation(intent, cleanDeltas) {
   };
 }
 
-function addPendingCredit(memory, intent, executionNonce, baselineObservation, field) {
+function addPendingCredit(memory, intent, executionNonce, baselineObservation, contextKey, field) {
   const pendingCredits = memory.pendingCredits ?? [];
   if (pendingCredits.some((item) => item.executionNonce === executionNonce)) {
     contractViolation('kernel pending credits contain a reused execution nonce', { field });
@@ -638,6 +649,7 @@ function addPendingCredit(memory, intent, executionNonce, baselineObservation, f
     beforeVector: cloneVector(baselineObservation.vector),
     expectedDelta: cloneVector(intent.expectation.expectedDelta),
     ...(intent.expectation.relationKey === undefined ? {} : { relationKey: intent.expectation.relationKey }),
+    ...(contextKey === undefined ? {} : { contextKey }),
     ...(memory.pendingCreditPolicy === undefined ? {} : { age: 0 }),
   });
 }
@@ -877,6 +889,12 @@ function normalizeMemory(value, field, dimensions) {
   const normalizedBeliefs = source.beliefModels === undefined
     ? undefined
     : normalizeBeliefModels(source.beliefModels, `${field}.beliefModels`, dimensions);
+  const normalizedContextModels = source.contextModels === undefined
+    ? undefined
+    : normalizeContextModels(source.contextModels, `${field}.contextModels`, dimensions);
+  const normalizedRecentHistory = source.recentHistory === undefined
+    ? undefined
+    : normalizeRecentHistory(source.recentHistory, `${field}.recentHistory`, dimensions);
   return {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
@@ -886,7 +904,54 @@ function normalizeMemory(value, field, dimensions) {
     ...(normalizedSettledFeedback === undefined ? {} : { settledFeedback: normalizedSettledFeedback }),
     ...(normalizedPendingCreditPolicy === undefined ? {} : { pendingCreditPolicy: normalizedPendingCreditPolicy }),
     ...(normalizedBeliefs === undefined ? {} : { beliefModels: normalizedBeliefs }),
+    ...(normalizedContextModels === undefined ? {} : { contextModels: normalizedContextModels }),
+    ...(normalizedRecentHistory === undefined ? {} : { recentHistory: normalizedRecentHistory }),
   };
+}
+
+function normalizeContextModels(value, field, dimensions) {
+  const source = assertDynamicRecord(value, field, MAX_CONTEXT_MODELS);
+  const normalized = Object.create(null);
+  let modelCount = 0;
+  for (const [contextKey, models] of Object.entries(source)) {
+    assertContextKey(contextKey, `${field}.${contextKey}`);
+    const modelSource = assertDynamicRecord(models, `${field}.${contextKey}`, MAX_ACTION_MODELS);
+    const contextModels = Object.create(null);
+    for (const [token, model] of Object.entries(modelSource)) {
+      modelCount += 1;
+      if (modelCount > MAX_CONTEXT_MODELS) {
+        contractViolation('kernel context memory exceeds its size limit', { field });
+      }
+      assertOpaqueToken(token, `${field}.${contextKey} token`);
+      contextModels[token] = normalizeActionModel(
+        model,
+        `${field}.${contextKey}.${token}`,
+        dimensions,
+      );
+    }
+    normalized[contextKey] = contextModels;
+  }
+  return normalized;
+}
+
+function normalizeRecentHistory(value, field, dimensions) {
+  const items = assertArray(value, field);
+  if (items.length > MAX_RECENT_HISTORY) {
+    contractViolation('kernel recent history exceeds its size limit', {
+      field,
+      max: MAX_RECENT_HISTORY,
+      actual: items.length,
+    });
+  }
+  return items.map((item, index) => {
+    const itemField = `${field}[${index}]`;
+    const source = assertPlainRecord(item, itemField, HISTORY_ENTRY_KEYS);
+    return {
+      schemaVersion: requireSchemaVersion(source, itemField),
+      token: assertOpaqueToken(source.token, `${itemField}.token`),
+      actualDelta: cloneVector(assertFiniteVector(source.actualDelta, `${itemField}.actualDelta`, dimensions)),
+    };
+  });
 }
 
 function normalizeBeliefModels(value, field, dimensions) {
@@ -961,7 +1026,7 @@ function normalizePendingCredits(value, field, dimensions) {
       item,
       itemField,
       PENDING_CREDIT_KEYS,
-      PENDING_CREDIT_KEYS.filter((key) => key !== 'relationKey' && key !== 'age'),
+      PENDING_CREDIT_KEYS.filter((key) => key !== 'relationKey' && key !== 'contextKey' && key !== 'age'),
     );
     const executionNonce = assertBoundedString(source.executionNonce, `${itemField}.executionNonce`, MAX_EXECUTION_NONCE_LENGTH);
     if (seen.has(executionNonce)) {
@@ -971,6 +1036,9 @@ function normalizePendingCredits(value, field, dimensions) {
     const relationKey = source.relationKey === undefined
       ? undefined
       : assertRelationKey(source.relationKey, `${itemField}.relationKey`, dimensions);
+    const contextKey = source.contextKey === undefined
+      ? undefined
+      : assertContextKey(source.contextKey, `${itemField}.contextKey`);
     const age = source.age === undefined
       ? undefined
       : assertNonNegativeInteger(source.age, `${itemField}.age`);
@@ -990,6 +1058,7 @@ function normalizePendingCredits(value, field, dimensions) {
       beforeVector: assertFiniteVector(source.beforeVector, `${itemField}.beforeVector`, dimensions),
       expectedDelta: assertFiniteVector(source.expectedDelta, `${itemField}.expectedDelta`, dimensions),
       ...(relationKey === undefined ? {} : { relationKey }),
+      ...(contextKey === undefined ? {} : { contextKey }),
       ...(age === undefined ? {} : { age }),
     };
   });
@@ -1123,6 +1192,7 @@ function countRelationModels(value) {
 function recordActionEvidence(memory, {
   token,
   relationKey,
+  contextKey,
   actualDelta,
   errorMagnitude,
   dimensions,
@@ -1156,6 +1226,15 @@ function recordActionEvidence(memory, {
     dimensions,
     field,
   });
+  recordContextEvidence(memory, {
+    contextKey,
+    token,
+    actualDelta,
+    errorMagnitude,
+    dimensions,
+    field,
+  });
+  appendRecentHistory(memory, { token, actualDelta, dimensions, field });
   if (relationKey === undefined) return;
 
   const relationModels = memory.relationModels ?? {};
@@ -1177,6 +1256,50 @@ function recordActionEvidence(memory, {
     ...relationModels,
     [token]: tokenRelations,
   };
+}
+
+function recordContextEvidence(memory, {
+  contextKey,
+  token,
+  actualDelta,
+  errorMagnitude,
+  dimensions,
+  field,
+}) {
+  if (memory.contextModels === undefined || contextKey === undefined) return;
+  const contexts = memory.contextModels;
+  const models = { ...(contexts[contextKey] ?? {}) };
+  const existing = models[token];
+  if (existing === undefined && countContextModels(contexts) >= MAX_CONTEXT_MODELS) {
+    contractViolation('kernel learning would exceed the context-model limit', {
+      field: `${field}.contextModels.${contextKey}.${token}`,
+    });
+  }
+  models[token] = updateActionModel(
+    existing ?? defaultActionModel(dimensions),
+    actualDelta,
+    errorMagnitude,
+    dimensions,
+    `${field}.contextModels.${contextKey}.${token}`,
+  );
+  memory.contextModels = { ...contexts, [contextKey]: models };
+}
+
+function countContextModels(value) {
+  return Object.values(value).reduce((sum, models) => sum + Object.keys(models).length, 0);
+}
+
+function appendRecentHistory(memory, { token, actualDelta, dimensions, field }) {
+  if (memory.recentHistory === undefined) return;
+  const recentHistory = memory.recentHistory.length >= MAX_RECENT_HISTORY
+    ? memory.recentHistory.slice(-MAX_RECENT_HISTORY + 1)
+    : [...memory.recentHistory];
+  recentHistory.push({
+    schemaVersion: SCHEMA_VERSION,
+    token,
+    actualDelta: cloneVector(assertFiniteVector(actualDelta, `${field}.recentHistory.actualDelta`, dimensions)),
+  });
+  memory.recentHistory = recentHistory;
 }
 
 function recordBeliefEvidence(memory, {
@@ -1457,6 +1580,7 @@ function assertIntentIsExecutable(intent, field) {
 }
 
 function buildPredictions(input) {
+  const contextKey = contextKeyForHistory(input.memory.recentHistory);
   return input.capabilities.map((capability) => {
     const relationKey = input.memory.relationModels === undefined
       ? undefined
@@ -1465,6 +1589,7 @@ function buildPredictions(input) {
     const rejectedRecently = rejectionModel?.rejected === true &&
       rejectionModel.relationKey === relationKey;
     const model =
+      (contextKey === undefined ? undefined : input.memory.contextModels?.[contextKey]?.[capability.token]) ??
       input.memory.relationModels?.[capability.token]?.[relationKey] ??
       input.memory.actionModels[capability.token] ??
       defaultActionModel(input.observation.vector.length);
@@ -1821,6 +1946,7 @@ function cloneMemory(value) {
       beforeVector: cloneVector(credit.beforeVector),
       expectedDelta: cloneVector(credit.expectedDelta),
       ...(credit.relationKey === undefined ? {} : { relationKey: credit.relationKey }),
+      ...(credit.contextKey === undefined ? {} : { contextKey: credit.contextKey }),
       ...(credit.age === undefined ? {} : { age: credit.age }),
     }));
   }
@@ -1838,6 +1964,26 @@ function cloneMemory(value) {
         }])),
       ]),
     );
+  }
+  if (value.contextModels !== undefined) {
+    cloned.contextModels = Object.fromEntries(
+      Object.entries(value.contextModels).map(([contextKey, models]) => [
+        contextKey,
+        Object.fromEntries(Object.entries(models).map(([token, model]) => [token, {
+          schemaVersion: SCHEMA_VERSION,
+          sampleCount: model.sampleCount,
+          meanDelta: cloneVector(model.meanDelta),
+          uncertainty: model.uncertainty,
+        }])),
+      ]),
+    );
+  }
+  if (value.recentHistory !== undefined) {
+    cloned.recentHistory = value.recentHistory.map((entry) => ({
+      schemaVersion: SCHEMA_VERSION,
+      token: entry.token,
+      actualDelta: cloneVector(entry.actualDelta),
+    }));
   }
   return cloned;
 }
@@ -2205,6 +2351,22 @@ function assertRelationKey(value, field, dimensions) {
 function assertBeliefContextKey(value, field, dimensions) {
   if (value === OVERALL_BELIEF_CONTEXT) return value;
   return assertRelationKey(value, field, dimensions);
+}
+
+function contextKeyForHistory(history) {
+  if (history === undefined) return undefined;
+  return `h1:${canonicalDigest(history.map((entry) => ({
+    token: entry.token,
+    actualDelta: entry.actualDelta,
+  })))}`;
+}
+
+function assertContextKey(value, field) {
+  const bounded = assertBoundedString(value, field, MAX_CONTEXT_KEY_LENGTH);
+  if (!/^h1:sha256:[0-9a-f]{64}$/u.test(bounded)) {
+    contractViolation('kernel context key is invalid', { field });
+  }
+  return bounded;
 }
 
 function assertOneOf(value, options, field) {

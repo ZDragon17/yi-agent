@@ -8,7 +8,7 @@
 
 - 电平高低、二进制、数值向量、不透明 Token 和领域对象属于不同表达层；不能把某一表达层误认为智能本身；
 - 所有领域必须通过同一套观察—行动—验证—学习闭环接入；金融、医疗、组织、设备和软件的差异只能由 WorldPort 的状态、观测、能力和约束表达；
-- Kernel、Memory、Replay 和智能判据必须保持领域中立；新增领域特判、孤立维度或单独一套底层逻辑，均视为架构偏移；Memory 可以按观测相对 ValueSpec 的关系签名条件化，但不能按领域标签条件化；变化模型必须允许有界近期证据修正过时历史，不能把世界假定为永久静态；对部分可观测变化，只能保存有界的后验分支信念，不能把隐藏状态猜测提升为事实；
+- Kernel、Memory、Replay 和智能判据必须保持领域中立；新增领域特判、孤立维度或单独一套底层逻辑，均视为架构偏移；Memory 可以按观测相对 ValueSpec 的关系签名和近期已验证变化上下文条件化，但不能按领域标签条件化；变化模型必须允许有界近期证据修正过时历史，不能把世界假定为永久静态；对部分可观测变化，只能保存有界的后验分支信念，不能把隐藏状态猜测提升为事实；
 - 每一项扩展必须回答：它对应哪条共同变化规律、如何被反例检验、如何在另一个领域复用；不能只用模型提示词或演示结果宣称成立；
 - 易经思想是架构公理和可证伪的工程方向，不把卦象、数字或哲学判断直接冒充为科学定律。
 
@@ -82,7 +82,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `WorldPort.transition(state,request)` | immutable worldState、`ActionRequest{token,basedOnVersion,policyVersion,constraintsDigest,executionNonce}` | `{nextWorldState,receipt,postObservation}` 或拒绝 receipt | 内置 WorldPort 是纯函数；外部 WorldPort 可产生现实变化，但必须以 executionNonce 作为持久幂等键，版本比较、AuthorityPolicy、效果和版本递增仍构成单一 transition |
 | `Kernel.step(input)` | `KernelObservation{vector,stateVersion,intervalId}`、memory、ValueSpec、capabilities、显式 rngState | `StepIntent{status,expectation,choice,nextRngState}` 或 `Halt` | Application 从 WorldPort Observation 剥离 evidence 后投影；纯函数；`distance-v2` 用带权绝对距离和可接受带，禁止越过目标被误判为改善；缺少版本标记的旧账本保持 `signed-v1` Replay；未知安全行动先于已学习行动探索 |
 | `Kernel.verify(input)` | `step` 原样返回的 StepIntent、receipt、投影后的 KernelObservation | `Verification{error,attribution,confidence,learnable}` | 纯函数；预测/选择/回执 token 必须一致；策略版本、约束摘要和 nonce 由 WorldPort/Application 绑定；当前动作证据不足为 AMBIGUOUS，延迟结果由 `learn` 按 pending credit 单独结算 |
-| `Kernel.learn(input)` | 已验证当前动作、后验 observation 和持久 Memory | `{status,token,nextMemory,settled?}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，`ACTION && learnable` 更新总体模型及其关系条件模型，`EXECUTION_REJECTED` 更新不含领域文本的最近关系拒绝证据；窗口未完成且无已知混杂时保存有界 pending credit，基线由动作前观测推导，并叠加同一步已明确归属于旧 nonce 的 clean feedback，排除当前动作的部分即时变化；后续匹配 feedback 才更新对应 Token/关系模型，混杂 feedback 只产生不可学习的 AMBIGUOUS settled 记录，同一步存在 settled feedback 时当前动作保守不学习。v6 及以后多个合法 feedback 先按 pending credit 的持久顺序规范化，保证传输顺序不泄漏进 `settled`、已结算收据或信念样本；v7 对同一 `stateVersion + intervalId` 的多个新反馈全部按共享观测边界保守结算为 AMBIGUOUS，防止同一快照复制给多个动作；Replay 对 v5 及以前显式保留历史到达顺序及旧归因语义。模型更新使用固定有界变化窗口，使近期证据可修正非平稳动力学 |
+| `Kernel.learn(input)` | 已验证当前动作、后验 observation 和持久 Memory | `{status,token,nextMemory,settled?}` | 纯函数；内部重算并绑定 Verification 与原始执行证据，`ACTION && learnable` 更新总体模型、关系条件模型和当前近期上下文模型，`EXECUTION_REJECTED` 更新不含领域文本的最近关系拒绝证据；窗口未完成且无已知混杂时保存有界 pending credit，基线从动作前观测推导，并叠加同一步已明确归属于旧 nonce 的 clean feedback，排除当前动作的部分即时变化；后续匹配 feedback 才更新对应 Token/关系/动作上下文模型，混杂 feedback 只产生不可学习的 AMBIGUOUS settled 记录，同一步存在 settled feedback 时当前动作保守不学习。已验证变化按固定大小写入 recentHistory，未闭合、拒绝或混杂结果不进入历史。v6 及以后多个合法 feedback 先按 pending credit 的持久顺序规范化，保证传输顺序不泄漏进 `settled`、已结算收据或信念样本；v7 对同一 `stateVersion + intervalId` 的多个新反馈全部按共享观测边界保守结算为 AMBIGUOUS，防止同一快照复制给多个动作；Replay 对 v5 及以前显式保留历史到达顺序及旧归因语义。模型更新使用固定有界变化窗口，使近期证据可修正非平稳动力学 |
 | `ChangeSupervisor.advance(state,input)` | 当前监督状态、完整 `Verification`、前后含 `stateVersion/intervalId` 的观察及本步新 feedback 结算标记 | 新监督状态，或 `REPLAN_REQUIRED`/终止状态 | 纯函数；只承认没有新 feedback 结算且满足 `ACTION && learnable` 的即时目标距离下降为确认进步，避免旧动作后验冒领当前动作进步；不接触领域标签、模型、WorldPort 或 I/O |
 | `ChangeSupervisor.resume(state)` | 上一周期的持久化状态 | 下一变化周期的 `ACTIVE` 状态 | 记录 `runtime-continuation` 原因并清零当前停滞；不重置目标、周期计数、最佳距离或历史变化证据 |
 | `ChangeSupervisor.acknowledgeReplan(state,reason)` | `REPLAN_REQUIRED` 状态、有限原因 | 恢复为 `ACTIVE` 的监督状态 | 清零停滞、增加 `replanCount`，并在 `strategy` 中以版本化方式切换 `BALANCED/EXPLORATORY`；不改变目标、权重或历史周期 |
@@ -230,3 +230,9 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 - v0.1 无 PII、鉴别数据、网络和进程内动态代码加载；显式 external adapter 仅通过固定 executable/args、`shell:false`、有限时限/输出的 JSONL 子进程协议接入。外部输入必须同时满足整步摘要绑定和 manifest 公钥验签；这能抵御证据被改写后重算本地无密钥哈希链，但不等同于 OS 沙箱或真实副作用保证。
 - 虚拟桌面只记录合成文件名/类别/位置，不读取文件内容；错误和日志不得输出主机环境变量、真实目录枚举或内部 tokenMap 语义映射。
 - v0.1 的纯模拟 transition 解决了“副作用发生而证据未落盘”窗口；外部桌面/设备 adapter 只能在显式声明并实现持久 execution nonce 幂等后获得自动续跑资格，否则进入 `EXTERNAL_TRANSITION_UNKNOWN` 阻断，必须人工对账，不能复用纯模拟结论。
+
+## 9. 有界近期变化上下文
+
+历史隐藏状态反例进一步区分出：保存“同一动作可能有多个结果”并不等于能够利用已验证历史选择动作。新 Lab 的 Memory 可选保存最近两个已验证变化条目 `{token,actualDelta}`，以固定顺序形成 `h1:` 上下文签名；`contextModels` 按该签名和不透明 Token 保存动作模型。Kernel 在当前上下文已有样本时优先使用它，再回退到关系模型和总体模型；学习只在 `ACTION && learnable` 或已闭合 clean feedback 时把变化写入上下文，拒绝、混杂和未闭合反馈不写入。
+
+这个上下文是跨领域的“最近已验证变化”，不是领域字段、自然语言语义或隐藏模式标签。它只提供有限历史条件化：窗口固定为 2，模型和上下文数量有上限，旧 Memory 不带字段时保持旧行为。外部 `history-conditioned` WorldPort 以探针结果在可见状态恢复为零后验证：经过有限训练，模式 A 选择 `target-a`，模式 B 选择 `target-b`；28 次外部效果只提交一次，Replay 仍为 `CONSISTENT`。这证明了历史证据可以改变策略，但不证明长期记忆、隐藏状态完全辨识、概率校准或通用规划。
