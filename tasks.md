@@ -427,3 +427,10 @@
 - 实现：新 continuation 固化 `planningBranchingMode`，`runContinuous` 在每个 Run start 和恢复调用中沿用该字段；读取旧 continuation 时扫描已提交 STEP 的 `kernelLearningVersion`/planning marker 及终态 `externalTransition.planning` 证据，推断 v17 `recursive-v1`、v18 `tree-v1` 或更早 `legacy-v1`，多模式混合直接判为 CORRUPT。
 - 验证：新 loop 读回 `tree-v1`；缺少字段但已有 v17 STEP 的 loop 读回 `recursive-v1`，后续 Run 继续保存该模式；连续运行、重启恢复、Replay、外部 transition 和 Oracle 保持一致。
 - 边界：没有任何 STEP 证据的古老 continuation 无法知道曾使用的规划实现，只能保守 legacy；这不会伪造历史确定性，必要时应由人工重新确认。
+
+## F-45 多 WorldPort 的连续耐久矩阵
+
+- 反例：单个内置世界的一次 loop 通过，不能推出公共底座在不同状态形状、能力投影和外部副作用边界上都能连续运行；一次响应丢失通过，也不能推出恢复后 Replay 不会重复现实效果。
+- 实现：新增独立 CLI E2E 矩阵，使用多个内置 WorldPort 验证相同的 loop、inspect、Run 账本和 Replay 契约；使用可持久化外部 WorldPort 注入“效果已提交、响应丢失、宿主进程终止”，再经过显式 recover、跨进程 resume 和 Replay 检查 nonce 幂等与现实效果计数。
+- 验证：`node scripts/test-gate.mjs test/e2e/durability-matrix-cli.test.mjs` 连续执行 2/2；相关 agent CLI、crash/restart、packaged CLI 与该矩阵合计 18/18；外部效果在恢复后恰好为两次，Replay 后不增加。
+- 边界：当前矩阵覆盖三种内置 WorldPort、一个幂等外部 adapter 和一次响应丢失；尚未证明非幂等外部系统、多次连续崩溃、无限运行、并发多写者或现实世界对账语义，后续必须沿这些轴继续构造反例。
