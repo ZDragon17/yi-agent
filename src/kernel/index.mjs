@@ -11,6 +11,7 @@ const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
 const ADAPTATION_WINDOW = 8;
 const MAX_PLANNING_HORIZON = 8;
 const MAX_PLANNING_CANDIDATES = 64;
+const PLANNING_INFORMATION_MODES = ['belief-v1', 'legacy-v1'];
 const MAX_PENDING_CREDITS = 64;
 const MAX_FEEDBACK_ITEMS = 64;
 const MAX_EXECUTION_NONCE_LENGTH = 256;
@@ -723,9 +724,14 @@ function normalizeStepInput(input) {
 
 function normalizePlanning(value, field) {
   if (value === undefined) {
-    return { schemaVersion: SCHEMA_VERSION, horizon: 1 };
+    return { schemaVersion: SCHEMA_VERSION, horizon: 1, informationMode: 'belief-v1' };
   }
-  const source = assertPlainRecord(value, field, ['schemaVersion', 'horizon']);
+  const source = assertPlainRecord(
+    value,
+    field,
+    ['schemaVersion', 'horizon', 'informationMode'],
+    ['schemaVersion', 'horizon'],
+  );
   const horizon = assertPositiveInteger(source.horizon, `${field}.horizon`);
   if (horizon > MAX_PLANNING_HORIZON) {
     contractViolation('kernel planning horizon exceeds its size limit', {
@@ -737,6 +743,8 @@ function normalizePlanning(value, field) {
   return {
     schemaVersion: requireSchemaVersion(source, field),
     horizon,
+    informationMode: source.informationMode === undefined ? 'belief-v1' :
+      assertOneOf(source.informationMode, PLANNING_INFORMATION_MODES, `${field}.informationMode`),
   };
 }
 
@@ -1883,10 +1891,11 @@ function chooseByStrategy(predictions, strategy, unit) {
 }
 
 // Planning is deliberately bounded and model-only. It projects the current
-// learned transition model forward, then lets the normal kernel policy choose
-// each simulated follow-up action. The real WorldPort is still re-observed at
-// the next committed step, so speculative state never crosses the safety
-// boundary.
+// learned transition model forward, and when verified belief samples exist it
+// branches only on the first action's bounded outcomes. This lets a safe
+// observation earn value when it lowers the next decision's uncertainty; it
+// does not claim a hidden-state model or move speculative state across the
+// WorldPort safety boundary.
 function chooseByPlanning(predictions, input, unit) {
   const candidatePool = boundedPlanningPredictions(predictions);
   const rolloutInput = {
@@ -1922,27 +1931,76 @@ function boundedPlanningCapabilities(capabilities, predictions) {
 }
 
 function rolloutUtility(firstPrediction, input, horizon, unit) {
-  let predictedVector = firstPrediction.expectation.predictedObservation.vector;
-  let totalCost = firstPrediction.choice.cost +
-    uncertaintyPenalty(firstPrediction.expectation.uncertainty, input.valueSpec.weights);
-  for (let depth = 1; depth < horizon; depth += 1) {
-    const futurePredictions = buildPredictions({
-      ...input,
-      observation: {
-        ...input.observation,
-        vector: predictedVector,
-      },
-    }).filter((item) => item.choice.allowed && item.choice.safe);
-    if (futurePredictions.length === 0) break;
-    const futurePool = selectionPoolFor(futurePredictions);
-    const future = chooseByStrategy(futurePool, input.strategy, unit);
-    predictedVector = future.expectation.predictedObservation.vector;
-    totalCost += future.choice.cost +
-      uncertaintyPenalty(future.expectation.uncertainty, input.valueSpec.weights);
+  const firstUncertaintyCost = uncertaintyPenalty(
+    firstPrediction.expectation.uncertainty,
+    input.valueSpec.weights,
+  );
+  const outcomes = predictionOutcomeVectors(
+    firstPrediction,
+    input,
+    input.planning.informationMode === 'belief-v1',
+  );
+  const outcomeVectors = outcomes.vectors;
+  let expectedUtility = 0;
+
+  for (const outcomeVector of outcomeVectors) {
+    let predictedVector = outcomeVector;
+    let totalCost = firstPrediction.choice.cost + firstUncertaintyCost;
+    let nextUncertainty = firstPrediction.expectation.uncertainty;
+    for (let depth = 1; depth < horizon; depth += 1) {
+      const futurePredictions = buildPredictions({
+        ...input,
+        observation: {
+          ...input.observation,
+          vector: predictedVector,
+        },
+      }).filter((item) => item.choice.allowed && item.choice.safe);
+      if (futurePredictions.length === 0) break;
+      const futurePool = selectionPoolFor(futurePredictions);
+      const future = chooseByStrategy(futurePool, input.strategy, unit);
+      if (depth === 1) nextUncertainty = future.expectation.uncertainty;
+      predictedVector = future.expectation.predictedObservation.vector;
+      totalCost += future.choice.cost +
+        uncertaintyPenalty(future.expectation.uncertainty, input.valueSpec.weights);
+    }
+    const informationValue = outcomes.sampled
+      ? uncertaintyReduction(
+          firstPrediction.expectation.uncertainty,
+          nextUncertainty,
+          input.valueSpec.weights,
+        )
+      : 0;
+    expectedUtility += (
+      valueObservation(predictedVector, input.valueSpec) - totalCost + informationValue
+    ) / outcomeVectors.length;
   }
-  return assertComputedFiniteNumber(
-    valueObservation(predictedVector, input.valueSpec) - totalCost,
-    'stepOutput.planning.utility',
+
+  return assertComputedFiniteNumber(expectedUtility, 'stepOutput.planning.utility');
+}
+
+function predictionOutcomeVectors(prediction, input, allowBeliefBranches) {
+  const contextKey = prediction.expectation.relationKey ?? OVERALL_BELIEF_CONTEXT;
+  const samples = input.memory.beliefModels?.[prediction.choice.token]?.[contextKey]?.samples;
+  if (!allowBeliefBranches || samples === undefined || samples.length === 0) {
+    return {
+      vectors: [cloneVector(prediction.expectation.predictedObservation.vector)],
+      sampled: false,
+    };
+  }
+  return {
+    vectors: samples.map((sample) => addVectors(
+      input.observation.vector,
+      sample,
+      'stepOutput.planning.outcomeVector',
+    )),
+    sampled: true,
+  };
+}
+
+function uncertaintyReduction(current, future, weights) {
+  return Math.max(
+    0,
+    uncertaintyPenalty(current, weights) - uncertaintyPenalty(future, weights),
   );
 }
 

@@ -185,6 +185,57 @@ test('bounded planning can choose a temporary detour from domain-neutral learned
   assert.deepEqual(planned.nextRngState, greedy.nextRngState);
 });
 
+test('bounded planning values a safe observation that reduces future uncertainty', async () => {
+  const { step } = await loadKernel();
+  const probe = 'tok_PROBE0001';
+  const exploit = 'tok_EXPLOIT01';
+  const goal = 'tok_GOAL0001';
+  const model = (meanDelta, uncertainty = 0) => ({
+    schemaVersion: 1,
+    sampleCount: 8,
+    meanDelta,
+    uncertainty,
+  });
+  const input = makeStepInput({
+    observation: observation([0, 0], 'state-information'),
+    valueSpec: { schemaVersion: 1, observationDimensions: 2, weights: [1, 1], target: [1, 1], tolerance: 0, valueMode: 'distance-v2' },
+    capabilities: [probe, exploit, goal].map((token) => capability(token, { cost: 0.05 })),
+  });
+  input.memory = {
+    schemaVersion: 1,
+    actionModels: {
+      [probe]: model([0, 0]),
+      [exploit]: model([0.5, 0.5]),
+      [goal]: model([0, 0]),
+    },
+    relationModels: {
+      [goal]: {
+        'r1:0+': model([0, 2]),
+        'r1:+0': model([2, 0]),
+      },
+    },
+    beliefModels: {
+      [probe]: {
+        'r1:++': {
+          schemaVersion: 1,
+          sampleCount: 2,
+          samples: [[1, -1], [-1, 1]],
+        },
+      },
+    },
+  };
+
+  const greedy = step(input);
+  const planned = step({
+    ...input,
+    planning: { schemaVersion: 1, horizon: 2 },
+  });
+
+  assert.equal(greedy.choice.token, exploit);
+  assert.equal(planned.choice.token, probe);
+  assert.deepEqual(planned.expectation.expectedDelta, [0, 0]);
+});
+
 test('step is deterministic with an explicit rngState and does not require policy metadata', async () => {
   const { step } = await loadKernel();
   const input = makeStepInput({

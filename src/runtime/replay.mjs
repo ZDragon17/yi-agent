@@ -24,7 +24,8 @@ const CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION = 6;
 const SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION = 7;
 const SUPERVISOR_FEEDBACK_ALIGNMENT_LEARNING_VERSION = 8;
 const HISTORY_ACCUMULATOR_LEARNING_VERSION = 11;
-const MAX_SUPPORTED_LEARNING_VERSION = 11;
+const ACTIVE_INFORMATION_PLANNING_LEARNING_VERSION = 12;
+const MAX_SUPPORTED_LEARNING_VERSION = 12;
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -170,12 +171,22 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   if (!difference) difference = compareValue(payload.beforeObservation, beforeObservation, 'payload.beforeObservation', event.sequence);
   if (difference) return { difference };
 
+  const learningVersion = payload.boundary.kernelLearningVersion ?? 1;
+  assertLearningVersion(learningVersion, event.sequence);
   let intent;
   try {
     const decision = payload.policyEvidence;
     if (decision !== undefined && typeof kernel.stepWithPreference !== 'function') {
       corrupt('Replay kernel cannot reapply the recorded model preference.', { sequence: event.sequence });
     }
+    const planning = payload.boundary.planning === undefined
+      ? undefined
+      : {
+          ...payload.boundary.planning,
+          ...(learningVersion < ACTIVE_INFORMATION_PLANNING_LEARNING_VERSION
+            ? { informationMode: 'legacy-v1' }
+            : {}),
+        };
     const stepInput = {
       observation: beforeObservation,
       memory: state.memory,
@@ -183,7 +194,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       capabilities,
       rngState: state.rngState,
       ...(state.changeSupervisor?.strategy === undefined ? {} : { strategy: state.changeSupervisor.strategy }),
-      ...(payload.boundary.planning === undefined ? {} : { planning: payload.boundary.planning }),
+      ...(planning === undefined ? {} : { planning }),
     };
     intent = decision === undefined
       ? kernel.step(stepInput)
@@ -225,8 +236,6 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
 
   let verification;
   let update;
-  const learningVersion = payload.boundary.kernelLearningVersion ?? 1;
-  assertLearningVersion(learningVersion, event.sequence);
   try {
     verification = kernel.verify({ intent, receipt, postObservation });
     const learned = kernel.learn({
