@@ -14,7 +14,7 @@ const MAX_PLANNING_HORIZON = 8;
 const MAX_PLANNING_CANDIDATES = 64;
 const PLANNING_INFORMATION_MODES = ['belief-v1', 'belief-v2', 'belief-v3', 'legacy-v1'];
 const PLANNING_CONTEXT_MODES = ['context-v1', 'legacy-v1'];
-const PLANNING_BRANCHING_MODES = ['recursive-v1', 'legacy-v1'];
+const PLANNING_BRANCHING_MODES = ['tree-v1', 'recursive-v1', 'legacy-v1'];
 const MAX_PLANNING_ROLLOUTS = 128;
 const MAX_PENDING_CREDITS = 64;
 const MAX_FEEDBACK_ITEMS = 64;
@@ -746,7 +746,7 @@ function normalizePlanning(value, field) {
       horizon: 1,
       informationMode: 'belief-v3',
       contextMode: 'context-v1',
-      branchingMode: 'recursive-v1',
+      branchingMode: 'tree-v1',
     };
   }
   const source = assertPlainRecord(
@@ -770,7 +770,7 @@ function normalizePlanning(value, field) {
       assertOneOf(source.informationMode, PLANNING_INFORMATION_MODES, `${field}.informationMode`),
     contextMode: source.contextMode === undefined ? 'context-v1' :
       assertOneOf(source.contextMode, PLANNING_CONTEXT_MODES, `${field}.contextMode`),
-    branchingMode: source.branchingMode === undefined ? 'recursive-v1' :
+    branchingMode: source.branchingMode === undefined ? 'tree-v1' :
       assertOneOf(source.branchingMode, PLANNING_BRANCHING_MODES, `${field}.branchingMode`),
   };
 }
@@ -1994,12 +1994,12 @@ function chooseByUncertainty(predictions, unit) {
 
 // Planning is deliberately bounded and model-only. It projects the current
 // learned transition model forward, and when verified belief samples exist it
-// branches only on the first action's bounded outcomes. The current information
-// rule also requires those branches to produce different value-relevant next
-// effects; raw variance or an irrelevant-coordinate change is not evidence that
-// the observation can change what the agent should do. This does not claim a
-// hidden-state model or move speculative state across the WorldPort safety
-// boundary.
+// branches on bounded outcomes at every recursively evaluated action. The
+// current information rule also requires those branches to produce different
+// value-relevant next effects; raw variance or an irrelevant-coordinate change
+// is not evidence that the observation can change what the agent should do.
+// This does not claim a hidden-state model or move speculative state across the
+// WorldPort safety boundary.
 function chooseByPlanning(predictions, input, unit) {
   const candidatePool = boundedPlanningPredictions(
     strategyCandidatePool(predictions, input.strategy),
@@ -2037,6 +2037,9 @@ function boundedPlanningCapabilities(capabilities, predictions) {
 }
 
 function rolloutUtility(firstPrediction, input, horizon, unit) {
+  if (input.planning.branchingMode === 'tree-v1') {
+    return rolloutUtilityTree(firstPrediction, input, horizon, unit);
+  }
   if (input.planning.branchingMode === 'recursive-v1') {
     return rolloutUtilityRecursive(firstPrediction, input, horizon, unit);
   }
@@ -2145,7 +2148,15 @@ function rolloutUtilityStatic(firstPrediction, input, horizon, unit) {
   return assertComputedFiniteNumber(expectedUtility, 'stepOutput.planning.utility');
 }
 
+function rolloutUtilityTree(firstPrediction, input, horizon, unit) {
+  return rolloutUtilityBranching(firstPrediction, input, horizon, unit, 'tree');
+}
+
 function rolloutUtilityRecursive(firstPrediction, input, horizon, unit) {
+  return rolloutUtilityBranching(firstPrediction, input, horizon, unit, 'greedy');
+}
+
+function rolloutUtilityBranching(firstPrediction, input, horizon, unit, searchMode) {
   const firstUncertaintyCost = uncertaintyPenalty(
     firstPrediction.expectation.uncertainty,
     input.valueSpec.weights,
@@ -2186,6 +2197,7 @@ function rolloutUtilityRecursive(firstPrediction, input, horizon, unit) {
       totalCost: firstPrediction.choice.cost + firstUncertaintyCost,
       unit,
       budget: MAX_PLANNING_ROLLOUTS,
+      searchMode,
     });
     expectedUtility += rollout.utility / outcomeVectors.length;
     if (rollout.firstDecision !== null) {
@@ -2224,8 +2236,15 @@ function rolloutUtilityRecursive(firstPrediction, input, horizon, unit) {
   return assertComputedFiniteNumber(expectedUtility, 'stepOutput.planning.utility');
 }
 
-function rolloutFutureUtility({ input, predictedVector, planningMemory, depth, horizon, totalCost, unit, budget }) {
+function rolloutFutureUtility({ input, predictedVector, planningMemory, depth, horizon, totalCost, unit, budget, searchMode = 'greedy' }) {
   if (depth >= horizon) {
+    return {
+      utility: valueObservation(predictedVector, input.valueSpec) - totalCost,
+      firstDecision: null,
+      firstUncertainty: null,
+    };
+  }
+  if (searchMode === 'tree' && budget <= 1) {
     return {
       utility: valueObservation(predictedVector, input.valueSpec) - totalCost,
       firstDecision: null,
@@ -2252,14 +2271,78 @@ function rolloutFutureUtility({ input, predictedVector, planningMemory, depth, h
     };
   }
 
-  const future = chooseByStrategy(selectionPoolFor(futurePredictions), input.strategy, unit);
+  const futurePool = boundedPlanningPredictions(selectionPoolFor(futurePredictions));
+  if (searchMode === 'greedy') {
+    const future = chooseByStrategy(futurePool, input.strategy, unit);
+    const rollout = rolloutActionTree({
+      input,
+      predictedVector,
+      planningMemory,
+      depth,
+      horizon,
+      totalCost,
+      unit,
+      budget,
+      prediction: future,
+      index: 0,
+      searchMode,
+    });
+    return {
+      utility: rollout.utility,
+      firstDecision: future,
+      firstUncertainty: future.expectation.uncertainty,
+    };
+  }
+  const actionBudget = Math.max(1, Math.floor(budget / futurePool.length));
+  const evaluated = futurePool.map((future, index) => rolloutActionTree({
+    input,
+    predictedVector,
+    planningMemory,
+    depth,
+    horizon,
+    totalCost,
+    unit,
+    budget: actionBudget,
+    prediction: future,
+    index,
+    searchMode,
+  }));
+  let bestUtility = -Infinity;
+  const bestIndexes = [];
+  evaluated.forEach((result, index) => {
+    if (result.utility > bestUtility) {
+      bestUtility = result.utility;
+      bestIndexes.length = 0;
+      bestIndexes.push(index);
+    } else if (Object.is(result.utility, bestUtility)) {
+      bestIndexes.push(index);
+    }
+  });
+  const selected = evaluated[bestIndexes[Math.floor(unit * bestIndexes.length)]];
+  return {
+    utility: selected.utility,
+    firstDecision: futurePool[selected.index],
+    firstUncertainty: futurePool[selected.index].expectation.uncertainty,
+  };
+}
+
+function rolloutActionTree({ input, predictedVector, planningMemory, depth, horizon, totalCost, unit, budget, prediction, index, searchMode }) {
   const outcomes = predictionOutcomeVectors(
-    future,
-    futureInput,
+    prediction,
+    {
+      ...input,
+      memory: planningMemory,
+      observation: {
+        ...input.observation,
+        vector: predictedVector,
+      },
+    },
     input.planning.informationMode !== 'legacy-v1',
   );
   const outcomeVectors = boundedPlanningOutcomeVectors(outcomes.vectors, budget);
-  const childBudget = Math.max(1, Math.floor(budget / outcomeVectors.length));
+  const childBudget = searchMode === 'tree'
+    ? Math.max(1, Math.floor(budget / outcomeVectors.length / 2))
+    : Math.max(1, Math.floor(budget / outcomeVectors.length));
   let expectedUtility = 0;
 
   for (const outcomeVector of outcomeVectors) {
@@ -2267,7 +2350,7 @@ function rolloutFutureUtility({ input, predictedVector, planningMemory, depth, h
     if (input.planning.contextMode !== 'legacy-v1') {
       nextMemory = planningMemoryAfterAction(
         planningMemory,
-        future.choice.token,
+        prediction.choice.token,
         subtractVectors(
           outcomeVector,
           predictedVector,
@@ -2282,17 +2365,17 @@ function rolloutFutureUtility({ input, predictedVector, planningMemory, depth, h
       planningMemory: nextMemory,
       depth: depth + 1,
       horizon,
-      totalCost: totalCost + future.choice.cost +
-        uncertaintyPenalty(future.expectation.uncertainty, input.valueSpec.weights),
+      totalCost: totalCost + prediction.choice.cost +
+        uncertaintyPenalty(prediction.expectation.uncertainty, input.valueSpec.weights),
       unit,
       budget: childBudget,
+      searchMode,
     }).utility / outcomeVectors.length;
   }
 
   return {
+    index,
     utility: expectedUtility,
-    firstDecision: future,
-    firstUncertainty: future.expectation.uncertainty,
   };
 }
 

@@ -37,7 +37,7 @@ const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
 const MAX_PLANNING_HORIZON = 8;
 const PLANNING_CONTEXT_MODES = ['context-v1', 'legacy-v1'];
-const PLANNING_BRANCHING_MODES = ['recursive-v1', 'legacy-v1'];
+const PLANNING_BRANCHING_MODES = ['tree-v1', 'recursive-v1', 'legacy-v1'];
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 

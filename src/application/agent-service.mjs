@@ -15,7 +15,7 @@ const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
-const KERNEL_LEARNING_VERSION = 17;
+const KERNEL_LEARNING_VERSION = 18;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -88,7 +88,7 @@ export async function runLab(input) {
     : requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon');
   let planningHorizon = requestedPlanningHorizon ?? 1;
   let planningContextMode = 'context-v1';
-  let planningBranchingMode = 'recursive-v1';
+  let planningBranchingMode = 'tree-v1';
   if (source.autoPlan !== undefined && typeof source.autoPlan !== 'boolean') {
     throw new LabStoreError('INVALID_INPUT', 'autoPlan must be a boolean.', { field: 'autoPlan' });
   }

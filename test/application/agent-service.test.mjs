@@ -285,8 +285,8 @@ test('bounded planning is persisted at the step boundary and survives replay', a
     await runLab({ labPath: lab, runId: 'run-1', steps: 3, planningHorizon: 2 });
     const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
     const step = run.events.find((event) => event.kind === 'STEP');
-    assert.deepEqual(step.payload.boundary.planning, { schemaVersion: 1, horizon: 2, contextMode: 'context-v1', branchingMode: 'recursive-v1' });
-    assert.equal(step.payload.boundary.kernelLearningVersion, 17);
+    assert.deepEqual(step.payload.boundary.planning, { schemaVersion: 1, horizon: 2, contextMode: 'context-v1', branchingMode: 'tree-v1' });
+    assert.equal(step.payload.boundary.kernelLearningVersion, 18);
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
   });
 });
@@ -413,7 +413,7 @@ test('continuous planning configuration survives interruption and resume', async
     assert.equal(resumed.status, 'COMPLETED');
     assert.equal(resumed.runs, 1);
     const run = await store.readRun(resumed.results[0].runId);
-    assert.deepEqual(run.events.find((event) => event.kind === 'STEP').payload.boundary.planning, { schemaVersion: 1, horizon: 2, contextMode: 'context-v1', branchingMode: 'recursive-v1' });
+    assert.deepEqual(run.events.find((event) => event.kind === 'STEP').payload.boundary.planning, { schemaVersion: 1, horizon: 2, contextMode: 'context-v1', branchingMode: 'tree-v1' });
     assert.equal((await replayLab({ labPath: lab, runId: resumed.results[0].runId })).verdict, 'CONSISTENT');
   });
 });

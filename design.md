@@ -229,7 +229,7 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 
 单步预测之外，规划器必须能够回答“如果这一步发生，下一步会处于什么关系中”。v16 的 bounded planning 为每个候选分支复制一份临时 Memory，把预测的 `Token+actualDelta` 写入近期历史和顺序累积摘要，再用同一 `buildPredictions` 生成下一步候选。该临时状态只存在于纯规划计算中，不写入真实 Lab，也不授予任何额外安全或执行权限；真实状态仍必须经过 WorldPort 回执、`verify` 和 `learn` 才能改变。
 
-这使已验证的历史条件模型能够影响多步假设，而不是只在真实下一轮才生效。v17 还对后续动作的已验证 belief 结果递归分支，并用固定 rollout 预算裁剪分支数量；它仍是固定 horizon、模型驱动的有限序列投影，不是完整搜索、反事实因果证明或无限期计划。v16 及以前的 Replay 通过 `branchingMode: legacy-v1` 保留旧的非递归规划语义；外部 transition 的 durable marker 同时保存该模式，旧 marker 缺少字段时默认恢复为 `legacy-v1`，从而在程序升级后仍能用原选择重试同一个 execution nonce。
+这使已验证的历史条件模型能够影响多步假设，而不是只在真实下一轮才生效。v17 对后续动作的已验证 belief 结果递归分支，但每个未来状态仍只跟随一个贪心动作；v18 的 `tree-v1` 在固定 rollout 预算内评估未来安全动作树，再对每个动作的 belief 结果递归展开。它仍是固定 horizon、模型驱动的有限策略投影，不是无限期计划、反事实因果证明或完整现实搜索。v16 及以前的 Replay 通过 `branchingMode: legacy-v1`，v17 通过 `branchingMode: recursive-v1` 保留各自历史规划语义；v18 STEP 和外部 transition marker 保存 `tree-v1`，旧 marker 缺少字段时默认恢复为 `legacy-v1`，从而在程序升级后仍能用原选择重试同一个 execution nonce。
 
 ## 8. 安全设计
 

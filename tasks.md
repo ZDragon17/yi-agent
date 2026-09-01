@@ -412,3 +412,11 @@
 - 兼容：v16 及以前 Replay 使用 `branchingMode: legacy-v1` 回放非递归算法；v17 STEP boundary 和外部 marker 固化 `branchingMode: recursive-v1`，缺失字段的旧 marker 按 legacy 恢复。
 - 验证：Kernel 三步 opaque-token 反例必须从 X 分化为 A，输入 Memory 不得改变；既有规划、旧版本 Replay、跨进程 E2E 和随机 WorldPort 继续通过。
 - 边界：分支预算和 horizon 都是有限启发式，不等价于完整树搜索、概率校准、因果推断或长期自主性。
+
+## F-43 未来动作树的有界策略评估
+
+- 反例：horizon=3 时，首步 A 后的未来状态有两个安全动作；动作 D 的即时预测价值略高但只能继续停留在中间状态，动作 E 的即时价值略低却能进入已验证的 C 上下文并到达目标。只递归 D 的 belief 结果会选择短期动作 X，评估未来动作树才能选择 A。
+- 实现：v18 的 `tree-v1` 在每个递归未来状态枚举有界安全候选，为每个候选评估其 belief outcome，再递归进入下一状态；候选选择仍服从未尝试覆盖、安全/授权筛选和固定预算，临时 Memory 不写回，v17 `recursive-v1` 保留旧的贪心未来策略。
+- 兼容：v18 STEP boundary 和外部 marker 固化 `tree-v1`；v17 Replay 固化 `recursive-v1`，v16 及以前仍为 `legacy-v1`，避免升级后历史规划选择漂移。
+- 验证：opaque-token 三步反例中，未改代码时现实现选择 X；v18 选择 A，v17 分支仍选择 X，输入 Memory 不变；全量、Oracle、连续运行、重启和跨 WorldPort 回归继续通过。
+- 边界：动作树仍受固定 horizon、候选窗口和 rollout 预算限制，不等于完整 POMDP、概率校准、因果推断、无限计划或现实适应能力。
