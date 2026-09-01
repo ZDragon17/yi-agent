@@ -23,7 +23,8 @@ const BELIEF_LEARNING_VERSION = 5;
 const CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION = 6;
 const SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION = 7;
 const SUPERVISOR_FEEDBACK_ALIGNMENT_LEARNING_VERSION = 8;
-const MAX_SUPPORTED_LEARNING_VERSION = 10;
+const HISTORY_ACCUMULATOR_LEARNING_VERSION = 11;
+const MAX_SUPPORTED_LEARNING_VERSION = 11;
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -340,9 +341,52 @@ function projectLearningForVersion(update, learningVersion) {
   const withoutReceipts = learningVersion < SETTLED_FEEDBACK_LEARNING_VERSION
     ? withoutSettledFeedback(withoutBeliefs)
     : withoutBeliefs;
-  return learningVersion < PENDING_CREDIT_EXPIRY_LEARNING_VERSION
+  const withoutExpiry = learningVersion < PENDING_CREDIT_EXPIRY_LEARNING_VERSION
     ? withoutPendingCreditExpiry(withoutReceipts)
     : withoutReceipts;
+  const withoutAccumulator = learningVersion < HISTORY_ACCUMULATOR_LEARNING_VERSION
+    ? withoutHistoryAccumulator(withoutExpiry)
+    : withoutExpiry;
+  return learningVersion < HISTORY_ACCUMULATOR_LEARNING_VERSION
+    ? withoutPendingContextKeys(withoutAccumulator)
+    : withoutAccumulator;
+}
+
+function withoutHistoryAccumulator(update) {
+  const memory = update.nextMemory;
+  if (memory === undefined) return update;
+  const { historyAccumulator: _ignored, ...withoutAccumulator } = memory;
+  const nextMemory = memory.contextModels === undefined
+    ? withoutAccumulator
+    : {
+        ...withoutAccumulator,
+        contextModels: Object.fromEntries(
+          Object.entries(memory.contextModels).filter(([contextKey]) => !contextKey.startsWith('h2:')),
+        ),
+      };
+  return { ...update, nextMemory };
+}
+
+function withoutPendingContextKeys(update) {
+  const memory = update.nextMemory;
+  if (memory?.pendingCredits === undefined ||
+      !memory.pendingCredits.some((credit) => credit.contextKeys !== undefined)) return update;
+  return {
+    ...update,
+    nextMemory: {
+      ...memory,
+      pendingCredits: memory.pendingCredits.map((credit) => {
+        if (credit.contextKeys === undefined) return credit;
+        const { contextKeys: _ignored, ...withoutContextKeys } = credit;
+        const legacyContextKey = credit.contextKeys.find((contextKey) => contextKey.startsWith('h1:'));
+        if (legacyContextKey === undefined) {
+          const { contextKey: _ignoredPrimary, ...withoutPrimaryContextKey } = withoutContextKeys;
+          return withoutPrimaryContextKey;
+        }
+        return { ...withoutContextKeys, contextKey: legacyContextKey };
+      }),
+    },
+  };
 }
 
 function withoutBeliefModels(update) {

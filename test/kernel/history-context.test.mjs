@@ -144,6 +144,7 @@ test('recent history preserves action chronology when feedback arrives after a l
     pendingCreditPolicy: { schemaVersion: 1, maxAge: 8 },
     settledFeedback: [],
     historyClock: 0,
+    historyAccumulator: zeroAccumulator(),
   };
   const firstBefore = observation([0], 'state:delayed:0');
   const firstIntent = choose(tokenA, firstBefore, memory, 21);
@@ -193,6 +194,7 @@ test('recent history preserves action chronology when feedback arrives after a l
   }).nextMemory;
 
   assert.deepEqual(afterThird.recentHistory.map((entry) => entry.token), [tokenA, tokenB]);
+  assert.notEqual(afterThird.historyAccumulator, zeroAccumulator());
 });
 
 test('ordered history rejects duplicate or future action orders', () => {
@@ -219,6 +221,52 @@ test('ordered history rejects duplicate or future action orders', () => {
   input.memory.recentHistory[1].historyOrder = 2;
   assert.throws(() => step(input), { code: 'KERNEL_CONTRACT_VIOLATION' });
 });
+
+test('history accumulator preserves longer ordered context beyond the recent window', () => {
+  const tokens = ['tok_ACCUMULATORA1', 'tok_ACCUMULATORB1', 'tok_ACCUMULATORC1'];
+  const forward = tokens.reduce((memory, token, index) => commit(memory, token, index), newMemory());
+  const reverse = [...tokens].reverse().reduce((memory, token, index) => commit(memory, token, index), newMemory());
+
+  assert.equal(forward.recentHistory.length, 2);
+  assert.equal(reverse.recentHistory.length, 2);
+  assert.notEqual(forward.historyAccumulator, reverse.historyAccumulator);
+  assert.equal(Object.keys(forward.contextModels).filter((key) => key.startsWith('h2:')).length, 1);
+  assert.doesNotThrow(() => step({
+    observation: observation([0], 'state:accumulator:3'),
+    memory: forward,
+    valueSpec: VALUE_SPEC,
+    capabilities: [{ schemaVersion: 1, token: 'tok_ACCUMULATORTARGET1', cost: 1, allowed: true, safe: true }],
+    rngState: rng(41),
+  }));
+});
+
+function newMemory() {
+  return {
+    schemaVersion: 1,
+    actionModels: {},
+    relationModels: {},
+    contextModels: {},
+    recentHistory: [],
+    pendingCredits: [],
+    pendingCreditPolicy: { schemaVersion: 1, maxAge: 8 },
+    settledFeedback: [],
+    historyClock: 0,
+    historyAccumulator: zeroAccumulator(),
+  };
+}
+
+function commit(memory, token, index) {
+  const before = observation([0], `state:accumulator:${index}`);
+  const intent = choose(token, before, memory, 41 + index);
+  const post = observation([0], `state:accumulator:${index + 1}`);
+  const receiptValue = receipt(token, before, `execution:accumulator:${index}`, true);
+  const verification = verify({ intent, receipt: receiptValue, postObservation: post });
+  return learn({ memory, intent, receipt: receiptValue, postObservation: post, verification }).nextMemory;
+}
+
+function zeroAccumulator() {
+  return '0000000000000000000000000000000000000000000000000000000000000000';
+}
 
 function model(meanDelta) {
   return { schemaVersion: 1, sampleCount: 1, meanDelta, uncertainty: 0 };

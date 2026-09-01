@@ -20,8 +20,15 @@ const MAX_BELIEF_MODELS = 8192;
 const MAX_BELIEF_SAMPLES = 8;
 const MAX_RECENT_HISTORY = 2;
 const MAX_CONTEXT_MODELS = 8192;
+// A long-context key is an exact fingerprint, so its cache must stay tiny;
+// h1 remains the reusable generalization layer for ordinary continuous runs.
+const MAX_LONG_CONTEXTS = 1;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const OVERALL_BELIEF_CONTEXT = 'overall';
+const HISTORY_ACCUMULATOR_HEX_LENGTH = 64;
+const HISTORY_ACCUMULATOR_PATTERN = /^[0-9a-f]{64}$/u;
+const HISTORY_ACCUMULATOR_MASK = (1n << 256n) - 1n;
+const HISTORY_ACCUMULATOR_BASE = 0x9e3779b185ebca87f4a7c15f39cc0605n;
 const FEEDBACK_ORDER_MODES = ['arrival-v1', 'pending-v2'];
 const FEEDBACK_CAUSALITY_MODES = ['legacy-v1', 'boundary-v2'];
 
@@ -69,7 +76,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -143,6 +150,7 @@ const PENDING_CREDIT_KEYS = [
   'expectedDelta',
   'relationKey',
   'contextKey',
+  'contextKeys',
   'historyOrder',
   'age',
 ];
@@ -340,7 +348,7 @@ export function learn(input) {
   assertIntentIsExecutable(intent, 'learnInput.intent.choice');
 
   const nextMemory = cloneMemory(memory);
-  const contextKey = contextKeyForHistory(memory.recentHistory);
+  const contextKeys = contextKeysForMemory(memory);
   const settlement = settlePendingCredits(
     nextMemory,
     postObservation,
@@ -383,7 +391,7 @@ export function learn(input) {
         intent,
         source.receipt.executionNonce,
         pendingBaselineObservation(intent, settlement.cleanDeltas),
-        contextKey,
+        contextKeys,
         nextHistoryOrder(nextMemory),
         'learnOutput.nextMemory.pendingCredits',
       );
@@ -441,7 +449,7 @@ export function learn(input) {
   recordActionEvidence(nextMemory, {
     token,
     relationKey: intent.expectation.relationKey,
-    contextKey,
+    contextKeys,
     historyOrder,
     actualDelta,
     errorMagnitude,
@@ -574,7 +582,7 @@ function settlePendingCredits(
     recordActionEvidence(memory, {
       token: pending.token,
       relationKey: pending.relationKey,
-      contextKey: pending.contextKey,
+      contextKeys: pending.contextKeys ?? (pending.contextKey === undefined ? undefined : [pending.contextKey]),
       historyOrder: pending.historyOrder,
       actualDelta,
       errorMagnitude,
@@ -636,7 +644,7 @@ function pendingBaselineObservation(intent, cleanDeltas) {
   };
 }
 
-function addPendingCredit(memory, intent, executionNonce, baselineObservation, contextKey, historyOrder, field) {
+function addPendingCredit(memory, intent, executionNonce, baselineObservation, contextKeys, historyOrder, field) {
   const pendingCredits = memory.pendingCredits ?? [];
   if (pendingCredits.some((item) => item.executionNonce === executionNonce)) {
     contractViolation('kernel pending credits contain a reused execution nonce', { field });
@@ -654,7 +662,10 @@ function addPendingCredit(memory, intent, executionNonce, baselineObservation, c
     beforeVector: cloneVector(baselineObservation.vector),
     expectedDelta: cloneVector(intent.expectation.expectedDelta),
     ...(intent.expectation.relationKey === undefined ? {} : { relationKey: intent.expectation.relationKey }),
-    ...(contextKey === undefined ? {} : { contextKey }),
+    ...(contextKeys === undefined ? {} : {
+      contextKeys: [...contextKeys],
+      ...(contextKeys[0] === undefined ? {} : { contextKey: contextKeys[0] }),
+    }),
     ...(historyOrder === undefined ? {} : { historyOrder }),
     ...(memory.pendingCreditPolicy === undefined ? {} : { age: 0 }),
   });
@@ -904,6 +915,14 @@ function normalizeMemory(value, field, dimensions) {
   const historyClock = source.historyClock === undefined
     ? undefined
     : assertNonNegativeInteger(source.historyClock, `${field}.historyClock`);
+  const historyAccumulator = source.historyAccumulator === undefined
+    ? undefined
+    : assertHistoryAccumulator(source.historyAccumulator, `${field}.historyAccumulator`);
+  if (historyAccumulator !== undefined && historyClock === undefined) {
+    contractViolation('kernel history accumulator requires a history clock', {
+      field: `${field}.historyAccumulator`,
+    });
+  }
   validateHistoryOrdering(
     normalizedRecentHistory,
     normalizedPendingCredits,
@@ -922,6 +941,7 @@ function normalizeMemory(value, field, dimensions) {
     ...(normalizedContextModels === undefined ? {} : { contextModels: normalizedContextModels }),
     ...(normalizedRecentHistory === undefined ? {} : { recentHistory: normalizedRecentHistory }),
     ...(historyClock === undefined ? {} : { historyClock }),
+    ...(historyAccumulator === undefined ? {} : { historyAccumulator }),
   };
 }
 
@@ -929,8 +949,15 @@ function normalizeContextModels(value, field, dimensions) {
   const source = assertDynamicRecord(value, field, MAX_CONTEXT_MODELS);
   const normalized = Object.create(null);
   let modelCount = 0;
+  let longContextCount = 0;
   for (const [contextKey, models] of Object.entries(source)) {
     assertContextKey(contextKey, `${field}.${contextKey}`);
+    if (contextKey.startsWith('h2:')) {
+      longContextCount += 1;
+      if (longContextCount > MAX_LONG_CONTEXTS) {
+        contractViolation('kernel long-context memory exceeds its size limit', { field });
+      }
+    }
     const modelSource = assertDynamicRecord(models, `${field}.${contextKey}`, MAX_ACTION_MODELS);
     const contextModels = Object.create(null);
     for (const [token, model] of Object.entries(modelSource)) {
@@ -1000,6 +1027,34 @@ function validateHistoryOrdering(history, pendingCredits, historyClock, field) {
     }
     seen.add(entry.historyOrder);
   }
+}
+
+function normalizeContextKeys(value, field) {
+  const items = assertArray(value, field);
+  if (items.length === 0 || items.length > 2) {
+    contractViolation('kernel context key list has an invalid size', {
+      field,
+      max: 2,
+      actual: items.length,
+    });
+  }
+  const seen = new Set();
+  return items.map((item, index) => {
+    const key = assertContextKey(item, `${field}[${index}]`);
+    if (seen.has(key)) contractViolation('kernel context key list contains a duplicate', { field });
+    seen.add(key);
+    return key;
+  });
+}
+
+function assertHistoryAccumulator(value, field) {
+  if (typeof value !== 'string' || !HISTORY_ACCUMULATOR_PATTERN.test(value)) {
+    contractViolation('kernel history accumulator is invalid', {
+      field,
+      expectedLength: HISTORY_ACCUMULATOR_HEX_LENGTH,
+    });
+  }
+  return value;
 }
 
 function normalizeBeliefModels(value, field, dimensions) {
@@ -1074,7 +1129,7 @@ function normalizePendingCredits(value, field, dimensions) {
       item,
       itemField,
       PENDING_CREDIT_KEYS,
-      PENDING_CREDIT_KEYS.filter((key) => key !== 'relationKey' && key !== 'contextKey' && key !== 'historyOrder' && key !== 'age'),
+      PENDING_CREDIT_KEYS.filter((key) => key !== 'relationKey' && key !== 'contextKey' && key !== 'contextKeys' && key !== 'historyOrder' && key !== 'age'),
     );
     const executionNonce = assertBoundedString(source.executionNonce, `${itemField}.executionNonce`, MAX_EXECUTION_NONCE_LENGTH);
     if (seen.has(executionNonce)) {
@@ -1087,6 +1142,14 @@ function normalizePendingCredits(value, field, dimensions) {
     const contextKey = source.contextKey === undefined
       ? undefined
       : assertContextKey(source.contextKey, `${itemField}.contextKey`);
+    const contextKeys = source.contextKeys === undefined
+      ? undefined
+      : normalizeContextKeys(source.contextKeys, `${itemField}.contextKeys`);
+    if (contextKey !== undefined && contextKeys !== undefined && contextKeys[0] !== contextKey) {
+      contractViolation('kernel pending credit context keys disagree with its primary context key', {
+        field: `${itemField}.contextKeys`,
+      });
+    }
     const age = source.age === undefined
       ? undefined
       : assertNonNegativeInteger(source.age, `${itemField}.age`);
@@ -1107,6 +1170,7 @@ function normalizePendingCredits(value, field, dimensions) {
       expectedDelta: assertFiniteVector(source.expectedDelta, `${itemField}.expectedDelta`, dimensions),
       ...(relationKey === undefined ? {} : { relationKey }),
       ...(contextKey === undefined ? {} : { contextKey }),
+      ...(contextKeys === undefined ? {} : { contextKeys }),
       ...(source.historyOrder === undefined ? {} : {
         historyOrder: assertPositiveInteger(source.historyOrder, `${itemField}.historyOrder`),
       }),
@@ -1243,7 +1307,7 @@ function countRelationModels(value) {
 function recordActionEvidence(memory, {
   token,
   relationKey,
-  contextKey,
+  contextKeys,
   historyOrder,
   actualDelta,
   errorMagnitude,
@@ -1278,15 +1342,18 @@ function recordActionEvidence(memory, {
     dimensions,
     field,
   });
-  recordContextEvidence(memory, {
-    contextKey,
-    token,
-    actualDelta,
-    errorMagnitude,
-    dimensions,
-    field,
-  });
+  for (const contextKey of contextKeys ?? []) {
+    recordContextEvidence(memory, {
+      contextKey,
+      token,
+      actualDelta,
+      errorMagnitude,
+      dimensions,
+      field,
+    });
+  }
   appendRecentHistory(memory, { token, actualDelta, historyOrder, dimensions, field });
+  appendHistoryAccumulator(memory, { token, actualDelta, historyOrder, field });
   if (relationKey === undefined) return;
 
   const relationModels = memory.relationModels ?? {};
@@ -1319,13 +1386,39 @@ function recordContextEvidence(memory, {
   field,
 }) {
   if (memory.contextModels === undefined || contextKey === undefined) return;
-  const contexts = memory.contextModels;
-  const models = { ...(contexts[contextKey] ?? {}) };
-  const existing = models[token];
+  let contexts = memory.contextModels;
+  let models = { ...(contexts[contextKey] ?? {}) };
+  let existing = models[token];
+  if (existing === undefined && contextKey.startsWith('h2:') &&
+      countLongContexts(contexts) >= MAX_LONG_CONTEXTS) {
+    const evictableKey = oldestLongContextKey(contexts);
+    if (evictableKey === undefined) {
+      contractViolation('kernel learning has no evictable long-context model', {
+        field: `${field}.contextModels.${contextKey}.${token}`,
+      });
+    }
+    contexts = { ...contexts };
+    delete contexts[evictableKey];
+    models = { ...(contexts[contextKey] ?? {}) };
+    existing = models[token];
+  }
   if (existing === undefined && countContextModels(contexts) >= MAX_CONTEXT_MODELS) {
-    contractViolation('kernel learning would exceed the context-model limit', {
-      field: `${field}.contextModels.${contextKey}.${token}`,
-    });
+    if (!contextKey.startsWith('h2:')) {
+      contractViolation('kernel learning would exceed the context-model limit', {
+        field: `${field}.contextModels.${contextKey}.${token}`,
+      });
+    }
+    const evictableKey = oldestLongContextKey(contexts);
+    if (evictableKey === undefined) {
+      contractViolation('kernel learning has no evictable long-context model', {
+        field: `${field}.contextModels.${contextKey}.${token}`,
+      });
+    }
+    const withoutEvicted = { ...contexts };
+    delete withoutEvicted[evictableKey];
+    contexts = withoutEvicted;
+    models = { ...(contexts[contextKey] ?? {}) };
+    existing = models[token];
   }
   models[token] = updateActionModel(
     existing ?? defaultActionModel(dimensions),
@@ -1339,6 +1432,14 @@ function recordContextEvidence(memory, {
 
 function countContextModels(value) {
   return Object.values(value).reduce((sum, models) => sum + Object.keys(models).length, 0);
+}
+
+function countLongContexts(value) {
+  return Object.keys(value).filter((contextKey) => contextKey.startsWith('h2:')).length;
+}
+
+function oldestLongContextKey(value) {
+  return Object.keys(value).find((contextKey) => contextKey.startsWith('h2:'));
 }
 
 function appendRecentHistory(memory, { token, actualDelta, historyOrder, dimensions, field }) {
@@ -1356,6 +1457,20 @@ function appendRecentHistory(memory, { token, actualDelta, historyOrder, dimensi
   memory.recentHistory = [...memory.recentHistory, entry]
     .sort((left, right) => left.historyOrder - right.historyOrder)
     .slice(-MAX_RECENT_HISTORY);
+}
+
+function appendHistoryAccumulator(memory, { token, actualDelta, historyOrder, field }) {
+  if (memory.historyAccumulator === undefined) return;
+  if (historyOrder === undefined) {
+    contractViolation('kernel history accumulator requires an action order', { field });
+  }
+  const eventNumber = BigInt(`0x${canonicalDigest({ token, actualDelta }).slice('sha256:'.length)}`);
+  const contribution = (eventNumber * modularPower(HISTORY_ACCUMULATOR_BASE, BigInt(historyOrder))) &
+    HISTORY_ACCUMULATOR_MASK;
+  const accumulator = BigInt(`0x${memory.historyAccumulator}`);
+  memory.historyAccumulator = ((accumulator + contribution) & HISTORY_ACCUMULATOR_MASK)
+    .toString(16)
+    .padStart(HISTORY_ACCUMULATOR_HEX_LENGTH, '0');
 }
 
 function recordBeliefEvidence(memory, {
@@ -1636,7 +1751,7 @@ function assertIntentIsExecutable(intent, field) {
 }
 
 function buildPredictions(input) {
-  const contextKey = contextKeyForHistory(input.memory.recentHistory);
+  const contextKeys = contextKeysForMemory(input.memory);
   return input.capabilities.map((capability) => {
     const relationKey = input.memory.relationModels === undefined
       ? undefined
@@ -1645,7 +1760,9 @@ function buildPredictions(input) {
     const rejectedRecently = rejectionModel?.rejected === true &&
       rejectionModel.relationKey === relationKey;
     const model =
-      (contextKey === undefined ? undefined : input.memory.contextModels?.[contextKey]?.[capability.token]) ??
+      contextKeys
+        ?.map((contextKey) => input.memory.contextModels?.[contextKey]?.[capability.token])
+        .find((candidate) => candidate !== undefined) ??
       input.memory.relationModels?.[capability.token]?.[relationKey] ??
       input.memory.actionModels[capability.token] ??
       defaultActionModel(input.observation.vector.length);
@@ -2003,6 +2120,7 @@ function cloneMemory(value) {
       expectedDelta: cloneVector(credit.expectedDelta),
       ...(credit.relationKey === undefined ? {} : { relationKey: credit.relationKey }),
       ...(credit.contextKey === undefined ? {} : { contextKey: credit.contextKey }),
+      ...(credit.contextKeys === undefined ? {} : { contextKeys: [...credit.contextKeys] }),
       ...(credit.historyOrder === undefined ? {} : { historyOrder: credit.historyOrder }),
       ...(credit.age === undefined ? {} : { age: credit.age }),
     }));
@@ -2044,6 +2162,7 @@ function cloneMemory(value) {
     }));
   }
   if (value.historyClock !== undefined) cloned.historyClock = value.historyClock;
+  if (value.historyAccumulator !== undefined) cloned.historyAccumulator = value.historyAccumulator;
   return cloned;
 }
 
@@ -2412,6 +2531,16 @@ function assertBeliefContextKey(value, field, dimensions) {
   return assertRelationKey(value, field, dimensions);
 }
 
+function contextKeysForMemory(memory) {
+  const keys = [];
+  if (memory.historyAccumulator !== undefined) {
+    keys.push(`h2:${canonicalDigest({ historyAccumulator: memory.historyAccumulator })}`);
+  }
+  const recentKey = contextKeyForHistory(memory.recentHistory);
+  if (recentKey !== undefined && !keys.includes(recentKey)) keys.push(recentKey);
+  return keys.length === 0 ? undefined : keys;
+}
+
 function contextKeyForHistory(history) {
   if (history === undefined) return undefined;
   return `h1:${canonicalDigest(orderedHistory(history).map((entry) => ({
@@ -2440,9 +2569,21 @@ function nextHistoryOrder(memory) {
   return memory.historyClock;
 }
 
+function modularPower(base, exponent) {
+  let result = 1n;
+  let factor = base;
+  let remaining = exponent;
+  while (remaining > 0n) {
+    if ((remaining & 1n) === 1n) result = (result * factor) & HISTORY_ACCUMULATOR_MASK;
+    factor = (factor * factor) & HISTORY_ACCUMULATOR_MASK;
+    remaining >>= 1n;
+  }
+  return result;
+}
+
 function assertContextKey(value, field) {
   const bounded = assertBoundedString(value, field, MAX_CONTEXT_KEY_LENGTH);
-  if (!/^h1:sha256:[0-9a-f]{64}$/u.test(bounded)) {
+  if (!/^h[12]:sha256:[0-9a-f]{64}$/u.test(bounded)) {
     contractViolation('kernel context key is invalid', { field });
   }
   return bounded;

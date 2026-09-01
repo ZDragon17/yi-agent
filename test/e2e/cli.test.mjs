@@ -982,6 +982,14 @@ async function rewriteDelayedRunAsV7(lab) {
     verification: current.verification,
   });
   current.boundary = { ...current.boundary, kernelLearningVersion: 7 };
+  current.update = {
+    ...current.update,
+    nextMemory: withoutHistoryAccumulator(current.update.nextMemory),
+  };
+  current.afterState = {
+    ...current.afterState,
+    memory: withoutHistoryAccumulator(current.afterState.memory),
+  };
   current.afterState = { ...current.afterState, changeSupervisor: legacySupervisor };
   current.afterDigest = canonicalDigest(current.afterState);
   steps[1].event.digest = digestEvent(steps[1].event);
@@ -1012,6 +1020,30 @@ async function rewriteDelayedRunAsV7(lab) {
   currentState.changeSupervisor = legacySupervisor;
   currentState.eventsDigest = terminal.digest;
   await writeFile(currentPath, `${canonicalJson(withSelfDigest(currentState))}\n`);
+}
+
+function withoutHistoryAccumulator(memory) {
+  const { historyAccumulator: _ignored, ...withoutAccumulator } = memory;
+  return {
+    ...withoutAccumulator,
+    ...(memory.contextModels === undefined ? {} : {
+      contextModels: Object.fromEntries(
+        Object.entries(memory.contextModels).filter(([contextKey]) => !contextKey.startsWith('h2:')),
+      ),
+    }),
+    ...(memory.pendingCredits === undefined ? {} : {
+      pendingCredits: memory.pendingCredits.map((credit) => {
+        if (credit.contextKeys === undefined) return credit;
+        const { contextKeys: _ignoredKeys, ...withoutContextKeys } = credit;
+        const legacyContextKey = credit.contextKeys.find((contextKey) => contextKey.startsWith('h1:'));
+        if (legacyContextKey === undefined) {
+          const { contextKey: _ignoredPrimary, ...withoutPrimaryContextKey } = withoutContextKeys;
+          return withoutPrimaryContextKey;
+        }
+        return { ...withoutContextKeys, contextKey: legacyContextKey };
+      }),
+    }),
+  };
 }
 
 function decodeStoredEvent(event) {
