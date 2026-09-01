@@ -61,7 +61,7 @@ HTML 原型证明了“预期—行动—验证—修正”能够运行，但状
 - 输出：在版本兼容且证据完整时复用已有认知；世界实例状态和 Agent 认知分别恢复，未完成的 pending credit 也跨 Run/进程保留。
 - 边界：状态损坏、版本不兼容、事件序列断裂时进入 CORRUPT/HALTED，禁止继续行动。
 - 验收：从同一已初始化 lab 的相同语义起点/tokenMap 做两个隔离分支：一支跨进程运行 15+15，另一支参考执行 30 步；同外部输入下 `{worldState,memory,rngState,kernelStep}` 规范化投影完全相等。runId、时间、run 边界和摘要链不参与比较。
-- 连续配置：`agent loop` 的推演步数随 continuation 持久化；恢复时不得通过新的 CLI 参数静默改变，必须沿原 continuation 继续。
+- 连续配置：`agent loop` 的推演步数和 `planningBranchingMode` 随 continuation 持久化；恢复时不得通过新的 CLI 参数静默改变，旧 continuation 缺少模式时从已提交 STEP 的版本边界推断，无法推断则保守按 legacy 继续。
 - 外部恢复：adapter transition 前的 in-flight marker 必须固化同一推演配置；响应丢失后的幂等重试在未显式指定时恢复 marker 配置，显式冲突必须拒绝。
 - 反馈恢复：反馈只能结算同一实验空间内已持久化的 execution nonce；同一 nonce 的完全相同反馈在有界已结算收据窗口内可幂等忽略，未知或相互矛盾的反馈必须 fail-closed，不得追加 STEP 或污染 Memory；超出收据窗口的旧重复反馈视为未知。
 

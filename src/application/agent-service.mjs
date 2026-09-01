@@ -15,6 +15,7 @@ const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
+const PLANNING_BRANCHING_MODES = ['tree-v1', 'recursive-v1', 'legacy-v1'];
 const KERNEL_LEARNING_VERSION = 18;
 
 export async function initLab(input) {
@@ -86,9 +87,12 @@ export async function runLab(input) {
   const requestedPlanningHorizon = source.planningHorizon === undefined
     ? undefined
     : requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon');
+  const requestedPlanningBranchingMode = source.planningBranchingMode === undefined
+    ? undefined
+    : requirePlanningBranchingMode(source.planningBranchingMode);
   let planningHorizon = requestedPlanningHorizon ?? 1;
   let planningContextMode = 'context-v1';
-  let planningBranchingMode = 'tree-v1';
+  let planningBranchingMode = requestedPlanningBranchingMode ?? 'tree-v1';
   if (source.autoPlan !== undefined && typeof source.autoPlan !== 'boolean') {
     throw new LabStoreError('INVALID_INPUT', 'autoPlan must be a boolean.', { field: 'autoPlan' });
   }
@@ -145,9 +149,23 @@ export async function runLab(input) {
         },
       );
     }
+    const recoveredPlanningBranchingMode = unresolved.evidence.planning?.branchingMode ??
+      (recoveredPlanningHorizon > 1 ? 'legacy-v1' : requestedPlanningBranchingMode ?? 'tree-v1');
+    if (requestedPlanningBranchingMode !== undefined && requestedPlanningBranchingMode !== recoveredPlanningBranchingMode) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'An unresolved external transition must be retried with its original planning branching mode.',
+        {
+          runId: unresolved.runId,
+          fields: ['planningBranchingMode'],
+          expected: recoveredPlanningBranchingMode,
+          actual: requestedPlanningBranchingMode,
+        },
+      );
+    }
     planningHorizon = recoveredPlanningHorizon;
     planningContextMode = unresolved.evidence.planning?.contextMode ?? 'legacy-v1';
-    planningBranchingMode = unresolved.evidence.planning?.branchingMode ?? 'legacy-v1';
+    planningBranchingMode = recoveredPlanningBranchingMode;
   }
   const goalRequested = (source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined;
   let initialState = current.lastRunId === null
@@ -565,7 +583,7 @@ export async function runContinuous(input) {
     source.runs !== undefined || source.forever !== undefined || source.stepsPerRun !== undefined || source.steps !== undefined ||
     source.runId !== undefined || source.scenario !== undefined || source.goal !== undefined || source.goalPlan !== undefined ||
     source.autoPlan === true || source.maxCycles !== undefined || source.stagnationLimit !== undefined ||
-    source.planningHorizon !== undefined
+    source.planningHorizon !== undefined || source.planningBranchingMode !== undefined
   )) {
     throw new LabStoreError('INVALID_INPUT', 'resume cannot be combined with loop configuration.', {
       fields: ['resume', 'loop configuration'],
@@ -614,6 +632,7 @@ export async function runContinuous(input) {
       stepsPerRun,
       mode: forever ? 'forever' : 'finite',
       planningHorizon: requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon') ?? 1,
+      planningBranchingMode: 'tree-v1',
       ...(forever ? {} : { maxRuns: requestedRuns }),
     };
   }
@@ -650,6 +669,7 @@ export async function runContinuous(input) {
       continuation: { ...continuation, runIndex: index },
       steps: stepsPerRun,
       planningHorizon: continuation.planningHorizon,
+      planningBranchingMode: continuation.planningBranchingMode,
       stepsPerRun: undefined,
       runs: undefined,
       durability,
@@ -756,6 +776,15 @@ function planningEvidence(horizon, contextMode, branchingMode) {
   };
 }
 
+function requirePlanningBranchingMode(value) {
+  if (!PLANNING_BRANCHING_MODES.includes(value)) {
+    throw new LabStoreError('INVALID_INPUT', 'planningBranchingMode is invalid.', {
+      field: 'planningBranchingMode',
+    });
+  }
+  return value;
+}
+
 function assertExternalTransitionRetry(unresolved, request, state, planningHorizon, planningContextMode, planningBranchingMode) {
   const evidence = unresolved.evidence;
   const mismatches = [];
@@ -765,7 +794,9 @@ function assertExternalTransitionRetry(unresolved, request, state, planningHoriz
   if (canonicalDigest(state) !== evidence.beforeDigest) mismatches.push('beforeDigest');
   if ((evidence.planning?.horizon ?? 1) !== planningHorizon) mismatches.push('planningHorizon');
   if ((evidence.planning?.contextMode ?? 'legacy-v1') !== planningContextMode) mismatches.push('planningContextMode');
-  if ((evidence.planning?.branchingMode ?? 'legacy-v1') !== planningBranchingMode) mismatches.push('planningBranchingMode');
+  if (evidence.planning?.branchingMode !== undefined && evidence.planning.branchingMode !== planningBranchingMode) {
+    mismatches.push('planningBranchingMode');
+  }
   if (mismatches.length > 0) {
     throw new LabStoreError(
       'CONFLICT',

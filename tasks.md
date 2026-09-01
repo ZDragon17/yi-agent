@@ -420,3 +420,10 @@
 - 兼容：v18 STEP boundary 和外部 marker 固化 `tree-v1`；v17 Replay 固化 `recursive-v1`，v16 及以前仍为 `legacy-v1`，避免升级后历史规划选择漂移。
 - 验证：opaque-token 三步反例中，未改代码时现实现选择 X；v18 选择 A，v17 分支仍选择 X，输入 Memory 不变；全量、Oracle、连续运行、重启和跨 WorldPort 回归继续通过。
 - 边界：动作树仍受固定 horizon、候选窗口和 rollout 预算限制，不等于完整 POMDP、概率校准、因果推断、无限计划或现实适应能力。
+
+## F-44 连续 loop 的规划语义恢复
+
+- 反例：v17 的 loop continuation 只保存 planningHorizon；程序升级到 v18 后执行 `--resume`，如果只按当前默认值恢复，就会把历史 `recursive-v1` 静默替换成 `tree-v1`，同一 loop 的后续选择与 Replay 语义不再一致。
+- 实现：新 continuation 固化 `planningBranchingMode`，`runContinuous` 在每个 Run start 和恢复调用中沿用该字段；读取旧 continuation 时扫描已提交 STEP 的 `kernelLearningVersion`/planning marker 推断 v17 `recursive-v1`、v18 `tree-v1` 或更早 `legacy-v1`，多模式混合直接判为 CORRUPT。
+- 验证：新 loop 读回 `tree-v1`；缺少字段但已有 v17 STEP 的 loop 读回 `recursive-v1`，后续 Run 继续保存该模式；连续运行、重启恢复、Replay、外部 transition 和 Oracle 保持一致。
+- 边界：没有任何 STEP 证据的古老 continuation 无法知道曾使用的规划实现，只能保守 legacy；这不会伪造历史确定性，必要时应由人工重新确认。

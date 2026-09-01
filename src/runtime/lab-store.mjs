@@ -364,11 +364,17 @@ export class LabStore {
       if (run.start.continuation === undefined) continue;
       const continuation = validateLoopContinuation(run.start.continuation, 'run continuation', true);
       const group = groups.get(continuation.loopId) ?? { continuation, runs: [] };
-      if (canonicalJson(loopContract(group.continuation)) !== canonicalJson(loopContract(continuation))) {
-        corrupt('Loop continuation contract differs across runs.', { loopId: continuation.loopId });
-      }
       group.runs.push(run);
       groups.set(continuation.loopId, group);
+    }
+    for (const group of groups.values()) {
+      group.planningBranchingMode = inferLoopPlanningBranchingMode(group);
+      for (const run of group.runs) {
+        if (canonicalJson(loopContract(group.continuation, group.planningBranchingMode)) !==
+            canonicalJson(loopContract(run.start.continuation, group.planningBranchingMode))) {
+          corrupt('Loop continuation contract differs across runs.', { loopId: group.continuation.loopId });
+        }
+      }
     }
     if (groups.size === 0) {
       throw new LabStoreError('NOT_FOUND', 'No persisted loop continuation exists.', {});
@@ -484,7 +490,8 @@ export class LabStore {
             continuationId: existingContinuation.loopId,
           });
         }
-        if (canonicalJson(loopContract(existingContinuation)) !== canonicalJson(loopContract(continuation))) {
+        if (canonicalJson(loopContract(existingContinuation)) !==
+            canonicalJson(loopContract(continuation, existingContinuation.planningBranchingMode))) {
           conflict('Loop continuation contract differs from the persisted owner.', {
             continuationId: existingContinuation.loopId,
           });
@@ -1483,6 +1490,7 @@ function validateLoopContinuation(value, field, corruptOnFailure = false) {
       !Number.isSafeInteger(value.runIndex) || value.runIndex < 0 ||
       !Number.isSafeInteger(value.stepsPerRun) || value.stepsPerRun < 1 || value.stepsPerRun > 10_000 ||
       (value.planningHorizon !== undefined && (!Number.isSafeInteger(value.planningHorizon) || value.planningHorizon < 1 || value.planningHorizon > MAX_PLANNING_HORIZON)) ||
+      (value.planningBranchingMode !== undefined && !PLANNING_BRANCHING_MODES.includes(value.planningBranchingMode)) ||
       (value.mode !== 'finite' && value.mode !== 'forever') ||
       (value.mode === 'finite' && (!Number.isSafeInteger(value.maxRuns) || value.maxRuns < 1 || value.maxRuns > 10_000 || value.runIndex >= value.maxRuns)) ||
       (value.mode === 'forever' && value.maxRuns !== undefined)) {
@@ -1495,18 +1503,54 @@ function validateLoopContinuation(value, field, corruptOnFailure = false) {
     runIndex: value.runIndex,
     stepsPerRun: value.stepsPerRun,
     ...(value.planningHorizon === undefined ? {} : { planningHorizon: value.planningHorizon }),
+    ...(value.planningBranchingMode === undefined ? {} : { planningBranchingMode: value.planningBranchingMode }),
     mode: value.mode,
     ...(value.maxRuns === undefined ? {} : { maxRuns: value.maxRuns }),
   };
 }
 
-function loopContract(continuation) {
+function inferLoopPlanningBranchingMode(group) {
+  const declared = uniquePlanningBranchingModes(group.runs.map((run) =>
+    run.start.continuation.planningBranchingMode,
+  ));
+  const observed = uniquePlanningBranchingModes(group.runs.flatMap((run) =>
+    run.events
+      .filter((event) => event.kind === 'STEP')
+      .map(planningBranchingModeForStep)
+      .filter((mode) => mode !== null),
+  ));
+  if (declared.length > 1 || observed.length > 1 ||
+      (declared.length === 1 && observed.length === 1 && declared[0] !== observed[0])) {
+    corrupt('Loop continuation planning branching mode differs across runs.', {
+      loopId: group.continuation.loopId,
+    });
+  }
+  return declared[0] ?? observed[0] ?? 'legacy-v1';
+}
+
+function uniquePlanningBranchingModes(modes) {
+  return [...new Set(modes.filter((mode) => mode !== undefined))];
+}
+
+function planningBranchingModeForStep(event) {
+  const boundary = event.payload?.boundary;
+  const explicit = boundary?.planning?.branchingMode;
+  if (PLANNING_BRANCHING_MODES.includes(explicit)) return explicit;
+  const learningVersion = boundary?.kernelLearningVersion;
+  if (learningVersion === 18) return 'tree-v1';
+  if (learningVersion === 17) return 'recursive-v1';
+  if (Number.isSafeInteger(learningVersion) && learningVersion < 17) return 'legacy-v1';
+  return null;
+}
+
+function loopContract(continuation, fallbackPlanningBranchingMode = 'legacy-v1') {
   return {
     schemaVersion: continuation.schemaVersion,
     loopId: continuation.loopId,
     scenario: continuation.scenario,
     stepsPerRun: continuation.stepsPerRun,
     ...(continuation.planningHorizon === undefined ? {} : { planningHorizon: continuation.planningHorizon }),
+    planningBranchingMode: continuation.planningBranchingMode ?? fallbackPlanningBranchingMode,
     mode: continuation.mode,
     ...(continuation.maxRuns === undefined ? {} : { maxRuns: continuation.maxRuns }),
   };
@@ -1543,7 +1587,7 @@ function summarizeLoopContinuation(group) {
     !recoverable;
   const completed = objectiveReached || (!recoverable && group.continuation.mode === 'finite' && last.start.continuation.runIndex + 1 >= group.continuation.maxRuns);
   return {
-    ...loopContract(group.continuation),
+    ...loopContract(group.continuation, group.planningBranchingMode),
     nextRunIndex: recoverable ? last.start.continuation.runIndex : last.start.continuation.runIndex + 1,
     status: stopped ? 'STOPPED' : (completed ? 'COMPLETED' : 'ACTIVE'),
     lastRunId: last.start.runId,

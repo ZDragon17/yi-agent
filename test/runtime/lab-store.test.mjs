@@ -889,6 +889,46 @@ test('startRun rejects a stale same-loop retry after the next index is committed
   await next.finish({ terminalStatus: 'COMPLETED', finalState: runInput().initialState });
 }));
 
+test('loop continuation infers the historical planning mode before v18', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const continuation = {
+    schemaVersion: SCHEMA_VERSION,
+    loopId: '00000000-0000-4000-8000-000000000004',
+    scenario: 'steady',
+    runIndex: 0,
+    stepsPerRun: 1,
+    planningHorizon: 2,
+    mode: 'finite',
+    maxRuns: 2,
+  };
+  const afterState = finalState();
+  const first = await store.startRun(runInput({ runId: 'loop-run-1', continuation }));
+  await first.append(stepEvent({
+    afterState,
+    boundary: {
+      kernelLearningVersion: 17,
+      planning: {
+        schemaVersion: SCHEMA_VERSION,
+        horizon: 2,
+        contextMode: 'context-v1',
+        branchingMode: 'recursive-v1',
+      },
+    },
+  }));
+  await first.finish({ terminalStatus: 'COMPLETED', finalState: afterState });
+
+  const recovered = await store.readLoopContinuation();
+  assert.equal(recovered.planningBranchingMode, 'recursive-v1');
+  const second = await store.startRun(runInput({
+    runId: 'loop-run-2',
+    initialState: afterState,
+    continuation: { ...recovered, runIndex: recovered.nextRunIndex },
+  }));
+  await second.finish({ terminalStatus: 'COMPLETED', finalState: afterState });
+  assert.equal((await store.readLoopContinuation()).planningBranchingMode, 'recursive-v1');
+}));
+
 test('inspect and startRun reject current state that disagrees with its valid ledger watermark', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

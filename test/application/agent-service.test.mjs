@@ -407,7 +407,9 @@ test('continuous planning configuration survives interruption and resume', async
     });
     assert.equal(interrupted.stopReason, 'INTERRUPTED');
     const store = await LabStore.open({ labPath: lab });
-    assert.equal((await store.readLoopContinuation()).planningHorizon, 2);
+    const continuation = await store.readLoopContinuation();
+    assert.equal(continuation.planningHorizon, 2);
+    assert.equal(continuation.planningBranchingMode, 'tree-v1');
 
     const resumed = await runContinuous({ labPath: lab, resume: true });
     assert.equal(resumed.status, 'COMPLETED');
