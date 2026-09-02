@@ -34,6 +34,8 @@ const MAX_CONTEXT_MODELS = 8192;
 const MAX_LONG_CONTEXTS = 1;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
+const CURRENT_LEARNING_VERSION = 22;
+const PERSISTED_MEMORY_BUDGET_LEARNING_VERSION = 22;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const HISTORY_ACCUMULATOR_HEX_LENGTH = 64;
 const HISTORY_ACCUMULATOR_PATTERN = /^[0-9a-f]{64}$/u;
@@ -63,8 +65,9 @@ const LEARN_INPUT_KEYS = [
   'verification',
   'feedbackOrder',
   'feedbackCausality',
+  'learningVersion',
 ];
-const LEARN_INPUT_REQUIRED_KEYS = LEARN_INPUT_KEYS.filter((key) => !['feedbackOrder', 'feedbackCausality'].includes(key));
+const LEARN_INPUT_REQUIRED_KEYS = LEARN_INPUT_KEYS.filter((key) => !['feedbackOrder', 'feedbackCausality', 'learningVersion'].includes(key));
 const VERIFICATION_KEYS = [
   'schemaVersion',
   'error',
@@ -354,6 +357,10 @@ export function learn(input) {
   const feedbackCausality = source.feedbackCausality === undefined
     ? 'boundary-v2'
     : assertOneOf(source.feedbackCausality, FEEDBACK_CAUSALITY_MODES, 'learnInput.feedbackCausality');
+  const learningVersion = source.learningVersion === undefined
+    ? CURRENT_LEARNING_VERSION
+    : assertLearningVersion(source.learningVersion, 'learnInput.learningVersion');
+  const enforcePersistedMemoryBudget = learningVersion >= PERSISTED_MEMORY_BUDGET_LEARNING_VERSION;
   const intent = normalizeIntent(source.intent, 'learnInput.intent');
   const dimensions = intent.expectation.expectedDelta.length;
   const memory = normalizeMemory(source.memory, 'learnInput.memory', dimensions);
@@ -428,7 +435,7 @@ export function learn(input) {
         schemaVersion: SCHEMA_VERSION,
         status: 'REJECTION_RECORDED',
         token,
-        nextMemory: cloneMemory(nextMemory),
+        nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
         ...(settled.length === 0 ? {} : { settled }),
       };
     }
@@ -448,7 +455,7 @@ export function learn(input) {
         schemaVersion: SCHEMA_VERSION,
         status: 'DEFERRED',
         token: intent.choice.token,
-        nextMemory: cloneMemory(nextMemory),
+        nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
         ...(settled.length === 0 ? {} : { settled }),
       };
     }
@@ -457,7 +464,7 @@ export function learn(input) {
         schemaVersion: SCHEMA_VERSION,
         status: 'SKIPPED',
         token: intent.choice.token,
-        nextMemory: cloneMemory(nextMemory),
+        nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
         settled,
       };
     }
@@ -465,7 +472,7 @@ export function learn(input) {
       schemaVersion: SCHEMA_VERSION,
       status: 'SKIPPED',
       token: intent.choice.token,
-      nextMemory: cloneMemory(nextMemory),
+      nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
       ...(settled.length === 0 ? {} : { settled }),
     };
   }
@@ -475,7 +482,7 @@ export function learn(input) {
       schemaVersion: SCHEMA_VERSION,
       status: 'SKIPPED',
       token: intent.choice.token,
-      nextMemory: cloneMemory(nextMemory),
+    nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
       settled,
     };
   }
@@ -510,7 +517,7 @@ export function learn(input) {
     schemaVersion: SCHEMA_VERSION,
     status: 'UPDATED',
     token,
-    nextMemory: cloneMemory(nextMemory),
+    nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
     ...(settled.length === 0 ? {} : { settled }),
   };
 }
@@ -2965,7 +2972,7 @@ function compactNestedModelAges(models) {
   return result;
 }
 
-function cloneMemory(value, { compactAges = true } = {}) {
+function cloneMemory(value, { compactAges = true, enforcePersistedBudget = compactAges } = {}) {
   const actionModels = {};
   for (const [token, model] of Object.entries(value.actionModels)) {
     actionModels[token] = {
@@ -3075,7 +3082,17 @@ function cloneMemory(value, { compactAges = true } = {}) {
   if (value.historyAccumulator !== undefined) cloned.historyAccumulator = value.historyAccumulator;
   if (value.lastVerifiedSteps !== undefined) cloned.lastVerifiedSteps = { ...value.lastVerifiedSteps };
   pruneOrphanedVerificationSteps(cloned);
-  if (compactAges) compactPersistedMemory(cloned);
+  if (compactAges) {
+    if (enforcePersistedBudget) {
+      compactPersistedMemory(cloned);
+    } else {
+      const compactModelAges = compactModelAgeState(cloned);
+      if (compactModelAges !== undefined && compactModelAges !== null) {
+        stripModelAges(cloned);
+        cloned.modelAges = compactModelAges;
+      }
+    }
+  }
   return cloned;
 }
 
@@ -3501,6 +3518,18 @@ function assertPositiveInteger(value, field) {
   }
 
   return value;
+}
+
+function assertLearningVersion(value, field) {
+  const version = assertPositiveInteger(value, field);
+  if (version > CURRENT_LEARNING_VERSION) {
+    contractViolation('kernel learning version is newer than this kernel', {
+      field,
+      actual: version,
+      maxSupported: CURRENT_LEARNING_VERSION,
+    });
+  }
+  return version;
 }
 
 function assertNonNegativeInteger(value, field) {

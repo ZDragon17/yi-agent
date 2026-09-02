@@ -532,3 +532,10 @@
 - 实现：将 1 MiB 事件上限与 768 KiB Memory 预算提升为公共 schema 契约。Kernel 在可持久化 Memory 克隆阶段统计规范 JSON 字节数，跨五类模型按 `modelAge`、规范化路径稳定淘汰，批量重算以控制长跑 CPU；淘汰后清理孤儿 `lastVerifiedSteps` 并重建 `modelAges`，旧的无年龄 Memory 继续使用兼容的稳定映射顺序。
 - 验证：真实存储入口复现超限；Kernel 覆盖单族容量、跨族合并、年龄顺序、F-57/F-58 新鲜度及现有 Replay/连续运行契约；最终持久化 Memory 不超过共享预算。
 - 边界：768 KiB 是为当前 1 MiB STEP 包保留证据余量的持久化预算，不是语义重要性评分；单个非模型字段若独占事件上限仍会被存储层拒绝，后续需要由新的可观察反例决定是否继续压缩证据表示。
+
+## F-60 持久化预算版本兼容
+
+- 反例：F-59 改变了 `learn` 输出 Memory 的持久化形状；如果 Replay 仍把旧 v21 STEP 当作当前版本重算，合法的近容量历史可能被新预算提前淘汰，导致旧账本的 Replay 漂移。
+- 实现：应用层新 STEP 升级为 `kernelLearningVersion: 22`；Replay 从 STEP boundary 读取并传入 Kernel。v22 及以后启用共享 768 KiB Memory 预算，v21 及更早版本仅保留此前的年龄压缩语义；Kernel 拒绝大于当前支持版本的输入，防止静默猜测未来规则。
+- 验证：新增旧 v21 近容量 Memory 的 Kernel 兼容断言，覆盖 Replay 的版本透传、应用层边界版本和既有全量 Kernel/Application/Replay 契约；语法检查与晚绑定 Oracle 继续作为独立证据。
+- 边界：版本兼容只保证已定义版本的确定性重演，不让旧账本获得新预算；未来修改持久化 Memory 形状仍必须新增版本并补充旧版本投影，不能仅依赖当前默认值。

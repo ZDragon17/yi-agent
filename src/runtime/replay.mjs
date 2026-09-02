@@ -32,7 +32,8 @@ const CONTEXT_PLANNING_LEARNING_VERSION = 16;
 const RECURSIVE_PLANNING_LEARNING_VERSION = 17;
 const TREE_PLANNING_LEARNING_VERSION = 18;
 const MODEL_AGE_LEARNING_VERSION = 21;
-const MAX_SUPPORTED_LEARNING_VERSION = 21;
+const PERSISTED_MEMORY_BUDGET_LEARNING_VERSION = 22;
+const MAX_SUPPORTED_LEARNING_VERSION = PERSISTED_MEMORY_BUDGET_LEARNING_VERSION;
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -274,6 +275,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       feedbackCausality: learningVersion >= SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION
         ? 'boundary-v2'
         : 'legacy-v1',
+      learningVersion,
     });
     const replayLearned = projectLearningForVersion(learned, learningVersion);
     update = payload.boundary.kernelLearningVersion === undefined &&

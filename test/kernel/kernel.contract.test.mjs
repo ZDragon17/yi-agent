@@ -1382,11 +1382,12 @@ test('verified learning evicts the oldest bounded relation, belief, and context 
     modelToken(index),
     Object.fromEntries(relationKeys.map((key) => [key, nestedModel()])),
   ]));
-  const runLearning = (memory) => {
+  const runLearning = (memory, overrides = {}) => {
     const verifyInput = makeVerifyInput();
     verifyInput.intent.expectation.relationKey = 'r1:++';
     const verification = verify(verifyInput);
     return learn({
+      ...overrides,
       memory,
       intent: verifyInput.intent,
       receipt: verifyInput.receipt,
@@ -1432,6 +1433,13 @@ test('verified learning evicts the oldest bounded relation, belief, and context 
   assert.ok(countNestedModels(contextUpdated.nextMemory.contextModels) <= 8192);
   assert.equal(Object.hasOwn(contextUpdated.nextMemory.contextModels, firstContextKey), false);
   assert.equal(Object.hasOwn(contextUpdated.nextMemory.contextModels, currentContextKey), true);
+
+  const legacyContextUpdated = runLearning({
+    ...memoryWithModels([]),
+    contextModels: contexts,
+    recentHistory: [],
+  }, { learningVersion: 21 });
+  assert.equal(countNestedModels(legacyContextUpdated.nextMemory.contextModels), 8192);
 
   const fullActionModels = Object.fromEntries(Array.from({ length: 8192 }, (_, index) => [
     modelToken(index),
