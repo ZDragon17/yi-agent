@@ -572,5 +572,12 @@
 
 - 反例：外部 adapter 原先允许任意领域字段进入 `nextWorldState`；实测约 1.045 MB 的合法对象能通过状态协议和 Kernel，直到 STEP 原始 JSON 超过 1 MiB 才失败。若真实外部效果已发生，这个失败点已经晚于执行，且不能由宿主把大状态安全写进 Replay 链。
 - 实现：公共 schema 增加 `MAX_PERSISTED_WORLD_STATE_BYTES`，取事件上限扣除 Memory 预算后的剩余空间一半，即当前 128 KiB。内置 `createWorldPort` 和外部 WorldPort 的状态归一化入口都对 canonical JSON 字节数执行同一边界；canonical JSON 不合法也转换为带字段上下文的协议错误，不让任意 TypeError 穿透边界。
-- 验证：生成 adapter 返回 1.045 MB 领域状态时，CLI 在 STEP 追加前拒绝，账本 STEP 数保持为零；既有外部状态、五个内置 WorldPort、重启/恢复、Replay 与 338 项回归继续覆盖。该实验还确认了此前真正的失败位置是持久化预算，而非 Kernel 预测。
+- 验证：生成 adapter 返回 1.045 MB 领域状态时，CLI 在 STEP 追加前拒绝，账本 STEP 数保持为零；既有外部状态、五个内置 WorldPort、重启/恢复、Replay 与 339 项回归继续覆盖。该实验还确认了此前真正的失败位置是持久化预算，而非 Kernel 预测。
 - 边界：128 KiB 是当前 STEP 预算分配，不是通用领域状态大小答案；状态超过该值必须引入快照、引用或分片协议，并重新定义幂等与 Replay 绑定。若外部副作用在状态被拒绝前已经发生，宿主仍只能依赖 adapter 的 reconcile/idempotency 契约，不能把“未追加 STEP”解释成“现实未改变”。
+
+## F-66 外部输入证据持久化预算
+
+- 反例：在 F-65 之后，外部 adapter 可以返回签名、摘要、数量和字段形状都合法的 `externalInputs`；实测约 1.044 MB 的单个输入先通过 WorldPort 协议，直到 STEP 原始 JSON 超过 1 MiB 才被 LabStore 拒绝。由于外部输入在 transition 前取得，这会把不可持久化证据带到真实副作用边界，并把失败留在动作之后。
+- 实现：公共 schema 增加 `MAX_PERSISTED_EXTERNAL_INPUT_BYTES`，按 1 MiB 事件上限扣除 768 KiB Memory 与 128 KiB WorldPort 状态预算后的剩余空间，再取一半，当前为 64 KiB。外部输入数组在签名校验后按 canonical JSON 聚合计量，超限或无法规范化统一转为带上下文的 WorldPort 协议错误。
+- 验证：生成 adapter 返回 1.044 MB 的合法签名输入时，CLI 在调用 `transition` 前拒绝，transition 计数文件不存在，STEP 数保持为零；受影响的外部 CLI、WorldPort contract、Replay/连续运行回归及晚绑定 Oracle 继续验证。
+- 边界：64 KiB 是当前 STEP 证据预算，不是事实数据的通用上限；更大的外部事实必须使用快照、引用或分片，并让签名、幂等、恢复和 Replay 共同绑定新表示，不能只提高常量。

@@ -7,6 +7,7 @@ import {
   canonicalJson,
   MAX_BOUNDARY_IDENTIFIER_LENGTH,
   MAX_EXECUTION_NONCE_LENGTH,
+  MAX_PERSISTED_EXTERNAL_INPUT_BYTES,
   MAX_PERSISTED_WORLD_STATE_BYTES,
   SCHEMA_VERSION,
 } from '../runtime/schema.mjs';
@@ -622,7 +623,7 @@ function validateExternalInputs(value, descriptor, scenario, stateVersion) {
   if (!Array.isArray(value) || value.length > MAX_EXTERNAL_INPUTS) {
     throw new ExternalWorldProtocolError('External WorldPort externalInputs are invalid.', { op: 'externalInputs' });
   }
-  return value.map((item, index) => {
+  const normalized = value.map((item, index) => {
     const source = assertExactKeys(item, ['schemaVersion', 'source', 'kind', 'payload', 'appliedBeforeVersion', 'digest', 'attestation'], `externalInputs[${index}]`);
     if (source.schemaVersion !== SCHEMA_VERSION || source.source !== 'scenario' || source.kind !== scenario ||
         source.appliedBeforeVersion !== stateVersion || source.payload === null || typeof source.payload !== 'object' || Array.isArray(source.payload) ||
@@ -632,6 +633,23 @@ function validateExternalInputs(value, descriptor, scenario, stateVersion) {
     }
     return structuredClone(source);
   });
+  let inputBytes;
+  try {
+    inputBytes = Buffer.byteLength(canonicalJson(normalized), 'utf8');
+  } catch (error) {
+    throw new ExternalWorldProtocolError('External WorldPort externalInputs are not canonical JSON.', {
+      op: 'externalInputs',
+      cause: error instanceof Error ? error.name : 'NonErrorThrow',
+    });
+  }
+  if (inputBytes > MAX_PERSISTED_EXTERNAL_INPUT_BYTES) {
+    throw new ExternalWorldProtocolError('External WorldPort externalInputs exceed the persistence budget.', {
+      op: 'externalInputs',
+      maxBytes: MAX_PERSISTED_EXTERNAL_INPUT_BYTES,
+      actualBytes: inputBytes,
+    });
+  }
+  return normalized;
 }
 
 function normalizeConfig(value, configPath) {

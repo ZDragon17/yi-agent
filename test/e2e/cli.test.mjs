@@ -890,6 +890,40 @@ test('CLI rejects oversized external domain state before STEP append', async () 
   });
 });
 
+test('CLI rejects oversized external input evidence before external transition', async () => {
+  await withTemp(async (root) => {
+    const transitionCountFile = path.join(root, 'transition-count.txt');
+    const adapter = await writeAdapterConfig(root, [
+      '--mode', 'oversized-external-input',
+      '--transition-count-file', transitionCountFile,
+    ]);
+    const lab = path.join(root, 'lab');
+    const init = await invoke(
+      'init',
+      '--lab', lab,
+      '--world', 'generated',
+      '--adapter', adapter,
+      '--json',
+    );
+    assert.equal(init.code, 0);
+    const result = await invoke(
+      'run',
+      '--lab', lab,
+      '--run-id', 'run-1',
+      '--steps', '1',
+      '--scenario', 'generated',
+      '--adapter', adapter,
+      '--json',
+    );
+    assert.notEqual(result.code, 0);
+    assert.equal(result.stdout.length, 1);
+    assert.equal(result.stdout[0].ok, false);
+    assert.match(result.stdout[0].error.message, /evidence|input|persistence|size/iu);
+    assert.equal(await countLedgerSteps(lab, 'run-1'), 0);
+    await assert.rejects(readFile(transitionCountFile), { code: 'ENOENT' });
+  });
+});
+
 async function invoke(...args) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });

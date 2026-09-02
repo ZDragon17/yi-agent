@@ -10,6 +10,11 @@ export const MAX_PERSISTED_MEMORY_BYTES = 768 * 1024;
 // other STEP envelope evidence.
 export const MAX_PERSISTED_WORLD_STATE_BYTES =
   (MAX_PERSISTED_EVENT_BYTES - MAX_PERSISTED_MEMORY_BYTES) / 2;
+// External inputs are durable STEP evidence. Reserve half of the remaining
+// envelope space for them and leave the other half for receipts,
+// observations, verification, and policy evidence.
+export const MAX_PERSISTED_EXTERNAL_INPUT_BYTES =
+  (MAX_PERSISTED_EVENT_BYTES - MAX_PERSISTED_MEMORY_BYTES - MAX_PERSISTED_WORLD_STATE_BYTES) / 2;
 // WorldPort versions are opaque, but they are persisted in every STEP.
 export const MAX_BOUNDARY_IDENTIFIER_LENGTH = 4096;
 export const MAX_EXECUTION_NONCE_LENGTH = 256;

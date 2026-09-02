@@ -11,6 +11,8 @@ const modeIndex = process.argv.indexOf('--mode');
 const mode = modeIndex === -1 ? 'valid' : process.argv[modeIndex + 1] ?? 'valid';
 const counterIndex = process.argv.indexOf('--counter-file');
 const counterFile = counterIndex === -1 ? null : process.argv[counterIndex + 1] ?? null;
+const transitionCountIndex = process.argv.indexOf('--transition-count-file');
+const transitionCountFile = transitionCountIndex === -1 ? null : process.argv[transitionCountIndex + 1] ?? null;
 const adapterId = 'generated-adapter-v1';
 const worldId = 'generated';
 const capabilityId = 'generated.advance';
@@ -67,6 +69,7 @@ function dispatch(op, payload) {
   }
   if (op === 'externalInputs') {
     const inputPayload = { generated: true, stepVersion: payload.stateVersion };
+    if (mode === 'oversized-external-input') inputPayload.domainPayload = 'x'.repeat(1_044_000);
     const input = {
       schemaVersion: 1,
       source: 'scenario',
@@ -78,6 +81,7 @@ function dispatch(op, payload) {
     return { inputs: [{ ...input, digest, attestation: attestationFor({ ...input, digest }) }] };
   }
   if (op === 'transition') {
+    if (transitionCountFile !== null) writeFileSync(transitionCountFile, '1');
     const priorNonces = Array.isArray(payload.state.usedExecutionNonces)
       ? payload.state.usedExecutionNonces.slice(-7)
       : [];
