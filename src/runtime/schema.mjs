@@ -5,6 +5,11 @@ export const SCHEMA_VERSION = 1;
 // headroom for the rest of that envelope instead of consuming the full event.
 export const MAX_PERSISTED_EVENT_BYTES = 1024 * 1024;
 export const MAX_PERSISTED_MEMORY_BYTES = 768 * 1024;
+// Reserve half of the event space left after Memory for the current
+// WorldPort state; the remaining half covers receipt, observations, and
+// other STEP envelope evidence.
+export const MAX_PERSISTED_WORLD_STATE_BYTES =
+  (MAX_PERSISTED_EVENT_BYTES - MAX_PERSISTED_MEMORY_BYTES) / 2;
 // WorldPort versions are opaque, but they are persisted in every STEP.
 export const MAX_BOUNDARY_IDENTIFIER_LENGTH = 4096;
 export const MAX_EXECUTION_NONCE_LENGTH = 256;

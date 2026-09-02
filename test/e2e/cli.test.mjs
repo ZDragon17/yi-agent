@@ -819,6 +819,7 @@ test('CLI rejects oversized opaque external WorldPort boundary identifiers befor
       '--lab', lab,
       '--run-id', 'run-1',
       '--steps', '1',
+      '--scenario', 'generated',
       '--adapter', adapter,
       '--json',
     );
@@ -857,6 +858,35 @@ test('CLI rejects oversized external execution nonces before ledger append', asy
     const inspect = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
     assert.equal(inspect.code, 0);
     assert.equal(inspect.stdout[0].data.current.lastRunId, null);
+  });
+});
+
+test('CLI rejects oversized external domain state before STEP append', async () => {
+  await withTemp(async (root) => {
+    const adapter = await writeAdapterConfig(root, ['--mode', 'oversized-domain-state']);
+    const lab = path.join(root, 'lab');
+    const init = await invoke(
+      'init',
+      '--lab', lab,
+      '--world', 'generated',
+      '--adapter', adapter,
+      '--json',
+    );
+    assert.equal(init.code, 0);
+    const result = await invoke(
+      'run',
+      '--lab', lab,
+      '--run-id', 'run-1',
+      '--steps', '1',
+      '--scenario', 'generated',
+      '--adapter', adapter,
+      '--json',
+    );
+    assert.notEqual(result.code, 0);
+    assert.equal(result.stdout.length, 1);
+    assert.equal(result.stdout[0].ok, false);
+    assert.match(result.stdout[0].error.message, /size|state|payload/iu);
+    assert.equal(await countLedgerSteps(lab, 'run-1'), 0);
   });
 });
 

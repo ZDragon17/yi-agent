@@ -567,3 +567,10 @@
 - 实现：`kernelLearningVersion: 24` 引入 `pareto-v1`。对同构的 action/relation/context 预测模型，只用已有的 `sampleCount` 与 `uncertainty` 建立偏序：样本不少且不确定度不高的模型支配另一模型；被支配者优先进入共享预算淘汰队列，仍无法比较的模型按 v23 的 `modelAge` 与稳定身份决胜。用按不确定度分组的前缀最大样本数计算支配标记，避免对长跑 Memory 做全量两两比较。rejection/belief 不被强行映射到预测质量坐标。
 - 验证：容量反例中 v23 会淘汰持续高质量但较旧的 `TOKEN_A`，v24 保留该非支配模型，同时仍把 Memory 压到 768 KiB 以内；应用层 STEP 版本升级到 24，旧版本 Replay 不改变；目标是为模型淘汰增加可解释的质量偏序，不是声称发现了通用重要性。
 - 边界：样本数和不确定度仍是有限统计证据，不是因果真实性；最近的高不确定度模型可能是环境漂移的最早信号，非支配候选之间也没有不依赖目标的唯一选择。后续必须用漂移 WorldPort、模型族互相挤压和重启/Replay 反例继续决定是否需要新的可观察信号，不能直接加入任意权重。
+
+## F-65 WorldPort 状态持久化预算
+
+- 反例：外部 adapter 原先允许任意领域字段进入 `nextWorldState`；实测约 1.045 MB 的合法对象能通过状态协议和 Kernel，直到 STEP 原始 JSON 超过 1 MiB 才失败。若真实外部效果已发生，这个失败点已经晚于执行，且不能由宿主把大状态安全写进 Replay 链。
+- 实现：公共 schema 增加 `MAX_PERSISTED_WORLD_STATE_BYTES`，取事件上限扣除 Memory 预算后的剩余空间一半，即当前 128 KiB。内置 `createWorldPort` 和外部 WorldPort 的状态归一化入口都对 canonical JSON 字节数执行同一边界；canonical JSON 不合法也转换为带字段上下文的协议错误，不让任意 TypeError 穿透边界。
+- 验证：生成 adapter 返回 1.045 MB 领域状态时，CLI 在 STEP 追加前拒绝，账本 STEP 数保持为零；既有外部状态、五个内置 WorldPort、重启/恢复、Replay 与 338 项回归继续覆盖。该实验还确认了此前真正的失败位置是持久化预算，而非 Kernel 预测。
+- 边界：128 KiB 是当前 STEP 预算分配，不是通用领域状态大小答案；状态超过该值必须引入快照、引用或分片协议，并重新定义幂等与 Replay 绑定。若外部副作用在状态被拒绝前已经发生，宿主仍只能依赖 adapter 的 reconcile/idempotency 契约，不能把“未追加 STEP”解释成“现实未改变”。

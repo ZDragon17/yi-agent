@@ -7,6 +7,7 @@ import {
   canonicalJson,
   MAX_BOUNDARY_IDENTIFIER_LENGTH,
   MAX_EXECUTION_NONCE_LENGTH,
+  MAX_PERSISTED_WORLD_STATE_BYTES,
   SCHEMA_VERSION,
 } from '../runtime/schema.mjs';
 import {
@@ -388,6 +389,22 @@ function normalizeExternalState(value, worldId, field) {
     new Set(value.usedExecutionNonces).size !== value.usedExecutionNonces.length
   ) {
     throw new ExternalWorldProtocolError('External WorldPort state violates the base state contract.', { field });
+  }
+  let stateBytes;
+  try {
+    stateBytes = Buffer.byteLength(canonicalJson(value), 'utf8');
+  } catch (error) {
+    throw new ExternalWorldProtocolError('External WorldPort state is not canonical JSON.', {
+      field,
+      cause: error instanceof Error ? error.name : 'NonErrorThrow',
+    });
+  }
+  if (stateBytes > MAX_PERSISTED_WORLD_STATE_BYTES) {
+    throw new ExternalWorldProtocolError('External WorldPort state exceeds the persistence budget.', {
+      field,
+      maxBytes: MAX_PERSISTED_WORLD_STATE_BYTES,
+      actualBytes: stateBytes,
+    });
   }
   return structuredClone(value);
 }

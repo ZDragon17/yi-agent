@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { MAX_PERSISTED_WORLD_STATE_BYTES } from '../runtime/schema.mjs';
 
 const SCHEMA_VERSION = 1;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
@@ -273,6 +274,14 @@ export function createWorldPort({
       normalized.usedExecutionNonces,
       `${worldId}.state.usedExecutionNonces`,
     );
+    const stateBytes = Buffer.byteLength(canonicalJson(normalized), 'utf8');
+    if (stateBytes > MAX_PERSISTED_WORLD_STATE_BYTES) {
+      contractViolation('world state exceeds the persistence budget', {
+        field: `${worldId}.state`,
+        maxBytes: MAX_PERSISTED_WORLD_STATE_BYTES,
+        actualBytes: stateBytes,
+      });
+    }
     return normalized;
   }
 

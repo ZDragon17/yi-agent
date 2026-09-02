@@ -83,6 +83,7 @@ function dispatch(op, payload) {
       : [];
     const next = state(payload.state.value + 1, payload.request.executionNonce);
     next.usedExecutionNonces = [...priorNonces, payload.request.executionNonce];
+    if (mode === 'oversized-domain-state') next.domainPayload = 'x'.repeat(1_045_000);
     return { nextWorldState: next, receipt: { ...payload.request, schemaVersion: 1, status: 'ACCEPTED', rejectionReason: null, effectDigest: canonicalDigest(next), attributionWindowComplete: true, confounderCount: 0 }, postObservation: observation(next) };
   }
   return null;
