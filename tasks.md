@@ -539,3 +539,10 @@
 - 实现：应用层新 STEP 升级为 `kernelLearningVersion: 22`；Replay 从 STEP boundary 读取并传入 Kernel。v22 及以后启用共享 768 KiB Memory 预算，v21 及更早版本仅保留此前的年龄压缩语义；Kernel 拒绝大于当前支持版本的输入，防止静默猜测未来规则。
 - 验证：新增旧 v21 近容量 Memory 的 Kernel 兼容断言，覆盖 Replay 的版本透传、应用层边界版本和既有全量 Kernel/Application/Replay 契约；语法检查与晚绑定 Oracle 继续作为独立证据。
 - 边界：版本兼容只保证已定义版本的确定性重演，不让旧账本获得新预算；未来修改持久化 Memory 形状仍必须新增版本并补充旧版本投影，不能仅依赖当前默认值。
+
+## F-61 有界 WorldPort 边界标识
+
+- 反例：Kernel 原先接受 500,000 字符的 `stateVersion`，并把它复制到预测观察；外部 adapter 也没有共享长度契约，长标识可能直到 STEP 追加时才撞上 1 MiB 事件上限。
+- 实现：在公共 schema 增加 `MAX_BOUNDARY_IDENTIFIER_LENGTH=4096`；Kernel 对观察、feedback 和 pending credit 的 `stateVersion/intervalId` 使用同一上限，外部 WorldPort 对 state、observation 和 feedback 也在协议归一化入口执行同一检查。标识保持 opaque，不添加领域格式限制。
+- 验证：Kernel 在预测前拒绝超限标识；外部 CLI adapter 在 `init` 后第一次 `run` 即被协议层拒绝且不追加 STEP；既有 opaque stateVersion、跨进程恢复、Replay 和晚绑定 Oracle 继续验证。
+- 边界：4096 是持久化边界，不是现实系统版本语义或真实性证明；receipt 中其它持久化文本仍须沿各自契约保持有界，未来若改变该上限需要重新评估事件预算与版本兼容。

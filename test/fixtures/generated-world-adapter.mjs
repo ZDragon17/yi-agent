@@ -1,6 +1,6 @@
 import readline from 'node:readline';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { canonicalDigest } from '../../src/runtime/schema.mjs';
+import { canonicalDigest, MAX_BOUNDARY_IDENTIFIER_LENGTH } from '../../src/runtime/schema.mjs';
 import { attestationFor, ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
 
 const modeIndex = process.argv.indexOf('--mode');
@@ -95,13 +95,22 @@ function state(value, executionNonce = null) {
 }
 
 function stateVersionFor(value) {
+  if (mode === 'oversized-boundary-id') return 'x'.repeat(MAX_BOUNDARY_IDENTIFIER_LENGTH + 1);
   return mode === 'opaque-state-version'
     ? `opaque-v7/${value.toString(36)}`
     : `state:${worldId}:${value}`;
 }
 
 function observation(value) {
-  return { schemaVersion: 1, vector: [value.value], stateVersion: value.stateVersion, intervalId: `boundary-v7/${value.revision.toString(36)}`, evidence: [] };
+  return {
+    schemaVersion: 1,
+    vector: [value.value],
+    stateVersion: value.stateVersion,
+    intervalId: mode === 'oversized-boundary-id'
+      ? 'x'.repeat(MAX_BOUNDARY_IDENTIFIER_LENGTH + 1)
+      : `boundary-v7/${value.revision.toString(36)}`,
+    evidence: [],
+  };
 }
 
 function respond(id, ok, result, { version = 1, duplicate = false, lineEnding = '\n' } = {}) {

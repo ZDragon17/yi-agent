@@ -5,6 +5,8 @@ export const SCHEMA_VERSION = 1;
 // headroom for the rest of that envelope instead of consuming the full event.
 export const MAX_PERSISTED_EVENT_BYTES = 1024 * 1024;
 export const MAX_PERSISTED_MEMORY_BYTES = 768 * 1024;
+// WorldPort versions are opaque, but they are persisted in every STEP.
+export const MAX_BOUNDARY_IDENTIFIER_LENGTH = 4096;
 const MAX_JSON_DEPTH = 128;
 
 export function canonicalJson(value) {

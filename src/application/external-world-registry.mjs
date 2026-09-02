@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../runtime/schema.mjs';
+import {
+  canonicalDigest,
+  canonicalJson,
+  MAX_BOUNDARY_IDENTIFIER_LENGTH,
+  SCHEMA_VERSION,
+} from '../runtime/schema.mjs';
 import {
   externalInputUnsigned,
   isValidEvidencePublicKey,
@@ -12,7 +17,6 @@ import { LabStoreError } from '../runtime/lab-store.mjs';
 import {
   assertExactKeys,
   assertFiniteNumber,
-  assertNonEmptyString,
   assertNonNegativeSafeInteger,
   assertSchemaVersion,
   createWorldPort,
@@ -376,7 +380,7 @@ function normalizeExternalState(value, worldId, field) {
   }
   if (
     value.schemaVersion !== SCHEMA_VERSION ||
-    typeof value.stateVersion !== 'string' || value.stateVersion.length === 0 ||
+    !isBoundedIdentifier(value.stateVersion) ||
     !Number.isSafeInteger(value.revision) || value.revision < 0 ||
     !Array.isArray(value.usedExecutionNonces) || value.usedExecutionNonces.length > 8 ||
     value.usedExecutionNonces.some((nonce) => typeof nonce !== 'string' || nonce.length === 0) ||
@@ -402,8 +406,8 @@ function normalizeExternalObservation(value, worldId, field, expectedStateVersio
       (expectedStateVersion !== undefined && source.stateVersion !== expectedStateVersion)) {
     throw new ExternalWorldProtocolError('External WorldPort observation vector is invalid.', { field });
   }
-  assertNonEmptyString(source.stateVersion, `${field}.stateVersion`);
-  assertNonEmptyString(source.intervalId, `${field}.intervalId`);
+  assertBoundedIdentifier(source.stateVersion, `${field}.stateVersion`);
+  assertBoundedIdentifier(source.intervalId, `${field}.intervalId`);
   if (!Array.isArray(source.evidence) || source.evidence.length > MAX_EVIDENCE_ITEMS) {
     throw new ExternalWorldProtocolError('External WorldPort observation evidence is invalid.', { field });
   }
@@ -424,8 +428,8 @@ function validateExternalFeedback(value, field, expectedDimensions) {
     if (source.schemaVersion !== SCHEMA_VERSION ||
         typeof source.executionNonce !== 'string' || source.executionNonce.length === 0 || source.executionNonce.length > 256 ||
         seen.has(source.executionNonce) ||
-        typeof source.stateVersion !== 'string' || source.stateVersion.length === 0 ||
-        typeof source.intervalId !== 'string' || source.intervalId.length === 0 ||
+        !isBoundedIdentifier(source.stateVersion) ||
+        !isBoundedIdentifier(source.intervalId) ||
         !Array.isArray(source.vector) || source.vector.length === 0 ||
         (expectedDimensions !== undefined && source.vector.length !== expectedDimensions) ||
         source.vector.some((number) => !Number.isFinite(number)) ||
@@ -434,6 +438,17 @@ function validateExternalFeedback(value, field, expectedDimensions) {
     }
     seen.add(source.executionNonce);
   });
+}
+
+function isBoundedIdentifier(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_BOUNDARY_IDENTIFIER_LENGTH;
+}
+
+function assertBoundedIdentifier(value, field) {
+  if (!isBoundedIdentifier(value)) {
+    throw new ExternalWorldProtocolError('External WorldPort boundary identifier is invalid.', { field });
+  }
+  return value;
 }
 
 function normalizeExternalActions(value, manifest, descriptor) {

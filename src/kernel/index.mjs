@@ -1,4 +1,5 @@
 import {
+  MAX_BOUNDARY_IDENTIFIER_LENGTH,
   MAX_PERSISTED_MEMORY_BYTES,
   canonicalDigest,
   canonicalJson,
@@ -482,7 +483,7 @@ export function learn(input) {
       schemaVersion: SCHEMA_VERSION,
       status: 'SKIPPED',
       token: intent.choice.token,
-    nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
+      nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
       settled,
     };
   }
@@ -846,8 +847,16 @@ function normalizeObservation(value, field) {
     OBSERVATION_KEYS.filter((key) => key !== 'feedback'),
   );
   const vector = assertFiniteVector(source.vector, `${field}.vector`);
-  const stateVersion = assertNonEmptyString(source.stateVersion, `${field}.stateVersion`);
-  const intervalId = assertNonEmptyString(source.intervalId, `${field}.intervalId`);
+  const stateVersion = assertBoundedString(
+    source.stateVersion,
+    `${field}.stateVersion`,
+    MAX_BOUNDARY_IDENTIFIER_LENGTH,
+  );
+  const intervalId = assertBoundedString(
+    source.intervalId,
+    `${field}.intervalId`,
+    MAX_BOUNDARY_IDENTIFIER_LENGTH,
+  );
   const feedback = source.feedback === undefined
     ? undefined
     : normalizeFeedback(source.feedback, `${field}.feedback`, vector.length);
@@ -881,8 +890,16 @@ function normalizeFeedback(value, field, dimensions) {
     return {
       schemaVersion: requireSchemaVersion(source, `${field}[${index}]`),
       executionNonce,
-      stateVersion: assertNonEmptyString(source.stateVersion, `${field}[${index}].stateVersion`),
-      intervalId: assertNonEmptyString(source.intervalId, `${field}[${index}].intervalId`),
+      stateVersion: assertBoundedString(
+        source.stateVersion,
+        `${field}[${index}].stateVersion`,
+        MAX_BOUNDARY_IDENTIFIER_LENGTH,
+      ),
+      intervalId: assertBoundedString(
+        source.intervalId,
+        `${field}[${index}].intervalId`,
+        MAX_BOUNDARY_IDENTIFIER_LENGTH,
+      ),
       vector: assertFiniteVector(source.vector, `${field}[${index}].vector`, dimensions),
       confounderCount: assertNonNegativeInteger(source.confounderCount, `${field}[${index}].confounderCount`),
     };
@@ -1389,8 +1406,16 @@ function normalizePendingCredits(value, field, dimensions) {
       schemaVersion: requireSchemaVersion(source, itemField),
       executionNonce,
       token: assertOpaqueToken(source.token, `${itemField}.token`),
-      beforeStateVersion: assertNonEmptyString(source.beforeStateVersion, `${itemField}.beforeStateVersion`),
-      beforeIntervalId: assertNonEmptyString(source.beforeIntervalId, `${itemField}.beforeIntervalId`),
+      beforeStateVersion: assertBoundedString(
+        source.beforeStateVersion,
+        `${itemField}.beforeStateVersion`,
+        MAX_BOUNDARY_IDENTIFIER_LENGTH,
+      ),
+      beforeIntervalId: assertBoundedString(
+        source.beforeIntervalId,
+        `${itemField}.beforeIntervalId`,
+        MAX_BOUNDARY_IDENTIFIER_LENGTH,
+      ),
       beforeVector: assertFiniteVector(source.beforeVector, `${itemField}.beforeVector`, dimensions),
       expectedDelta: assertFiniteVector(source.expectedDelta, `${itemField}.expectedDelta`, dimensions),
       ...(relationKey === undefined ? {} : { relationKey }),

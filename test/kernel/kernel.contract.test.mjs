@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  MAX_BOUNDARY_IDENTIFIER_LENGTH,
   MAX_PERSISTED_MEMORY_BYTES,
   canonicalDigest,
   canonicalJson,
@@ -1741,6 +1742,23 @@ test('step rejects non-finite, undefined, and function-valued data fail-closed',
     assertContractViolation(
       () => step(setPath(makeStepInput(), path, value)),
       field,
+    );
+  }
+});
+
+test('step rejects oversized opaque WorldPort boundary identifiers before prediction work', async () => {
+  const { step } = await loadKernel();
+  const oversized = 'x'.repeat(MAX_BOUNDARY_IDENTIFIER_LENGTH + 1);
+  for (const field of ['stateVersion', 'intervalId']) {
+    assertContractViolation(
+      () => step({
+        ...makeStepInput(),
+        observation: observation([1, 1], field === 'stateVersion' ? oversized : 'interval:state-1'),
+        ...(field === 'intervalId' ? {
+          observation: { ...observation([1, 1], 'state-1'), intervalId: oversized },
+        } : {}),
+      }),
+      `observation.${field}`,
     );
   }
 });
