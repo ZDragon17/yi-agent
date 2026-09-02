@@ -454,3 +454,10 @@
 - 实现：`external-transition.json` 的 ValueSpec、ChangeSupervisor、目标激活计划和 Planner 证据均经过完整边界校验；摘要可被重新计算但内容语义畸形时，统一判为 `CORRUPT`。
 - 验证：覆盖畸形 ValueSpec、监督器和目标激活计划，且连续运行、强杀恢复、并发接续、跨 WorldPort 回归与 Oracle 均保持通过。
 - 边界：这仍是本地账本完整性与语义校验，不等价于外部 WorldPort 对现实回执的密码学认证；签名对账回执需要后续协调协议契约。
+
+## F-49 显式 opt-in 的 loop 自动恢复
+
+- 原则：长期 loop 在进程崩溃后可以减少人工接力，但不能把“看起来像陈旧”的 writer lock 当成死亡证明；自动恢复必须复用同一 liveness probe 和恢复矩阵，并保持活跃 owner 不被抢占。
+- 实现：`agent loop --resume --auto-recover` 先读取 writer owner 身份并确认 current 为 `RUNNING`，再调用既有 `LabStore.recover`；仅系统判定旧 owner 已死亡时接管，完成边界短暂无锁时仍复探测原 owner，避免把活跃进程误判为已完成。其他状态保留人工 `recover --confirm-lock-owner-dead` 路径。非 resume 使用自动恢复会在 CLI/Application 边界拒绝。
+- 验证：真实外部 transition 响应保持挂起时强杀 CLI，单次 `--resume --auto-recover` 完成剩余 loop 且效果不重复；旧 CLI 仍存活时并发自动恢复返回 `LIVE_OWNER/BUSY`，不新增 Run、不终止旧进程。
+- 边界：这是本地文件账本下的显式自动化；同一用户主动伪造 PID、Windows 进程终止与锁检查之间的竞态、分布式锁和真实设备安全仍不在保证范围。

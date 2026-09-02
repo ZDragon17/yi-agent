@@ -680,6 +680,22 @@ test('default recovery liveness probe recognizes a definitely absent pid', async
   assert.equal(recovered.current.status, 'HALTED');
 }));
 
+test('auto-recovery keeps a live owner blocked across a completed-run lock gap', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  const writerLock = await store.readWriterLock();
+  await run.finish({ terminalStatus: 'COMPLETED', finalState: runInput().initialState });
+
+  await assert.rejects(
+    LabStore.recover({ labPath: lab, expectedLock: writerLock, livenessProbe: () => true }),
+    (error) => assertCode(error, 'LIVE_OWNER'),
+  );
+  const recovered = await LabStore.recover({ labPath: lab, expectedLock: writerLock, livenessProbe: () => false });
+  assert.equal(recovered.reason, 'ALREADY_TERMINAL');
+  assert.equal(recovered.current.status, 'READY');
+}));
+
 test('snapshot and terminal state must equal the last ledger STEP continuity state', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

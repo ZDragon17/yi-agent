@@ -242,6 +242,7 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 - v0.1 无 PII、鉴别数据、网络和进程内动态代码加载；显式 external adapter 仅通过固定 executable/args、`shell:false`、有限时限/输出的 JSONL 子进程协议接入。外部输入必须同时满足整步摘要绑定和 manifest 公钥验签；这能抵御证据被改写后重算本地无密钥哈希链，但不等同于 OS 沙箱或真实副作用保证。
 - 虚拟桌面只记录合成文件名/类别/位置，不读取文件内容；错误和日志不得输出主机环境变量、真实目录枚举或内部 tokenMap 语义映射。
 - v0.1 的纯模拟 transition 解决了“副作用发生而证据未落盘”窗口；外部桌面/设备 adapter 只能在显式声明并实现持久 execution nonce 幂等后获得自动续跑资格，否则进入 `EXTERNAL_TRANSITION_UNKNOWN` 阻断，必须人工对账，不能复用纯模拟结论。
+- loop 的自动恢复是显式 opt-in：`--resume --auto-recover` 仅在 current 为 `RUNNING` 且 `LabStore.recover` 的系统 liveness probe 证明旧 writer owner 已死亡时接管；若检查与正常完成之间出现短暂无锁窗口，仍用初始 writer owner 身份复探测，活跃 owner、无法确认死亡或非运行态均不自动接管。它复用原有恢复意图、陈旧锁证据、canonical recovery lock 和 completion，不另造一套恢复状态机。
 
 ## 9. 有界近期变化上下文
 

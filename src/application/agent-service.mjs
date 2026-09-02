@@ -674,6 +674,12 @@ export async function runContinuous(input) {
   if (source.resume !== undefined && typeof source.resume !== 'boolean') {
     throw new LabStoreError('INVALID_INPUT', 'resume must be a boolean.', { field: 'resume' });
   }
+  if (source.autoRecover !== undefined && typeof source.autoRecover !== 'boolean') {
+    throw new LabStoreError('INVALID_INPUT', 'autoRecover must be a boolean.', { field: 'autoRecover' });
+  }
+  if (source.autoRecover === true && source.resume !== true) {
+    throw new LabStoreError('INVALID_INPUT', 'autoRecover requires resume.', { field: 'autoRecover' });
+  }
   if (source.resume === true && (
     source.runs !== undefined || source.forever !== undefined || source.stepsPerRun !== undefined || source.steps !== undefined ||
     source.runId !== undefined || source.scenario !== undefined || source.goal !== undefined || source.goalPlan !== undefined ||
@@ -693,7 +699,16 @@ export async function runContinuous(input) {
   const requestedRuns = requireBoundedOptional(source.runs, 1, 10_000, 'runs') ?? 1;
   let continuation;
   if (source.resume === true) {
-    const store = await LabStore.open({ labPath: requireText(source.labPath, 'labPath') });
+    const labPath = requireText(source.labPath, 'labPath');
+    const store = await LabStore.open({ labPath });
+    const expectedLock = source.autoRecover === true ? await store.readWriterLock() : null;
+    if (source.autoRecover === true && (await store.inspect()).current.status === 'RUNNING') {
+      await LabStore.recover({
+        labPath,
+        command: 'agent-loop-auto-recover',
+        expectedLock,
+      });
+    }
     continuation = await store.readLoopContinuation();
     if (continuation.status !== 'ACTIVE') {
       return {

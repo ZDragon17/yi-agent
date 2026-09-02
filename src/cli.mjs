@@ -90,6 +90,9 @@ async function dispatch(command, options) {
 }
 
 async function dispatchAgent(options) {
+  if (options['auto-recover'] === true && (options.agentOperation !== 'loop' || options.resume !== true)) {
+    throw cliError('INVALID_INPUT', '--auto-recover requires agent loop --resume.', { field: 'auto-recover' }, 64);
+  }
   if (options['auto-plan'] === true && options.goal === undefined) {
     throw cliError('INVALID_INPUT', '--auto-plan requires --goal.', { field: 'goal' }, 64);
   }
@@ -145,6 +148,7 @@ async function dispatchAgent(options) {
         advisor,
         planner,
         autoPlan: options['auto-plan'] === true,
+        autoRecover: options['auto-recover'] === true,
         goal: options.goal,
         goalPlan,
         durability: 'checkpoint',
@@ -256,7 +260,7 @@ function parseArguments(argv) {
     if (argument === '--json') continue;
     if (!argument.startsWith('--')) throw cliError('INVALID_INPUT', `Unexpected argument: ${argument}`, {}, 64);
     const name = argument.slice(2);
-    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan' || name === 'kernel-only' || name === 'resume') {
+    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan' || name === 'kernel-only' || name === 'resume' || name === 'auto-recover') {
       options[name] = true;
       continue;
     }
@@ -268,7 +272,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
@@ -456,7 +460,7 @@ function helpText() {
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
     '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--planning-horizon N] [--kernel-only] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
-    '  yi-agent agent loop --lab PATH --resume [--kernel-only] [--adapter CONFIG] [--json]',
+    '  yi-agent agent loop --lab PATH --resume [--auto-recover] [--kernel-only] [--adapter CONFIG] [--json]',
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',

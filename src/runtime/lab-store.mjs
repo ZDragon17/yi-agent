@@ -211,6 +211,8 @@ export class LabStore {
       ? input.livenessProbe
       : defaultLivenessProbe;
     const command = typeof input.command === 'string' ? input.command : 'recover';
+    const expectedLock = input.expectedLock === undefined ? null : input.expectedLock;
+    if (expectedLock !== null) validateWriterLock(expectedLock, manifest);
 
     const completed = await findRecoveryRecords(root, manifest);
     if (completed.pending.length > 1) {
@@ -248,6 +250,12 @@ export class LabStore {
           left.ownerNonce.localeCompare(right.ownerNonce)
         )).at(-1);
         return recoveryResult(record.completion.reason, current, record.ownerNonce);
+      }
+      if (expectedLock !== null && current.status !== 'RUNNING') {
+        if (await probeOwner(livenessProbe, expectedLock)) {
+          throw new LabStoreError('LIVE_OWNER', 'Writer owner is still live.', { pid: expectedLock.pid });
+        }
+        return recoveryResult('ALREADY_TERMINAL', current, expectedLock.ownerNonce);
       }
       corrupt('No active or idempotently completed recovery exists.', { phase: 'completion' });
     }
@@ -324,6 +332,13 @@ export class LabStore {
       validateCurrentProjection(current, start, events);
     }
     return { manifest: cloneJson(this.manifest), current };
+  }
+
+  async readWriterLock() {
+    await assertDirectoryIsCanonical(this.root, this.root);
+    const lock = await readOptionalJson(childPath(this.root, 'locks', 'writer.lock'));
+    if (lock !== null) validateWriterLock(lock, this.manifest);
+    return lock === null ? null : cloneJson(lock);
   }
 
   async readRun(runId) {
