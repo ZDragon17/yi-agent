@@ -286,7 +286,7 @@ test('bounded planning is persisted at the step boundary and survives replay', a
     const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
     const step = run.events.find((event) => event.kind === 'STEP');
     assert.deepEqual(step.payload.boundary.planning, { schemaVersion: 1, horizon: 2, contextMode: 'context-v1', branchingMode: 'tree-v1' });
-    assert.equal(step.payload.boundary.kernelLearningVersion, 23);
+    assert.equal(step.payload.boundary.kernelLearningVersion, 24);
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
   });
 });

@@ -1622,6 +1622,56 @@ test('v23 refreshes verified model age so a reused model survives shared-budget 
   assert.ok(Buffer.byteLength(canonicalJson(recent.nextMemory), 'utf8') <= MAX_PERSISTED_MEMORY_BYTES);
 });
 
+test('v24 evicts a dominated noisy model before an older well-supported model', async () => {
+  const { learn, step, verify } = await loadKernel();
+  const modelToken = (index) => index === 0
+    ? TOKEN_A
+    : index === 1
+      ? TOKEN_B
+      : `tok_${index.toString(36).toUpperCase().padStart(8, '0')}X`;
+  const actionModel = (index) => ({
+    schemaVersion: 1,
+    sampleCount: index === 0 ? 1000 : index === 1 ? 1 : 2,
+    meanDelta: [0, 0],
+    uncertainty: index === 1 ? 1 : 0,
+    modelAge: index === 0 ? 1 : index === 1 ? 8193 : 8193 + index,
+  });
+  const tokens = Array.from({ length: 8192 }, (_, index) => modelToken(index));
+  const makeMemory = () => ({
+    schemaVersion: 1,
+    actionModels: Object.fromEntries(tokens.map((token, index) => [token, actionModel(index)])),
+    rejectionModels: Object.fromEntries(tokens.map((token, index) => [token, {
+      schemaVersion: 1,
+      sampleCount: 1,
+      rejected: true,
+      modelAge: 1 + index,
+    }])),
+    modelClock: 16384,
+  });
+  const input = {
+    observation: observation([1, 1], 'state-1'),
+    memory: makeMemory(),
+    valueSpec: valueSpec([1, 1]),
+    capabilities: [capability(TOKEN_B)],
+    rngState: rngState(0x1234abcd),
+  };
+  const intent = step(input);
+  const learnInput = makeVerifyInput({
+    intent,
+    receipt: receiptForRequest(actionRequest({ token: TOKEN_B })),
+    postObservation: observation([1.5, 0.75], 'state-2'),
+  });
+  const verification = verify(learnInput);
+  const recent = learn({ ...learnInput, memory: makeMemory(), verification, learningVersion: 23 });
+  const pareto = learn({ ...learnInput, memory: makeMemory(), verification, learningVersion: 24 });
+
+  assert.equal(Object.hasOwn(recent.nextMemory.actionModels, TOKEN_A), false);
+  assert.equal(Object.hasOwn(recent.nextMemory.actionModels, TOKEN_B), true);
+  assert.equal(Object.hasOwn(pareto.nextMemory.actionModels, TOKEN_A), true);
+  assert.equal(Object.hasOwn(pareto.nextMemory.actionModels, TOKEN_B), true);
+  assert.ok(Buffer.byteLength(canonicalJson(pareto.nextMemory), 'utf8') <= MAX_PERSISTED_MEMORY_BYTES);
+});
+
 test('kernel rejects model-age state without modelClock before step or learn can alter eviction semantics', async () => {
   const { learn, step, verify } = await loadKernel();
   const baseModel = (overrides = {}) => ({

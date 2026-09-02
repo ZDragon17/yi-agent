@@ -560,3 +560,10 @@
 - 实现：公共 schema 增加 `MAX_EXECUTION_NONCE_LENGTH=256`；Kernel 的 feedback、pending credit、receipt 与外部 adapter 的状态 nonce、feedback nonce 共用该常量，保持执行身份不透明但有界。
 - 验证：外部 CLI adapter 返回超长状态 nonce 时，在第一次 `run` 的协议归一化阶段失败，且 inspect 确认没有创建 Run；既有 nonce 幂等、延迟 feedback、崩溃恢复和晚绑定 Oracle 继续通过。
 - 边界：该上限只约束本地持久化/传输标识长度，不证明外部 nonce 的密码学真实性；外部状态中的其它任意领域字段仍需要独立的状态大小与事件预算实验。
+
+## F-64 可靠性支配式模型淘汰
+
+- 反例：F-62 的 v23 只按最近验证年龄保留模型；一个高样本、低不确定度的旧 action 与一个新近、低样本、高不确定度的 action 同时逼近共享预算时，单一 recency 会把两者视为不可区分的“新鲜证据”，无法表达已有证据对新噪声的支撑关系。
+- 实现：`kernelLearningVersion: 24` 引入 `pareto-v1`。对同构的 action/relation/context 预测模型，只用已有的 `sampleCount` 与 `uncertainty` 建立偏序：样本不少且不确定度不高的模型支配另一模型；被支配者优先进入共享预算淘汰队列，仍无法比较的模型按 v23 的 `modelAge` 与稳定身份决胜。用按不确定度分组的前缀最大样本数计算支配标记，避免对长跑 Memory 做全量两两比较。rejection/belief 不被强行映射到预测质量坐标。
+- 验证：容量反例中 v23 会淘汰持续高质量但较旧的 `TOKEN_A`，v24 保留该非支配模型，同时仍把 Memory 压到 768 KiB 以内；应用层 STEP 版本升级到 24，旧版本 Replay 不改变；目标是为模型淘汰增加可解释的质量偏序，不是声称发现了通用重要性。
+- 边界：样本数和不确定度仍是有限统计证据，不是因果真实性；最近的高不确定度模型可能是环境漂移的最早信号，非支配候选之间也没有不依赖目标的唯一选择。后续必须用漂移 WorldPort、模型族互相挤压和重启/Replay 反例继续决定是否需要新的可观察信号，不能直接加入任意权重。

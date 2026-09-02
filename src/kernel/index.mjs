@@ -36,7 +36,8 @@ const MAX_LONG_CONTEXTS = 1;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
 const MODEL_RECENCY_LEARNING_VERSION = 23;
-const CURRENT_LEARNING_VERSION = MODEL_RECENCY_LEARNING_VERSION;
+const MODEL_QUALITY_RETENTION_LEARNING_VERSION = 24;
+const CURRENT_LEARNING_VERSION = MODEL_QUALITY_RETENTION_LEARNING_VERSION;
 const PERSISTED_MEMORY_BUDGET_LEARNING_VERSION = 22;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const HISTORY_ACCUMULATOR_HEX_LENGTH = 64;
@@ -364,6 +365,9 @@ export function learn(input) {
     : assertLearningVersion(source.learningVersion, 'learnInput.learningVersion');
   const enforcePersistedMemoryBudget = learningVersion >= PERSISTED_MEMORY_BUDGET_LEARNING_VERSION;
   const refreshModelAge = learningVersion >= MODEL_RECENCY_LEARNING_VERSION;
+  const retentionMode = learningVersion >= MODEL_QUALITY_RETENTION_LEARNING_VERSION
+    ? 'pareto-v1'
+    : 'recency-v1';
   const intent = normalizeIntent(source.intent, 'learnInput.intent');
   const dimensions = intent.expectation.expectedDelta.length;
   const memory = normalizeMemory(source.memory, 'learnInput.memory', dimensions);
@@ -441,7 +445,10 @@ export function learn(input) {
         schemaVersion: SCHEMA_VERSION,
         status: 'REJECTION_RECORDED',
         token,
-        nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
+        nextMemory: cloneMemory(nextMemory, {
+          enforcePersistedBudget: enforcePersistedMemoryBudget,
+          retentionMode,
+        }),
         ...(settled.length === 0 ? {} : { settled }),
       };
     }
@@ -461,7 +468,10 @@ export function learn(input) {
         schemaVersion: SCHEMA_VERSION,
         status: 'DEFERRED',
         token: intent.choice.token,
-        nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
+        nextMemory: cloneMemory(nextMemory, {
+          enforcePersistedBudget: enforcePersistedMemoryBudget,
+          retentionMode,
+        }),
         ...(settled.length === 0 ? {} : { settled }),
       };
     }
@@ -470,7 +480,10 @@ export function learn(input) {
         schemaVersion: SCHEMA_VERSION,
         status: 'SKIPPED',
         token: intent.choice.token,
-        nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
+        nextMemory: cloneMemory(nextMemory, {
+          enforcePersistedBudget: enforcePersistedMemoryBudget,
+          retentionMode,
+        }),
         settled,
       };
     }
@@ -478,7 +491,10 @@ export function learn(input) {
       schemaVersion: SCHEMA_VERSION,
       status: 'SKIPPED',
       token: intent.choice.token,
-      nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
+      nextMemory: cloneMemory(nextMemory, {
+        enforcePersistedBudget: enforcePersistedMemoryBudget,
+        retentionMode,
+      }),
       ...(settled.length === 0 ? {} : { settled }),
     };
   }
@@ -488,7 +504,10 @@ export function learn(input) {
       schemaVersion: SCHEMA_VERSION,
       status: 'SKIPPED',
       token: intent.choice.token,
-      nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
+      nextMemory: cloneMemory(nextMemory, {
+        enforcePersistedBudget: enforcePersistedMemoryBudget,
+        retentionMode,
+      }),
       settled,
     };
   }
@@ -524,7 +543,10 @@ export function learn(input) {
     schemaVersion: SCHEMA_VERSION,
     status: 'UPDATED',
     token,
-    nextMemory: cloneMemory(nextMemory, { enforcePersistedBudget: enforcePersistedMemoryBudget }),
+    nextMemory: cloneMemory(nextMemory, {
+      enforcePersistedBudget: enforcePersistedMemoryBudget,
+      retentionMode,
+    }),
     ...(settled.length === 0 ? {} : { settled }),
   };
 }
@@ -3033,7 +3055,10 @@ function compactNestedModelAges(models) {
   return result;
 }
 
-function cloneMemory(value, { compactAges = true, enforcePersistedBudget = compactAges } = {}) {
+function cloneMemory(
+  value,
+  { compactAges = true, enforcePersistedBudget = compactAges, retentionMode = 'recency-v1' } = {},
+) {
   const actionModels = {};
   for (const [token, model] of Object.entries(value.actionModels)) {
     actionModels[token] = {
@@ -3145,7 +3170,7 @@ function cloneMemory(value, { compactAges = true, enforcePersistedBudget = compa
   pruneOrphanedVerificationSteps(cloned);
   if (compactAges) {
     if (enforcePersistedBudget) {
-      compactPersistedMemory(cloned);
+      compactPersistedMemory(cloned, { retentionMode });
     } else {
       const compactModelAges = compactModelAgeState(cloned);
       if (compactModelAges !== undefined && compactModelAges !== null) {
@@ -3157,8 +3182,8 @@ function cloneMemory(value, { compactAges = true, enforcePersistedBudget = compa
   return cloned;
 }
 
-function compactPersistedMemory(memory) {
-  const candidates = persistedModelCandidates(memory);
+function compactPersistedMemory(memory, { retentionMode = 'recency-v1' } = {}) {
+  const candidates = persistedModelCandidates(memory, { retentionMode });
   const ageByIdentity = new Map(candidates.map((candidate) => [candidate.identity, candidate.age]));
   const compactModelAges = compactModelAgeState(memory);
   const canCompactAges = compactModelAges !== undefined && compactModelAges !== null;
@@ -3221,7 +3246,7 @@ function compactPersistedModelAges(memory, ageByIdentity) {
   };
 }
 
-function persistedModelCandidates(memory) {
+function persistedModelCandidates(memory, { retentionMode = 'recency-v1' } = {}) {
   const candidates = [];
   const addTopLevel = (family, models) => {
     for (const [token, model] of Object.entries(models ?? {})) {
@@ -3230,6 +3255,7 @@ function persistedModelCandidates(memory) {
         parent: models,
         key: token,
         age: model.modelAge,
+        model,
         identity: `${family}:${token}`,
       });
     }
@@ -3244,6 +3270,7 @@ function persistedModelCandidates(memory) {
           outerParent: models,
           outerKey,
           age: model.modelAge,
+          model,
           identity: `${family}:${outerKey}:${innerKey}`,
         });
       }
@@ -3256,9 +3283,45 @@ function persistedModelCandidates(memory) {
   addNested('belief', memory.beliefModels);
   addNested('context', memory.contextModels);
   if (!candidates.every((candidate) => candidate.age !== undefined)) return candidates;
+  if (retentionMode === 'pareto-v1') {
+    markDominatedPredictionModels(candidates);
+  }
   return candidates.sort((left, right) => {
-    return left.age - right.age || left.identity.localeCompare(right.identity);
+    return Number(right.dominated === true) - Number(left.dominated === true) ||
+      left.age - right.age || left.identity.localeCompare(right.identity);
   });
+}
+
+function markDominatedPredictionModels(candidates) {
+  const comparable = candidates.filter(isComparablePredictionModel);
+  const familyGroups = new Map();
+  for (const candidate of comparable) {
+    const uncertainty = candidate.model.uncertainty;
+    const groups = familyGroups.get(candidate.family) ?? new Map();
+    const group = groups.get(uncertainty) ?? { maxSampleCount: 0, lowerMaxSampleCount: -1 };
+    group.maxSampleCount = Math.max(group.maxSampleCount, candidate.model.sampleCount);
+    groups.set(uncertainty, group);
+    familyGroups.set(candidate.family, groups);
+  }
+  for (const groups of familyGroups.values()) {
+    let lowerMaxSampleCount = -1;
+    for (const uncertainty of [...groups.keys()].sort((left, right) => left - right)) {
+      const group = groups.get(uncertainty);
+      group.lowerMaxSampleCount = lowerMaxSampleCount;
+      lowerMaxSampleCount = Math.max(lowerMaxSampleCount, group.maxSampleCount);
+    }
+  }
+  for (const candidate of comparable) {
+    const group = familyGroups.get(candidate.family).get(candidate.model.uncertainty);
+    candidate.dominated = group.lowerMaxSampleCount >= candidate.model.sampleCount ||
+      group.maxSampleCount > candidate.model.sampleCount;
+  }
+}
+
+function isComparablePredictionModel(candidate) {
+  return ['action', 'relation', 'context'].includes(candidate.family) &&
+    Number.isSafeInteger(candidate.model.sampleCount) &&
+    Number.isFinite(candidate.model.uncertainty);
 }
 
 function stripModelAges(memory) {

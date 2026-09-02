@@ -16,7 +16,7 @@ const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
 const PLANNING_BRANCHING_MODES = ['tree-v1', 'recursive-v1', 'legacy-v1'];
-const KERNEL_LEARNING_VERSION = 23;
+const KERNEL_LEARNING_VERSION = 24;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');

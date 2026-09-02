@@ -388,6 +388,7 @@ test('F-58 prunes verification freshness when relation eviction removes the last
     receipt: receiptValue,
     postObservation,
     verification,
+    learningVersion: 23,
   });
 
   assert.equal(Object.hasOwn(update.nextMemory.relationModels, TARGET_A), false);
