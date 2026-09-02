@@ -920,6 +920,46 @@ test('forever runner keeps continuation lookup bounded across a thousand run bou
     assert.equal(result.metrics.executed, 1000);
     assert.equal(result.results.length, 1);
     assert.equal((await inspectLab({ labPath: lab, registry })).current.kernelStep, 1000);
+
+    let resumeChecks = 0;
+    const resumed = await runContinuous({
+      labPath: lab,
+      resume: true,
+      shouldStop: () => resumeChecks++ >= 2,
+      registry,
+    });
+    assert.equal(resumed.runs, 1);
+    assert.equal(resumed.metrics.executed, 1);
+    assert.equal((await inspectLab({ labPath: lab, registry })).current.kernelStep, 1001);
+  });
+});
+
+test('forever runner preserves the common boundary contract across built-in WorldPorts', async () => {
+  await withLab(async (root) => {
+    for (const worldId of ['temperature', 'virtual-desktop', 'inventory', 'grid', 'queue']) {
+      const lab = path.join(root, worldId);
+      await initLab({ labPath: lab, labId: `forever-${worldId}`, worldId, seed: `forever-${worldId}` });
+      let stopChecks = 0;
+      const result = await runContinuous({
+        labPath: lab,
+        stepsPerRun: 1,
+        forever: true,
+        shouldStop: () => stopChecks++ >= 8,
+      });
+      const current = (await inspectLab({ labPath: lab })).current;
+      assert.equal(result.results.length, 1, worldId);
+      assert.equal(result.metrics.executed, result.runs, worldId);
+      assert.equal(current.kernelStep, result.runs, worldId);
+      if (worldId === 'grid') {
+        assert.equal(result.status, 'HALTED', worldId);
+        assert.equal(result.stopReason, 'EXECUTION_REJECTED', worldId);
+        assert.equal(result.runs, 1, worldId);
+      } else {
+        assert.equal(result.status, 'COMPLETED', worldId);
+        assert.equal(result.stopReason, 'INTERRUPTED', worldId);
+        assert.equal(result.runs, 4, worldId);
+      }
+    }
   });
 });
 

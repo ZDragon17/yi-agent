@@ -466,5 +466,5 @@
 
 - 反例：如果每个 forever Run 都为判断 loop 所有权扫描并校验全部历史 Run，Run 数增长会把连续运行退化为历史数量的重复扫描，1000 个单步边界无法在可接受时间内完成。
 - 实现：保留显式启动和恢复时的全量 `readLoopContinuation` 审计；`startRun` 已持有唯一 writer lock 后，只从 verified current 指向的最新 terminal Run 读取并总结当前 continuation。正常账本的唯一 active continuation 仍由此前的 startRun 原子所有权约束保证，历史全量扫描继续作为显式恢复/审计路径。
-- 验证：1000 个单步 forever Run 在真实 Runtime 中完成，内存结果仍只保留最近一个 Run，最终 current 与累计指标一致；既有全量账本、恢复、Replay 和跨 WorldPort 测试保持通过。
+- 验证：1000 个单步 forever Run 在真实 Runtime 中完成，内存结果仍只保留最近一个 Run，最终 current 与累计指标一致；随后通过全量 continuation 审计恢复，并从第 1001 个逻辑 Run 继续；既有全量账本、恢复、Replay 和跨 WorldPort 测试保持通过。
 - 边界：该优化不改变账本真相或绕过当前 Run 的结构校验；若同一用户主动篡改历史形成多个 continuation，必须通过全量 inspect/recovery 审计发现，分布式索引和无限磁盘增长仍不在 v0.1 保证范围。
