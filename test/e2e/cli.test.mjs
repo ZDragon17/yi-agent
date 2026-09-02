@@ -724,7 +724,7 @@ test('replay rejects recomputed external evidence and does not start the adapter
 });
 
 test('CLI external adapter failures do not append STEP events', async () => {
-  for (const mode of ['nonzero', 'pollution', 'timeout', 'invalid-response']) {
+  for (const mode of ['nonzero', 'pollution', 'timeout', 'invalid-response', 'truncated-response', 'wrong-response-id', 'wrong-response-version', 'duplicate-response']) {
     await withTemp(async (root) => {
       const lab = path.join(root, 'generated-lab');
       const brokenAdapter = await writeAdapterConfig(root, ['--mode', mode]);
@@ -734,6 +734,25 @@ test('CLI external adapter failures do not append STEP events', async () => {
       const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--scenario', 'generated', '--adapter', brokenAdapter, '--json');
       assert.notEqual(run.code, 0, `${mode}: run must fail`);
       assert.equal(await countLedgerSteps(lab, 'run-1'), 0, `${mode}: failed adapter appended a STEP`);
+    });
+  }
+});
+
+test('CLI keeps JSONL transport deterministic across stderr diagnostics and Windows line endings', async () => {
+  for (const mode of ['stderr-noise', 'crlf']) {
+    await withTemp(async (root) => {
+      const lab = path.join(root, `generated-${mode}`);
+      const adapter = await writeAdapterConfig(root, ['--mode', mode]);
+      const init = await invoke('init', '--lab', lab, '--world', 'generated', '--seed', `cli-${mode}-seed`, '--lab-id', `generated-${mode}`, '--adapter', adapter, '--json');
+      assert.equal(init.code, 0, `${mode}: init`);
+
+      const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--scenario', 'generated', '--adapter', adapter, '--json');
+      assert.equal(run.code, 0, `${mode}: run`);
+      assert.equal(run.stdout[0].data.status, 'COMPLETED', `${mode}: status`);
+
+      const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+      assert.equal(replay.code, 0, `${mode}: replay`);
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT', `${mode}: replay`);
     });
   }
 });
@@ -794,7 +813,7 @@ async function invoke(...args) {
       child.kill();
       settled = true;
       resolve({ code: null, timedOut: true, stdout: parseOutput(stdout), stderr });
-    }, 5000);
+    }, 10000);
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('close', (code) => {

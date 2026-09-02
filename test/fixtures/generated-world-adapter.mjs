@@ -33,6 +33,12 @@ rl.on('line', (line) => {
   }
   if (request.protocol !== 'yi-world-cli' || request.version !== 1) return respond(request.id, false, null);
   const result = dispatch(request.op, request.payload ?? {});
+  if (request.op !== 'hello' && mode === 'truncated-response') return process.stdout.write('{"protocol":"yi-world-cli"');
+  if (request.op !== 'hello' && mode === 'wrong-response-id') return respond(`${request.id}-wrong`, true, result);
+  if (request.op !== 'hello' && mode === 'wrong-response-version') return respond(request.id, true, result, { version: 2 });
+  if (request.op !== 'hello' && mode === 'duplicate-response') return respond(request.id, true, result, { duplicate: true });
+  if (request.op !== 'hello' && mode === 'stderr-noise') process.stderr.write('adapter diagnostic\n');
+  if (request.op !== 'hello' && mode === 'crlf') return respond(request.id, true, result, { lineEnding: '\r\n' });
   respond(request.id, true, result);
 });
 
@@ -98,6 +104,8 @@ function observation(value) {
   return { schemaVersion: 1, vector: [value.value], stateVersion: value.stateVersion, intervalId: `boundary-v7/${value.revision.toString(36)}`, evidence: [] };
 }
 
-function respond(id, ok, result) {
-  process.stdout.write(`${JSON.stringify({ protocol: 'yi-world-cli', version: 1, id, ok, result })}\n`);
+function respond(id, ok, result, { version = 1, duplicate = false, lineEnding = '\n' } = {}) {
+  const line = `${JSON.stringify({ protocol: 'yi-world-cli', version, id, ok, result })}${lineEnding}`;
+  process.stdout.write(line);
+  if (duplicate) process.stdout.write(line);
 }

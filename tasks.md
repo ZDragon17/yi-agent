@@ -475,3 +475,10 @@
 - 实现：新 loop 沿用调用方已验证的 `planningBranchingMode`，未指定时才使用 `tree-v1`；默认 `tree-v1` 在 horizon=1 可保持紧凑证据，非默认分支即使 horizon=1 也写入显式 STEP evidence；resume 仍只接受持久化的 continuation 契约，不重新接受规划配置。
 - 验证：真实 application loop 写入 `recursive-v1` 的 start 与 STEP，并完成 Replay；已有连续运行、重启恢复、全量审计和跨 WorldPort 矩阵保持通过。
 - 边界：分支模式仍是有限规划策略，不等于通用规划；CLI 当前不暴露该内部兼容参数，外部用户默认使用 `tree-v1`。
+
+## F-52 WorldPort JSONL 传输故障闭环
+
+- 反例：只验证一个理想的一次性 JSON 响应，不能推出 WorldPort 跨 Windows 子进程边界仍可判定；半帧、重复响应、错请求 ID、错协议版本和 stdout 污染都可能把“没有得到完整事实”误写成一步成功。
+- 实现：沿用现有 `yi-world-cli` 单请求/单响应边界，测试 adapter 注入截断 JSON、重复 JSONL 响应、错误 ID、错误版本、非 JSON 污染、超时和非零退出；宿主必须在外部响应完成且 envelope 严格匹配前不追加 STEP。另验证 adapter 的 stderr 诊断与 CRLF 响应不会污染 stdout 协议。
+- 验证：`test/e2e/cli.test.mjs` 对每种故障真实启动独立 adapter 子进程，并检查 Run 账本 STEP 数为零；stderr/CRLF 真实完成 `init→run→replay` 且 Replay 为 `CONSISTENT`。
+- 边界：当前仍是本地一次请求一次进程的 JSONL 协议，不等于网络流式传输的分片重组、消息确认或分布式重试保证；持久 adapter 会话、网络分区和外部效果发生后响应丢失仍需沿非幂等对账契约与人工安全门继续验证。

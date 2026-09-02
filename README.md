@@ -113,7 +113,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 纯 Kernel：数值观测、ValueSpec、不透明 Action Token、确定性随机状态；新运行使用带权绝对距离和 `tolerance` 可接受目标带，旧账本按兼容语义重放；
 - `WorldPort`：五个内置世界覆盖连续控制、受保护对象、多资源库存、离散网格和排队系统；
 - WorldPort 身份绑定：新实验把 `worldVersion` 与 `worldImplementationDigest` 写入不可变 manifest；继续运行、重启恢复和 Replay 都校验当前实现仍对应同一世界语义；没有这些字段的历史实验仅按 legacy 兼容路径读取，不宣称具备这项保证；内置摘要绑定具体 WorldPort 源码、共享 `world-port-base` 和定义元数据，不把无关世界的注册表变更误算成当前世界漂移；实现材料发生变化时必须更新摘要，摘要是发布边界的身份锚点，不是对任意不诚实注册表的数学证明；
-- 可插拔外部世界：通过受控 JSONL 子进程协议接入；
+- 可插拔外部世界：通过受控 JSONL 子进程协议接入；传输层只接受与请求 ID、协议版本严格匹配的单条响应，半帧、重复帧、stdout 污染和错误响应都会在写入 STEP 前 fail-closed；stderr 诊断和 Windows CRLF 不改变协议结果；
 - 外部版本不透明：`stateVersion`/`intervalId` 只作为 WorldPort 提供的边界标识，宿主不再强制它们包含 world id 或采用某种字符串格式；连续性仍由 revision、nonce 窗口和前后状态绑定校验；
 - 可审计运行时：事件账本、快照、锁、恢复和哈希链；
 - 证据闭环：行动前预期、行动回执、复观、验证、学习；
