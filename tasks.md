@@ -553,3 +553,10 @@
 - 实现：v23 为已验证触碰的模型重新分配统一 `modelClock` 序号，覆盖 action、rejection、relation、belief、context 五类模型及延迟 feedback 结算；共享预算仍按年龄和稳定身份淘汰，v22 及更早版本保持创建年龄语义，Replay 传入版本后不会改写旧账本。
 - 验证：Kernel 对同一容量反例断言 v22 淘汰旧 action、v23 保留被重新验证的 action，并确认压缩后 Memory 仍在 768 KiB 内；全量回归、外部 WorldPort、连续恢复和晚绑定 Oracle 继续作为独立证据。
 - 边界：证据新鲜度只是“最近被验证”的领域无关信号，不代表模型重要性、未来效用、因果真实性或语义理解；未被重新验证但仍有价值的模型仍可能被淘汰，下一步必须由新的 WorldPort 反例决定是否需要频率、置信度或多信号生存策略。
+
+## F-63 统一执行 nonce 边界
+
+- 反例：外部 WorldPort 的 `usedExecutionNonces` 原先只限制数组最多 8 项，不限制每项长度；因此状态可以携带超长 nonce，直到后续 STEP 序列化时才触发持久化大小错误。
+- 实现：公共 schema 增加 `MAX_EXECUTION_NONCE_LENGTH=256`；Kernel 的 feedback、pending credit、receipt 与外部 adapter 的状态 nonce、feedback nonce 共用该常量，保持执行身份不透明但有界。
+- 验证：外部 CLI adapter 返回超长状态 nonce 时，在第一次 `run` 的协议归一化阶段失败，且 inspect 确认没有创建 Run；既有 nonce 幂等、延迟 feedback、崩溃恢复和晚绑定 Oracle 继续通过。
+- 边界：该上限只约束本地持久化/传输标识长度，不证明外部 nonce 的密码学真实性；外部状态中的其它任意领域字段仍需要独立的状态大小与事件预算实验。

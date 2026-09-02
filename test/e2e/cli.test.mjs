@@ -831,6 +831,35 @@ test('CLI rejects oversized opaque external WorldPort boundary identifiers befor
   });
 });
 
+test('CLI rejects oversized external execution nonces before ledger append', async () => {
+  await withTemp(async (root) => {
+    const adapter = await writeAdapterConfig(root, ['--mode', 'oversized-execution-nonce']);
+    const lab = path.join(root, 'lab');
+    const init = await invoke(
+      'init',
+      '--lab', lab,
+      '--world', 'generated',
+      '--adapter', adapter,
+      '--json',
+    );
+    assert.equal(init.code, 0);
+    const result = await invoke(
+      'run',
+      '--lab', lab,
+      '--run-id', 'run-1',
+      '--steps', '1',
+      '--adapter', adapter,
+      '--json',
+    );
+    assert.notEqual(result.code, 0);
+    assert.equal(result.stdout.length, 1);
+    assert.equal(result.stdout[0].ok, false);
+    const inspect = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
+    assert.equal(inspect.code, 0);
+    assert.equal(inspect.stdout[0].data.current.lastRunId, null);
+  });
+});
+
 async function invoke(...args) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });

@@ -1,6 +1,10 @@
 import readline from 'node:readline';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { canonicalDigest, MAX_BOUNDARY_IDENTIFIER_LENGTH } from '../../src/runtime/schema.mjs';
+import {
+  canonicalDigest,
+  MAX_BOUNDARY_IDENTIFIER_LENGTH,
+  MAX_EXECUTION_NONCE_LENGTH,
+} from '../../src/runtime/schema.mjs';
 import { attestationFor, ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
 
 const modeIndex = process.argv.indexOf('--mode');
@@ -85,12 +89,17 @@ function dispatch(op, payload) {
 }
 
 function state(value, executionNonce = null) {
+  const usedExecutionNonces = executionNonce === null
+    ? mode === 'oversized-execution-nonce'
+      ? ['x'.repeat(MAX_EXECUTION_NONCE_LENGTH + 1)]
+      : []
+    : [executionNonce];
   return {
     schemaVersion: 1,
     stateVersion: stateVersionFor(value),
     revision: value,
     value,
-    usedExecutionNonces: executionNonce === null ? [] : [executionNonce],
+    usedExecutionNonces,
   };
 }
 

@@ -6,6 +6,7 @@ import {
   canonicalDigest,
   canonicalJson,
   MAX_BOUNDARY_IDENTIFIER_LENGTH,
+  MAX_EXECUTION_NONCE_LENGTH,
   SCHEMA_VERSION,
 } from '../runtime/schema.mjs';
 import {
@@ -383,7 +384,7 @@ function normalizeExternalState(value, worldId, field) {
     !isBoundedIdentifier(value.stateVersion) ||
     !Number.isSafeInteger(value.revision) || value.revision < 0 ||
     !Array.isArray(value.usedExecutionNonces) || value.usedExecutionNonces.length > 8 ||
-    value.usedExecutionNonces.some((nonce) => typeof nonce !== 'string' || nonce.length === 0) ||
+    value.usedExecutionNonces.some((nonce) => !isBoundedExecutionNonce(nonce)) ||
     new Set(value.usedExecutionNonces).size !== value.usedExecutionNonces.length
   ) {
     throw new ExternalWorldProtocolError('External WorldPort state violates the base state contract.', { field });
@@ -426,7 +427,7 @@ function validateExternalFeedback(value, field, expectedDimensions) {
       'schemaVersion', 'executionNonce', 'stateVersion', 'intervalId', 'vector', 'confounderCount',
     ], itemField);
     if (source.schemaVersion !== SCHEMA_VERSION ||
-        typeof source.executionNonce !== 'string' || source.executionNonce.length === 0 || source.executionNonce.length > 256 ||
+        !isBoundedExecutionNonce(source.executionNonce) ||
         seen.has(source.executionNonce) ||
         !isBoundedIdentifier(source.stateVersion) ||
         !isBoundedIdentifier(source.intervalId) ||
@@ -442,6 +443,10 @@ function validateExternalFeedback(value, field, expectedDimensions) {
 
 function isBoundedIdentifier(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_BOUNDARY_IDENTIFIER_LENGTH;
+}
+
+function isBoundedExecutionNonce(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_EXECUTION_NONCE_LENGTH;
 }
 
 function assertBoundedIdentifier(value, field) {
