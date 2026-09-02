@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canonicalDigest } from '../../src/runtime/schema.mjs';
+import {
+  MAX_PERSISTED_MEMORY_BYTES,
+  canonicalDigest,
+  canonicalJson,
+} from '../../src/runtime/schema.mjs';
 
 const KERNEL_ENTRY = new URL('../../src/kernel/index.mjs', import.meta.url);
 
@@ -1395,7 +1399,7 @@ test('verified learning evicts the oldest bounded relation, belief, and context 
     ...memoryWithModels([]),
     relationModels: fullNestedModels(),
   });
-  assert.equal(countNestedModels(relationUpdated.nextMemory.relationModels), 8192);
+  assert.ok(countNestedModels(relationUpdated.nextMemory.relationModels) <= 8192);
   assert.equal(Object.hasOwn(relationUpdated.nextMemory.relationModels[TOKEN_A], 'r1:--'), false);
   assert.equal(Object.hasOwn(relationUpdated.nextMemory.relationModels[TOKEN_A], 'r1:++'), true);
 
@@ -1407,7 +1411,7 @@ test('verified learning evicts the oldest bounded relation, belief, and context 
     ...memoryWithModels([]),
     beliefModels: fullBeliefModels(),
   });
-  assert.equal(countNestedModels(beliefUpdated.nextMemory.beliefModels), 8192);
+  assert.ok(countNestedModels(beliefUpdated.nextMemory.beliefModels) <= 8192);
   assert.equal(Object.hasOwn(beliefUpdated.nextMemory.beliefModels[TOKEN_A], 'r1:--'), false);
   assert.equal(Object.hasOwn(beliefUpdated.nextMemory.beliefModels[TOKEN_A], 'r1:++'), true);
 
@@ -1425,7 +1429,7 @@ test('verified learning evicts the oldest bounded relation, belief, and context 
     recentHistory: [],
   });
   const currentContextKey = `h1:${canonicalDigest([])}`;
-  assert.equal(countNestedModels(contextUpdated.nextMemory.contextModels), 8192);
+  assert.ok(countNestedModels(contextUpdated.nextMemory.contextModels) <= 8192);
   assert.equal(Object.hasOwn(contextUpdated.nextMemory.contextModels, firstContextKey), false);
   assert.equal(Object.hasOwn(contextUpdated.nextMemory.contextModels, currentContextKey), true);
 
@@ -1455,7 +1459,7 @@ test('verified learning evicts the oldest bounded relation, belief, and context 
     postObservation: acceptedInput.postObservation,
     verification: acceptedVerification,
   });
-  assert.equal(Object.keys(actionUpdated.nextMemory.actionModels).length, 8192);
+  assert.ok(Object.keys(actionUpdated.nextMemory.actionModels).length <= 8192);
   assert.equal(Object.hasOwn(actionUpdated.nextMemory.actionModels, TOKEN_A), false);
   assert.equal(Object.hasOwn(actionUpdated.nextMemory.actionModels, newActionToken), true);
   assert.equal(Object.hasOwn(actionUpdated.nextMemory.lastVerifiedSteps, TOKEN_A), false);
@@ -1484,6 +1488,15 @@ test('verified learning evicts the oldest bounded relation, belief, and context 
   assert.equal(Object.keys(rejectionUpdated.nextMemory.rejectionModels).length, 8192);
   assert.equal(Object.hasOwn(rejectionUpdated.nextMemory.rejectionModels, TOKEN_A), false);
   assert.equal(Object.hasOwn(rejectionUpdated.nextMemory.rejectionModels, newActionToken), true);
+
+  const combinedUpdated = runLearning({
+    ...memoryWithModels([]),
+    actionModels: fullActionModels,
+    rejectionModels: fullRejectionModels,
+  });
+  assert.ok(
+    Buffer.byteLength(canonicalJson(combinedUpdated.nextMemory), 'utf8') <= MAX_PERSISTED_MEMORY_BYTES,
+  );
 });
 
 test('persistent model age makes eviction independent of JSON key order', async () => {

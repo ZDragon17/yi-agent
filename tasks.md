@@ -525,3 +525,10 @@
 - 实现：将 `lastVerifiedSteps` 维护提升为 Memory 克隆后的派生不变量，按当前 action、relation、belief、context 四类可复用模型扫描并删除孤儿索引；因此总体模型淘汰后仍有嵌套证据时保留，所有证据消失时清理。
 - 验证：Kernel 构造关系模型达到 8192 项、移除没有根模型的最老 Token 后确认关系数量不变、该 Token 的索引消失、当前 Token 的学习结果保留；F-57 的根模型淘汰/关系保留场景、全量回归和晚绑定 Oracle 继续通过。
 - 边界：这保证索引与证据生命周期一致，不改变有限容量下的淘汰选择，也不解决跨模型族共享生存预算、重要性排序或防止高价值模型被创建年龄淘汰。
+
+## F-59 共享持久化生存预算
+
+- 反例：各模型族分别限制为 8192 项，仍允许 action、rejection、relation、belief、context 同时增长；一个可由 Kernel 产生的 Memory 在真实 `LabStore.append` 中达到 1,670,385 字节，触发 `Ledger event payload exceeds the size limit`，连续 Agent 会因内部记忆而停机。
+- 实现：将 1 MiB 事件上限与 768 KiB Memory 预算提升为公共 schema 契约。Kernel 在可持久化 Memory 克隆阶段统计规范 JSON 字节数，跨五类模型按 `modelAge`、规范化路径稳定淘汰，批量重算以控制长跑 CPU；淘汰后清理孤儿 `lastVerifiedSteps` 并重建 `modelAges`，旧的无年龄 Memory 继续使用兼容的稳定映射顺序。
+- 验证：真实存储入口复现超限；Kernel 覆盖单族容量、跨族合并、年龄顺序、F-57/F-58 新鲜度及现有 Replay/连续运行契约；最终持久化 Memory 不超过共享预算。
+- 边界：768 KiB 是为当前 1 MiB STEP 包保留证据余量的持久化预算，不是语义重要性评分；单个非模型字段若独占事件上限仍会被存储层拒绝，后续需要由新的可观察反例决定是否继续压缩证据表示。

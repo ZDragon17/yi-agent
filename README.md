@@ -133,6 +133,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 模型年龄状态原子性：v21 的 `modelAge/modelAges` 只有在同一 Memory 同时带有 `modelClock` 时才是合法表示；缺少时钟的半版本状态会在 `step`/`learn` 入口 fail-closed，避免同一语义账本在后续容量淘汰中退回依赖 JSON 插入顺序；v20 及更早账本不携带年龄状态，继续使用各自历史语义；
 - 证据新鲜度与淘汰一致：当 Token 的总体 `actionModel` 被容量淘汰、但关系/信念/历史上下文模型仍保留时，`lastVerifiedSteps` 继续绑定这些可复用证据；后续选择仍能进入周期再验证，而不是以 `verificationAge:null` 永久绕过变化检测。只有该 Token 已无其它可复用模型证据时，才清理新鲜度索引；
 - 新鲜度索引无孤儿：关系、信念或历史上下文模型被单独淘汰后，Memory 克隆会按当前所有可复用模型重新校验 `lastVerifiedSteps`；没有任何可复用证据的 Token 不会留下无效新鲜度记录，避免索引与模型生命周期分叉；
+- 共享持久化生存预算：v22 将事件上限（1 MiB）与 Kernel 的 Memory 预算（768 KiB）放进同一份 schema 契约；输出持久化 Memory 前，跨 action/rejection/relation/belief/context 模型按持久年龄统一淘汰，保留 STEP 证据包的序列化余量，并在淘汰后重建紧凑年龄索引。各模型族分别有数量上限并不等于整个 STEP 有界；该预算修复了多族同时增长导致真实 `LabStore` 追加失败的问题，但仍是确定性容量遗忘，不等于重要性学习或无限长期记忆；
 - 共享观测边界保护：v7 还会识别同一 `stateVersion + intervalId` 承载多个新 feedback 的情况，即使 adapter 把它们标为 clean，也全部记为 `AMBIGUOUS` 且不学习，避免一份无法分解的快照被复制到多个动作；旧 v6 账本按旧归因语义 Replay；
 - 监督器证据对齐：`kernelLearningVersion: 9` 的新 STEP 当本步先结算了新的延迟 feedback 时，变化监督器不会把合并观测中的旧动作进步记成当前动作的确认进步；已结算收据仍按 nonce 学习，当前动作和目标监督各自保守处理；旧版本 Replay 保持原监督语义；
 - 变化监督器：用同一套目标距离、确认进步、停滞、重规划和停止判定约束不同世界；状态随 STEP、快照、终态和恢复账本连续保存，跨进程 CLI 可继续运行；

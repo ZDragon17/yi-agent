@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 
 export const SCHEMA_VERSION = 1;
+// The ledger stores each STEP as one bounded JSON event. Kernel memory keeps
+// headroom for the rest of that envelope instead of consuming the full event.
+export const MAX_PERSISTED_EVENT_BYTES = 1024 * 1024;
+export const MAX_PERSISTED_MEMORY_BYTES = 768 * 1024;
 const MAX_JSON_DEPTH = 128;
 
 export function canonicalJson(value) {

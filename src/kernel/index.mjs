@@ -1,4 +1,8 @@
-import { canonicalDigest } from '../runtime/schema.mjs';
+import {
+  MAX_PERSISTED_MEMORY_BYTES,
+  canonicalDigest,
+  canonicalJson,
+} from '../runtime/schema.mjs';
 
 const SCHEMA_VERSION = 1;
 const CONTRACT_ERROR_CODE = 'KERNEL_CONTRACT_VIOLATION';
@@ -29,6 +33,7 @@ const MAX_CONTEXT_MODELS = 8192;
 // h1 remains the reusable generalization layer for ordinary continuous runs.
 const MAX_LONG_CONTEXTS = 1;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
+const PERSISTED_MEMORY_TRIM_BATCH = 64;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const HISTORY_ACCUMULATOR_HEX_LENGTH = 64;
 const HISTORY_ACCUMULATOR_PATTERN = /^[0-9a-f]{64}$/u;
@@ -2961,7 +2966,6 @@ function compactNestedModelAges(models) {
 }
 
 function cloneMemory(value, { compactAges = true } = {}) {
-  const compactModelAges = compactAges ? compactModelAgeState(value) : undefined;
   const actionModels = {};
   for (const [token, model] of Object.entries(value.actionModels)) {
     actionModels[token] = {
@@ -2969,7 +2973,7 @@ function cloneMemory(value, { compactAges = true } = {}) {
       sampleCount: model.sampleCount,
       meanDelta: cloneVector(model.meanDelta),
       uncertainty: model.uncertainty,
-      ...(compactModelAges === undefined && model.modelAge !== undefined ? { modelAge: model.modelAge } : {}),
+      ...(model.modelAge === undefined ? {} : { modelAge: model.modelAge }),
     };
   }
   const cloned = {
@@ -2978,7 +2982,6 @@ function cloneMemory(value, { compactAges = true } = {}) {
   };
   TOP_LEVEL_MODEL_COUNTS.set(cloned.actionModels, Object.keys(actionModels).length);
   if (value.modelClock !== undefined) cloned.modelClock = value.modelClock;
-  if (compactModelAges !== undefined) cloned.modelAges = compactModelAges;
   if (value.pendingCreditPolicy !== undefined) {
     cloned.pendingCreditPolicy = {
       schemaVersion: SCHEMA_VERSION,
@@ -2994,7 +2997,7 @@ function cloneMemory(value, { compactAges = true } = {}) {
           sampleCount: model.sampleCount,
           meanDelta: cloneVector(model.meanDelta),
           uncertainty: model.uncertainty,
-          ...(compactModelAges === undefined && model.modelAge !== undefined ? { modelAge: model.modelAge } : {}),
+          ...(model.modelAge === undefined ? {} : { modelAge: model.modelAge }),
         }])),
       ]),
     );
@@ -3007,7 +3010,7 @@ function cloneMemory(value, { compactAges = true } = {}) {
         sampleCount: model.sampleCount,
         rejected: model.rejected,
         ...(model.relationKey === undefined ? {} : { relationKey: model.relationKey }),
-        ...(compactModelAges === undefined && model.modelAge !== undefined ? { modelAge: model.modelAge } : {}),
+        ...(model.modelAge === undefined ? {} : { modelAge: model.modelAge }),
       }]),
     );
     TOP_LEVEL_MODEL_COUNTS.set(cloned.rejectionModels, Object.keys(value.rejectionModels).length);
@@ -3039,7 +3042,7 @@ function cloneMemory(value, { compactAges = true } = {}) {
           schemaVersion: SCHEMA_VERSION,
           sampleCount: model.sampleCount,
           samples: model.samples.map(cloneVector),
-          ...(compactModelAges === undefined && model.modelAge !== undefined ? { modelAge: model.modelAge } : {}),
+          ...(model.modelAge === undefined ? {} : { modelAge: model.modelAge }),
         }])),
       ]),
     );
@@ -3054,7 +3057,7 @@ function cloneMemory(value, { compactAges = true } = {}) {
           sampleCount: model.sampleCount,
           meanDelta: cloneVector(model.meanDelta),
           uncertainty: model.uncertainty,
-          ...(compactModelAges === undefined && model.modelAge !== undefined ? { modelAge: model.modelAge } : {}),
+          ...(model.modelAge === undefined ? {} : { modelAge: model.modelAge }),
         }])),
       ]),
     );
@@ -3072,7 +3075,127 @@ function cloneMemory(value, { compactAges = true } = {}) {
   if (value.historyAccumulator !== undefined) cloned.historyAccumulator = value.historyAccumulator;
   if (value.lastVerifiedSteps !== undefined) cloned.lastVerifiedSteps = { ...value.lastVerifiedSteps };
   pruneOrphanedVerificationSteps(cloned);
+  if (compactAges) compactPersistedMemory(cloned);
   return cloned;
+}
+
+function compactPersistedMemory(memory) {
+  const candidates = persistedModelCandidates(memory);
+  const ageByIdentity = new Map(candidates.map((candidate) => [candidate.identity, candidate.age]));
+  const compactModelAges = compactModelAgeState(memory);
+  const canCompactAges = compactModelAges !== undefined && compactModelAges !== null;
+  if (canCompactAges) {
+    stripModelAges(memory);
+    memory.modelAges = compactModelAges;
+  }
+  let persistedBytes = Buffer.byteLength(canonicalJson(memory), 'utf8');
+  while (persistedBytes > MAX_PERSISTED_MEMORY_BYTES && candidates.length > 0) {
+    for (let index = 0; index < PERSISTED_MEMORY_TRIM_BATCH && candidates.length > 0; index += 1) {
+      const candidate = candidates.shift();
+      delete candidate.parent[candidate.key];
+      if (candidate.outerParent !== undefined && Object.keys(candidate.parent).length === 0) {
+        delete candidate.outerParent[candidate.outerKey];
+      }
+    }
+    if (canCompactAges) {
+      const nextModelAges = compactPersistedModelAges(memory, ageByIdentity);
+      if (nextModelAges === undefined) delete memory.modelAges;
+      else memory.modelAges = nextModelAges;
+    }
+    persistedBytes = Buffer.byteLength(canonicalJson(memory), 'utf8');
+  }
+  pruneOrphanedVerificationSteps(memory);
+}
+
+function compactPersistedModelAges(memory, ageByIdentity) {
+  const topLevel = (family, models) => {
+    const keys = Object.keys(models ?? {}).sort();
+    if (keys.length === 0) return undefined;
+    const ages = keys.map((key) => ageByIdentity.get(`${family}:${key}`));
+    return ages.some((age) => age === undefined)
+      ? null
+      : ages.map((age) => age.toString(36)).join(',');
+  };
+  const nested = (family, models) => {
+    const outerKeys = Object.keys(models ?? {}).sort();
+    if (outerKeys.length === 0) return undefined;
+    const result = [];
+    for (const outerKey of outerKeys) {
+      const innerKeys = Object.keys(models[outerKey]).sort();
+      const ages = innerKeys.map((innerKey) => ageByIdentity.get(`${family}:${outerKey}:${innerKey}`));
+      if (ages.some((age) => age === undefined)) return null;
+      result.push(ages.map((age) => age.toString(36)).join(','));
+    }
+    return result;
+  };
+  const states = {
+    actionModels: topLevel('action', memory.actionModels),
+    relationModels: nested('relation', memory.relationModels),
+    rejectionModels: topLevel('rejection', memory.rejectionModels),
+    beliefModels: nested('belief', memory.beliefModels),
+    contextModels: nested('context', memory.contextModels),
+  };
+  if (Object.values(states).some((state) => state === null)) return undefined;
+  if (memory.modelClock === undefined && Object.values(states).every((state) => state === undefined)) return undefined;
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    ...Object.fromEntries(Object.entries(states).filter(([, state]) => state !== undefined)),
+  };
+}
+
+function persistedModelCandidates(memory) {
+  const candidates = [];
+  const addTopLevel = (family, models) => {
+    for (const [token, model] of Object.entries(models ?? {})) {
+      candidates.push({
+        family,
+        parent: models,
+        key: token,
+        age: model.modelAge,
+        identity: `${family}:${token}`,
+      });
+    }
+  };
+  const addNested = (family, models) => {
+    for (const [outerKey, nested] of Object.entries(models ?? {})) {
+      for (const [innerKey, model] of Object.entries(nested)) {
+        candidates.push({
+          family,
+          parent: nested,
+          key: innerKey,
+          outerParent: models,
+          outerKey,
+          age: model.modelAge,
+          identity: `${family}:${outerKey}:${innerKey}`,
+        });
+      }
+    }
+  };
+
+  addTopLevel('action', memory.actionModels);
+  addTopLevel('rejection', memory.rejectionModels);
+  addNested('relation', memory.relationModels);
+  addNested('belief', memory.beliefModels);
+  addNested('context', memory.contextModels);
+  if (!candidates.every((candidate) => candidate.age !== undefined)) return candidates;
+  return candidates.sort((left, right) => {
+    return left.age - right.age || left.identity.localeCompare(right.identity);
+  });
+}
+
+function stripModelAges(memory) {
+  const stripTopLevel = (models) => {
+    for (const model of Object.values(models ?? {})) delete model.modelAge;
+  };
+  const stripNested = (models) => {
+    for (const nested of Object.values(models ?? {})) stripTopLevel(nested);
+  };
+
+  stripTopLevel(memory.actionModels);
+  stripTopLevel(memory.rejectionModels);
+  stripNested(memory.relationModels);
+  stripNested(memory.beliefModels);
+  stripNested(memory.contextModels);
 }
 
 function pruneOrphanedVerificationSteps(memory) {

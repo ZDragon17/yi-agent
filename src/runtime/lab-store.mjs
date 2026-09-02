@@ -15,6 +15,7 @@ import {
 import path from 'node:path';
 import {
   SCHEMA_VERSION,
+  MAX_PERSISTED_EVENT_BYTES,
   canonicalDigest,
   canonicalJson,
   cloneJson,
@@ -29,9 +30,9 @@ import {
 import { createChangeSupervisor, normalizeChangeSupervisorState } from '../agent/change-supervisor.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
-const MAX_JSON_BYTES = 1024 * 1024;
+const MAX_JSON_BYTES = MAX_PERSISTED_EVENT_BYTES;
 const MAX_LEDGER_BYTES = 32 * 1024 * 1024;
-const MAX_EVENT_LINE_BYTES = 1024 * 1024;
+const MAX_EVENT_LINE_BYTES = MAX_PERSISTED_EVENT_BYTES;
 const MAX_RECENT_COMMITTED_STEPS = 32;
 const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
