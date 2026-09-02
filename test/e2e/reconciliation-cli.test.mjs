@@ -99,9 +99,7 @@ test('a force-killed reconcilable non-idempotent loop recovers explicitly before
   await withTemporaryLab(async ({ root, lab }) => {
     const effectFile = path.join(root, 'force-kill-effect.json');
     const releaseFile = path.join(root, 'release-response');
-    const adapter = await writeAdapter(root, effectFile, 'APPLIED', [
-      '--two-actions', '--hold-response', '--release-file', releaseFile,
-    ]);
+    const adapter = await writeHeldAdapter(root, effectFile, releaseFile);
     const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'reconcile-force-kill', '--adapter', adapter, '--json']);
     assert.equal(init.code, 0, JSON.stringify(init));
 
@@ -119,6 +117,68 @@ test('a force-killed reconcilable non-idempotent loop recovers explicitly before
     assert.equal(resumed.code, 0, JSON.stringify(resumed));
     assert.equal(resumed.stdout[0]?.data?.status, 'COMPLETED');
     assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 3);
+  });
+});
+
+test('two auto-recovering CLIs race safely on an externally unknown loop', async () => {
+  await withTemporaryLab(async ({ root, lab }) => {
+    const effectFile = path.join(root, 'auto-recover-race-effect.json');
+    const releaseFile = path.join(root, 'auto-recover-race-release');
+    const adapter = await writeHeldAdapter(root, effectFile, releaseFile);
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'reconcile-auto-recover-race',
+      '--adapter', adapter, '--json',
+    ]);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const killed = await invokeUntilCrashAfterEffect([
+      'agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '3', '--scenario', 'idempotent',
+      '--kernel-only', '--adapter', adapter, '--json',
+    ], effectFile, releaseFile);
+    assert.notEqual(killed.code, 0, 'the first CLI must crash after the external effect is applied');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const crashedRunIds = await readdir(path.join(lab, 'runs'));
+    assert.equal(crashedRunIds.length, 1, JSON.stringify(crashedRunIds));
+    const crashedRunId = crashedRunIds[0];
+    const crashedEvents = (await readFile(path.join(lab, 'runs', crashedRunId, 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    assert.equal(crashedEvents.at(-1)?.kind, 'RUN_STARTED');
+    assert.equal(await fileExists(path.join(lab, 'runs', crashedRunId, 'external-transition.json')), true);
+
+    const resumes = await Promise.all([
+      invoke([
+        'agent', 'loop', '--lab', lab, '--resume', '--auto-recover', '--kernel-only', '--adapter', adapter, '--json',
+      ], 30_000),
+      invoke([
+        'agent', 'loop', '--lab', lab, '--resume', '--auto-recover', '--kernel-only', '--adapter', adapter, '--json',
+      ], 30_000),
+    ]);
+    assert.ok(
+      resumes.some((result) => result.code === 0 && result.stdout[0]?.data?.status === 'COMPLETED'),
+      JSON.stringify(resumes),
+    );
+
+    const runIds = await readdir(path.join(lab, 'runs'));
+    assert.equal(new Set(runIds).size, runIds.length, JSON.stringify(runIds));
+    assert.equal(runIds.length, 4, 'one halted crash attempt plus three logical Runs are expected');
+
+    let unknownRecoveryCount = 0;
+    const completedRunIds = [];
+    for (const runId of runIds) {
+      const events = (await readFile(path.join(lab, 'runs', runId, 'events.jsonl'), 'utf8'))
+        .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+      const terminal = events.at(-1);
+      if (terminal?.payload?.reason === 'EXTERNAL_TRANSITION_UNKNOWN') unknownRecoveryCount += 1;
+      if (terminal?.payload?.terminalStatus !== 'COMPLETED') continue;
+      completedRunIds.push(runId);
+      const replay = await invoke(['replay', '--lab', lab, '--run', runId, '--adapter', adapter, '--json']);
+      assert.equal(replay.code, 0, `${runId} replay: ${JSON.stringify(replay)}`);
+      assert.equal(replay.stdout[0]?.data?.verdict, 'CONSISTENT', `${runId} replay must remain consistent`);
+    }
+    assert.equal(unknownRecoveryCount, 1, 'the crashed external transition must be recovered exactly once');
+    assert.equal(completedRunIds.length, 3, JSON.stringify(completedRunIds));
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, completedRunIds.length);
   });
 });
 
@@ -151,6 +211,26 @@ async function writeAdapter(root, effectFile, reconciliationStatus, fixtureArgs 
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
     args: [wrapper, FIXTURE, '--effect-file', effectFile, ...fixtureArgs, '--reconciliation-status', reconciliationStatus],
+    adapterId: 'idempotent-transition-adapter-v1',
+    worldId: 'idempotent-transition',
+    timeoutMs: 10_000,
+  }));
+  return config;
+}
+
+async function writeHeldAdapter(root, effectFile, releaseFile) {
+  const config = path.join(root, 'held-transition-adapter.json');
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [
+      FIXTURE,
+      '--effect-file', effectFile,
+      '--two-actions',
+      '--non-idempotent',
+      '--reconcilable',
+      '--hold-response',
+      '--release-file', releaseFile,
+    ],
     adapterId: 'idempotent-transition-adapter-v1',
     worldId: 'idempotent-transition',
     timeoutMs: 10_000,
@@ -237,6 +317,16 @@ async function countSteps(lab, runId) {
   }
 }
 
+async function fileExists(file) {
+  try {
+    await readFile(file);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 function parseJsonLines(value) {
   return value.trim() === '' ? [] : value.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
 }
@@ -279,6 +369,43 @@ function invokeUntilEffectThenKill(args, effectFile, releaseFile, timeoutMs = 20
           .catch(reject);
       })
       .catch(reject);
+  });
+}
+
+async function invokeUntilCrashAfterEffect(args, effectFile, releaseFile, timeoutMs = 20_000) {
+  const child = spawn(process.execPath, [CLI, ...args], {
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const closed = waitForClose(child, timeoutMs);
+  try {
+    await waitForEffect(effectFile, timeoutMs);
+    assert.equal(child.kill(), true, 'the first CLI must be killable while the response is withheld');
+    const result = await closed;
+    return { code: result.code, timedOut: false, stdout: parseJsonLines(stdout), stderr };
+  } finally {
+    await writeFile(releaseFile, 'release-response').catch(() => {});
+  }
+}
+
+function waitForClose(child, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error(`child did not exit within ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('close', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal });
+    });
   });
 }
 

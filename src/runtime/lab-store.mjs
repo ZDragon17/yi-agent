@@ -649,6 +649,7 @@ class ActiveRun {
     this.operationTail = Promise.resolve();
     this.lastStepState = null;
     this.expectedState = cloneJson(start.initialState);
+    this.expectedStateDigest = canonicalDigest(this.expectedState);
     this.committedSteps = new Map();
     this.knownExecutionNonces = new Set();
     this.needsLedgerReconcile = false;
@@ -695,8 +696,9 @@ class ActiveRun {
       return cloneJson(committed.event);
     }
     if (
-      payload.beforeDigest !== canonicalDigest(this.expectedState) ||
-      canonicalJson(payload.rngBefore) !== canonicalJson(this.expectedState.rngState)
+      payload.beforeDigest !== this.expectedStateDigest ||
+      (payload.rngBefore !== this.expectedState.rngState &&
+        canonicalJson(payload.rngBefore) !== canonicalJson(this.expectedState.rngState))
     ) conflict('STEP before-state evidence does not continue the prior state.', { runId: this.start.runId });
     let event;
     try {
@@ -719,6 +721,7 @@ class ActiveRun {
     this.lastEvent = event;
     this.lastStepState = payload.afterState;
     this.expectedState = payload.afterState;
+    this.expectedStateDigest = payload.afterDigest;
     this.rememberCommittedStep(executionNonce, event, payload);
     inject(options.failpoint ?? this.failpoint, `${kind}:appended`);
     return options.returnReference === true ? event : cloneJson(event);
@@ -1029,6 +1032,7 @@ class ActiveRun {
       this.lastEvent = event;
       this.lastStepState = event.payload.afterState;
       this.expectedState = event.payload.afterState;
+      this.expectedStateDigest = event.payload.afterDigest;
     }
     this.needsLedgerReconcile = false;
   }
@@ -1207,20 +1211,23 @@ async function appendLedgerEvent(
   const storedEvent = compactStorage && input.kind === 'STEP'
     ? encodeStoredLedgerEvent(event, payloadJson)
     : event;
-  const line = `${canonicalJson(storedEvent)}\n`;
-  if (Buffer.byteLength(line) > MAX_EVENT_LINE_BYTES) {
+  const line = compactStorage && input.kind === 'STEP'
+    ? canonicalStoredLedgerLine(storedEvent)
+    : `${canonicalJson(storedEvent)}\n`;
+  const lineBuffer = Buffer.from(line, 'utf8');
+  if (lineBuffer.byteLength > MAX_EVENT_LINE_BYTES) {
     throw new LabStoreError('INVALID_INPUT', 'Ledger event exceeds the size limit.', { runId, sequence });
   }
   const handle = existingHandle ?? await open(eventsPath, 'a', 0o600);
   const ownsHandle = existingHandle === null;
   try {
-    const lineBytes = Buffer.byteLength(line);
+    const lineBytes = lineBuffer.byteLength;
     const status = ledgerOwner === null ? await handle.stat() : null;
     const currentBytes = ledgerOwner === null ? status.size : ledgerOwner.ledgerBytes;
     if ((status !== null && !status.isFile()) || currentBytes === undefined || currentBytes === null || currentBytes + lineBytes > MAX_LEDGER_BYTES) {
       corrupt('Ledger exceeds the size limit.', { runId });
     }
-    await handle.writeFile(line, 'utf8');
+    await writeComplete(handle, lineBuffer);
     inject(failpoint, 'ledger:after-write-before-sync');
     if (syncLedger) await handle.datasync();
     if (ledgerOwner !== null) ledgerOwner.ledgerBytes += lineBytes;
@@ -1228,6 +1235,17 @@ async function appendLedgerEvent(
     if (ownsHandle) await handle.close();
   }
   return event;
+}
+
+async function writeComplete(handle, buffer) {
+  let offset = 0;
+  while (offset < buffer.byteLength) {
+    const result = await handle.write(buffer, offset, buffer.byteLength - offset, null);
+    if (!Number.isSafeInteger(result.bytesWritten) || result.bytesWritten <= 0) {
+      throw new LabStoreError('IO_ERROR', 'Ledger write made no progress.', {});
+    }
+    offset += result.bytesWritten;
+  }
 }
 
 function digestLedgerEvent(event, payloadJson) {
@@ -1250,6 +1268,12 @@ function encodeStoredLedgerEvent(event, payloadJson) {
     ...event,
     payload: compressedPayload.toString('base64'),
   };
+}
+
+function canonicalStoredLedgerLine(event) {
+  // Keep the same lexicographic key order as canonicalJson without sorting the
+  // already fixed-shape compact STEP envelope on every long-run append.
+  return `{"digest":${JSON.stringify(event.digest)},"kind":${JSON.stringify(event.kind)},"payload":${JSON.stringify(event.payload)},"prevDigest":${JSON.stringify(event.prevDigest)},"runId":${JSON.stringify(event.runId)},"schemaVersion":${event.schemaVersion},"sequence":${event.sequence}}\n`;
 }
 
 function decodeStoredLedgerEvent(event, runId, sequence) {
@@ -2630,10 +2654,23 @@ async function atomicWriteJson(root, target, value, beforePublish, exclusive = f
     await writeFileFlushed(staging, content, { exclusive: true });
     if (beforePublish) await beforePublish();
     if (exclusive && await pathExists(target)) conflict('Immutable target was published concurrently.', {});
-    await rename(staging, target);
+    if (exclusive) {
+      try {
+        // A rename can replace a target between the existence check and the
+        // publish on Windows. A same-directory hard link makes this commit
+        // genuinely create-if-absent.
+        await link(staging, target);
+      } catch (error) {
+        if (error?.code === 'EEXIST') conflict('Immutable target was published concurrently.', {});
+        throw error;
+      }
+    } else {
+      await rename(staging, target);
+    }
   } catch (error) {
-    await rm(staging, { force: true }).catch(() => {});
     throw error;
+  } finally {
+    await rm(staging, { force: true }).catch(() => {});
   }
   return cloneJson(value);
 }
