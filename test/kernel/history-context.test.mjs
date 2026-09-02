@@ -346,6 +346,56 @@ test('F-57 preserves revalidation freshness when action eviction leaves a relati
   );
 });
 
+test('F-58 prunes verification freshness when relation eviction removes the last reusable model', () => {
+  const relationTokens = Array.from({ length: 8191 }, (_, index) =>
+    `tok_F58${(index + 1).toString(36).toUpperCase().padStart(8, '0')}`,
+  );
+  const relationModels = {
+    [TARGET_A]: {
+      'r1:+': {
+        ...model([1]),
+        modelAge: 1,
+      },
+    },
+    ...Object.fromEntries(relationTokens.map((token, index) => [token, {
+      'r1:+': {
+        ...model([0]),
+        modelAge: index + 2,
+      },
+    }])),
+  };
+  const memory = {
+    schemaVersion: 1,
+    actionModels: {
+      [TARGET_B]: {
+        ...model([0]),
+        modelAge: relationTokens.length + 2,
+      },
+    },
+    relationModels,
+    historyClock: 100,
+    lastVerifiedSteps: { [TARGET_A]: 1 },
+    modelClock: relationTokens.length + 2,
+  };
+  const before = observation([0], 'state:f58:before');
+  const intent = choose(TARGET_B, before, memory, 67);
+  const receiptValue = receipt(TARGET_B, before, 'execution:f58:1', true);
+  const postObservation = observation([1], 'state:f58:after');
+  const verification = verify({ intent, receipt: receiptValue, postObservation });
+  const update = learn({
+    memory,
+    intent,
+    receipt: receiptValue,
+    postObservation,
+    verification,
+  });
+
+  assert.equal(Object.hasOwn(update.nextMemory.relationModels, TARGET_A), false);
+  assert.equal(update.nextMemory.lastVerifiedSteps?.[TARGET_A], undefined);
+  assert.equal(update.nextMemory.actionModels[TARGET_B].sampleCount, 2);
+  assert.equal(update.nextMemory.relationModels[TARGET_B]['r1:+'].meanDelta[0], 1);
+});
+
 function newMemory() {
   return {
     schemaVersion: 1,

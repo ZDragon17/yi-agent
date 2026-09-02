@@ -1595,10 +1595,9 @@ function recordActionEvidence(memory, {
   field,
 }) {
   let existing = memory.actionModels[token];
-  let evictedToken;
   let actionModelCount = existing === undefined ? cachedTopLevelModelCount(memory.actionModels) : null;
   if (existing === undefined && actionModelCount >= MAX_ACTION_MODELS) {
-    evictedToken = evictOldestTopLevelModel(memory.actionModels);
+    const evictedToken = evictOldestTopLevelModel(memory.actionModels);
     if (evictedToken === undefined) {
       contractViolation('kernel learning has no evictable action model', {
         field: `${field}.actionModels`,
@@ -1656,10 +1655,7 @@ function recordActionEvidence(memory, {
     }
     memory.lastVerifiedSteps[token] = historyOrder;
   }
-  if (relationKey === undefined) {
-    pruneVerificationStepIfNoAuxiliaryModels(memory, evictedToken);
-    return;
-  }
+  if (relationKey === undefined) return;
 
   let relationModels = memory.relationModels ?? {};
   let tokenRelations = { ...(relationModels[token] ?? {}) };
@@ -1699,17 +1695,6 @@ function recordActionEvidence(memory, {
   NESTED_MODEL_COUNTS.set(memory.relationModels, existingRelation === undefined
     ? relationModelCount + 1
     : countRelationModels(relationModels));
-  pruneVerificationStepIfNoAuxiliaryModels(memory, evictedToken);
-}
-
-function pruneVerificationStepIfNoAuxiliaryModels(memory, token) {
-  if (token === undefined || memory.lastVerifiedSteps === undefined) return;
-  if (
-    Object.keys(memory.relationModels?.[token] ?? {}).length > 0 ||
-    Object.keys(memory.beliefModels?.[token] ?? {}).length > 0 ||
-    Object.values(memory.contextModels ?? {}).some((models) => Object.hasOwn(models, token))
-  ) return;
-  delete memory.lastVerifiedSteps[token];
 }
 
 function recordContextEvidence(memory, {
@@ -3086,7 +3071,22 @@ function cloneMemory(value, { compactAges = true } = {}) {
   if (value.historyClock !== undefined) cloned.historyClock = value.historyClock;
   if (value.historyAccumulator !== undefined) cloned.historyAccumulator = value.historyAccumulator;
   if (value.lastVerifiedSteps !== undefined) cloned.lastVerifiedSteps = { ...value.lastVerifiedSteps };
+  pruneOrphanedVerificationSteps(cloned);
   return cloned;
+}
+
+function pruneOrphanedVerificationSteps(memory) {
+  if (memory.lastVerifiedSteps === undefined) return;
+  for (const token of Object.keys(memory.lastVerifiedSteps)) {
+    if (!hasReusableModelEvidence(memory, token)) delete memory.lastVerifiedSteps[token];
+  }
+}
+
+function hasReusableModelEvidence(memory, token) {
+  return Object.hasOwn(memory.actionModels, token) ||
+    Object.keys(memory.relationModels?.[token] ?? {}).length > 0 ||
+    Object.keys(memory.beliefModels?.[token] ?? {}).length > 0 ||
+    Object.values(memory.contextModels ?? {}).some((models) => Object.hasOwn(models, token));
 }
 
 function cloneObservation(value) {
