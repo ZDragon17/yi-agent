@@ -1547,6 +1547,71 @@ test('persistent model age makes eviction independent of JSON key order', async 
   );
 });
 
+test('kernel rejects model-age state without modelClock before step or learn can alter eviction semantics', async () => {
+  const { learn, step, verify } = await loadKernel();
+  const baseModel = (overrides = {}) => ({
+    schemaVersion: 1,
+    sampleCount: 1,
+    meanDelta: [0, 0],
+    uncertainty: 0,
+    ...overrides,
+  });
+  const modelAges = {
+    schemaVersion: 1,
+    actionModels: '1,2',
+  };
+  const invalidMemories = [
+    {
+      name: 'per-model modelAge without modelClock',
+      memory: {
+        schemaVersion: 1,
+        actionModels: {
+          [TOKEN_A]: baseModel({ modelAge: 1 }),
+          [TOKEN_B]: baseModel({ modelAge: 2 }),
+        },
+      },
+    },
+    {
+      name: 'compact modelAges without modelClock',
+      memory: {
+        schemaVersion: 1,
+        actionModels: {
+          [TOKEN_A]: baseModel(),
+          [TOKEN_B]: baseModel(),
+        },
+        modelAges,
+      },
+    },
+  ];
+  const stepInput = {
+    observation: observation([0, 0], 'state-1'),
+    valueSpec: valueSpec([1, 1]),
+    capabilities: [capability(TOKEN_A), capability(TOKEN_B)],
+    rngState: rngState(0x1234abcd),
+  };
+  const request = actionRequest();
+  const learnInput = makeVerifyInput({
+    intent: intentForRequest(request),
+    receipt: receiptForRequest(request),
+  });
+  const verification = verify(learnInput);
+
+  // Regression: before the modelClock boundary was enforced, these inputs were
+  // accepted and capacity eviction could depend on JSON key insertion order.
+  for (const { name, memory } of invalidMemories) {
+    await assert.rejects(
+      async () => step({ ...stepInput, memory }),
+      (error) => error?.code === 'KERNEL_CONTRACT_VIOLATION',
+      `${name}: step must fail closed`,
+    );
+    await assert.rejects(
+      async () => learn({ ...learnInput, memory, verification }),
+      (error) => error?.code === 'KERNEL_CONTRACT_VIOLATION',
+      `${name}: learn must fail closed`,
+    );
+  }
+});
+
 test('kernel rejects oversized numeric and capability surfaces before prediction work', async () => {
   const { step } = await loadKernel();
   const dimensions = 1025;

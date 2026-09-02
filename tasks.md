@@ -504,3 +504,10 @@
 - 实现：`kernelLearningVersion: 21` 用每个模型的 `modelAge` 和 Memory 级 `modelClock` 表达统一创建序列；新增模型递增时钟，更新模型保留年龄，顶层及嵌套淘汰按最小年龄、再按规范化身份决胜。缺少年龄的 v20 及更早 Memory 保留原稳定映射顺序，并由 Replay 对新字段做版本投影。
 - 验证：Kernel 对同一年龄映射的正序/逆序 JSON Memory 均淘汰同一最老 Token、生成同一新年龄；应用/Runtime、NFR、CLI E2E、全量回归与多 WorldPort 连续/重启/Replay 继续验证。第一版顺序表的 ledger 超限作为失败边界保留在本记录中。
 - 边界：年龄只表达创建先后，不等于价值、频率、因果可信度或语义重要性；模型族仍独立受容量限制，真正的跨模型重要性与遗忘策略仍需新的可证伪 WorldPort 反例。
+
+## F-56 模型年龄状态的原子契约
+
+- 反例：Memory 若携带 `modelAge` 或紧凑 `modelAges` 却缺少 `modelClock`，第一轮淘汰仍可能被接受；新增模型后年龄表示变成半版本状态，下一轮会回退到对象插入顺序，同一 `canonicalDigest` 的正序/逆序输入因此产生不同淘汰结果。
+- 实现：Kernel 将 `modelAge/modelAges` 与 `modelClock` 视为一个不可拆分的持久表示；没有时钟的年龄状态在 `step` 与 `learn` 的公共 Memory 校验入口统一 fail-closed。无年龄字段的 v20 及更早 Memory 不受影响，v21 的正常 Memory 仍要求全部模型年龄不超过时钟。
+- 验证：Kernel 回归覆盖逐模型年龄和紧凑年龄向量两种畸形输入，分别确认 `step`、`learn` 均拒绝；原始顺序置换反例在修复前产生分叉，修复后不再进入淘汰路径；48 个 Kernel 契约、全量回归与既有旧版本 Replay 继续通过。
+- 边界：这只保证年龄表示的版本原子性，不解决模型族独立淘汰、创建年龄不等于重要性，以及跨模型经验如何共享生存预算；后者仍需新的可观察 WorldPort 反例决定是否升级记忆实体模型。

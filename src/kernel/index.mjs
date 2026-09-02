@@ -1000,6 +1000,18 @@ function normalizeMemory(value, field, dimensions) {
       `${field}.modelAges`,
     );
   }
+  if (modelClock === undefined && (
+    source.modelAges !== undefined ||
+    hasModelAge(normalizedModels) ||
+    hasNestedModelAge(normalizedRelations) ||
+    hasModelAge(normalizedRejections) ||
+    hasNestedModelAge(normalizedBeliefs) ||
+    hasNestedModelAge(normalizedContextModels)
+  )) {
+    contractViolation('kernel model age state requires a model clock', {
+      field: `${field}.modelClock`,
+    });
+  }
   if (historyAccumulator !== undefined && historyClock === undefined) {
     contractViolation('kernel history accumulator requires a history clock', {
       field: `${field}.historyAccumulator`,
@@ -1046,6 +1058,14 @@ function normalizeMemory(value, field, dimensions) {
     ...(lastVerifiedSteps === undefined ? {} : { lastVerifiedSteps }),
     ...(modelClock === undefined ? {} : { modelClock }),
   };
+}
+
+function hasModelAge(models) {
+  return Object.values(models ?? {}).some((model) => model.modelAge !== undefined);
+}
+
+function hasNestedModelAge(models) {
+  return Object.values(models ?? {}).some((nested) => hasModelAge(nested));
 }
 
 function applyCompactModelAges(value, actionModels, relationModels, rejectionModels, beliefModels, contextModels, field) {
