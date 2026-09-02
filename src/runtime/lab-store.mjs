@@ -406,6 +406,30 @@ export class LabStore {
     )).at(0)));
   }
 
+  async readCurrentLoopContinuation() {
+    const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
+    validateCurrentShape(current);
+    if (current.status === 'RUNNING') {
+      throw new LabStoreError('BUSY', 'The current run requires recovery before a loop can resume.', {
+        runId: current.lastRunId,
+      });
+    }
+    if (current.lastRunId === null) {
+      throw new LabStoreError('NOT_FOUND', 'No persisted loop continuation exists.', {});
+    }
+    const run = await this.readRun(current.lastRunId);
+    if (run.start.continuation === undefined) {
+      throw new LabStoreError('NOT_FOUND', 'No persisted loop continuation exists.', {});
+    }
+    const continuation = validateLoopContinuation(run.start.continuation, 'run continuation', true);
+    if (continuation.planningBranchingMode === undefined) {
+      return this.readLoopContinuation();
+    }
+    const group = { continuation, runs: [run] };
+    group.planningBranchingMode = inferLoopPlanningBranchingMode(group);
+    return cloneJson(summarizeLatestLoopRun(group.continuation, group.planningBranchingMode, run));
+  }
+
   async findUnresolvedExternalTransition() {
     const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
     validateCurrentShape(current);
@@ -495,7 +519,7 @@ export class LabStore {
       if (previousCurrent.status === 'CORRUPT') corrupt('A corrupt lab cannot start a run.', {});
       let existingContinuation = null;
       try {
-        existingContinuation = await this.readLoopContinuation();
+        existingContinuation = await this.readCurrentLoopContinuation();
       } catch (error) {
         if (error?.code !== 'NOT_FOUND') throw error;
       }
@@ -1729,15 +1753,19 @@ function summarizeLoopContinuation(group) {
   }
   const runs = indexes.map((index) => attempts.get(index).at(-1));
   const last = runs.at(-1);
+  return summarizeLatestLoopRun(group.continuation, group.planningBranchingMode, last);
+}
+
+function summarizeLatestLoopRun(continuation, planningBranchingMode, last) {
   const terminal = last.events.at(-1);
   const reason = terminal.payload.reason ?? null;
   const objectiveReached = reason === 'OBJECTIVE_REACHED';
   const recoverable = isRecoverableLoopAttempt(last);
   const stopped = terminal.payload.terminalStatus === 'HALTED' &&
     !recoverable;
-  const completed = objectiveReached || (!recoverable && group.continuation.mode === 'finite' && last.start.continuation.runIndex + 1 >= group.continuation.maxRuns);
+  const completed = objectiveReached || (!recoverable && continuation.mode === 'finite' && last.start.continuation.runIndex + 1 >= continuation.maxRuns);
   return {
-    ...loopContract(group.continuation, group.planningBranchingMode),
+    ...loopContract(continuation, planningBranchingMode),
     nextRunIndex: recoverable ? last.start.continuation.runIndex : last.start.continuation.runIndex + 1,
     status: stopped ? 'STOPPED' : (completed ? 'COMPLETED' : 'ACTIVE'),
     lastRunId: last.start.runId,

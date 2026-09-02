@@ -461,3 +461,10 @@
 - 实现：`agent loop --resume --auto-recover` 先读取 writer owner 身份并确认 current 为 `RUNNING`，再调用既有 `LabStore.recover`；仅系统判定旧 owner 已死亡时接管，完成边界短暂无锁时仍复探测原 owner，避免把活跃进程误判为已完成。其他状态保留人工 `recover --confirm-lock-owner-dead` 路径。非 resume 使用自动恢复会在 CLI/Application 边界拒绝。
 - 验证：真实外部 transition 响应保持挂起时强杀 CLI，单次 `--resume --auto-recover` 完成剩余 loop 且效果不重复；旧 CLI 仍存活时并发自动恢复返回 `LIVE_OWNER/BUSY`，不新增 Run、不终止旧进程。
 - 边界：这是本地文件账本下的显式自动化；同一用户主动伪造 PID、Windows 进程终止与锁检查之间的竞态、分布式锁和真实设备安全仍不在保证范围。
+
+## F-50 forever continuation 的历史扫描边界
+
+- 反例：如果每个 forever Run 都为判断 loop 所有权扫描并校验全部历史 Run，Run 数增长会把连续运行退化为历史数量的重复扫描，1000 个单步边界无法在可接受时间内完成。
+- 实现：保留显式启动和恢复时的全量 `readLoopContinuation` 审计；`startRun` 已持有唯一 writer lock 后，只从 verified current 指向的最新 terminal Run 读取并总结当前 continuation。正常账本的唯一 active continuation 仍由此前的 startRun 原子所有权约束保证，历史全量扫描继续作为显式恢复/审计路径。
+- 验证：1000 个单步 forever Run 在真实 Runtime 中完成，内存结果仍只保留最近一个 Run，最终 current 与累计指标一致；既有全量账本、恢复、Replay 和跨 WorldPort 测试保持通过。
+- 边界：该优化不改变账本真相或绕过当前 Run 的结构校验；若同一用户主动篡改历史形成多个 continuation，必须通过全量 inspect/recovery 审计发现，分布式索引和无限磁盘增长仍不在 v0.1 保证范围。

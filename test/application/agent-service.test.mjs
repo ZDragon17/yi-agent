@@ -903,6 +903,26 @@ test('forever runner keeps in-memory result retention bounded across many run bo
   });
 });
 
+test('forever runner keeps continuation lookup bounded across a thousand run boundaries', async () => {
+  await withLab(async (lab) => {
+    const registry = createGeneratedRegistry({ stepDelta: 0 });
+    await initLab({ labPath: lab, labId: 'forever-scale-lab', worldId: 'generated', seed: 'forever-scale-seed', registry });
+    let stopChecks = 0;
+    const result = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      forever: true,
+      scenario: 'generated',
+      shouldStop: () => stopChecks++ >= 2000,
+      registry,
+    });
+    assert.equal(result.runs, 1000);
+    assert.equal(result.metrics.executed, 1000);
+    assert.equal(result.results.length, 1);
+    assert.equal((await inspectLab({ labPath: lab, registry })).current.kernelStep, 1000);
+  });
+});
+
 test('split and whole runs preserve the same continuity projection across every WorldPort', async () => {
   await withLab(async (root) => {
     for (const worldId of ['temperature', 'virtual-desktop', 'inventory', 'grid', 'queue']) {

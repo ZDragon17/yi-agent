@@ -132,6 +132,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 监督器证据对齐：`kernelLearningVersion: 9` 的新 STEP 当本步先结算了新的延迟 feedback 时，变化监督器不会把合并观测中的旧动作进步记成当前动作的确认进步；已结算收据仍按 nonce 学习，当前动作和目标监督各自保守处理；旧版本 Replay 保持原监督语义；
 - 变化监督器：用同一套目标距离、确认进步、停滞、重规划和停止判定约束不同世界；状态随 STEP、快照、终态和恢复账本连续保存，跨进程 CLI 可继续运行；
 - 连续 Runner：`agent loop` 把有限 STEP 批次串成多个已提交 Run；每个边界都可独立 Replay，进程重启后从同一个 current 继续；每个子 Run 的 `loopId/runIndex/scenario/budget/planningBranchingMode` 都写入 immutable start，使用 `--resume` 时从账本重建剩余预算和规划语义，不重复已提交 Run；旧 v17/v16 continuation 缺少该字段时从已提交 STEP 或终态 `externalTransition` 证据推断，无法推断则保守使用 legacy；
+- `forever` 长运行边界：新 Run 在唯一 writer lock 内从 verified current 指向的最近 terminal Run 重建 continuation，不重复扫描全部历史；显式恢复和审计仍保留全量扫描，1000 个单步 Run 的连续运行回归已覆盖该边界；
 - 显式自动恢复：`agent loop --resume --auto-recover` 只在 current 明确处于 `RUNNING` 且既有 writer owner 已被系统 liveness probe 判定死亡时执行恢复；活跃 owner 仍返回 `LIVE_OWNER`，READY/HALTED 或无法证明死亡的状态不会被自动接管，保留人工 recover 作为安全路径；
 - 进程级恢复回归：E2E 真实启动 CLI 子进程，在第二个模型请求挂起期间强制终止进程，显式回收死亡 owner 后继续下一 Run，验证 current 和 execution 链不回退；
 - 多 WorldPort 耐久矩阵：`test/e2e/durability-matrix-cli.test.mjs` 用 `temperature`、`inventory`、`queue` 验证 kernel-only 连续多 Run、独立进程 inspect 和逐 Run Replay；用外部 `durable-counter` 验证效果已提交但响应丢失后的 recover、跨进程 resume、幂等效果计数和 Replay 不触发副作用；同一外部 loop 还连续经历四次独立 CLI 强杀、recover、resume，最终仍只提交四个效果；
