@@ -140,6 +140,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 统一执行 nonce 边界：公共 schema 将 `executionNonce` 的 256 字符上限同时用于 Kernel feedback/pending/receipt 与外部 WorldPort 的 `usedExecutionNonces`，避免外部状态的 nonce 历史绕过 Kernel 限制后才在 STEP 落盘阶段超限；
 - WorldPort 状态预算：公共 schema 将 1 MiB STEP 事件扣除 768 KiB Memory 后的剩余空间再分成两半，给当前 `worldState` 预留 128 KiB；内置 WorldPort 与外部 adapter 在状态入口使用同一上限，避免任意领域字段把失败推迟到 STEP 追加阶段；
 - 外部输入证据预算：外部 adapter 的 `externalInputs` 在签名和数量校验后，还要共享 64 KiB 聚合持久化预算；这部分占用剩余 STEP 证据空间的一半，另一半留给回执、观测、验证和策略证据。超限输入在 transition 之前被拒绝，不把一个可验证但不可持久化的输入送进现实副作用边界；
+- 外部输入规范化边界：单条 `externalInputs` 的摘要校验、签名校验和聚合计量共享 canonical JSON 异常边界；深度超过规范化器上限的证据统一成为 `WORLD_ADAPTER_PROTOCOL`，不让原始 `TypeError` 穿透为内部错误；
 - 可靠性支配式淘汰：v24 在共享预算压缩前，对同构预测模型按“样本数不少且不确定度不高”建立不可加权的支配关系；被另一模型全面支配的 action/relation/context 证据优先淘汰，剩余不可比较部分再按 v23 新鲜度确定性淘汰。v23 及更早 Replay 保持原语义；这仍不是价值函数、因果可信度或对环境变化的识别；
 - 共享观测边界保护：v7 还会识别同一 `stateVersion + intervalId` 承载多个新 feedback 的情况，即使 adapter 把它们标为 clean，也全部记为 `AMBIGUOUS` 且不学习，避免一份无法分解的快照被复制到多个动作；旧 v6 账本按旧归因语义 Replay；
 - 监督器证据对齐：`kernelLearningVersion: 9` 的新 STEP 当本步先结算了新的延迟 feedback 时，变化监督器不会把合并观测中的旧动作进步记成当前动作的确认进步；已结算收据仍按 nonce 学习，当前动作和目标监督各自保守处理；旧版本 Replay 保持原监督语义；
@@ -335,6 +336,8 @@ v24 在共享预算压缩时增加 `pareto-v1` 保留策略：对结构相同的
 WorldPort 状态不是“只要是对象就无限容纳”。公共 `MAX_PERSISTED_WORLD_STATE_BYTES` 当前为 128 KiB：它来自 1 MiB STEP 上限减去 768 KiB Memory 预算后的剩余空间，再保留一半给回执、前后观测和其它证据。内置 `createWorldPort` 与外部 adapter 归一化入口都执行该限制，超限状态会在进入账本前明确失败。这个边界保证的是可持久化性，不是对领域状态的语义压缩；需要更大状态时必须设计快照/引用/分片契约，而不能悄悄放宽单个 STEP。
 
 外部 `externalInputs` 也不是“签名合法就可以无限进入 STEP”。公共 `MAX_PERSISTED_EXTERNAL_INPUT_BYTES` 当前为 64 KiB，按规范 JSON 对整个输入数组计量，而不是只限制条目数量或单个字符串。它在 adapter 返回后、`transition` 调用前执行；因此超限输入不会触发外部动作。这个预算仍是当前 STEP 包的容量分配，不是领域数据大小的普适答案；更大的外部事实必须改成快照、引用或分片协议，并重新定义签名、幂等和 Replay 绑定。
+
+外部输入的规范化也是协议边界的一部分：摘要校验、签名校验和最终聚合计量遇到超深或不可表示的 JSON 时，都必须返回带上下文的 `WORLD_ADAPTER_PROTOCOL`，不能把 adapter 提供的畸形证据升级成宿主内部异常。
 
 目标评价现在也固定在同一底层几何上：新 Run 的 `valueMode=distance-v2` 用每个观测维度到目标的带权绝对距离打分，`tolerance` 把目标从一个点扩展为可接受带；因此越过目标不会被错误奖励，带内状态可被视为满足该维度。`valueMode` 不进入领域逻辑，旧 STEP 缺少它时 Replay 保持 `signed-v1`，避免演化破坏历史连续性。
 

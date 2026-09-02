@@ -78,7 +78,13 @@ function dispatch(op, payload) {
       appliedBeforeVersion: payload.stateVersion,
     };
     const digest = canonicalDigest(input);
-    return { inputs: [{ ...input, digest, attestation: attestationFor({ ...input, digest }) }] };
+    const attestation = attestationFor({ ...input, digest });
+    if (mode === 'deep-external-input') {
+      let deepPayload = input.payload;
+      for (let depth = 0; depth < 130; depth += 1) deepPayload = { nested: deepPayload };
+      input.payload = deepPayload;
+    }
+    return { inputs: [{ ...input, digest, attestation }] };
   }
   if (op === 'transition') {
     if (transitionCountFile !== null) writeFileSync(transitionCountFile, '1');

@@ -625,10 +625,19 @@ function validateExternalInputs(value, descriptor, scenario, stateVersion) {
   }
   const normalized = value.map((item, index) => {
     const source = assertExactKeys(item, ['schemaVersion', 'source', 'kind', 'payload', 'appliedBeforeVersion', 'digest', 'attestation'], `externalInputs[${index}]`);
+    let digestValid;
+    try {
+      digestValid = source.digest === canonicalDigest(externalInputUnsigned(source));
+    } catch (error) {
+      throw new ExternalWorldProtocolError('External WorldPort externalInputs are not canonical JSON.', {
+        op: 'externalInputs',
+        field: `externalInputs[${index}]`,
+        cause: error instanceof Error ? error.name : 'NonErrorThrow',
+      });
+    }
     if (source.schemaVersion !== SCHEMA_VERSION || source.source !== 'scenario' || source.kind !== scenario ||
         source.appliedBeforeVersion !== stateVersion || source.payload === null || typeof source.payload !== 'object' || Array.isArray(source.payload) ||
-        source.digest !== canonicalDigest(externalInputUnsigned(source)) ||
-        !verifyExternalInputAttestation(source, descriptor.evidencePublicKey)) {
+        !digestValid || !verifyExternalInputAttestation(source, descriptor.evidencePublicKey)) {
       throw new ExternalWorldProtocolError('External WorldPort external input is not canonical.', { op: 'externalInputs' });
     }
     return structuredClone(source);

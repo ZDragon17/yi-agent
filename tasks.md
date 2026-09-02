@@ -581,3 +581,10 @@
 - 实现：公共 schema 增加 `MAX_PERSISTED_EXTERNAL_INPUT_BYTES`，按 1 MiB 事件上限扣除 768 KiB Memory 与 128 KiB WorldPort 状态预算后的剩余空间，再取一半，当前为 64 KiB。外部输入数组在签名校验后按 canonical JSON 聚合计量，超限或无法规范化统一转为带上下文的 WorldPort 协议错误。
 - 验证：生成 adapter 返回 1.044 MB 的合法签名输入时，CLI 在调用 `transition` 前拒绝，transition 计数文件不存在，STEP 数保持为零；受影响的外部 CLI、WorldPort contract、Replay/连续运行回归及晚绑定 Oracle 继续验证。
 - 边界：64 KiB 是当前 STEP 证据预算，不是事实数据的通用上限；更大的外部事实必须使用快照、引用或分片，并让签名、幂等、恢复和 Replay 共同绑定新表示，不能只提高常量。
+
+## F-67 外部输入 canonical JSON 失败闭环
+
+- 反例：F-66 只包住了聚合大小计算；单条输入在摘要校验时仍直接调用 `canonicalDigest`。构造一个保留浅层合法摘要/签名、再把 payload 改成超过规范化深度的 JSON，CLI 实测将原始异常映射成 `INTERNAL`，而不是 WorldPort 协议错误。
+- 实现：外部输入逐条摘要校验纳入 canonical JSON 异常捕获，并复用既有协议错误上下文；聚合计量继续在所有条目校验后执行。这样摘要、签名和持久化预算三个边界对不可表示证据使用同一 fail-closed 语义。
+- 验证：深层签名反例返回 `WORLD_ADAPTER_PROTOCOL` 且不追加 STEP；超大输入预算反例仍在 `transition` 前拒绝；外部 CLI、LabStore、Replay、连续运行和晚绑定 Oracle 继续回归。
+- 边界：这只保证宿主不把不可规范化证据误报为内部故障，不证明 adapter 提供的事实真实；签名密钥、外部系统身份和现实数据语义仍属于 WorldPort 契约。
