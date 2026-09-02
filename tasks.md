@@ -496,3 +496,11 @@
 - 实现：`kernelLearningVersion: 20` 对 `actionModels`、`rejectionModels` 以及已有三类嵌套模型统一采用确定性有界淘汰；新增顶层模型时按稳定顶层映射顺序移除最早项，并同步清理被淘汰 action Token 的 `lastVerifiedSteps`，避免新鲜度索引残留。每一类仍保持自己的容量边界，淘汰发生在 `verify→learn` 的克隆 Memory 内。
 - 验证：Kernel 在 action/rejection 两类模型达到 8192 项后提交第 8193 个新 Token，数量保持上限、最早项移除、新项写入；全量回归与 Replay 继续覆盖 v20。
 - 边界：稳定映射顺序是可复现的确定性遗忘，不是按价值、频率或语义重要性学习；各模型族独立淘汰可能保留某个 Token 的更具体上下文而移除总体模型，后续需要用跨 Token 置换和真实未知 WorldPort 反例决定是否引入统一的持久模型年龄。
+
+## F-55 持久模型年龄与表示顺序独立
+
+- 反例：F-54 把 JavaScript 对象的插入顺序当作“最早模型”；同一语义 Memory 只改变 JSON 键顺序时，`canonicalDigest` 不变，但下一次容量淘汰可能移除不同 Token，跨 WorldPort、重启和 Replay 的共同底座因此不再表示独立。
+- 失败证据：第一版为每类模型保存完整路径顺序表，逻辑上修复了置换反例，但 10,000 步连续运行的真实 ledger 超过固定 32MB 上限；这个方案被 NFR 反证，不能靠扩大阈值或弱化断言放行。
+- 实现：`kernelLearningVersion: 21` 用每个模型的 `modelAge` 和 Memory 级 `modelClock` 表达统一创建序列；新增模型递增时钟，更新模型保留年龄，顶层及嵌套淘汰按最小年龄、再按规范化身份决胜。缺少年龄的 v20 及更早 Memory 保留原稳定映射顺序，并由 Replay 对新字段做版本投影。
+- 验证：Kernel 对同一年龄映射的正序/逆序 JSON Memory 均淘汰同一最老 Token、生成同一新年龄；应用/Runtime、NFR、CLI E2E、全量回归与多 WorldPort 连续/重启/Replay 继续验证。第一版顺序表的 ledger 超限作为失败边界保留在本记录中。
+- 边界：年龄只表达创建先后，不等于价值、频率、因果可信度或语义重要性；模型族仍独立受容量限制，真正的跨模型重要性与遗忘策略仍需新的可证伪 WorldPort 反例。

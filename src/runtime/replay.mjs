@@ -31,7 +31,8 @@ const REVALIDATION_LEARNING_VERSION = 15;
 const CONTEXT_PLANNING_LEARNING_VERSION = 16;
 const RECURSIVE_PLANNING_LEARNING_VERSION = 17;
 const TREE_PLANNING_LEARNING_VERSION = 18;
-const MAX_SUPPORTED_LEARNING_VERSION = 20;
+const MODEL_AGE_LEARNING_VERSION = 21;
+const MAX_SUPPORTED_LEARNING_VERSION = 21;
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -382,9 +383,40 @@ function projectLearningForVersion(update, learningVersion) {
   const withoutRevalidation = learningVersion < REVALIDATION_LEARNING_VERSION
     ? withoutLastVerifiedSteps(withoutAccumulator)
     : withoutAccumulator;
-  return learningVersion < HISTORY_ACCUMULATOR_LEARNING_VERSION
-    ? withoutPendingContextKeys(withoutRevalidation)
+  const withoutModelAge = learningVersion < MODEL_AGE_LEARNING_VERSION
+    ? withoutModelAgeState(withoutRevalidation)
     : withoutRevalidation;
+  return learningVersion < HISTORY_ACCUMULATOR_LEARNING_VERSION
+    ? withoutPendingContextKeys(withoutModelAge)
+    : withoutModelAge;
+}
+
+function withoutModelAgeState(update) {
+  const memory = update.nextMemory;
+  if (memory === undefined || memory.modelClock === undefined) return update;
+  const nextMemory = { ...memory };
+  delete nextMemory.modelClock;
+  delete nextMemory.modelAges;
+  nextMemory.actionModels = stripModelAges(memory.actionModels);
+  if (memory.relationModels !== undefined) nextMemory.relationModels = stripNestedModelAges(memory.relationModels);
+  if (memory.rejectionModels !== undefined) nextMemory.rejectionModels = stripModelAges(memory.rejectionModels);
+  if (memory.beliefModels !== undefined) nextMemory.beliefModels = stripNestedModelAges(memory.beliefModels);
+  if (memory.contextModels !== undefined) nextMemory.contextModels = stripNestedModelAges(memory.contextModels);
+  return { ...update, nextMemory };
+}
+
+function stripModelAges(models) {
+  return Object.fromEntries(Object.entries(models ?? {}).map(([key, model]) => {
+    const { modelAge: _ignored, ...withoutAge } = model;
+    return [key, withoutAge];
+  }));
+}
+
+function stripNestedModelAges(models) {
+  return Object.fromEntries(Object.entries(models).map(([outerKey, nested]) => [
+    outerKey,
+    stripModelAges(nested),
+  ]));
 }
 
 function withoutLastVerifiedSteps(update) {

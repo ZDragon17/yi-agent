@@ -83,14 +83,15 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps', 'modelClock', 'modelAges'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
   'meanDelta',
   'uncertainty',
+  'modelAge',
 ];
-const REJECTION_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'rejected', 'relationKey'];
+const REJECTION_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'rejected', 'relationKey', 'modelAge'];
 const CAPABILITY_KEYS = [
   'schemaVersion',
   'token',
@@ -164,7 +165,8 @@ const PENDING_CREDIT_KEYS = [
   'age',
 ];
 const PENDING_CREDIT_POLICY_KEYS = ['schemaVersion', 'maxAge'];
-const BELIEF_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'samples'];
+const BELIEF_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'samples', 'modelAge'];
+const MODEL_AGE_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'beliefModels', 'contextModels'];
 const HISTORY_ENTRY_KEYS = ['schemaVersion', 'token', 'actualDelta', 'historyOrder'];
 
 export function step(input) {
@@ -367,7 +369,7 @@ export function learn(input) {
   assertVerificationMatches(claimedVerification, verification);
   assertIntentIsExecutable(intent, 'learnInput.intent.choice');
 
-  const nextMemory = cloneMemory(memory);
+  const nextMemory = cloneMemory(memory, { compactAges: false });
   const contextKeys = contextKeysForMemory(memory);
   const settlement = settlePendingCredits(
     nextMemory,
@@ -402,11 +404,16 @@ export function learn(input) {
           field: 'learnOutput.nextMemory.rejectionModels',
         });
       }
+      const rejectionModelAge = existingRejection?.modelAge ?? nextModelAge(
+        nextMemory,
+        `learnOutput.nextMemory.rejectionModels.${token}.modelAge`,
+      );
       rejectionModels[token] = updateRejectionModel(
         existingRejection,
         true,
         intent.expectation.relationKey,
         `learnOutput.nextMemory.rejectionModels.${token}`,
+        rejectionModelAge,
       );
       nextMemory.rejectionModels = rejectionModels;
       if (existingRejection === undefined) {
@@ -416,7 +423,7 @@ export function learn(input) {
         schemaVersion: SCHEMA_VERSION,
         status: 'REJECTION_RECORDED',
         token,
-        nextMemory,
+        nextMemory: cloneMemory(nextMemory),
         ...(settled.length === 0 ? {} : { settled }),
       };
     }
@@ -436,7 +443,7 @@ export function learn(input) {
         schemaVersion: SCHEMA_VERSION,
         status: 'DEFERRED',
         token: intent.choice.token,
-        nextMemory,
+        nextMemory: cloneMemory(nextMemory),
         ...(settled.length === 0 ? {} : { settled }),
       };
     }
@@ -445,7 +452,7 @@ export function learn(input) {
         schemaVersion: SCHEMA_VERSION,
         status: 'SKIPPED',
         token: intent.choice.token,
-        nextMemory,
+        nextMemory: cloneMemory(nextMemory),
         settled,
       };
     }
@@ -453,7 +460,7 @@ export function learn(input) {
       schemaVersion: SCHEMA_VERSION,
       status: 'SKIPPED',
       token: intent.choice.token,
-      nextMemory,
+      nextMemory: cloneMemory(nextMemory),
       ...(settled.length === 0 ? {} : { settled }),
     };
   }
@@ -463,7 +470,7 @@ export function learn(input) {
       schemaVersion: SCHEMA_VERSION,
       status: 'SKIPPED',
       token: intent.choice.token,
-      nextMemory,
+      nextMemory: cloneMemory(nextMemory),
       settled,
     };
   }
@@ -498,7 +505,7 @@ export function learn(input) {
     schemaVersion: SCHEMA_VERSION,
     status: 'UPDATED',
     token,
-    nextMemory,
+    nextMemory: cloneMemory(nextMemory),
     ...(settled.length === 0 ? {} : { settled }),
   };
 }
@@ -979,6 +986,20 @@ function normalizeMemory(value, field, dimensions) {
   const lastVerifiedSteps = source.lastVerifiedSteps === undefined
     ? undefined
     : normalizeLastVerifiedSteps(source.lastVerifiedSteps, `${field}.lastVerifiedSteps`);
+  const modelClock = source.modelClock === undefined
+    ? undefined
+    : assertNonNegativeInteger(source.modelClock, `${field}.modelClock`);
+  if (source.modelAges !== undefined) {
+    applyCompactModelAges(
+      source.modelAges,
+      normalizedModels,
+      normalizedRelations,
+      normalizedRejections,
+      normalizedBeliefs,
+      normalizedContextModels,
+      `${field}.modelAges`,
+    );
+  }
   if (historyAccumulator !== undefined && historyClock === undefined) {
     contractViolation('kernel history accumulator requires a history clock', {
       field: `${field}.historyAccumulator`,
@@ -1000,6 +1021,15 @@ function normalizeMemory(value, field, dimensions) {
     historyClock,
     field,
   );
+  validateModelAgeCoverage(
+    modelClock,
+    normalizedModels,
+    normalizedRelations,
+    normalizedRejections,
+    normalizedBeliefs,
+    normalizedContextModels,
+    field,
+  );
   return {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
@@ -1014,7 +1044,78 @@ function normalizeMemory(value, field, dimensions) {
     ...(historyClock === undefined ? {} : { historyClock }),
     ...(historyAccumulator === undefined ? {} : { historyAccumulator }),
     ...(lastVerifiedSteps === undefined ? {} : { lastVerifiedSteps }),
+    ...(modelClock === undefined ? {} : { modelClock }),
   };
+}
+
+function applyCompactModelAges(value, actionModels, relationModels, rejectionModels, beliefModels, contextModels, field) {
+  const source = assertPlainRecord(value, field, MODEL_AGE_KEYS, ['schemaVersion']);
+  applyTopLevelModelAges(actionModels, source.actionModels, `${field}.actionModels`);
+  applyTopLevelModelAges(rejectionModels, source.rejectionModels, `${field}.rejectionModels`);
+  applyNestedModelAges(relationModels, source.relationModels, `${field}.relationModels`);
+  applyNestedModelAges(beliefModels, source.beliefModels, `${field}.beliefModels`);
+  applyNestedModelAges(contextModels, source.contextModels, `${field}.contextModels`);
+}
+
+function applyTopLevelModelAges(models, ages, field) {
+  if (ages === undefined) return;
+  const values = decodeCompactModelAges(ages, field);
+  const keys = Object.keys(models ?? {}).sort();
+  if (values.length !== keys.length) {
+    contractViolation('kernel compact model ages do not match its model record', { field });
+  }
+  for (let index = 0; index < keys.length; index += 1) {
+    setModelAge(models[keys[index]], values[index], `${field}[${index}]`);
+  }
+}
+
+function applyNestedModelAges(models, ages, field) {
+  if (ages === undefined) return;
+  const values = assertArray(ages, field);
+  const outerKeys = Object.keys(models ?? {}).sort();
+  if (values.length !== outerKeys.length) {
+    contractViolation('kernel compact nested model ages do not match its model record', { field });
+  }
+  for (let outerIndex = 0; outerIndex < outerKeys.length; outerIndex += 1) {
+    const outerKey = outerKeys[outerIndex];
+    const innerAges = decodeCompactModelAges(values[outerIndex], `${field}[${outerIndex}]`);
+    const innerKeys = Object.keys(models[outerKey]).sort();
+    if (innerAges.length !== innerKeys.length) {
+      contractViolation('kernel compact nested model ages do not match its model record', { field });
+    }
+    for (let innerIndex = 0; innerIndex < innerKeys.length; innerIndex += 1) {
+      setModelAge(
+        models[outerKey][innerKeys[innerIndex]],
+        innerAges[innerIndex],
+        `${field}[${outerIndex}][${innerIndex}]`,
+      );
+    }
+  }
+}
+
+function decodeCompactModelAges(value, field) {
+  if (Array.isArray(value)) {
+    return value.map((age, index) => assertNonNegativeInteger(age, `${field}[${index}]`));
+  }
+  if (typeof value !== 'string') {
+    contractViolation('kernel compact model ages must be a base36 string or an array', { field });
+  }
+  if (value.length === 0) return [];
+  return value.split(',').map((encoded, index) => {
+    if (!/^[0-9a-z]+$/u.test(encoded)) {
+      contractViolation('kernel compact model age is invalid', { field: `${field}[${index}]` });
+    }
+    const age = Number.parseInt(encoded, 36);
+    return assertNonNegativeInteger(age, `${field}[${index}]`);
+  });
+}
+
+function setModelAge(model, value, field) {
+  const age = assertNonNegativeInteger(value, field);
+  if (model.modelAge !== undefined && model.modelAge !== age) {
+    contractViolation('kernel model age has contradictory representations', { field });
+  }
+  model.modelAge = age;
 }
 
 function normalizeLastVerifiedSteps(value, field) {
@@ -1167,7 +1268,12 @@ function normalizeBeliefModels(value, field, dimensions) {
 }
 
 function normalizeBeliefModel(value, field, dimensions) {
-  const source = assertPlainRecord(value, field, BELIEF_MODEL_KEYS);
+  const source = assertPlainRecord(
+    value,
+    field,
+    BELIEF_MODEL_KEYS,
+    BELIEF_MODEL_KEYS.filter((key) => key !== 'modelAge'),
+  );
   const samples = assertArray(source.samples, `${field}.samples`);
   if (samples.length > MAX_BELIEF_SAMPLES) {
     contractViolation('kernel belief samples exceed their size limit', { field });
@@ -1177,6 +1283,9 @@ function normalizeBeliefModel(value, field, dimensions) {
     sampleCount: assertNonNegativeInteger(source.sampleCount, `${field}.sampleCount`),
     samples: samples.map((sample, index) =>
       cloneVector(assertFiniteVector(sample, `${field}.samples[${index}]`, dimensions))),
+    ...(source.modelAge === undefined ? {} : {
+      modelAge: assertNonNegativeInteger(source.modelAge, `${field}.modelAge`),
+    }),
   };
 }
 
@@ -1277,6 +1386,9 @@ function normalizeRejectionModels(value, field, dimensions) {
       sampleCount: assertNonNegativeInteger(modelSource.sampleCount, `${field}.${token}.sampleCount`),
       rejected: assertBoolean(modelSource.rejected, `${field}.${token}.rejected`),
       ...(relationKey === undefined ? {} : { relationKey }),
+      ...(modelSource.modelAge === undefined ? {} : {
+        modelAge: assertNonNegativeInteger(modelSource.modelAge, `${field}.${token}.modelAge`),
+      }),
     };
   }
   TOP_LEVEL_MODEL_COUNTS.set(normalized, Object.keys(normalized).length);
@@ -1310,7 +1422,12 @@ function normalizeRelationModels(value, field, dimensions) {
 }
 
 function normalizeActionModel(value, field, dimensions) {
-  const source = assertPlainRecord(value, field, ACTION_MODEL_KEYS);
+  const source = assertPlainRecord(
+    value,
+    field,
+    ACTION_MODEL_KEYS,
+    ACTION_MODEL_KEYS.filter((key) => key !== 'modelAge'),
+  );
 
   return {
     schemaVersion: requireSchemaVersion(source, field),
@@ -1320,6 +1437,9 @@ function normalizeActionModel(value, field, dimensions) {
       source.uncertainty,
       `${field}.uncertainty`,
     ),
+    ...(source.modelAge === undefined ? {} : {
+      modelAge: assertNonNegativeInteger(source.modelAge, `${field}.modelAge`),
+    }),
     ...(source.verificationAge === undefined
       ? {}
       : { verificationAge: source.verificationAge === null
@@ -1328,7 +1448,38 @@ function normalizeActionModel(value, field, dimensions) {
   };
 }
 
-function updateActionModel(current, actualDelta, errorMagnitude, dimensions, field) {
+function validateModelAgeCoverage(
+  modelClock,
+  actionModels,
+  relationModels,
+  rejectionModels,
+  beliefModels,
+  contextModels,
+  field,
+) {
+  if (modelClock === undefined) return;
+  const check = (model, modelField) => {
+    if (model.modelAge === undefined) {
+      contractViolation('kernel model clock requires an age for every model', { field: modelField });
+    }
+    if (model.modelAge > modelClock) {
+      contractViolation('kernel model age cannot exceed its model clock', { field: modelField });
+    }
+  };
+  for (const [token, model] of Object.entries(actionModels)) check(model, `${field}.actionModels.${token}.modelAge`);
+  for (const [token, model] of Object.entries(rejectionModels ?? {})) check(model, `${field}.rejectionModels.${token}.modelAge`);
+  for (const [token, relations] of Object.entries(relationModels ?? {})) {
+    for (const [relationKey, model] of Object.entries(relations)) check(model, `${field}.relationModels.${token}.${relationKey}.modelAge`);
+  }
+  for (const [token, contexts] of Object.entries(beliefModels ?? {})) {
+    for (const [contextKey, model] of Object.entries(contexts)) check(model, `${field}.beliefModels.${token}.${contextKey}.modelAge`);
+  }
+  for (const [contextKey, models] of Object.entries(contextModels ?? {})) {
+    for (const [token, model] of Object.entries(models)) check(model, `${field}.contextModels.${contextKey}.${token}.modelAge`);
+  }
+}
+
+function updateActionModel(current, actualDelta, errorMagnitude, dimensions, field, modelAge) {
   if (current.sampleCount === Number.MAX_SAFE_INTEGER) {
     contractViolation('kernel action-model sample count cannot be incremented safely', {
       field: `${field}.sampleCount`,
@@ -1353,10 +1504,13 @@ function updateActionModel(current, actualDelta, errorMagnitude, dimensions, fie
     sampleCount: nextSampleCount,
     meanDelta: nextMean,
     uncertainty: nextUncertainty,
+    ...(current.modelAge === undefined && modelAge === undefined
+      ? {}
+      : { modelAge: current.modelAge ?? modelAge }),
   };
 }
 
-function updateBeliefModel(current, actualDelta, dimensions, field) {
+function updateBeliefModel(current, actualDelta, dimensions, field, modelAge) {
   const sampleCount = current?.sampleCount ?? 0;
   if (sampleCount === Number.MAX_SAFE_INTEGER) {
     contractViolation('kernel belief sample count cannot be incremented safely', {
@@ -1370,10 +1524,13 @@ function updateBeliefModel(current, actualDelta, dimensions, field) {
     schemaVersion: SCHEMA_VERSION,
     sampleCount: sampleCount + 1,
     samples,
+    ...(current?.modelAge === undefined && modelAge === undefined
+      ? {}
+      : { modelAge: current?.modelAge ?? modelAge }),
   };
 }
 
-function updateRejectionModel(current, rejected, relationKey, field) {
+function updateRejectionModel(current, rejected, relationKey, field, modelAge) {
   const sampleCount = current?.sampleCount ?? 0;
   if (rejected && sampleCount === Number.MAX_SAFE_INTEGER) {
     contractViolation('kernel rejection-model sample count cannot be incremented safely', {
@@ -1385,7 +1542,19 @@ function updateRejectionModel(current, rejected, relationKey, field) {
     sampleCount: rejected ? sampleCount + 1 : sampleCount,
     rejected,
     ...(relationKey === undefined ? {} : { relationKey }),
+    ...(current?.modelAge === undefined && modelAge === undefined
+      ? {}
+      : { modelAge: current?.modelAge ?? modelAge }),
   };
+}
+
+function nextModelAge(memory, field) {
+  if (memory.modelClock === undefined) return undefined;
+  if (memory.modelClock === Number.MAX_SAFE_INTEGER) {
+    contractViolation('kernel model clock cannot be incremented safely', { field });
+  }
+  memory.modelClock += 1;
+  return memory.modelClock;
 }
 
 function countRelationModels(value) {
@@ -1437,8 +1606,11 @@ function recordActionEvidence(memory, {
     errorMagnitude,
     dimensions,
     `${field}.actionModels.${token}`,
+    existing?.modelAge ?? nextModelAge(memory, `${field}.actionModels.${token}.modelAge`),
   );
-  if (existing === undefined) TOP_LEVEL_MODEL_COUNTS.set(memory.actionModels, actionModelCount + 1);
+  if (existing === undefined) {
+    TOP_LEVEL_MODEL_COUNTS.set(memory.actionModels, actionModelCount + 1);
+  }
   recordBeliefEvidence(memory, {
     token,
     relationKey,
@@ -1492,6 +1664,10 @@ function recordActionEvidence(memory, {
     errorMagnitude,
     dimensions,
     `${field}.relationModels.${token}.${relationKey}`,
+    existingRelation?.modelAge ?? nextModelAge(
+      memory,
+      `${field}.relationModels.${token}.${relationKey}.modelAge`,
+    ),
   );
   memory.relationModels = {
     ...relationModels,
@@ -1549,6 +1725,10 @@ function recordContextEvidence(memory, {
     errorMagnitude,
     dimensions,
     `${field}.contextModels.${contextKey}.${token}`,
+    existing?.modelAge ?? nextModelAge(
+      memory,
+      `${field}.contextModels.${contextKey}.${token}.modelAge`,
+    ),
   );
   memory.contextModels = { ...contexts, [contextKey]: models };
   NESTED_MODEL_COUNTS.set(memory.contextModels, existing === undefined
@@ -1568,21 +1748,41 @@ function countLongContexts(value) {
 }
 
 function oldestLongContextKey(value) {
-  return Object.keys(value).find((contextKey) => contextKey.startsWith('h2:'));
+  const entries = Object.entries(value).filter(([contextKey]) => contextKey.startsWith('h2:'));
+  if (entries.length === 0) return undefined;
+  if (entries.every(([, models]) => Object.values(models).every((model) => model.modelAge !== undefined))) {
+    return entries.reduce((oldest, current) => {
+      const oldestAge = Math.min(...Object.values(oldest[1]).map((model) => model.modelAge));
+      const currentAge = Math.min(...Object.values(current[1]).map((model) => model.modelAge));
+      return currentAge < oldestAge || (currentAge === oldestAge && current[0] < oldest[0]) ? current : oldest;
+    })[0];
+  }
+  return entries[0][0];
 }
 
 function evictOldestNestedModel(value) {
+  const candidates = [];
   for (const [outerKey, models] of Object.entries(value)) {
-    const oldestKey = Object.keys(models)[0];
-    if (oldestKey === undefined) {
-      delete value[outerKey];
-      continue;
+    for (const [innerKey, model] of Object.entries(models)) {
+      candidates.push({ outerKey, innerKey, model });
     }
-    delete models[oldestKey];
-    if (Object.keys(models).length === 0) delete value[outerKey];
-    return true;
   }
-  return false;
+  if (candidates.length === 0) return false;
+  const allHaveAge = candidates.every((candidate) => candidate.model.modelAge !== undefined);
+  const oldest = allHaveAge
+    ? candidates.reduce((current, candidate) => {
+        const currentIdentity = `${current.outerKey}\u0000${current.innerKey}`;
+        const candidateIdentity = `${candidate.outerKey}\u0000${candidate.innerKey}`;
+        return candidate.model.modelAge < current.model.modelAge ||
+          (candidate.model.modelAge === current.model.modelAge && candidateIdentity < currentIdentity)
+          ? candidate
+          : current;
+      })
+    : candidates[0];
+  const currentModels = value[oldest.outerKey];
+  delete currentModels[oldest.innerKey];
+  if (Object.keys(currentModels).length === 0) delete value[oldest.outerKey];
+  return true;
 }
 
 function appendRecentHistory(memory, { token, actualDelta, historyOrder, dimensions, field }) {
@@ -1650,6 +1850,10 @@ function recordBeliefEvidence(memory, {
     actualDelta,
     dimensions,
     `${field}.beliefModels.${token}.${contextKey}`,
+    existing?.modelAge ?? nextModelAge(
+      memory,
+      `${field}.beliefModels.${token}.${contextKey}.modelAge`,
+    ),
   );
   memory.beliefModels = { ...beliefs, [token]: tokenBeliefs };
   NESTED_MODEL_COUNTS.set(memory.beliefModels, existing === undefined
@@ -1673,7 +1877,19 @@ function cachedTopLevelModelCount(value) {
 }
 
 function evictOldestTopLevelModel(value) {
-  const oldestKey = Object.keys(value)[0];
+  const entries = Object.entries(value);
+  if (entries.length === 0) return undefined;
+  const allHaveAge = entries.every(([, model]) => model.modelAge !== undefined);
+  const oldestKey = allHaveAge
+    ? entries.reduce((current, candidate) => {
+        const [currentKey, currentModel] = current;
+        const [candidateKey, candidateModel] = candidate;
+        return candidateModel.modelAge < currentModel.modelAge ||
+          (candidateModel.modelAge === currentModel.modelAge && candidateKey < currentKey)
+          ? candidate
+          : current;
+      })[0]
+    : entries[0][0];
   if (oldestKey === undefined) return undefined;
   delete value[oldestKey];
   const cached = TOP_LEVEL_MODEL_COUNTS.get(value);
@@ -2685,7 +2901,48 @@ function cloneRngState(value) {
   };
 }
 
-function cloneMemory(value) {
+function compactModelAgeState(value) {
+  const actionModels = compactTopLevelModelAges(value.actionModels);
+  const relationModels = compactNestedModelAges(value.relationModels);
+  const rejectionModels = compactTopLevelModelAges(value.rejectionModels);
+  const beliefModels = compactNestedModelAges(value.beliefModels);
+  const contextModels = compactNestedModelAges(value.contextModels);
+  const states = [actionModels, relationModels, rejectionModels, beliefModels, contextModels];
+  if (states.some((state) => state === null)) return undefined;
+  if (value.modelClock === undefined && states.every((state) => state === undefined)) return undefined;
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    ...(actionModels === undefined ? {} : { actionModels }),
+    ...(relationModels === undefined ? {} : { relationModels }),
+    ...(rejectionModels === undefined ? {} : { rejectionModels }),
+    ...(beliefModels === undefined ? {} : { beliefModels }),
+    ...(contextModels === undefined ? {} : { contextModels }),
+  };
+}
+
+function compactTopLevelModelAges(models) {
+  if (models === undefined) return undefined;
+  const keys = Object.keys(models).sort();
+  if (keys.length === 0) return undefined;
+  if (keys.some((key) => models[key].modelAge === undefined)) return null;
+  return keys.map((key) => models[key].modelAge.toString(36)).join(',');
+}
+
+function compactNestedModelAges(models) {
+  if (models === undefined) return undefined;
+  const outerKeys = Object.keys(models).sort();
+  if (outerKeys.length === 0) return undefined;
+  const result = [];
+  for (const outerKey of outerKeys) {
+    const innerKeys = Object.keys(models[outerKey]).sort();
+    if (innerKeys.some((innerKey) => models[outerKey][innerKey].modelAge === undefined)) return null;
+    result.push(innerKeys.map((innerKey) => models[outerKey][innerKey].modelAge.toString(36)).join(','));
+  }
+  return result;
+}
+
+function cloneMemory(value, { compactAges = true } = {}) {
+  const compactModelAges = compactAges ? compactModelAgeState(value) : undefined;
   const actionModels = {};
   for (const [token, model] of Object.entries(value.actionModels)) {
     actionModels[token] = {
@@ -2693,6 +2950,7 @@ function cloneMemory(value) {
       sampleCount: model.sampleCount,
       meanDelta: cloneVector(model.meanDelta),
       uncertainty: model.uncertainty,
+      ...(compactModelAges === undefined && model.modelAge !== undefined ? { modelAge: model.modelAge } : {}),
     };
   }
   const cloned = {
@@ -2700,6 +2958,8 @@ function cloneMemory(value) {
     actionModels,
   };
   TOP_LEVEL_MODEL_COUNTS.set(cloned.actionModels, Object.keys(actionModels).length);
+  if (value.modelClock !== undefined) cloned.modelClock = value.modelClock;
+  if (compactModelAges !== undefined) cloned.modelAges = compactModelAges;
   if (value.pendingCreditPolicy !== undefined) {
     cloned.pendingCreditPolicy = {
       schemaVersion: SCHEMA_VERSION,
@@ -2715,6 +2975,7 @@ function cloneMemory(value) {
           sampleCount: model.sampleCount,
           meanDelta: cloneVector(model.meanDelta),
           uncertainty: model.uncertainty,
+          ...(compactModelAges === undefined && model.modelAge !== undefined ? { modelAge: model.modelAge } : {}),
         }])),
       ]),
     );
@@ -2727,6 +2988,7 @@ function cloneMemory(value) {
         sampleCount: model.sampleCount,
         rejected: model.rejected,
         ...(model.relationKey === undefined ? {} : { relationKey: model.relationKey }),
+        ...(compactModelAges === undefined && model.modelAge !== undefined ? { modelAge: model.modelAge } : {}),
       }]),
     );
     TOP_LEVEL_MODEL_COUNTS.set(cloned.rejectionModels, Object.keys(value.rejectionModels).length);
@@ -2758,6 +3020,7 @@ function cloneMemory(value) {
           schemaVersion: SCHEMA_VERSION,
           sampleCount: model.sampleCount,
           samples: model.samples.map(cloneVector),
+          ...(compactModelAges === undefined && model.modelAge !== undefined ? { modelAge: model.modelAge } : {}),
         }])),
       ]),
     );
@@ -2772,6 +3035,7 @@ function cloneMemory(value) {
           sampleCount: model.sampleCount,
           meanDelta: cloneVector(model.meanDelta),
           uncertainty: model.uncertainty,
+          ...(compactModelAges === undefined && model.modelAge !== undefined ? { modelAge: model.modelAge } : {}),
         }])),
       ]),
     );

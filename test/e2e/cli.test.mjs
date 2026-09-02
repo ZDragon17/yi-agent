@@ -1059,11 +1059,11 @@ async function rewriteDelayedRunAsV7(lab) {
   current.boundary = { ...current.boundary, kernelLearningVersion: 7 };
   current.update = {
     ...current.update,
-    nextMemory: withoutHistoryAccumulator(current.update.nextMemory),
+    nextMemory: withoutModelAge(withoutHistoryAccumulator(current.update.nextMemory)),
   };
   current.afterState = {
     ...current.afterState,
-    memory: withoutHistoryAccumulator(current.afterState.memory),
+    memory: withoutModelAge(withoutHistoryAccumulator(current.afterState.memory)),
   };
   current.afterState = { ...current.afterState, changeSupervisor: legacySupervisor };
   current.afterDigest = canonicalDigest(current.afterState);
@@ -1119,6 +1119,26 @@ function withoutHistoryAccumulator(memory) {
       }),
     }),
   };
+}
+
+function withoutModelAge(memory) {
+  const withoutAge = { ...memory };
+  delete withoutAge.modelClock;
+  delete withoutAge.modelAges;
+  const stripTopLevel = (models) => Object.fromEntries(Object.entries(models ?? {}).map(([key, model]) => {
+    const { modelAge: _ignored, ...legacyModel } = model;
+    return [key, legacyModel];
+  }));
+  const stripNested = (models) => Object.fromEntries(Object.entries(models ?? {}).map(([outerKey, nested]) => [
+    outerKey,
+    stripTopLevel(nested),
+  ]));
+  withoutAge.actionModels = stripTopLevel(memory.actionModels);
+  if (memory.relationModels !== undefined) withoutAge.relationModels = stripNested(memory.relationModels);
+  if (memory.rejectionModels !== undefined) withoutAge.rejectionModels = stripTopLevel(memory.rejectionModels);
+  if (memory.beliefModels !== undefined) withoutAge.beliefModels = stripNested(memory.beliefModels);
+  if (memory.contextModels !== undefined) withoutAge.contextModels = stripNested(memory.contextModels);
+  return withoutAge;
 }
 
 function decodeStoredEvent(event) {

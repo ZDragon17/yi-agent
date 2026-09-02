@@ -1486,6 +1486,67 @@ test('verified learning evicts the oldest bounded relation, belief, and context 
   assert.equal(Object.hasOwn(rejectionUpdated.nextMemory.rejectionModels, newActionToken), true);
 });
 
+test('persistent model age makes eviction independent of JSON key order', async () => {
+  const { learn, verify } = await loadKernel();
+  const modelToken = (index) => index === 0
+    ? TOKEN_A
+    : `tok_${index.toString(36).toUpperCase().padStart(8, '0')}X`;
+  const tokens = Array.from({ length: 8192 }, (_, index) => modelToken(index));
+  const ageByToken = new Map(tokens.map((token, index) => [token, index + 1]));
+  const makeMemory = (orderedTokens) => ({
+    schemaVersion: 1,
+    actionModels: Object.fromEntries(orderedTokens.map((token) => [token, {
+      schemaVersion: 1,
+      sampleCount: 1,
+      meanDelta: [0, 0],
+      uncertainty: 0,
+      modelAge: ageByToken.get(token),
+    }])),
+    modelClock: tokens.length,
+  });
+  const newToken = modelToken(8192);
+  const request = actionRequest({ token: newToken });
+  const input = makeVerifyInput({
+    intent: intentForRequest(request),
+    receipt: receiptForRequest(request),
+  });
+  const verification = verify(input);
+  const first = learn({
+    memory: makeMemory(tokens),
+    intent: input.intent,
+    receipt: input.receipt,
+    postObservation: input.postObservation,
+    verification,
+  });
+  const second = learn({
+    memory: makeMemory([...tokens].reverse()),
+    intent: input.intent,
+    receipt: input.receipt,
+    postObservation: input.postObservation,
+    verification,
+  });
+
+  assert.equal(canonicalDigest(makeMemory(tokens)), canonicalDigest(makeMemory([...tokens].reverse())));
+  assert.equal(Object.hasOwn(first.nextMemory.actionModels, TOKEN_A), false);
+  assert.equal(Object.hasOwn(second.nextMemory.actionModels, TOKEN_A), false);
+  assert.equal(Object.hasOwn(first.nextMemory.actionModels, newToken), true);
+  assert.equal(Object.hasOwn(second.nextMemory.actionModels, newToken), true);
+  assert.equal(first.nextMemory.modelClock, tokens.length + 1);
+  assert.equal(second.nextMemory.modelClock, tokens.length + 1);
+  const expectedAges = Object.keys(first.nextMemory.actionModels).sort().map((token) =>
+    ageByToken.get(token) ?? tokens.length + 1,
+  );
+  assert.deepEqual(first.nextMemory.modelAges, {
+    schemaVersion: 1,
+    actionModels: expectedAges.map((age) => age.toString(36)).join(','),
+  });
+  assert.deepEqual(second.nextMemory.modelAges, first.nextMemory.modelAges);
+  assert.deepEqual(
+    Object.keys(first.nextMemory.actionModels).sort(),
+    Object.keys(second.nextMemory.actionModels).sort(),
+  );
+});
+
 test('kernel rejects oversized numeric and capability surfaces before prediction work', async () => {
   const { step } = await loadKernel();
   const dimensions = 1025;
