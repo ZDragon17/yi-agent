@@ -742,7 +742,7 @@ export async function runContinuous(input) {
       stepsPerRun,
       mode: forever ? 'forever' : 'finite',
       planningHorizon: requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon') ?? 1,
-      planningBranchingMode: 'tree-v1',
+      planningBranchingMode: source.planningBranchingMode ?? 'tree-v1',
       ...(forever ? {} : { maxRuns: requestedRuns }),
     };
   }
@@ -881,7 +881,7 @@ function planningEvidence(horizon, contextMode, branchingMode) {
   return {
     schemaVersion: SCHEMA_VERSION,
     horizon,
-    ...(horizon > 1 ? { contextMode, branchingMode } :
+    ...(horizon > 1 || branchingMode !== 'tree-v1' ? { contextMode, branchingMode } :
       contextMode === 'legacy-v1' ? { contextMode } : {}),
   };
 }

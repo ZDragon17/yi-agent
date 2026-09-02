@@ -420,6 +420,28 @@ test('continuous planning configuration survives interruption and resume', async
   });
 });
 
+test('continuous runner persists recursive planning branching mode in run boundaries', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'recursive-planning-loop-lab', worldId: 'temperature', seed: 'recursive-planning-loop-seed' });
+    const result = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      runs: 2,
+      planningBranchingMode: 'recursive-v1',
+    });
+    assert.equal(result.results.length, 2);
+    const store = await LabStore.open({ labPath: lab });
+    for (const item of result.results) {
+      const run = await store.readRun(item.runId);
+      const step = run.events.find((event) => event.kind === 'STEP');
+
+      assert.equal(run.start.continuation.planningBranchingMode, 'recursive-v1');
+      assert.equal(step.payload.boundary.planning.branchingMode, 'recursive-v1');
+      assert.equal((await replayLab({ labPath: lab, runId: item.runId })).verdict, 'CONSISTENT');
+    }
+  });
+});
+
 test('continuous resume honors an objective reached before the persisted run budget', async () => {
   await withLab(async (lab) => {
     const registry = createGeneratedRegistry();

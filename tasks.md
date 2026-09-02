@@ -468,3 +468,10 @@
 - 实现：正常 `--resume` 和 `startRun` 已持有唯一 writer lock 后，只从 verified current 指向的最新 terminal Run 读取并总结当前 continuation；新 loop 没有既有 owner 时强制从逻辑索引 0 开始。显式启动时的冲突检查、`readLoopContinuation` 审计和恢复候选扫描仍保留全量账本校验。正常账本的唯一 active continuation 仍由此前的 startRun 原子所有权约束保证，历史全量扫描继续作为显式恢复/审计路径。
 - 验证：1000 个单步 forever Run 在真实 Runtime 中完成，内存结果仍只保留最近一个 Run，最终 current 与累计指标一致；随后从 current frontier 接续第 1001 个逻辑 Run，显式 `readLoopContinuation` 审计仍保持可用；既有全量账本、恢复、Replay 和跨 WorldPort 测试保持通过。
 - 边界：该优化不改变账本真相或绕过当前 Run 的结构校验；若同一用户主动篡改历史形成多个 continuation，必须通过全量 inspect/recovery 审计发现，分布式索引和无限磁盘增长仍不在 v0.1 保证范围。
+
+## F-51 连续 Runner 的规划分支契约
+
+- 反例：应用 API 接受 `planningBranchingMode: recursive-v1`，但连续 Runner 创建 continuation 时固定写入 `tree-v1`，导致调用输入、immutable start、STEP 决策边界和后续 Replay 语义不一致。
+- 实现：新 loop 沿用调用方已验证的 `planningBranchingMode`，未指定时才使用 `tree-v1`；默认 `tree-v1` 在 horizon=1 可保持紧凑证据，非默认分支即使 horizon=1 也写入显式 STEP evidence；resume 仍只接受持久化的 continuation 契约，不重新接受规划配置。
+- 验证：真实 application loop 写入 `recursive-v1` 的 start 与 STEP，并完成 Replay；已有连续运行、重启恢复、全量审计和跨 WorldPort 矩阵保持通过。
+- 边界：分支模式仍是有限规划策略，不等于通用规划；CLI 当前不暴露该内部兼容参数，外部用户默认使用 `tree-v1`。
