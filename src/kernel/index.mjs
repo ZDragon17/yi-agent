@@ -1595,15 +1595,15 @@ function recordActionEvidence(memory, {
   field,
 }) {
   let existing = memory.actionModels[token];
+  let evictedToken;
   let actionModelCount = existing === undefined ? cachedTopLevelModelCount(memory.actionModels) : null;
   if (existing === undefined && actionModelCount >= MAX_ACTION_MODELS) {
-    const evictedToken = evictOldestTopLevelModel(memory.actionModels);
+    evictedToken = evictOldestTopLevelModel(memory.actionModels);
     if (evictedToken === undefined) {
       contractViolation('kernel learning has no evictable action model', {
         field: `${field}.actionModels`,
       });
     }
-    if (memory.lastVerifiedSteps !== undefined) delete memory.lastVerifiedSteps[evictedToken];
     actionModelCount -= 1;
     existing = memory.actionModels[token];
   }
@@ -1656,7 +1656,10 @@ function recordActionEvidence(memory, {
     }
     memory.lastVerifiedSteps[token] = historyOrder;
   }
-  if (relationKey === undefined) return;
+  if (relationKey === undefined) {
+    pruneVerificationStepIfNoAuxiliaryModels(memory, evictedToken);
+    return;
+  }
 
   let relationModels = memory.relationModels ?? {};
   let tokenRelations = { ...(relationModels[token] ?? {}) };
@@ -1696,6 +1699,17 @@ function recordActionEvidence(memory, {
   NESTED_MODEL_COUNTS.set(memory.relationModels, existingRelation === undefined
     ? relationModelCount + 1
     : countRelationModels(relationModels));
+  pruneVerificationStepIfNoAuxiliaryModels(memory, evictedToken);
+}
+
+function pruneVerificationStepIfNoAuxiliaryModels(memory, token) {
+  if (token === undefined || memory.lastVerifiedSteps === undefined) return;
+  if (
+    Object.keys(memory.relationModels?.[token] ?? {}).length > 0 ||
+    Object.keys(memory.beliefModels?.[token] ?? {}).length > 0 ||
+    Object.values(memory.contextModels ?? {}).some((models) => Object.hasOwn(models, token))
+  ) return;
+  delete memory.lastVerifiedSteps[token];
 }
 
 function recordContextEvidence(memory, {

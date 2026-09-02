@@ -290,6 +290,62 @@ test('periodic revalidation revisits stale safe actions without domain fields', 
   assert.equal(update.nextMemory.historyClock, 10);
 });
 
+test('F-57 preserves revalidation freshness when action eviction leaves a relation model', () => {
+  const actionTokens = Array.from({ length: 8192 }, (_, index) => {
+    if (index === 0) return TARGET_A;
+    if (index === 1) return TARGET_B;
+    return `tok_F57${index.toString(36).toUpperCase().padStart(8, '0')}`;
+  });
+  const memory = {
+    schemaVersion: 1,
+    actionModels: Object.fromEntries(actionTokens.map((token, index) => [token, {
+      ...model([0]),
+      modelAge: index + 1,
+    }])),
+    relationModels: {
+      [TARGET_A]: {
+        'r1:+': {
+          ...model([1]),
+          modelAge: actionTokens.length + 1,
+        },
+      },
+    },
+    historyClock: 100,
+    lastVerifiedSteps: { [TARGET_A]: 1 },
+    modelClock: actionTokens.length + 1,
+  };
+  const before = observation([0], 'state:f57:before');
+  const newToken = 'tok_F57NEWACTION1';
+  const intent = choose(newToken, before, memory, 59);
+  const receiptValue = receipt(newToken, before, 'execution:f57:1', true);
+  const postObservation = observation([0], 'state:f57:after');
+  const verification = verify({ intent, receipt: receiptValue, postObservation });
+  const update = learn({
+    memory,
+    intent,
+    receipt: receiptValue,
+    postObservation,
+    verification,
+  });
+
+  assert.equal(Object.hasOwn(update.nextMemory.actionModels, TARGET_A), false);
+  assert.equal(update.nextMemory.relationModels[TARGET_A]['r1:+'].meanDelta[0], 1);
+  assert.equal(update.nextMemory.lastVerifiedSteps[TARGET_A], 1);
+
+  const nextIntent = step({
+    observation: postObservation,
+    memory: update.nextMemory,
+    valueSpec: VALUE_SPEC,
+    capabilities: CAPABILITIES,
+    rngState: rng(61),
+  });
+  assert.equal(nextIntent.choice.token, TARGET_A);
+  assert.equal(
+    nextIntent.expectation.verificationAge,
+    update.nextMemory.historyClock - update.nextMemory.lastVerifiedSteps[TARGET_A],
+  );
+});
+
 function newMemory() {
   return {
     schemaVersion: 1,

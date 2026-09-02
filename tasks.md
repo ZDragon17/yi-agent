@@ -511,3 +511,10 @@
 - 实现：Kernel 将 `modelAge/modelAges` 与 `modelClock` 视为一个不可拆分的持久表示；没有时钟的年龄状态在 `step` 与 `learn` 的公共 Memory 校验入口统一 fail-closed。无年龄字段的 v20 及更早 Memory 不受影响，v21 的正常 Memory 仍要求全部模型年龄不超过时钟。
 - 验证：Kernel 回归覆盖逐模型年龄和紧凑年龄向量两种畸形输入，分别确认 `step`、`learn` 均拒绝；原始顺序置换反例在修复前产生分叉，修复后不再进入淘汰路径；48 个 Kernel 契约、全量回归与既有旧版本 Replay 继续通过。
 - 边界：这只保证年龄表示的版本原子性，不解决模型族独立淘汰、创建年龄不等于重要性，以及跨模型经验如何共享生存预算；后者仍需新的可观察 WorldPort 反例决定是否升级记忆实体模型。
+
+## F-57 淘汰后证据新鲜度保持一致
+
+- 反例：F-55/F-56 的统一年龄淘汰可能先移除某个 Token 的总体 `actionModel`，但保留同一 Token 的关系模型；旧逻辑同时删除 `lastVerifiedSteps`，关系模型仍会被使用，却以 `verificationAge:null` 绕过 F-40 的周期再验证。
+- 实现：`recordActionEvidence` 延迟处理被淘汰 Token 的新鲜度索引，等本次完整 `verify→learn` 转移完成后，只有该 Token 已无关系、信念和历史上下文模型时才删除 `lastVerifiedSteps`。因此索引始终覆盖仍可能被选择的已验证模型证据，不改变模型容量或 WorldPort 边界。
+- 验证：Kernel 构造 8192 个带年龄的 action 模型和一个保留关系模型的 Token，真实学习新 Token 后确认总体模型被淘汰、关系模型保留、新鲜度序号仍在；下一次 `step` 继续选用关系预测并返回有限 `verificationAge`。既有周期再验证、全量回归和晚绑定 Oracle 保持通过。
+- 边界：这只修复 Token 级证据索引与模型生命周期的错位，不代表模型重要性排序，也不解决各模型族共享生存预算或主动保留策略；这些仍需新的 WorldPort 反例。

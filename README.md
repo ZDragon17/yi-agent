@@ -131,6 +131,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 有界记忆淘汰：`kernelLearningVersion: 19` 对关系模型、信念模型和历史上下文模型按稳定嵌套映射顺序淘汰最早项；连续世界产生无穷新关系或上下文时，Memory 保持固定上限而不会因缓存耗尽伪装成执行成功或改变账本语义。淘汰会降低可复用经验，不等于无限记忆、完美遗忘策略或现实适应能力；同一账本 Replay 按相同证据顺序重现同一淘汰结果；
 - 全模型族有界淘汰：`kernelLearningVersion: 20` 也对 `actionModels` 和 `rejectionModels` 的新 Token 按稳定顶层映射顺序淘汰最早项；当连续 WorldPort 不断产生新的能力标识时，所有可增长的经验模型都保持固定上限，且被淘汰 Token 的新鲜度索引同步移除。不同模型族仍各自独立计数，淘汰只发生在纯 Memory 转移中，不改变权限、回执或真实世界状态；
 - 模型年龄状态原子性：v21 的 `modelAge/modelAges` 只有在同一 Memory 同时带有 `modelClock` 时才是合法表示；缺少时钟的半版本状态会在 `step`/`learn` 入口 fail-closed，避免同一语义账本在后续容量淘汰中退回依赖 JSON 插入顺序；v20 及更早账本不携带年龄状态，继续使用各自历史语义；
+- 证据新鲜度与淘汰一致：当 Token 的总体 `actionModel` 被容量淘汰、但关系/信念/历史上下文模型仍保留时，`lastVerifiedSteps` 继续绑定这些可复用证据；后续选择仍能进入周期再验证，而不是以 `verificationAge:null` 永久绕过变化检测。只有该 Token 已无其它可复用模型证据时，才清理新鲜度索引；
 - 共享观测边界保护：v7 还会识别同一 `stateVersion + intervalId` 承载多个新 feedback 的情况，即使 adapter 把它们标为 clean，也全部记为 `AMBIGUOUS` 且不学习，避免一份无法分解的快照被复制到多个动作；旧 v6 账本按旧归因语义 Replay；
 - 监督器证据对齐：`kernelLearningVersion: 9` 的新 STEP 当本步先结算了新的延迟 feedback 时，变化监督器不会把合并观测中的旧动作进步记成当前动作的确认进步；已结算收据仍按 nonce 学习，当前动作和目标监督各自保守处理；旧版本 Replay 保持原监督语义；
 - 变化监督器：用同一套目标距离、确认进步、停滞、重规划和停止判定约束不同世界；状态随 STEP、快照、终态和恢复账本连续保存，跨进程 CLI 可继续运行；
