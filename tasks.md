@@ -546,3 +546,10 @@
 - 实现：在公共 schema 增加 `MAX_BOUNDARY_IDENTIFIER_LENGTH=4096`；Kernel 对观察、feedback 和 pending credit 的 `stateVersion/intervalId` 使用同一上限，外部 WorldPort 对 state、observation 和 feedback 也在协议归一化入口执行同一检查。标识保持 opaque，不添加领域格式限制。
 - 验证：Kernel 在预测前拒绝超限标识；外部 CLI adapter 在 `init` 后第一次 `run` 即被协议层拒绝且不追加 STEP；既有 opaque stateVersion、跨进程恢复、Replay 和晚绑定 Oracle 继续验证。
 - 边界：4096 是持久化边界，不是现实系统版本语义或真实性证明；receipt 中其它持久化文本仍须沿各自契约保持有界，未来若改变该上限需要重新评估事件预算与版本兼容。
+
+## F-62 证据新鲜度驱动的模型淘汰
+
+- 反例：v22 在一个同时含 8192 个 action 与 8192 个 rejection 模型的 Memory 中反复验证最早创建的 Token；共享预算压缩后该 Token 的 action 模型仍被淘汰，实际结果为约 1,529,099 字节输入压缩到 785,826 字节、`retainedAction=false`，创建年龄掩盖了持续证据。
+- 实现：v23 为已验证触碰的模型重新分配统一 `modelClock` 序号，覆盖 action、rejection、relation、belief、context 五类模型及延迟 feedback 结算；共享预算仍按年龄和稳定身份淘汰，v22 及更早版本保持创建年龄语义，Replay 传入版本后不会改写旧账本。
+- 验证：Kernel 对同一容量反例断言 v22 淘汰旧 action、v23 保留被重新验证的 action，并确认压缩后 Memory 仍在 768 KiB 内；全量回归、外部 WorldPort、连续恢复和晚绑定 Oracle 继续作为独立证据。
+- 边界：证据新鲜度只是“最近被验证”的领域无关信号，不代表模型重要性、未来效用、因果真实性或语义理解；未被重新验证但仍有价值的模型仍可能被淘汰，下一步必须由新的 WorldPort 反例决定是否需要频率、置信度或多信号生存策略。

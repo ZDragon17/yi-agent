@@ -1569,6 +1569,59 @@ test('persistent model age makes eviction independent of JSON key order', async 
   );
 });
 
+test('v23 refreshes verified model age so a reused model survives shared-budget eviction', async () => {
+  const { learn, step, verify } = await loadKernel();
+  const modelToken = (index) => index === 0
+    ? TOKEN_A
+    : `tok_${index.toString(36).toUpperCase().padStart(8, '0')}X`;
+  const model = (age) => ({
+    schemaVersion: 1,
+    sampleCount: 1,
+    meanDelta: [0, 0],
+    uncertainty: 0,
+    modelAge: age,
+  });
+  const tokens = Array.from({ length: 8192 }, (_, index) => modelToken(index));
+  const makeMemory = () => ({
+    schemaVersion: 1,
+    actionModels: Object.fromEntries(tokens.map((token, index) => [token, model(index + 1)])),
+    rejectionModels: Object.fromEntries(tokens.map((token, index) => [token, {
+      schemaVersion: 1,
+      sampleCount: 1,
+      rejected: true,
+      modelAge: 8193 + index,
+    }])),
+    modelClock: 16384,
+  });
+  const input = {
+    observation: observation([1, 1], 'state-1'),
+    memory: makeMemory(),
+    valueSpec: valueSpec([1, 1]),
+    capabilities: [capability(TOKEN_A)],
+    rngState: rngState(0x1234abcd),
+  };
+  const intent = step(input);
+  const learnInput = makeVerifyInput({
+    intent,
+    receipt: receiptForRequest(actionRequest({ token: TOKEN_A })),
+    postObservation: observation([1, 1], 'state-2'),
+  });
+  const verification = verify(learnInput);
+  const legacy = learn({ ...learnInput, memory: makeMemory(), verification, learningVersion: 22 });
+  const recent = learn({ ...learnInput, memory: makeMemory(), verification, learningVersion: 23 });
+
+  assert.equal(Object.hasOwn(legacy.nextMemory.actionModels, TOKEN_A), false);
+  assert.equal(Object.hasOwn(recent.nextMemory.actionModels, TOKEN_A), true);
+  const recentActionKeys = Object.keys(recent.nextMemory.actionModels).sort();
+  const recentActionAges = recent.nextMemory.modelAges.actionModels.split(',');
+  const recentActionAge = Number.parseInt(
+    recentActionAges[recentActionKeys.indexOf(TOKEN_A)],
+    36,
+  );
+  assert.ok(recentActionAge > 16384);
+  assert.ok(Buffer.byteLength(canonicalJson(recent.nextMemory), 'utf8') <= MAX_PERSISTED_MEMORY_BYTES);
+});
+
 test('kernel rejects model-age state without modelClock before step or learn can alter eviction semantics', async () => {
   const { learn, step, verify } = await loadKernel();
   const baseModel = (overrides = {}) => ({

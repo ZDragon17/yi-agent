@@ -136,6 +136,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 共享持久化生存预算：v22 将事件上限（1 MiB）与 Kernel 的 Memory 预算（768 KiB）放进同一份 schema 契约；输出持久化 Memory 前，跨 action/rejection/relation/belief/context 模型按持久年龄统一淘汰，保留 STEP 证据包的序列化余量，并在淘汰后重建紧凑年龄索引。各模型族分别有数量上限并不等于整个 STEP 有界；该预算修复了多族同时增长导致真实 `LabStore` 追加失败的问题，但仍是确定性容量遗忘，不等于重要性学习或无限长期记忆；
 - 学习版本兼容：新 STEP 由应用层明确写入 `kernelLearningVersion: 22`，Replay 将该版本传回 Kernel；因此 v22 才启用跨模型族共享持久化预算，v21 及更早账本继续保留原有模型年龄压缩和淘汰语义，避免升级代码重写合法历史状态。Kernel 对未知未来版本 fail-closed，而不是猜测其学习规则；
 - 有界 WorldPort 边界标识：`stateVersion` 与 `intervalId` 仍保持不透明，不要求固定格式，但在进入 Kernel 和外部 adapter 归一化层时统一限制为 4096 字符；超过限制的版本不会先进入预测、执行或账本，避免把任意长标识延迟成 STEP 大小错误；
+- 证据新鲜度淘汰：v23 将新 STEP 中 `modelAge` 的含义从“创建序号”升级为“最近一次已验证证据触碰序号”；被持续验证的 action/rejection/relation/belief/context 模型会获得新的统一年龄，跨模型族共享预算因此优先保留仍被现实证据使用的模型。v22 及更早 Replay 继续保持创建年龄语义；这仍是领域无关的 recency，不等于价值、因果可信度或重要性学习；
 - 共享观测边界保护：v7 还会识别同一 `stateVersion + intervalId` 承载多个新 feedback 的情况，即使 adapter 把它们标为 clean，也全部记为 `AMBIGUOUS` 且不学习，避免一份无法分解的快照被复制到多个动作；旧 v6 账本按旧归因语义 Replay；
 - 监督器证据对齐：`kernelLearningVersion: 9` 的新 STEP 当本步先结算了新的延迟 feedback 时，变化监督器不会把合并观测中的旧动作进步记成当前动作的确认进步；已结算收据仍按 nonce 学习，当前动作和目标监督各自保守处理；旧版本 Replay 保持原监督语义；
 - 变化监督器：用同一套目标距离、确认进步、停滞、重规划和停止判定约束不同世界；状态随 STEP、快照、终态和恢复账本连续保存，跨进程 CLI 可继续运行；

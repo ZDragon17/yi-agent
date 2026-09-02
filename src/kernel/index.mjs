@@ -35,7 +35,8 @@ const MAX_CONTEXT_MODELS = 8192;
 const MAX_LONG_CONTEXTS = 1;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
-const CURRENT_LEARNING_VERSION = 22;
+const MODEL_RECENCY_LEARNING_VERSION = 23;
+const CURRENT_LEARNING_VERSION = MODEL_RECENCY_LEARNING_VERSION;
 const PERSISTED_MEMORY_BUDGET_LEARNING_VERSION = 22;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const HISTORY_ACCUMULATOR_HEX_LENGTH = 64;
@@ -362,6 +363,7 @@ export function learn(input) {
     ? CURRENT_LEARNING_VERSION
     : assertLearningVersion(source.learningVersion, 'learnInput.learningVersion');
   const enforcePersistedMemoryBudget = learningVersion >= PERSISTED_MEMORY_BUDGET_LEARNING_VERSION;
+  const refreshModelAge = learningVersion >= MODEL_RECENCY_LEARNING_VERSION;
   const intent = normalizeIntent(source.intent, 'learnInput.intent');
   const dimensions = intent.expectation.expectedDelta.length;
   const memory = normalizeMemory(source.memory, 'learnInput.memory', dimensions);
@@ -391,6 +393,7 @@ export function learn(input) {
     'learnInput.postObservation.feedback',
     feedbackOrder,
     feedbackCausality,
+    refreshModelAge,
   );
   const settled = settlement.entries;
 
@@ -417,9 +420,11 @@ export function learn(input) {
           field: 'learnOutput.nextMemory.rejectionModels',
         });
       }
-      const rejectionModelAge = existingRejection?.modelAge ?? nextModelAge(
+      const rejectionModelAge = modelAgeFor(
         nextMemory,
+        existingRejection,
         `learnOutput.nextMemory.rejectionModels.${token}.modelAge`,
+        refreshModelAge,
       );
       rejectionModels[token] = updateRejectionModel(
         existingRejection,
@@ -512,6 +517,7 @@ export function learn(input) {
     errorMagnitude,
     dimensions,
     field: 'learnOutput.nextMemory',
+    refreshModelAge,
   });
 
   return {
@@ -530,6 +536,7 @@ function settlePendingCredits(
   field,
   feedbackOrder = 'pending-v2',
   feedbackCausality = 'boundary-v2',
+  refreshModelAge = false,
 ) {
   const feedback = postObservation.feedback ?? [];
   const pendingCredits = memory.pendingCredits ?? [];
@@ -645,6 +652,7 @@ function settlePendingCredits(
       errorMagnitude,
       dimensions,
       field: `learnOutput.nextMemory.settled.${item.executionNonce}`,
+      refreshModelAge,
     });
     hasFeedbackSettlement = true;
     rememberSettledFeedback(memory, item);
@@ -1563,7 +1571,7 @@ function updateActionModel(current, actualDelta, errorMagnitude, dimensions, fie
     uncertainty: nextUncertainty,
     ...(current.modelAge === undefined && modelAge === undefined
       ? {}
-      : { modelAge: current.modelAge ?? modelAge }),
+      : { modelAge: modelAge ?? current.modelAge }),
   };
 }
 
@@ -1583,7 +1591,7 @@ function updateBeliefModel(current, actualDelta, dimensions, field, modelAge) {
     samples,
     ...(current?.modelAge === undefined && modelAge === undefined
       ? {}
-      : { modelAge: current?.modelAge ?? modelAge }),
+      : { modelAge: modelAge ?? current?.modelAge }),
   };
 }
 
@@ -1601,7 +1609,7 @@ function updateRejectionModel(current, rejected, relationKey, field, modelAge) {
     ...(relationKey === undefined ? {} : { relationKey }),
     ...(current?.modelAge === undefined && modelAge === undefined
       ? {}
-      : { modelAge: current?.modelAge ?? modelAge }),
+      : { modelAge: modelAge ?? current?.modelAge }),
   };
 }
 
@@ -1612,6 +1620,12 @@ function nextModelAge(memory, field) {
   }
   memory.modelClock += 1;
   return memory.modelClock;
+}
+
+function modelAgeFor(memory, existing, field, refresh) {
+  return refresh || existing === undefined
+    ? nextModelAge(memory, field)
+    : existing.modelAge;
 }
 
 function countRelationModels(value) {
@@ -1630,6 +1644,7 @@ function recordActionEvidence(memory, {
   errorMagnitude,
   dimensions,
   field,
+  refreshModelAge = false,
 }) {
   let existing = memory.actionModels[token];
   let actionModelCount = existing === undefined ? cachedTopLevelModelCount(memory.actionModels) : null;
@@ -1654,6 +1669,12 @@ function recordActionEvidence(memory, {
       false,
       relationKey,
       `${field}.rejectionModels.${token}`,
+      modelAgeFor(
+        memory,
+        memory.rejectionModels[token],
+        `${field}.rejectionModels.${token}.modelAge`,
+        refreshModelAge,
+      ),
     );
   }
   memory.actionModels[token] = updateActionModel(
@@ -1662,7 +1683,12 @@ function recordActionEvidence(memory, {
     errorMagnitude,
     dimensions,
     `${field}.actionModels.${token}`,
-    existing?.modelAge ?? nextModelAge(memory, `${field}.actionModels.${token}.modelAge`),
+    modelAgeFor(
+      memory,
+      existing,
+      `${field}.actionModels.${token}.modelAge`,
+      refreshModelAge,
+    ),
   );
   if (existing === undefined) {
     TOP_LEVEL_MODEL_COUNTS.set(memory.actionModels, actionModelCount + 1);
@@ -1673,6 +1699,7 @@ function recordActionEvidence(memory, {
     actualDelta,
     dimensions,
     field,
+    refreshModelAge,
   });
   for (const contextKey of contextKeys ?? []) {
     recordContextEvidence(memory, {
@@ -1682,6 +1709,7 @@ function recordActionEvidence(memory, {
       errorMagnitude,
       dimensions,
       field,
+      refreshModelAge,
     });
   }
   appendRecentHistory(memory, { token, actualDelta, historyOrder, dimensions, field });
@@ -1720,9 +1748,11 @@ function recordActionEvidence(memory, {
     errorMagnitude,
     dimensions,
     `${field}.relationModels.${token}.${relationKey}`,
-    existingRelation?.modelAge ?? nextModelAge(
+    modelAgeFor(
       memory,
+      existingRelation,
       `${field}.relationModels.${token}.${relationKey}.modelAge`,
+      refreshModelAge,
     ),
   );
   memory.relationModels = {
@@ -1741,6 +1771,7 @@ function recordContextEvidence(memory, {
   errorMagnitude,
   dimensions,
   field,
+  refreshModelAge = false,
 }) {
   if (memory.contextModels === undefined || contextKey === undefined) return;
   let contexts = memory.contextModels;
@@ -1781,9 +1812,11 @@ function recordContextEvidence(memory, {
     errorMagnitude,
     dimensions,
     `${field}.contextModels.${contextKey}.${token}`,
-    existing?.modelAge ?? nextModelAge(
+    modelAgeFor(
       memory,
+      existing,
       `${field}.contextModels.${contextKey}.${token}.modelAge`,
+      refreshModelAge,
     ),
   );
   memory.contextModels = { ...contexts, [contextKey]: models };
@@ -1878,6 +1911,7 @@ function recordBeliefEvidence(memory, {
   actualDelta,
   dimensions,
   field,
+  refreshModelAge = false,
 }) {
   if (memory.beliefModels === undefined) return;
   const contextKey = relationKey ?? OVERALL_BELIEF_CONTEXT;
@@ -1906,9 +1940,11 @@ function recordBeliefEvidence(memory, {
     actualDelta,
     dimensions,
     `${field}.beliefModels.${token}.${contextKey}`,
-    existing?.modelAge ?? nextModelAge(
+    modelAgeFor(
       memory,
+      existing,
       `${field}.beliefModels.${token}.${contextKey}.modelAge`,
+      refreshModelAge,
     ),
   );
   memory.beliefModels = { ...beliefs, [token]: tokenBeliefs };
