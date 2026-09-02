@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { canonicalDigest } from '../../src/runtime/schema.mjs';
 
 const KERNEL_ENTRY = new URL('../../src/kernel/index.mjs', import.meta.url);
 
@@ -1365,6 +1366,70 @@ test('verified learning records the same change under its relation context', asy
   assert.deepEqual(updated.nextMemory.relationModels[request.token]['r1:++'].meanDelta, [0.5, -0.25]);
 });
 
+test('verified learning evicts the oldest bounded relation, belief, and context models', async () => {
+  const { learn, verify } = await loadKernel();
+  const relationKeys = ['r1:--', 'r1:-0', 'r1:-+', 'r1:0-', 'r1:00', 'r1:0+', 'r1:+-', 'r1:+0'];
+  const modelToken = (index) => index === 0
+    ? TOKEN_A
+    : `tok_${index.toString(36).toUpperCase().padStart(8, '0')}X`;
+  const nestedModel = () => ({ schemaVersion: 1, sampleCount: 1, meanDelta: [0, 0], uncertainty: 0 });
+  const beliefModel = () => ({ schemaVersion: 1, sampleCount: 1, samples: [[0, 0]] });
+  const fullNestedModels = () => Object.fromEntries(Array.from({ length: 1024 }, (_, index) => [
+    modelToken(index),
+    Object.fromEntries(relationKeys.map((key) => [key, nestedModel()])),
+  ]));
+  const runLearning = (memory) => {
+    const verifyInput = makeVerifyInput();
+    verifyInput.intent.expectation.relationKey = 'r1:++';
+    const verification = verify(verifyInput);
+    return learn({
+      memory,
+      intent: verifyInput.intent,
+      receipt: verifyInput.receipt,
+      postObservation: verifyInput.postObservation,
+      verification,
+    });
+  };
+
+  const relationUpdated = runLearning({
+    ...memoryWithModels([]),
+    relationModels: fullNestedModels(),
+  });
+  assert.equal(countNestedModels(relationUpdated.nextMemory.relationModels), 8192);
+  assert.equal(Object.hasOwn(relationUpdated.nextMemory.relationModels[TOKEN_A], 'r1:--'), false);
+  assert.equal(Object.hasOwn(relationUpdated.nextMemory.relationModels[TOKEN_A], 'r1:++'), true);
+
+  const fullBeliefModels = () => Object.fromEntries(Array.from({ length: 1024 }, (_, index) => [
+    modelToken(index),
+    Object.fromEntries(relationKeys.map((key) => [key, beliefModel()])),
+  ]));
+  const beliefUpdated = runLearning({
+    ...memoryWithModels([]),
+    beliefModels: fullBeliefModels(),
+  });
+  assert.equal(countNestedModels(beliefUpdated.nextMemory.beliefModels), 8192);
+  assert.equal(Object.hasOwn(beliefUpdated.nextMemory.beliefModels[TOKEN_A], 'r1:--'), false);
+  assert.equal(Object.hasOwn(beliefUpdated.nextMemory.beliefModels[TOKEN_A], 'r1:++'), true);
+
+  const firstContextKey = `h1:sha256:${'0'.repeat(64)}`;
+  const contexts = {};
+  let contextIndex = 0;
+  while (Object.keys(contexts).length < 8192) {
+    const contextKey = `h1:sha256:${contextIndex.toString(16).padStart(64, '0')}`;
+    contextIndex += 1;
+    contexts[contextKey] = { [TOKEN_A]: nestedModel() };
+  }
+  const contextUpdated = runLearning({
+    ...memoryWithModels([]),
+    contextModels: contexts,
+    recentHistory: [],
+  });
+  const currentContextKey = `h1:${canonicalDigest([])}`;
+  assert.equal(countNestedModels(contextUpdated.nextMemory.contextModels), 8192);
+  assert.equal(Object.hasOwn(contextUpdated.nextMemory.contextModels, firstContextKey), false);
+  assert.equal(Object.hasOwn(contextUpdated.nextMemory.contextModels, currentContextKey), true);
+});
+
 test('kernel rejects oversized numeric and capability surfaces before prediction work', async () => {
   const { step } = await loadKernel();
   const dimensions = 1025;
@@ -1722,6 +1787,10 @@ function memoryWithModels(entries) {
       ]),
     ),
   };
+}
+
+function countNestedModels(value) {
+  return Object.values(value).reduce((sum, models) => sum + Object.keys(models).length, 0);
 }
 
 function rngState(state) {

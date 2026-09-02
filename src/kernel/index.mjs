@@ -36,6 +36,7 @@ const HISTORY_ACCUMULATOR_MASK = (1n << 256n) - 1n;
 const HISTORY_ACCUMULATOR_BASE = 0x9e3779b185ebca87f4a7c15f39cc0605n;
 const FEEDBACK_ORDER_MODES = ['arrival-v1', 'pending-v2'];
 const FEEDBACK_CAUSALITY_MODES = ['legacy-v1', 'boundary-v2'];
+const NESTED_MODEL_COUNTS = new WeakMap();
 
 const STEP_INPUT_KEYS = [
   'observation',
@@ -1036,6 +1037,7 @@ function normalizeContextModels(value, field, dimensions) {
     }
     normalized[contextKey] = contextModels;
   }
+  NESTED_MODEL_COUNTS.set(normalized, modelCount);
   return normalized;
 }
 
@@ -1141,6 +1143,7 @@ function normalizeBeliefModels(value, field, dimensions) {
     }
     normalized[token] = normalizedContexts;
   }
+  NESTED_MODEL_COUNTS.set(normalized, modelCount);
   return normalized;
 }
 
@@ -1282,6 +1285,7 @@ function normalizeRelationModels(value, field, dimensions) {
     }
     normalized[token] = relationModels;
   }
+  NESTED_MODEL_COUNTS.set(normalized, relationCount);
   return normalized;
 }
 
@@ -1365,10 +1369,10 @@ function updateRejectionModel(current, rejected, relationKey, field) {
 }
 
 function countRelationModels(value) {
-  return Object.values(value).reduce(
+  return cachedNestedModelCount(value, () => Object.values(value).reduce(
     (sum, relations) => sum + Object.keys(relations).length,
     0,
-  );
+  ));
 }
 
 function recordActionEvidence(memory, {
@@ -1429,10 +1433,22 @@ function recordActionEvidence(memory, {
   }
   if (relationKey === undefined) return;
 
-  const relationModels = memory.relationModels ?? {};
-  const tokenRelations = { ...(relationModels[token] ?? {}) };
-  const existingRelation = tokenRelations[relationKey];
-  if (existingRelation === undefined && countRelationModels(relationModels) >= MAX_RELATION_MODELS) {
+  let relationModels = memory.relationModels ?? {};
+  let tokenRelations = { ...(relationModels[token] ?? {}) };
+  let existingRelation = tokenRelations[relationKey];
+  let relationModelCount = existingRelation === undefined ? countRelationModels(relationModels) : null;
+  if (existingRelation === undefined && relationModelCount >= MAX_RELATION_MODELS) {
+    const evicted = evictOldestNestedModel(relationModels);
+    if (!evicted) {
+      contractViolation('kernel learning has no evictable relation model', {
+        field: `${field}.relationModels.${token}.${relationKey}`,
+      });
+    }
+    relationModelCount -= 1;
+    tokenRelations = { ...(relationModels[token] ?? {}) };
+    existingRelation = tokenRelations[relationKey];
+  }
+  if (existingRelation === undefined && relationModelCount >= MAX_RELATION_MODELS) {
     contractViolation('kernel learning would exceed the relation-model limit', {
       field: `${field}.relationModels.${token}.${relationKey}`,
     });
@@ -1448,6 +1464,9 @@ function recordActionEvidence(memory, {
     ...relationModels,
     [token]: tokenRelations,
   };
+  NESTED_MODEL_COUNTS.set(memory.relationModels, existingRelation === undefined
+    ? relationModelCount + 1
+    : countRelationModels(relationModels));
 }
 
 function recordContextEvidence(memory, {
@@ -1470,26 +1489,24 @@ function recordContextEvidence(memory, {
         field: `${field}.contextModels.${contextKey}.${token}`,
       });
     }
-    contexts = { ...contexts };
+    const evictedLongModelCount = Object.keys(contexts[evictableKey] ?? {}).length;
     delete contexts[evictableKey];
+    const cachedContextModelCount = NESTED_MODEL_COUNTS.get(contexts);
+    if (cachedContextModelCount !== undefined) {
+      NESTED_MODEL_COUNTS.set(contexts, cachedContextModelCount - evictedLongModelCount);
+    }
     models = { ...(contexts[contextKey] ?? {}) };
     existing = models[token];
   }
-  if (existing === undefined && countContextModels(contexts) >= MAX_CONTEXT_MODELS) {
-    if (!contextKey.startsWith('h2:')) {
-      contractViolation('kernel learning would exceed the context-model limit', {
+  let contextModelCount = existing === undefined ? countContextModels(contexts) : null;
+  if (existing === undefined && contextModelCount >= MAX_CONTEXT_MODELS) {
+    const evicted = evictOldestNestedModel(contexts);
+    if (!evicted) {
+      contractViolation('kernel learning has no evictable context model', {
         field: `${field}.contextModels.${contextKey}.${token}`,
       });
     }
-    const evictableKey = oldestLongContextKey(contexts);
-    if (evictableKey === undefined) {
-      contractViolation('kernel learning has no evictable long-context model', {
-        field: `${field}.contextModels.${contextKey}.${token}`,
-      });
-    }
-    const withoutEvicted = { ...contexts };
-    delete withoutEvicted[evictableKey];
-    contexts = withoutEvicted;
+    contextModelCount -= 1;
     models = { ...(contexts[contextKey] ?? {}) };
     existing = models[token];
   }
@@ -1501,10 +1518,16 @@ function recordContextEvidence(memory, {
     `${field}.contextModels.${contextKey}.${token}`,
   );
   memory.contextModels = { ...contexts, [contextKey]: models };
+  NESTED_MODEL_COUNTS.set(memory.contextModels, existing === undefined
+    ? contextModelCount + 1
+    : countContextModels(contexts));
 }
 
 function countContextModels(value) {
-  return Object.values(value).reduce((sum, models) => sum + Object.keys(models).length, 0);
+  return cachedNestedModelCount(value, () => Object.values(value).reduce(
+    (sum, models) => sum + Object.keys(models).length,
+    0,
+  ));
 }
 
 function countLongContexts(value) {
@@ -1513,6 +1536,20 @@ function countLongContexts(value) {
 
 function oldestLongContextKey(value) {
   return Object.keys(value).find((contextKey) => contextKey.startsWith('h2:'));
+}
+
+function evictOldestNestedModel(value) {
+  for (const [outerKey, models] of Object.entries(value)) {
+    const oldestKey = Object.keys(models)[0];
+    if (oldestKey === undefined) {
+      delete value[outerKey];
+      continue;
+    }
+    delete models[oldestKey];
+    if (Object.keys(models).length === 0) delete value[outerKey];
+    return true;
+  }
+  return false;
 }
 
 function appendRecentHistory(memory, { token, actualDelta, historyOrder, dimensions, field }) {
@@ -1555,10 +1592,22 @@ function recordBeliefEvidence(memory, {
 }) {
   if (memory.beliefModels === undefined) return;
   const contextKey = relationKey ?? OVERALL_BELIEF_CONTEXT;
-  const beliefs = memory.beliefModels;
-  const tokenBeliefs = { ...(beliefs[token] ?? {}) };
-  const existing = tokenBeliefs[contextKey];
-  if (existing === undefined && countBeliefModels(beliefs) >= MAX_BELIEF_MODELS) {
+  let beliefs = memory.beliefModels;
+  let tokenBeliefs = { ...(beliefs[token] ?? {}) };
+  let existing = tokenBeliefs[contextKey];
+  let beliefModelCount = existing === undefined ? countBeliefModels(beliefs) : null;
+  if (existing === undefined && beliefModelCount >= MAX_BELIEF_MODELS) {
+    const evicted = evictOldestNestedModel(beliefs);
+    if (!evicted) {
+      contractViolation('kernel learning has no evictable belief model', {
+        field: `${field}.beliefModels.${token}.${contextKey}`,
+      });
+    }
+    beliefModelCount -= 1;
+    tokenBeliefs = { ...(beliefs[token] ?? {}) };
+    existing = tokenBeliefs[contextKey];
+  }
+  if (existing === undefined && beliefModelCount >= MAX_BELIEF_MODELS) {
     contractViolation('kernel learning would exceed the belief-model limit', {
       field: `${field}.beliefModels.${token}.${contextKey}`,
     });
@@ -1570,10 +1619,24 @@ function recordBeliefEvidence(memory, {
     `${field}.beliefModels.${token}.${contextKey}`,
   );
   memory.beliefModels = { ...beliefs, [token]: tokenBeliefs };
+  NESTED_MODEL_COUNTS.set(memory.beliefModels, existing === undefined
+    ? beliefModelCount + 1
+    : countBeliefModels(beliefs));
 }
 
 function countBeliefModels(value) {
-  return Object.values(value).reduce((sum, contexts) => sum + Object.keys(contexts).length, 0);
+  return cachedNestedModelCount(value, () => Object.values(value).reduce(
+    (sum, contexts) => sum + Object.keys(contexts).length,
+    0,
+  ));
+}
+
+function cachedNestedModelCount(value, compute) {
+  const cached = NESTED_MODEL_COUNTS.get(value);
+  if (cached !== undefined) return cached;
+  const count = compute();
+  NESTED_MODEL_COUNTS.set(value, count);
+  return count;
 }
 
 function normalizeCapabilities(value, field) {
@@ -2604,6 +2667,7 @@ function cloneMemory(value) {
         }])),
       ]),
     );
+    NESTED_MODEL_COUNTS.set(cloned.relationModels, countRelationModels(value.relationModels));
   }
   if (value.rejectionModels !== undefined) {
     cloned.rejectionModels = Object.fromEntries(
@@ -2645,6 +2709,7 @@ function cloneMemory(value) {
         }])),
       ]),
     );
+    NESTED_MODEL_COUNTS.set(cloned.beliefModels, countBeliefModels(value.beliefModels));
   }
   if (value.contextModels !== undefined) {
     cloned.contextModels = Object.fromEntries(
@@ -2658,6 +2723,7 @@ function cloneMemory(value) {
         }])),
       ]),
     );
+    NESTED_MODEL_COUNTS.set(cloned.contextModels, countContextModels(value.contextModels));
   }
   if (value.recentHistory !== undefined) {
     cloned.recentHistory = value.recentHistory.map((entry) => ({

@@ -482,3 +482,10 @@
 - 实现：沿用现有 `yi-world-cli` 单请求/单响应边界，测试 adapter 注入截断 JSON、重复 JSONL 响应、错误 ID、错误版本、非 JSON 污染、超时和非零退出；宿主必须在外部响应完成且 envelope 严格匹配前不追加 STEP。另验证 adapter 的 stderr 诊断与 CRLF 响应不会污染 stdout 协议。
 - 验证：`test/e2e/cli.test.mjs` 对每种故障真实启动独立 adapter 子进程，并检查 Run 账本 STEP 数为零；stderr/CRLF 真实完成 `init→run→replay` 且 Replay 为 `CONSISTENT`。
 - 边界：当前仍是本地一次请求一次进程的 JSONL 协议，不等于网络流式传输的分片重组、消息确认或分布式重试保证；持久 adapter 会话、网络分区和外部效果发生后响应丢失仍需沿非幂等对账契约与人工安全门继续验证。
+
+## F-53 连续运行的有界记忆淘汰
+
+- 反例：如果每个新关系、隐藏结果或历史上下文都永久留在 Memory，连续 WorldPort 迟早会撞上固定上限；如果直接抛错，Agent 会在尚未完成现实目标时因内部缓存耗尽停机；如果无规则删除，重启和 Replay 又会产生不同决策。
+- 实现：`kernelLearningVersion: 19` 对 relation、belief 和 context 三类嵌套模型按稳定嵌套映射顺序淘汰最早项，保持每类既有硬上限；淘汰发生在 `verify→learn` 的纯 Memory 转移内，不改变 WorldPort 权限、执行回执或真实状态。旧版本账本在未触及上限时保持原结果，Replay 支持 v19 并重现同一淘汰顺序。
+- 验证：Kernel 构造达到上限的关系/信念/上下文 Memory，再提交一个新证据；每类数量保持上限、新模型存在、最旧模型被移除。连续 CLI、跨进程重启、Replay、五个内置 WorldPort、外部 adapter 和晚绑定 Oracle 继续通过。
+- 边界：这是固定容量下的确定性遗忘，不是重要性学习、语义压缩、概率校准或无限长期记忆；淘汰可能丢失仍有价值的经验，后续需要用变化速度和未知 WorldPort 反例校准容量与淘汰策略。
