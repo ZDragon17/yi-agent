@@ -489,3 +489,10 @@
 - 实现：`kernelLearningVersion: 19` 对 relation、belief 和 context 三类嵌套模型按稳定嵌套映射顺序淘汰最早项，保持每类既有硬上限；淘汰发生在 `verify→learn` 的纯 Memory 转移内，不改变 WorldPort 权限、执行回执或真实状态。旧版本账本在未触及上限时保持原结果，Replay 支持 v19 并重现同一淘汰顺序。
 - 验证：Kernel 构造达到上限的关系/信念/上下文 Memory，再提交一个新证据；每类数量保持上限、新模型存在、最旧模型被移除。连续 CLI、跨进程重启、Replay、五个内置 WorldPort、外部 adapter 和晚绑定 Oracle 继续通过。
 - 边界：这是固定容量下的确定性遗忘，不是重要性学习、语义压缩、概率校准或无限长期记忆；淘汰可能丢失仍有价值的经验，后续需要用变化速度和未知 WorldPort 反例校准容量与淘汰策略。
+
+## F-54 全模型族的连续 Token 淘汰
+
+- 反例：F-53 只覆盖 relation、belief、context；一个连续 WorldPort 若逐步暴露第 8193 个全新能力 Token，`actionModels` 或 `rejectionModels` 仍会直接抛出容量错误，Agent 依旧可能在经验种类增长时停机。
+- 实现：`kernelLearningVersion: 20` 对 `actionModels`、`rejectionModels` 以及已有三类嵌套模型统一采用确定性有界淘汰；新增顶层模型时按稳定顶层映射顺序移除最早项，并同步清理被淘汰 action Token 的 `lastVerifiedSteps`，避免新鲜度索引残留。每一类仍保持自己的容量边界，淘汰发生在 `verify→learn` 的克隆 Memory 内。
+- 验证：Kernel 在 action/rejection 两类模型达到 8192 项后提交第 8193 个新 Token，数量保持上限、最早项移除、新项写入；全量回归与 Replay 继续覆盖 v20。
+- 边界：稳定映射顺序是可复现的确定性遗忘，不是按价值、频率或语义重要性学习；各模型族独立淘汰可能保留某个 Token 的更具体上下文而移除总体模型，后续需要用跨 Token 置换和真实未知 WorldPort 反例决定是否引入统一的持久模型年龄。

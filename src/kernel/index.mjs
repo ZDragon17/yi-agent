@@ -36,6 +36,7 @@ const HISTORY_ACCUMULATOR_MASK = (1n << 256n) - 1n;
 const HISTORY_ACCUMULATOR_BASE = 0x9e3779b185ebca87f4a7c15f39cc0605n;
 const FEEDBACK_ORDER_MODES = ['arrival-v1', 'pending-v2'];
 const FEEDBACK_CAUSALITY_MODES = ['legacy-v1', 'boundary-v2'];
+const TOP_LEVEL_MODEL_COUNTS = new WeakMap();
 const NESTED_MODEL_COUNTS = new WeakMap();
 
 const STEP_INPUT_KEYS = [
@@ -382,18 +383,35 @@ export function learn(input) {
     if (verification.attribution === 'EXECUTION_REJECTED' && source.receipt.status === 'REJECTED') {
       const token = intent.choice.token;
       const rejectionModels = nextMemory.rejectionModels ?? {};
-      if (rejectionModels[token] === undefined && Object.keys(rejectionModels).length >= MAX_ACTION_MODELS) {
+      let existingRejection = rejectionModels[token];
+      let rejectionModelCount = existingRejection === undefined
+        ? cachedTopLevelModelCount(rejectionModels)
+        : null;
+      if (existingRejection === undefined && rejectionModelCount >= MAX_ACTION_MODELS) {
+        const evictedToken = evictOldestTopLevelModel(rejectionModels);
+        if (evictedToken === undefined) {
+          contractViolation('kernel learning has no evictable rejection model', {
+            field: 'learnOutput.nextMemory.rejectionModels',
+          });
+        }
+        rejectionModelCount -= 1;
+        existingRejection = rejectionModels[token];
+      }
+      if (existingRejection === undefined && rejectionModelCount >= MAX_ACTION_MODELS) {
         contractViolation('kernel learning would exceed the rejection-model limit', {
           field: 'learnOutput.nextMemory.rejectionModels',
         });
       }
       rejectionModels[token] = updateRejectionModel(
-        rejectionModels[token],
+        existingRejection,
         true,
         intent.expectation.relationKey,
         `learnOutput.nextMemory.rejectionModels.${token}`,
       );
       nextMemory.rejectionModels = rejectionModels;
+      if (existingRejection === undefined) {
+        TOP_LEVEL_MODEL_COUNTS.set(rejectionModels, rejectionModelCount + 1);
+      }
       return {
         schemaVersion: SCHEMA_VERSION,
         status: 'REJECTION_RECORDED',
@@ -926,6 +944,7 @@ function normalizeMemory(value, field, dimensions) {
       dimensions,
     );
   }
+  TOP_LEVEL_MODEL_COUNTS.set(normalizedModels, Object.keys(normalizedModels).length);
 
   const normalizedRelations = source.relationModels === undefined
     ? undefined
@@ -1260,6 +1279,7 @@ function normalizeRejectionModels(value, field, dimensions) {
       ...(relationKey === undefined ? {} : { relationKey }),
     };
   }
+  TOP_LEVEL_MODEL_COUNTS.set(normalized, Object.keys(normalized).length);
   return normalized;
 }
 
@@ -1385,8 +1405,20 @@ function recordActionEvidence(memory, {
   dimensions,
   field,
 }) {
-  const existing = memory.actionModels[token];
-  if (!existing && Object.keys(memory.actionModels).length >= MAX_ACTION_MODELS) {
+  let existing = memory.actionModels[token];
+  let actionModelCount = existing === undefined ? cachedTopLevelModelCount(memory.actionModels) : null;
+  if (existing === undefined && actionModelCount >= MAX_ACTION_MODELS) {
+    const evictedToken = evictOldestTopLevelModel(memory.actionModels);
+    if (evictedToken === undefined) {
+      contractViolation('kernel learning has no evictable action model', {
+        field: `${field}.actionModels`,
+      });
+    }
+    if (memory.lastVerifiedSteps !== undefined) delete memory.lastVerifiedSteps[evictedToken];
+    actionModelCount -= 1;
+    existing = memory.actionModels[token];
+  }
+  if (existing === undefined && actionModelCount >= MAX_ACTION_MODELS) {
     contractViolation('kernel learning would exceed the action-model limit', {
       field: `${field}.actionModels`,
     });
@@ -1406,6 +1438,7 @@ function recordActionEvidence(memory, {
     dimensions,
     `${field}.actionModels.${token}`,
   );
+  if (existing === undefined) TOP_LEVEL_MODEL_COUNTS.set(memory.actionModels, actionModelCount + 1);
   recordBeliefEvidence(memory, {
     token,
     relationKey,
@@ -1629,6 +1662,23 @@ function countBeliefModels(value) {
     (sum, contexts) => sum + Object.keys(contexts).length,
     0,
   ));
+}
+
+function cachedTopLevelModelCount(value) {
+  const cached = TOP_LEVEL_MODEL_COUNTS.get(value);
+  if (cached !== undefined) return cached;
+  const count = Object.keys(value).length;
+  TOP_LEVEL_MODEL_COUNTS.set(value, count);
+  return count;
+}
+
+function evictOldestTopLevelModel(value) {
+  const oldestKey = Object.keys(value)[0];
+  if (oldestKey === undefined) return undefined;
+  delete value[oldestKey];
+  const cached = TOP_LEVEL_MODEL_COUNTS.get(value);
+  if (cached !== undefined) TOP_LEVEL_MODEL_COUNTS.set(value, cached - 1);
+  return oldestKey;
 }
 
 function cachedNestedModelCount(value, compute) {
@@ -2649,6 +2699,7 @@ function cloneMemory(value) {
     schemaVersion: SCHEMA_VERSION,
     actionModels,
   };
+  TOP_LEVEL_MODEL_COUNTS.set(cloned.actionModels, Object.keys(actionModels).length);
   if (value.pendingCreditPolicy !== undefined) {
     cloned.pendingCreditPolicy = {
       schemaVersion: SCHEMA_VERSION,
@@ -2678,6 +2729,7 @@ function cloneMemory(value) {
         ...(model.relationKey === undefined ? {} : { relationKey: model.relationKey }),
       }]),
     );
+    TOP_LEVEL_MODEL_COUNTS.set(cloned.rejectionModels, Object.keys(value.rejectionModels).length);
   }
   if (value.pendingCredits !== undefined) {
     cloned.pendingCredits = value.pendingCredits.map((credit) => ({

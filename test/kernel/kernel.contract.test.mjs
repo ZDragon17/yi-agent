@@ -1428,6 +1428,62 @@ test('verified learning evicts the oldest bounded relation, belief, and context 
   assert.equal(countNestedModels(contextUpdated.nextMemory.contextModels), 8192);
   assert.equal(Object.hasOwn(contextUpdated.nextMemory.contextModels, firstContextKey), false);
   assert.equal(Object.hasOwn(contextUpdated.nextMemory.contextModels, currentContextKey), true);
+
+  const fullActionModels = Object.fromEntries(Array.from({ length: 8192 }, (_, index) => [
+    modelToken(index),
+    nestedModel(),
+  ]));
+  const newActionToken = modelToken(8192);
+  const acceptedRequest = actionRequest({ token: newActionToken });
+  const acceptedInput = makeVerifyInput({
+    intent: intentForRequest(acceptedRequest),
+    receipt: receiptForRequest(acceptedRequest),
+  });
+  const acceptedVerification = verify(acceptedInput);
+  const actionUpdated = learn({
+    memory: {
+      schemaVersion: 1,
+      actionModels: fullActionModels,
+      historyClock: 8192,
+      lastVerifiedSteps: Object.fromEntries(Array.from({ length: 8192 }, (_, index) => [
+        modelToken(index),
+        index + 1,
+      ])),
+    },
+    intent: acceptedInput.intent,
+    receipt: acceptedInput.receipt,
+    postObservation: acceptedInput.postObservation,
+    verification: acceptedVerification,
+  });
+  assert.equal(Object.keys(actionUpdated.nextMemory.actionModels).length, 8192);
+  assert.equal(Object.hasOwn(actionUpdated.nextMemory.actionModels, TOKEN_A), false);
+  assert.equal(Object.hasOwn(actionUpdated.nextMemory.actionModels, newActionToken), true);
+  assert.equal(Object.hasOwn(actionUpdated.nextMemory.lastVerifiedSteps, TOKEN_A), false);
+  assert.equal(actionUpdated.nextMemory.lastVerifiedSteps[newActionToken], 8193);
+
+  const fullRejectionModels = Object.fromEntries(Array.from({ length: 8192 }, (_, index) => [
+    modelToken(index),
+    { schemaVersion: 1, sampleCount: 1, rejected: true },
+  ]));
+  const rejectedRequest = actionRequest({ token: newActionToken });
+  const rejectedInput = makeVerifyInput({
+    intent: intentForRequest(rejectedRequest),
+    receipt: receiptForRequest(rejectedRequest, {
+      status: 'REJECTED',
+      rejectionReason: 'TEMPORARY_CONSTRAINT',
+    }),
+  });
+  const rejectedVerification = verify(rejectedInput);
+  const rejectionUpdated = learn({
+    memory: { schemaVersion: 1, actionModels: {}, rejectionModels: fullRejectionModels },
+    intent: rejectedInput.intent,
+    receipt: rejectedInput.receipt,
+    postObservation: rejectedInput.postObservation,
+    verification: rejectedVerification,
+  });
+  assert.equal(Object.keys(rejectionUpdated.nextMemory.rejectionModels).length, 8192);
+  assert.equal(Object.hasOwn(rejectionUpdated.nextMemory.rejectionModels, TOKEN_A), false);
+  assert.equal(Object.hasOwn(rejectionUpdated.nextMemory.rejectionModels, newActionToken), true);
 });
 
 test('kernel rejects oversized numeric and capability surfaces before prediction work', async () => {
