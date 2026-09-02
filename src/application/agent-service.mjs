@@ -709,7 +709,7 @@ export async function runContinuous(input) {
         expectedLock,
       });
     }
-    continuation = await store.readLoopContinuation();
+    continuation = await store.readCurrentLoopContinuation();
     if (continuation.status !== 'ACTIVE') {
       return {
         schemaVersion: SCHEMA_VERSION,

@@ -250,7 +250,7 @@
 
 ## F-9 连续 Run Runner
 
-- 实现：`runContinuous` 和 `agent loop` 将有限步数分割为多个独立、可恢复、可 Replay 的 Run；每个 Run 提交完成后才启动下一个，显式目标达成、执行拒绝或无安全动作立即停止；`--forever` 提供长期策略，SIGINT/SIGTERM 只在已提交 Run 边界停止并返回 `INTERRUPTED`，并只在内存保留最近 Run 摘要，累计指标独立维护，完整历史由 lab 账本承载。每个子 Run 的 immutable `start.json` 固化 `loopId/runIndex/scenario/stepsPerRun/mode/maxRuns`，`agent loop --resume` 从完整账本重建同一 continuation 的 `nextRunIndex`，不把 loop 调度控制混入 Kernel 当前状态；同一 lab 的未完成 continuation 在 `LabStore.startRun` 的 writer lock 内排他，且只接受持久化 `nextRunIndex`，避免并发 loop 形成无法选择的多个恢复意图或重复提交同一逻辑 Run；目标达成终止 continuation，幂等外部不确定终态保留可重试 continuation。
+- 实现：`runContinuous` 和 `agent loop` 将有限步数分割为多个独立、可恢复、可 Replay 的 Run；每个 Run 提交完成后才启动下一个，显式目标达成、执行拒绝或无安全动作立即停止；`--forever` 提供长期策略，SIGINT/SIGTERM 只在已提交 Run 边界停止并返回 `INTERRUPTED`，并只在内存保留最近 Run 摘要，累计指标独立维护，完整历史由 lab 账本承载。每个子 Run 的 immutable `start.json` 固化 `loopId/runIndex/scenario/stepsPerRun/mode/maxRuns`，`agent loop --resume` 从 verified current 指向的终态 Run 重建同一 continuation 的 `nextRunIndex`，显式 `readLoopContinuation()` 保留完整账本审计，不把 loop 调度控制混入 Kernel 当前状态；同一 lab 的未完成 continuation 在 `LabStore.startRun` 的 writer lock 内排他，且只接受持久化 `nextRunIndex`，避免并发 loop 形成无法选择的多个恢复意图或重复提交同一逻辑 Run；目标达成终止 continuation，幂等外部不确定终态保留可重试 continuation。
 - 验证：同一个 lab 在多个 Run 间持续推进，所有子 Run 可独立 Replay；重新执行 loop 命令从 current 继续，不重置 WorldPort、memory、RNG 或 supervisor strategy；CLI 在真实 API 请求延迟期间注入 SIGINT，仍完成当前 Run 并保持 current 一致；独立 E2E 真实强制终止 CLI 子进程后，显式 recover 并用 `--resume` 接续剩余有限预算，已提交 Run 不重复，current/kernelStep 不回退。
 - 边界：单个 Run 崩溃后的锁接管仍需显式 `recover --confirm-lock-owner-dead`，这是故意保留的人工安全卡点；Windows 下无法用 Node `child.kill('SIGINT')` 模拟控制台 Ctrl+C，真实控制台行为仍需人工在目标终端验证；后台服务编排和真实桌面执行不在本阶段自动开启。
 
@@ -465,6 +465,6 @@
 ## F-50 forever continuation 的历史扫描边界
 
 - 反例：如果每个 forever Run 都为判断 loop 所有权扫描并校验全部历史 Run，Run 数增长会把连续运行退化为历史数量的重复扫描，1000 个单步边界无法在可接受时间内完成。
-- 实现：保留显式启动和恢复时的全量 `readLoopContinuation` 审计；`startRun` 已持有唯一 writer lock 后，只从 verified current 指向的最新 terminal Run 读取并总结当前 continuation。正常账本的唯一 active continuation 仍由此前的 startRun 原子所有权约束保证，历史全量扫描继续作为显式恢复/审计路径。
-- 验证：1000 个单步 forever Run 在真实 Runtime 中完成，内存结果仍只保留最近一个 Run，最终 current 与累计指标一致；随后通过全量 continuation 审计恢复，并从第 1001 个逻辑 Run 继续；既有全量账本、恢复、Replay 和跨 WorldPort 测试保持通过。
+- 实现：正常 `--resume` 和 `startRun` 已持有唯一 writer lock 后，只从 verified current 指向的最新 terminal Run 读取并总结当前 continuation；新 loop 没有既有 owner 时强制从逻辑索引 0 开始。显式启动时的冲突检查、`readLoopContinuation` 审计和恢复候选扫描仍保留全量账本校验。正常账本的唯一 active continuation 仍由此前的 startRun 原子所有权约束保证，历史全量扫描继续作为显式恢复/审计路径。
+- 验证：1000 个单步 forever Run 在真实 Runtime 中完成，内存结果仍只保留最近一个 Run，最终 current 与累计指标一致；随后从 current frontier 接续第 1001 个逻辑 Run，显式 `readLoopContinuation` 审计仍保持可用；既有全量账本、恢复、Replay 和跨 WorldPort 测试保持通过。
 - 边界：该优化不改变账本真相或绕过当前 Run 的结构校验；若同一用户主动篡改历史形成多个 continuation，必须通过全量 inspect/recovery 审计发现，分布式索引和无限磁盘增长仍不在 v0.1 保证范围。

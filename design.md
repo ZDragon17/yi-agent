@@ -87,7 +87,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | `ChangeSupervisor.resume(state)` | 上一周期的持久化状态 | 下一变化周期的 `ACTIVE` 状态 | 记录 `runtime-continuation` 原因并清零当前停滞；不重置目标、周期计数、最佳距离或历史变化证据 |
 | `ChangeSupervisor.acknowledgeReplan(state,reason)` | `REPLAN_REQUIRED` 状态、有限原因 | 恢复为 `ACTIVE` 的监督状态 | 清零停滞、增加 `replanCount`，并在 `strategy` 中以版本化方式切换 `BALANCED/EXPLORATORY`；不改变目标、权重或历史周期 |
 | `Kernel.step(...,strategy)` | 观察、记忆、ValueSpec、能力、RNG 和可选策略 | 确定性 `StepIntent` | `BALANCED` 延续价值排序；新的 `EXPLORATORY + coverage-v1` 在单步选择和有界规划首步都先按样本数覆盖安全候选、再按不确定度选择，旧策略缺少该字段时保持 `uncertainty-v1`；任何模式都不能绕过 allowed/safe |
-| `runContinuous(input)` | lab、每 Run 步数、Run 数上限或 persisted continuation | 多个已提交 Run 的汇总 | 每个 Run 的 loopId/runIndex/scenario/budget/planningBranchingMode 固化在 immutable start；同一 lab 的未完成 continuation 在 writer lock 内原子地排他，且只接受与持久化 `nextRunIndex` 相等的下一逻辑 Run；resume 从完整账本重建 nextRunIndex 和历史规划分支模式，旧 continuation 缺失模式时按已提交 STEP 或终态 externalTransition 证据推断、无法推断则 legacy；当前调用遇到终止原因即停止串联，目标达成完成 continuation，崩溃和可幂等外部不确定保留恢复入口，不把失败伪装成持续成功；forever 模式只保留最近 Run 摘要，累计指标与完整历史分离，避免内存随 Run 数增长 |
+| `runContinuous(input)` | lab、每 Run 步数、Run 数上限或 persisted continuation | 多个已提交 Run 的汇总 | 每个 Run 的 loopId/runIndex/scenario/budget/planningBranchingMode 固化在 immutable start；同一 lab 的未完成 continuation 在 writer lock 内原子地排他，且只接受与持久化 `nextRunIndex` 相等的下一逻辑 Run；resume 从 verified current 指向的终态 Run 重建 nextRunIndex 和历史规划分支模式，旧 continuation 缺失模式时按已提交 STEP 或终态 externalTransition 证据推断、无法推断则 legacy；显式 `readLoopContinuation()` 仍提供完整账本审计；当前调用遇到终止原因即停止串联，目标达成完成 continuation，崩溃和可幂等外部不确定保留恢复入口，不把失败伪装成持续成功；forever 模式只保留最近 Run 摘要，累计指标与完整历史分离，避免内存随 Run 数增长 |
 | `LabStore.append(event)` | 完整事件、预期 run sequence/digest | 已 flush 的 sequence/digest | 单 writer；冲突拒绝；只追加 |
 | `LabStore.commit(snapshot)` | 与已追加事件同 sequence 的快照 | 原子替换结果 | 可重复；快照只能追平账本，不能领先 |
 | `Replay.decision(run)` | immutable start、事件、外部输入 | 首差异或一致 | 只读；按 start 的 world/scenario 重建纯 World+Kernel+RNG；每个 STEP 的 `boundary.valueSpec` 是不可变决策输入 |
@@ -243,7 +243,7 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 - 虚拟桌面只记录合成文件名/类别/位置，不读取文件内容；错误和日志不得输出主机环境变量、真实目录枚举或内部 tokenMap 语义映射。
 - v0.1 的纯模拟 transition 解决了“副作用发生而证据未落盘”窗口；外部桌面/设备 adapter 只能在显式声明并实现持久 execution nonce 幂等后获得自动续跑资格，否则进入 `EXTERNAL_TRANSITION_UNKNOWN` 阻断，必须人工对账，不能复用纯模拟结论。
 - loop 的自动恢复是显式 opt-in：`--resume --auto-recover` 仅在 current 为 `RUNNING` 且 `LabStore.recover` 的系统 liveness probe 证明旧 writer owner 已死亡时接管；若检查与正常完成之间出现短暂无锁窗口，仍用初始 writer owner 身份复探测，活跃 owner、无法确认死亡或非运行态均不自动接管。它复用原有恢复意图、陈旧锁证据、canonical recovery lock 和 completion，不另造一套恢复状态机。
-- `forever` 的热路径不在每个新 Run 中重复扫描全部历史：`startRun` 已持有唯一 writer lock 后，根据 verified current 指向的最新 terminal Run 重建当前 continuation；显式恢复和审计仍使用全量 continuation 扫描，避免性能优化替代历史完整性检查。
+- `forever` 的热路径不在每个新 Run 或正常 `--resume` 中重复扫描全部历史：`startRun` 已持有唯一 writer lock 后，`--resume` 在进入下一 Run 前，均根据 verified current 指向的最新 terminal Run 重建当前 continuation；显式 `readLoopContinuation()` 审计和恢复候选扫描仍使用全量账本校验，避免性能优化替代历史完整性检查。
 
 ## 9. 有界近期变化上下文
 

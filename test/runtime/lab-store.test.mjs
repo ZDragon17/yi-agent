@@ -879,6 +879,26 @@ test('startRun atomically protects loop ownership and the next logical run index
   await retry.finish({ terminalStatus: 'COMPLETED', finalState: runInput().initialState });
 }));
 
+test('startRun rejects a new loop continuation that skips its initial logical index', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  await assert.rejects(
+    store.startRun(runInput({
+      runId: 'loop-run-skipped-start',
+      continuation: {
+        schemaVersion: SCHEMA_VERSION,
+        loopId: '00000000-0000-4000-8000-000000000006',
+        scenario: 'steady',
+        runIndex: 1,
+        stepsPerRun: 1,
+        mode: 'finite',
+        maxRuns: 2,
+      },
+    })),
+    (error) => assertCode(error, 'CONFLICT'),
+  );
+}));
+
 test('startRun rejects a stale same-loop retry after the next index is committed', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

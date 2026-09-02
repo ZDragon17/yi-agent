@@ -523,6 +523,14 @@ export class LabStore {
       } catch (error) {
         if (error?.code !== 'NOT_FOUND') throw error;
       }
+      if (continuation !== undefined &&
+          (existingContinuation === null || existingContinuation.loopId !== continuation.loopId) &&
+          continuation.runIndex !== 0) {
+        conflict('A new loop continuation must start at run index zero.', {
+          continuationId: continuation.loopId,
+          runIndex: continuation.runIndex,
+        });
+      }
       if (existingContinuation?.status === 'ACTIVE') {
         if (existingContinuation.loopId !== continuation?.loopId) {
           conflict('An unfinished loop continuation already owns this lab.', {
