@@ -595,3 +595,10 @@
 - 实现：`LabStore.readRun` 保留 `readLedger` 逐事件解析、校验和解压后的结果，移除对整个 `events` 数组的二次 canonical JSON 序列化；其它返回字段和事件摘要链不变。
 - 验证：真实应用回归创建大计划并跨两个 Run 执行 1000 步，修复后第二 Run 完成、inspect 返回 `READY`、计划保持 128 阶段且 Kernel 步数为 1001；修复前同一输入稳定失败。完整回归和晚绑定 Oracle 在本节点继续复跑。
 - 边界：该修复只消除一次性聚合复制，不等于分页/流式 Replay；读取端仍会解码整个 Run，未来更大历史需要新的索引或流式契约。
+
+## F-69 Challenge 证伪信号可达
+
+- 反例：Challenge runner 原先把所有 case 异常统一映射为 `INCONCLUSIVE`；而各判别器在发现执行了不安全动作、未记录规律突变或 Replay 未定位篡改时也通过异常报告失败，导致设计契约要求的 `FALSIFIED` 永远不可达，CLI exit 2 只是死分支。
+- 实现：增加专用 `ChallengeFalsifiedError`。判别器失败通过该类型返回 case 级 `FALSIFIED` 与结构化证据；其它异常继续返回 `INCONCLUSIVE` 与 `invalidator`，不把装置故障伪装成系统反例。
+- 验证：Challenge 现有 9 个真实隔离 case 仍全部 PASS；分类回归确认专用判别器错误与普通基础设施错误类型不同，CLI 既有 `FALSIFIED→2` 映射继续可用。
+- 边界：当前内置 case 仍是演示性有限判别器；本节点修的是结果分类可达性，不增加新的世界事实，也不把 PASS 表述为通用智能证明。未来新增 case 必须明确区分判别器失败、无效装置和真实内部错误。

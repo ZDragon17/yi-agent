@@ -20,6 +20,27 @@ const CASES = [
   'world-diversity',
 ];
 
+export class ChallengeFalsifiedError extends Error {
+  constructor(code, message = code) {
+    super(message);
+    this.name = 'ChallengeFalsifiedError';
+    this.code = code;
+  }
+}
+
+export function classifyChallengeError(error) {
+  if (error instanceof ChallengeFalsifiedError) {
+    return {
+      verdict: 'FALSIFIED',
+      evidence: { code: error.code, message: error.message },
+    };
+  }
+  return {
+    verdict: 'INCONCLUSIVE',
+    invalidator: { code: error?.code ?? 'INTERNAL', message: error?.message ?? 'Unknown challenge error.' },
+  };
+}
+
 export async function challenge(input) {
   const source = requireRecord(input, 'challenge input');
   if (source.labPath !== undefined) await inspectLab({ labPath: requireText(source.labPath, 'labPath') });
@@ -42,11 +63,7 @@ async function runCase(id) {
     const evidence = await CASE_RUNNERS[id](root);
     return { id, verdict: 'PASS', evidence };
   } catch (error) {
-    return {
-      id,
-      verdict: 'INCONCLUSIVE',
-      invalidator: { code: error?.code ?? 'INTERNAL', message: error?.message ?? 'Unknown challenge error.' },
-    };
+    return { id, ...classifyChallengeError(error) };
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -221,7 +238,7 @@ function omit(value, key) {
 }
 
 function challengeFailure(code) {
-  return Object.assign(new Error(code), { code });
+  return new ChallengeFalsifiedError(code);
 }
 
 function requireRecord(value, field) {

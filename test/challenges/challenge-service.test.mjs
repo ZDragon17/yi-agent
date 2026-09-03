@@ -3,7 +3,11 @@ import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { challenge } from '../../src/application/challenge-service.mjs';
+import {
+  challenge,
+  classifyChallengeError,
+  ChallengeFalsifiedError,
+} from '../../src/application/challenge-service.mjs';
 import { initLab } from '../../src/application/agent-service.mjs';
 
 test('challenge suite runs all registered cases in isolated labs', async () => {
@@ -23,6 +27,18 @@ test('challenge can run one named case without creating evidence in the main lab
   const result = await challenge({ caseId: 'all-unsafe' });
   assert.equal(result.verdict, 'PASS');
   assert.deepEqual(result.cases.map((item) => item.id), ['all-unsafe']);
+});
+
+test('challenge failure is a falsification signal while infrastructure failure stays inconclusive', () => {
+  const falsified = new ChallengeFalsifiedError('EXPECTED_INVARIANT_BROKEN');
+  assert.deepEqual(classifyChallengeError(falsified), {
+    verdict: 'FALSIFIED',
+    evidence: { code: 'EXPECTED_INVARIANT_BROKEN', message: 'EXPECTED_INVARIANT_BROKEN' },
+  });
+  assert.deepEqual(classifyChallengeError(Object.assign(new Error('adapter unavailable'), { code: 'WORLD_ADAPTER_PROTOCOL' })), {
+    verdict: 'INCONCLUSIVE',
+    invalidator: { code: 'WORLD_ADAPTER_PROTOCOL', message: 'adapter unavailable' },
+  });
 });
 
 async function withTemp(callback) {
