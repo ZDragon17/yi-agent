@@ -17,7 +17,7 @@ test('challenge suite runs all registered cases in isolated labs', async () => {
     const before = await readFile(path.join(mainLab, 'state/current.json'), 'utf8');
     const result = await challenge({ labPath: mainLab });
     assert.equal(result.verdict, 'PASS');
-    assert.equal(result.cases.length, 9);
+    assert.equal(result.cases.length, 10);
     assert.ok(result.cases.every((item) => item.verdict === 'PASS'));
     assert.equal(await readFile(path.join(mainLab, 'state/current.json'), 'utf8'), before);
   });
@@ -27,6 +27,16 @@ test('challenge can run one named case without creating evidence in the main lab
   const result = await challenge({ caseId: 'all-unsafe' });
   assert.equal(result.verdict, 'PASS');
   assert.deepEqual(result.cases.map((item) => item.id), ['all-unsafe']);
+});
+
+test('challenge compares two candidate branches from one verified initial snapshot', async () => {
+  const result = await challenge({ caseId: 'paired-candidates' });
+  assert.equal(result.verdict, 'PASS');
+  assert.deepEqual(result.cases.map((item) => item.id), ['paired-candidates']);
+  assert.equal(result.cases[0].evidence.beforeStateDigest, result.cases[0].evidence.branchBeforeStateDigest);
+  assert.equal(result.cases[0].evidence.replayVerdicts.left, 'CONSISTENT');
+  assert.equal(result.cases[0].evidence.replayVerdicts.right, 'CONSISTENT');
+  assert.equal(result.cases[0].evidence.comparison.verdict, 'RIGHT_BETTER');
 });
 
 test('challenge failure is a falsification signal while infrastructure failure stays inconclusive', () => {

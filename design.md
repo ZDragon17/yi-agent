@@ -257,6 +257,12 @@ F-91 增加 `beforeStateDigest` 作为候选产生前连续状态的不可变引
 
 配对结果的语义是匹配状态的终态比较，不是因果证明：两个候选即便拥有相同 before 摘要，也可能受到外部时间、隐藏副作用或执行环境影响。要把它升级为反事实证据，仍需隔离、随机化/交叉运行和独立领域判别器；在这些条件缺失时，系统宁可不生成比较结果。
 
+## 8.2 隔离分支挑战
+
+F-92 的 `paired-candidates` challenge 建立三个隔离 LabStore：父空间先完成一个真实 Run，两个分支使用相同的 world identity、seed、token map 和父 Run 终态连续性状态，但各自拥有独立的 manifest/current/lock/events。分支通过 `runLab.initialState` 仅在空账本上启动；该入口拒绝向已有 Run 注入回退状态，避免普通续跑被伪装成分支。两个分支使用不同候选、相同 scenario，各自完成后由共同 `candidate-history` 重新配对，并对两个 immutable Run 分别执行 Replay。
+
+该挑战的判定链为：父状态摘要保持不变、分支 before 摘要相等、WorldPort identity 相等、候选摘要不同、质量已验证、配对 verdict 可观察、左右 Replay 均 `CONSISTENT`。它仍是纯模拟 WorldPort 的隔离实验；外部 adapter 的真实副作用不能通过复制初始 JSON 安全分叉，必须等显式幂等/隔离/对账契约后再扩展。
+
 ## 9. 有界近期变化上下文
 
 历史隐藏状态反例进一步区分出：保存“同一动作可能有多个结果”并不等于能够利用已验证历史选择动作。新 Lab 的 Memory 可选保存最近两个已验证变化条目 `{token,actualDelta}`，以固定顺序形成 `h1:` 上下文签名；`contextModels` 按该签名和不透明 Token 保存动作模型。Kernel 在当前上下文已有样本时优先使用它，再回退到关系模型和总体模型；学习只在 `ACTION && learnable` 或已闭合 clean feedback 时把变化写入上下文，拒绝、混杂和未闭合反馈不写入。

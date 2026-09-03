@@ -764,3 +764,10 @@
 - 实现：候选历史从 STEP 的 `beforeDigest` 投影 `beforeStateDigest`；Runtime 只在同一 `worldVersion + tokenMapDigest + scenario + beforeStateDigest` 下，将当前候选与最近的不同候选配对。比较器要求两端 `quality.verified=true`，优先比较 `goalDistanceAfter`，否则比较 `errorMagnitude`；结果经过 ModelAdvisor 有界投影进入后续提议上下文。
 - 验证：比较器覆盖同状态优先目标距离、误差回退、不同 before 摘要、同候选、跨场景和非有限数值边界；candidate-history、ModelAdvisor 与 repo E2E 继续验证历史投影和 Replay 不被破坏。
 - 边界：这是匹配初始状态的终态比较，不是隔离反事实、现实因果、领域成功判别或 Kernel 自动学习；下一步应构造真正的分支/隔离 WorldPort，使多个候选共享可审计的初始快照并接受独立终态判别器。
+
+## F-92 真实隔离分支候选挑战
+
+- 反例：F-91 的配对比较虽然使用了 `beforeStateDigest`，但此前主要由合成历史证明；若没有真实分支执行，仍无法确认不同候选确实从同一已验证连续性状态出发，或确认比较不会改变父实验。
+- 实现：`runLab` 增加仅限空账本的 `initialState` 注入边界；challenge 新增 `paired-candidates`，先运行父 Run，再在两个独立 LabStore 中从同一父终态启动不同候选。两个分支完成后合并其候选历史进入共同 Runtime 配对，并分别 Replay；已有 Run 注入回退状态会明确冲突。
+- 验证：challenge 单 case 证明父状态未变化、两个分支 before 摘要和 WorldPort identity 相同、候选不同、比较结果为 RIGHT_BETTER、左右 Replay 均 `CONSISTENT`；全 challenge suite 从 9 个扩展为 10 个且全部 PASS。
+- 边界：这是纯模拟环境中的隔离分支实验，不是持久化生产 fork、外部副作用复制、随机化反事实或领域成功证明；下一步应为分支建立可恢复的实验元数据和独立终态判别器，同时继续拒绝无幂等契约的外部副作用分叉。

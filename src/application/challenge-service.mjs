@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { LabStore, LabStoreError } from '../runtime/lab-store.mjs';
 import { canonicalDigest, SCHEMA_VERSION } from '../runtime/schema.mjs';
+import { annotateCandidateHistory } from '../runtime/candidate-history.mjs';
 import { replayRun } from '../runtime/replay.mjs';
 import { createWorld } from './world-registry.mjs';
 import { initLab, inspectLab, replayLab, runLab } from './agent-service.mjs';
@@ -18,6 +19,7 @@ const CASES = [
   'replay-tamper',
   'inspect-readonly',
   'world-diversity',
+  'paired-candidates',
 ];
 
 export class ChallengeFalsifiedError extends Error {
@@ -203,12 +205,108 @@ const CASE_RUNNERS = {
     }
     return { worlds: evidence };
   },
+
+  async 'paired-candidates'(root) {
+    const identity = {
+      worldId: 'temperature',
+      labId: 'challenge-paired',
+      seed: 'challenge-paired-seed',
+    };
+    const parent = await prepareWithIdentity(root, 'paired-parent', identity);
+    const parentManifest = (await LabStore.open({ labPath: parent })).manifest;
+    await runLab({
+      labPath: parent,
+      runId: 'run-1',
+      steps: 1,
+      scenario: 'steady',
+      advisor: fixedAdvisor(parentManifest.tokenMap.entries[0].token, 'parent'),
+    });
+    const parentInspection = await inspectLab({ labPath: parent });
+    const initialState = continuityState(parentInspection.current);
+    const beforeStateDigest = canonicalDigest(initialState);
+    const left = await prepareWithIdentity(root, 'paired-left', identity);
+    const right = await prepareWithIdentity(root, 'paired-right', identity);
+    const leftToken = (await LabStore.open({ labPath: left })).manifest.tokenMap.entries[0].token;
+    const rightToken = (await LabStore.open({ labPath: right })).manifest.tokenMap.entries[1].token;
+    await runLab({
+      labPath: left,
+      runId: 'run-1',
+      steps: 1,
+      scenario: 'regime-shift',
+      initialState,
+      advisor: fixedAdvisor(leftToken, 'left'),
+    });
+    await runLab({
+      labPath: right,
+      runId: 'run-1',
+      steps: 1,
+      scenario: 'regime-shift',
+      initialState,
+      advisor: fixedAdvisor(rightToken, 'right'),
+    });
+    const leftStore = await LabStore.open({ labPath: left });
+    const rightStore = await LabStore.open({ labPath: right });
+    const leftHistory = await leftStore.readCandidateOutcomes();
+    const rightHistory = await rightStore.readCandidateOutcomes();
+    const pairedHistory = annotateCandidateHistory([...leftHistory, ...rightHistory]);
+    const comparison = pairedHistory.at(-1)?.pairedComparison;
+    if (comparison === undefined || comparison.verdict !== 'RIGHT_BETTER') {
+      throw challengeFailure('PAIRED_CANDIDATE_COMPARISON_NOT_OBSERVED');
+    }
+    if (comparison.beforeStateDigest !== beforeStateDigest ||
+        leftHistory[0].beforeStateDigest !== rightHistory[0].beforeStateDigest ||
+        leftHistory[0].tokenMapDigest !== rightHistory[0].tokenMapDigest) {
+      throw challengeFailure('PAIRED_CANDIDATE_SCOPE_NOT_BOUND');
+    }
+    const replayVerdicts = {
+      left: (await replayLab({ labPath: left, runId: 'run-1' })).verdict,
+      right: (await replayLab({ labPath: right, runId: 'run-1' })).verdict,
+    };
+    if (replayVerdicts.left !== 'CONSISTENT' || replayVerdicts.right !== 'CONSISTENT') {
+      throw challengeFailure('PAIRED_CANDIDATE_REPLAY_DIVERGED');
+    }
+    const afterParent = await inspectLab({ labPath: parent });
+    if (afterParent.current.selfDigest !== parentInspection.current.selfDigest) {
+      throw challengeFailure('PAIRED_CANDIDATE_MUTATED_PARENT');
+    }
+    return {
+      beforeStateDigest,
+      branchBeforeStateDigest: leftHistory[0].beforeStateDigest,
+      comparison,
+      replayVerdicts,
+    };
+  },
 };
 
 async function prepare(root, worldId, suffix) {
   const lab = path.join(root, suffix);
   await initLab({ labPath: lab, labId: `challenge-${suffix}`, worldId, seed: `challenge-${suffix}` });
   return lab;
+}
+
+async function prepareWithIdentity(root, suffix, identity) {
+  const lab = path.join(root, suffix);
+  await initLab({ labPath: lab, ...identity });
+  return lab;
+}
+
+function continuityState(current) {
+  return {
+    worldState: current.worldState,
+    memory: current.memory,
+    rngState: current.rngState,
+    kernelStep: current.kernelStep,
+    ...(current.changeSupervisor === undefined ? {} : { changeSupervisor: current.changeSupervisor }),
+  };
+}
+
+function fixedAdvisor(token, label) {
+  return async () => ({
+    model: `challenge-paired-${label}`,
+    token,
+    responseDigest: canonicalDigest({ token, label }),
+    reason: null,
+  });
 }
 
 function requireCase(value) {

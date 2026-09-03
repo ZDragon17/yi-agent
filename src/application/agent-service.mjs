@@ -80,6 +80,15 @@ export async function runLab(input) {
   const runId = source.runId ?? randomUUID();
   const scenario = source.scenario ?? 'steady';
   const registry = resolveRegistry(source.registry);
+  let suppliedInitialState;
+  if (source.initialState !== undefined) {
+    try {
+      suppliedInitialState = cloneJson(requireRecord(source.initialState, 'initialState'));
+    } catch (error) {
+      if (error instanceof LabStoreError) throw error;
+      throw new LabStoreError('INVALID_INPUT', 'initialState must be canonical JSON.', { field: 'initialState' }, { cause: error });
+    }
+  }
   const failpoint = typeof source.failpoint === 'function' ? source.failpoint : undefined;
   const durability = source.durability ?? 'strict';
   if (durability !== 'strict' && durability !== 'checkpoint') {
@@ -113,6 +122,11 @@ export async function runLab(input) {
   const spec = registry.valueSpec(manifest.worldId);
   const world = registry.createWorld(manifest, scenario);
   const current = (await store.inspect()).current;
+  if (suppliedInitialState !== undefined && current.lastRunId !== null) {
+    throw new LabStoreError('CONFLICT', 'initialState is only valid when starting an isolated fresh Run.', {
+      field: 'initialState',
+    });
+  }
   const sharedCandidateHistory = Array.isArray(source.candidateHistory) ? source.candidateHistory : null;
   let candidateHistory = source.advisor === undefined
     ? []
@@ -212,7 +226,7 @@ export async function runLab(input) {
   const goalRequested = recoveredDecisionBoundary?.goalRequested ??
     ((source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined);
   let initialState = current.lastRunId === null
-    ? {
+    ? suppliedInitialState ?? {
         worldState: world.initialState(),
         memory: {
           schemaVersion: SCHEMA_VERSION,

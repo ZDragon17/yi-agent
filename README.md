@@ -270,6 +270,8 @@ F-90 在同一条件成立时继续派生 `goalDistanceDeltaFromSuperseded` 与 
 
 F-91 把候选比较推进到同初始状态配对：每条候选历史保留产生该 STEP 前的 `beforeStateDigest`，Runtime 只将同一 `worldVersion + tokenMapDigest + scenario + beforeStateDigest` 下最近的两个不同候选配对；两端必须有 `quality.verified=true`，优先比较统一 `distance-v2` 的 `goalDistanceAfter`，否则比较验证误差 `errorMagnitude`。结果记录 `metric/leftValue/rightValue/delta/verdict` 并进入模型有界上下文。它证明的是“匹配初始状态下的终态结果差异”，不是顺序执行的反事实、领域判别器或真实修复因果；没有同初始摘要或验证质量不足时不生成。
 
+F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 Run，再把其连续性状态快照分别注入两个隔离 LabStore 分支，让两个分支在相同场景中执行不同候选；父实验不会被分支写入，两个分支各自保留完整账本并独立 Replay。这个挑战第一次把“同状态候选比较”从合成历史提升为真实运行证据，但分支目前属于 challenge 的隔离实验空间，实验结束后清理，不是生产 Lab 的持久分叉或外部副作用复制。
+
 ## 当前明确不是什么
 
 当前版本还不是通用自主智能，也不会自动操作真实桌面、任意 Shell 或用户文件。它没有证明“智能已经出现”，只提供一个可以持续做实验、记录证据、制造反例和检查回放一致性的底座。

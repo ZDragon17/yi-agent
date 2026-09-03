@@ -216,6 +216,25 @@ test('application service runs full steps when no explicit goal is provided', as
   });
 });
 
+test('application rejects an isolated initial state on an existing lab', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'initial-state-boundary-lab', worldId: 'temperature', seed: 'initial-state-boundary-seed' });
+    await runLab({ labPath: lab, runId: 'run-1', steps: 1 });
+    const current = (await inspectLab({ labPath: lab })).current;
+    const initialState = {
+      worldState: current.worldState,
+      memory: current.memory,
+      rngState: current.rngState,
+      kernelStep: current.kernelStep,
+      changeSupervisor: current.changeSupervisor,
+    };
+    await assert.rejects(
+      () => runLab({ labPath: lab, runId: 'run-2', steps: 1, initialState }),
+      (error) => error.code === 'CONFLICT' && error.context.field === 'initialState',
+    );
+  });
+});
+
 test('lab continuation does not silently accept a different WorldPort implementation', async () => {
   await withLab(async (lab) => {
     const worldA = createGeneratedRegistry({ stepDelta: 1, worldVersion: 'generated.v1', worldImplementationDigest: `sha256:${'a'.repeat(64)}` });
