@@ -645,3 +645,10 @@
 - 实现：不增加生产兼容分支；补充 ModelAdvisor 超限 proposal 的无效化测试，以及 repo adapter 对目标错配、超限替换的写入前拒绝测试。
 - 验证：ModelAdvisor 10/10；repo WorldPort 7/7。错误候选均返回拒绝，原文件保持不变，nonce 日志未创建；原有正确 proposal、响应丢失恢复、Replay 回归继续通过。
 - 边界：这只证明输入边界与副作用前置拒绝，不证明 proposal 的代码语义正确，也不证明模型能生成高质量候选。下一节点应测量错误候选、正确候选和 Kernel fallback 的结果差异，并把“候选质量”纳入可复盘证据。
+
+## F-75 WorldPort 提供可生成 proposal 的有界上下文
+
+- 反例：F-73 的正向测试由测试服务器外部预置 `targetPath` 和 `expectedBeforeDigest`；真实模型只看到文件内容和 capability token，无法可靠生成 adapter 所要求的完整 proposal。
+- 实现：repo WorldPort 将目标路径、修改前摘要、UTF-8 编码、替换大小上限和字段列表作为有界 observation evidence 提供给模型，同时补充最近读取文件的摘要；这些信息不进入 Kernel，也不改变 adapter 的最终授权与校验。
+- 验证：writable repo E2E 的模型候选从 observation evidence 读取目标与摘要后完成真实替换；正确写入、错误候选、响应丢失恢复和 Replay 回归继续通过。ModelAdvisor 10/10，repo WorldPort 7/7。
+- 边界：这解决“模型缺少生成合法候选所需事实”的输入缺口，不证明候选语义正确或模型具备自主审查能力。下一节点应对同一上下文运行正确、错误和 fallback 候选，记录测试结果、拒绝原因和恢复成本，形成可比较的候选质量证据。

@@ -276,4 +276,4 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 
 活跃 Run 的锁身份使用稳定 `dev+ino`，每次写入同时重新校验锁 JSON 的自摘要；时间戳变化不再构成所有权变化，内容篡改仍会 fail-closed。身份与内容分层只收敛本地锁误报，不把 PID liveness 或分布式文件系统误称为可靠锁服务。
 
-repo WorldPort 的 writable 实验是 adapter 层的最小真实修改边界，不改变通用 Kernel 的 Token-only 决策契约：只有显式提供补丁策略和 nonce 日志时才暴露 `repo.apply-patch`。策略只授权目标相对路径与修改前 `contentDigest`；模型 proposal 携带完整替换内容，但仍是非权威数据，必须通过应用层边界和 adapter 的独立校验。adapter 先持久化 `PREPARED`，再做普通文件的原子替换，随后追加 `APPLIED`，同一 nonce 的重试复用已保存结果。该顺序覆盖写入前崩溃、替换中断和响应丢失的有限实验矩阵，但不提供 OS 级沙箱、通用 patch 解析、并发写入隔离或回滚保证；真实项目写权限仍属于 EffectBroker/Future-Gate。当前模型可见文件内容仍受 2 KiB 观察预算限制，实验只证明受控 proposal 能进入共同底座，不等于任意代码修改已经安全。
+repo WorldPort 的 writable 实验是 adapter 层的最小真实修改边界，不改变通用 Kernel 的 Token-only 决策契约：只有显式提供补丁策略和 nonce 日志时才暴露 `repo.apply-patch`。策略只授权目标相对路径与修改前 `contentDigest`；WorldPort 通过有界 observation evidence 把目标、摘要和 proposal 字段约束提供给模型，但这些提示仍不是权威授权；模型 proposal 携带完整替换内容，必须通过应用层边界和 adapter 的独立校验。adapter 先持久化 `PREPARED`，再做普通文件的原子替换，随后追加 `APPLIED`，同一 nonce 的重试复用已保存结果。该顺序覆盖写入前崩溃、替换中断和响应丢失的有限实验矩阵，但不提供 OS 级沙箱、通用 patch 解析、并发写入隔离或回滚保证；真实项目写权限仍属于 EffectBroker/Future-Gate。当前模型可见文件内容仍受 2 KiB 观察预算限制，实验只证明受控 proposal 能进入共同底座，不等于任意代码修改已经安全。

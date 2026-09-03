@@ -208,10 +208,21 @@ test('writable repo WorldPort applies a digest-bound patch and verifies the reta
     if (modelCalls === 1) {
       const actionEvidence = context.observationEvidence.find((item) => item.kind === 'repo-action');
       assert.equal(actionEvidence.readFileContent, buggySource);
+      assert.equal(actionEvidence.readFileDigest, canonicalDigest({ bytes: buggySource.length, content: buggySource }));
     }
     modelCalls += 1;
     response.setHeader('Content-Type', 'application/json');
-    const proposal = capability.capabilityId === 'repo.apply-patch' ? patchProposal : undefined;
+    const patchPolicy = context.observationEvidence.find((item) => item.kind === 'repo-patch-policy');
+    assert.deepEqual(patchPolicy?.proposalSchema?.fields, [
+      'schemaVersion', 'targetPath', 'expectedBeforeDigest', 'replacement',
+    ]);
+    const proposal = capability.capabilityId === 'repo.apply-patch'
+      ? {
+          ...patchProposal,
+          targetPath: patchPolicy.targetPath,
+          expectedBeforeDigest: patchPolicy.expectedBeforeDigest,
+        }
+      : undefined;
     response.end(JSON.stringify({
       id: 'repo-write-chat',
       model: body.model,

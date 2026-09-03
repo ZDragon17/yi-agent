@@ -250,7 +250,7 @@ powershell -ExecutionPolicy Bypass `
 
 只读 repo WorldPort 证明了“理解和验证”能进入账本，但还没有证明真实文件改动能安全跨过 `transition→verify→ledger→replay`。因此 adapter 另有显式的 writable 模式：在配置中追加补丁策略文件和 nonce 日志路径后，能力集合才增加 `repo.apply-patch`。策略文件只绑定目标相对路径和期望的修改前摘要；模型可以随 Token 一起提出有界 proposal，proposal 必须再次声明同一目标、修改前摘要和完整替换内容。adapter 会先把 `PREPARED` nonce 记录刷盘，再对普通文件做受控原子替换，最后追加 `APPLIED` 记录。修改前摘要不匹配、路径越界、符号链接、不同 nonce 重用或日志损坏都会拒绝。
 
-这个能力只用于隔离实验仓库，不默认打开，也不代表已经获得真实项目写权限；生产写入仍需经过 EffectBroker、权限隔离、人工确认和回滚设计。本节点的 E2E 使用一个故意有 bug 的 `add` 函数：WorldPort 先通过 `repo.read-file` 向模型提供最多 2 KiB 的文件内容，再依次选择“读文件→跑失败测试→应用模型 proposal→跑通过测试”，文件修改被保留，响应丢失后恢复只使用同一 nonce 的已提交回执，proposal 不会重复应用，Replay 不调用 adapter。重要的诚实边界是：模型 proposal 仍受实验策略限制，且只覆盖完整文件替换；这证明的是“模型候选修改可以进入共同底座并被独立边界验证”，不是“模型已经能自主生成、审查并安全修改任意真实项目”。
+这个能力只用于隔离实验仓库，不默认打开，也不代表已经获得真实项目写权限；生产写入仍需经过 EffectBroker、权限隔离、人工确认和回滚设计。本节点的 E2E 使用一个故意有 bug 的 `add` 函数：WorldPort 先通过 `repo.read-file` 向模型提供最多 2 KiB 的文件内容，再通过有界 observation evidence 提供目标路径、修改前摘要和 proposal 字段约束，依次选择“读文件→跑失败测试→应用模型 proposal→跑通过测试”，文件修改被保留，响应丢失后恢复只使用同一 nonce 的已提交回执，proposal 不会重复应用，Replay 不调用 adapter。重要的诚实边界是：这些策略 evidence 仍是不可信提示，模型 proposal 仍受实验策略限制，且只覆盖完整文件替换；这证明的是“模型候选修改可以进入共同底座并被独立边界验证”，不是“模型已经能自主生成、审查并安全修改任意真实项目”。
 
 ## 当前明确不是什么
 

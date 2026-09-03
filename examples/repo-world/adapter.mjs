@@ -219,6 +219,7 @@ function observation(state) {
         kind: 'repo-action',
         action: state.lastAction,
         readPath: state.lastReadPath,
+        readFileDigest: state.lastReadDigest,
         readFileContent: state.lastReadContent,
         readFileContentTruncated: state.lastReadContentTruncated,
         testStatus: state.lastTestStatus,
@@ -226,6 +227,17 @@ function observation(state) {
         patchBeforeDigest: state.lastPatchBeforeDigest,
         patchAfterDigest: state.lastPatchAfterDigest,
       },
+      ...(patchSpec === null ? [] : [{
+        kind: 'repo-patch-policy',
+        targetPath: patchSpec.targetPath,
+        expectedBeforeDigest: patchSpec.expectedBeforeDigest,
+        proposalSchema: {
+          schemaVersion: VERSION,
+          fields: ['schemaVersion', 'targetPath', 'expectedBeforeDigest', 'replacement'],
+          replacementEncoding: 'utf8',
+          maxReplacementBytes: MAX_FILE_BYTES,
+        },
+      }]),
     ],
   };
 }
