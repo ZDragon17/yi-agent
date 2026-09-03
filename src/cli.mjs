@@ -9,6 +9,7 @@ import { assertSandboxRoot, createSandboxFileExecutor } from './effects/sandbox-
 import { createOpenAICompatibleClient, loadApiConfig } from './api/openai-compatible-client.mjs';
 import { createModelAdvisor } from './agent/model-advisor.mjs';
 import { createModelPlanner } from './agent/model-planner.mjs';
+import { runPairedCandidates } from './application/paired-experiment-service.mjs';
 
 export async function main(argv, io = defaultIo()) {
   const json = argv.includes('--json');
@@ -35,6 +36,19 @@ async function dispatch(command, options) {
   if (command === 'api') return dispatchApi(options);
   if (command === 'ask') return askApi(options);
   if (command === 'effect') return dispatchEffect(options);
+  if (command === 'experiment') {
+    if (options.experimentOperation !== 'pair') {
+      throw cliError('INVALID_INPUT', `Unsupported experiment operation: ${options.experimentOperation ?? '(missing)'}`, {}, 64);
+    }
+    return runPairedCandidates({
+      labPath: required(options, 'lab'),
+      outputPath: requiredAbsolute(options, 'output'),
+      ...(options['left-token'] === undefined ? {} : { leftToken: options['left-token'] }),
+      ...(options['right-token'] === undefined ? {} : { rightToken: options['right-token'] }),
+      scenario: options.scenario,
+      resume: options.resume === true,
+    });
+  }
   if (command === 'init') {
     const labPath = required(options, 'lab');
     const labId = options['lab-id'] ?? path.basename(path.resolve(labPath));
@@ -255,6 +269,13 @@ function parseArguments(argv) {
     }
     options.agentOperation = operation;
   }
+  if (command === 'experiment') {
+    const operation = args.shift();
+    if (operation !== 'pair') {
+      throw cliError('INVALID_INPUT', `Unsupported experiment operation: ${operation ?? '(missing)'}`, {}, 64);
+    }
+    options.experimentOperation = operation;
+  }
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === '--json') continue;
@@ -282,6 +303,7 @@ function parseArguments(argv) {
     recover: ['lab', 'confirm-lock-owner-dead'],
     challenge: ['lab', 'case'],
     effect: ['effectOperation', 'journal', 'sandbox-root', 'intent', 'nonce'],
+    experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'scenario', 'resume'],
   }[command] ?? [];
   for (const name of Object.keys(options)) {
     if (!allowed.includes(name)) throw cliError('INVALID_INPUT', `Unknown option: --${name}`, { field: name }, 64);
@@ -464,6 +486,7 @@ function helpText() {
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',
+    '  yi-agent experiment pair --lab PATH --output PATH --left-token TOK --right-token TOK [--scenario ID] [--resume] [--json]',
     '  yi-agent effect plan|confirm|execute|reconcile|compensate|inspect ...',
     '',
     'API 环境变量: YI_AGENT_PROVIDER, YI_AGENT_API_KEY/ZAI_API_KEY, YI_AGENT_API_BASE_URL, YI_AGENT_MODEL, YI_AGENT_API_TIMEOUT_MS',

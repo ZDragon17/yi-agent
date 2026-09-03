@@ -771,3 +771,10 @@
 - 实现：`runLab` 增加仅限空账本的 `initialState` 注入边界；challenge 新增 `paired-candidates`，先运行父 Run，再在两个独立 LabStore 中从同一父终态启动不同候选。两个分支完成后合并其候选历史进入共同 Runtime 配对，并分别 Replay；已有 Run 注入回退状态会明确冲突。
 - 验证：challenge 单 case 证明父状态未变化、两个分支 before 摘要和 WorldPort identity 相同、候选不同、比较结果为 RIGHT_BETTER、左右 Replay 均 `CONSISTENT`；全 challenge suite 从 9 个扩展为 10 个且全部 PASS。
 - 边界：这是纯模拟环境中的隔离分支实验，不是持久化生产 fork、外部副作用复制、随机化反事实或领域成功证明；下一步应为分支建立可恢复的实验元数据和独立终态判别器，同时继续拒绝无幂等契约的外部副作用分叉。
+
+## F-93 可恢复的持久化候选配对实验
+
+- 反例：F-92 的分支只在 challenge 进程内存在；进程若在一个分支完成后中断，用户没有可审计的实验起点，也无法只靠重启补齐另一分支。若直接把 end 当作完成标记，又可能接受与当前父状态、start 或 Replay 不绑定的伪结论。
+- 实现：新增 `experiment pair` CLI 和持久化实验服务。首次运行在输出目录独占写入带自摘要的 `pair.start.json`，固定父 Lab manifest/current、WorldPort identity、Token map、scenario、初始状态摘要和左右 runId；两个分支使用普通 LabStore 从同一状态各自执行一个 Run，父 Lab 保持只读。左右历史重新进入共同候选比较器，两个分支 Replay 一致后才独占写入 `pair.end.json`。`--resume` 校验 start/end 的交叉摘要、候选边界和父状态，已完成分支不重复执行，缺失分支可接续。
+- 验证：服务单测覆盖正常完成、父空间无终态拒绝和“左分支完成后注入中断、仅 `--resume` 补右分支”；真实 PowerShell 子进程 CLI 完成首次配对与恢复调用，在 `steady` 场景观察到 `LEFT_BETTER`，左右 Replay 均 `CONSISTENT`，父 current 摘要不变；其它合法动力学可得到 `TIE` 或另一侧更优，不预设结果。
+- 边界：当前只允许内置纯模拟 WorldPort；不能把 JSON 初始快照当成外部设备、文件、金融或医疗现实的安全 fork。独立终态判别器、随机化候选、多分支预算、外部幂等/隔离/对账及人工确认仍是后续实验，不把本节点描述为长期自主智能。

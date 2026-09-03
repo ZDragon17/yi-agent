@@ -398,3 +398,20 @@ WorldPort 状态不是“只要是对象就无限容纳”。公共 `MAX_PERSIST
 当前 CLI 不会替你保存密钥；真实连通性需要你在本机配置上述环境变量后执行 `yi-agent api test`。模型调用只负责提出候选 Token，仍由 WorldPort、Kernel、verify、learn 和 replay 闭环裁决。
 
 运行时锁的所有权检查把文件身份与内容完整性分开：活跃 Run 只依赖稳定的 `dev+ino` 文件身份，并在每次写入前重新验证锁 JSON 的自摘要；因此备份/杀软改变锁时间戳不会误杀活跃 Run，而原地改写锁内容仍会 fail-closed。这个边界减少的是本地锁误报，不解决 Windows PID 复用或分布式文件系统语义。
+
+F-93 将 F-92 的隔离分支挑战提升为可持久化 CLI 实验：父 Lab 完成一个终态 Run 后，可以让两个不同候选从同一父连续性状态分别运行，并把实验元数据写入输出目录的 `pair.start.json`、`pair.end.json`。父 Lab 不被修改；左右分支各自拥有普通的 manifest/current/events 账本，最终同时 Replay 为 `CONSISTENT` 后才会生成 PASS 终态。若进程在左分支完成后中断，输出目录保留不可变 start 证据，重新执行 `experiment pair --resume` 会只补齐缺失分支，不重复已提交 Run。
+
+示例（PowerShell）：
+
+```powershell
+yi-agent experiment pair `
+  --lab E:\labs\temperature `
+  --output E:\labs\temperature-pair-001 `
+  --left-token tok_XXXXXXXX `
+  --right-token tok_YYYYYYYY `
+  --scenario regime-shift `
+  --json
+yi-agent experiment pair --lab E:\labs\temperature --output E:\labs\temperature-pair-001 --resume --json
+```
+
+这是共同底层变化逻辑的实验工具：候选只是不透明 Token，比较必须绑定相同 WorldPort 身份、Token map、scenario 和 before 状态摘要。当前故意只允许内置纯模拟 WorldPort；外部设备、文件、金融或医疗副作用不能通过复制 JSON 被假定为可安全分叉，必须先有幂等、隔离、对账和人工确认契约。该能力验证的是可恢复的反事实实验基础，不是已经实现长期自主智能。
