@@ -887,6 +887,9 @@ test('a current-state repo policy enables a history-guided repair across Runs', 
     assert.equal(requests.length, 8);
     assert.equal(requests[0].candidateHistory.length, 0);
     assert.ok(requests[4].candidateHistory.some((entry) => entry.proposal?.replacement === wrongSource));
+    assert.ok(requests[4].candidateHistory.some((entry) =>
+      entry.proposal?.replacement === wrongSource && entry.candidateOutcome.quality?.verified === true &&
+      Number.isFinite(entry.candidateOutcome.quality.errorMagnitude)));
     assert.ok(requests[6].candidateHistory.some((entry) => entry.proposal?.replacement === wrongSource));
     const store = await LabStore.open({ labPath: lab });
     const firstEvents = (await store.readRun(first.stdout[0].data.runId)).events;

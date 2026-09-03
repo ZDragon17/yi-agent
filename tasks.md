@@ -715,3 +715,10 @@
 - 实现：保持候选历史查询以单个 LabStore 空间为边界，在两个不同 WorldPort 的独立 lab 中分别运行同一闭环；不增加跨领域聚合分支，跨 WorldPort 仍只复用共同 Runtime/Kernel/Replay 契约。
 - 验证：temperature 与 inventory 各自首个 Run 的模型上下文历史均为空；各自账本只返回本 WorldPort 的一条候选记录，两边独立 Replay 均为 `CONSISTENT`。
 - 边界：这证明的是历史不串台与底层闭环可复用，不证明候选语义能跨 WorldPort 迁移；若未来要做跨空间经验，需要单独定义可证伪的共享关系签名、授权和归因契约，不能直接拼接历史数组。
+
+## F-85 候选预测质量的可比较派生证据
+
+- 反例：F-84 仍只能看到候选是否采用、验证误差向量和重复次数；如果每个消费者自行计算质量，长时间运行中容易出现不同口径，甚至把“预测误差小”误报成“任务完成”。
+- 实现：共同 Runtime 从已有 `candidateOutcome.verification` 派生 `quality.errorMagnitude` 与 `quality.verified`；该字段不写入 Kernel Memory、不修改 STEP schema、不参与安全选择，ModelAdvisor 只接收经过既有历史预算筛选的摘要。
+- 验证：`[1,-3]` 的误差得到平均绝对值 `2`；ACTION 且 learnable 的反馈标记为 verified；ModelAdvisor 能携带质量摘要；candidate-history 2/2、ModelAdvisor 13/13、agent CLI 13/13、repo WorldPort 9/9。
+- 边界：这是预测质量线索，不是业务目标成功率、修复成本或因果归因；尚未定义跨候选的反事实比较，也未让质量自动改变 Kernel。下一节点应使用同一初始状态的多次候选与真实测试结果，测量质量线索是否能预测修复成本，并保留失败反例。

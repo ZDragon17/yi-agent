@@ -133,6 +133,15 @@ function candidateHistorySummary(history) {
         learnable: typeof outcome.verification.learnable === 'boolean' ? outcome.verification.learnable : null,
       };
     }
+    if (entry.quality !== undefined && entry.quality !== null &&
+        typeof entry.quality === 'object' && !Array.isArray(entry.quality)) {
+      summary.quality = {
+        errorMagnitude: Number.isFinite(entry.quality.errorMagnitude) && entry.quality.errorMagnitude >= 0
+          ? entry.quality.errorMagnitude
+          : null,
+        verified: typeof entry.quality.verified === 'boolean' ? entry.quality.verified : null,
+      };
+    }
     const entrySummary = {
       runId: boundedText(entry.runId),
       worldId: boundedText(entry.worldId),

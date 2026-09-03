@@ -33,3 +33,25 @@ test('candidate history counts attempts only inside one WorldPort scope', () => 
   assert.equal(history[0].candidateScopeDigest, history[1].candidateScopeDigest);
   assert.notEqual(history[0].candidateScopeDigest, history[2].candidateScopeDigest);
 });
+
+test('candidate history derives prediction quality without calling it task success', () => {
+  const history = annotateCandidateHistory([
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      candidateOutcome: {
+        candidateDigest: CANDIDATE_DIGEST,
+        status: 'APPLIED',
+        receiptStatus: 'ACCEPTED',
+        verification: {
+          error: [1, -3],
+          attribution: 'ACTION',
+          learnable: true,
+        },
+      },
+    },
+  ]);
+
+  assert.deepEqual(history[0].quality, { errorMagnitude: 2, verified: true });
+});

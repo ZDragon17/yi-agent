@@ -5,11 +5,16 @@ export function annotateCandidateHistory(history) {
   const attempts = new Map();
   return history.map((entry) => {
     const scope = candidateScope(entry);
-    if (scope === null) return { ...entry };
+    const quality = predictionQuality(entry.candidateOutcome);
+    const enriched = {
+      ...entry,
+      ...(quality === null ? {} : { quality }),
+    };
+    if (scope === null) return enriched;
     const attempt = (attempts.get(scope) ?? 0) + 1;
     attempts.set(scope, attempt);
     return {
-      ...entry,
+      ...enriched,
       candidateScopeDigest: scope,
       attempt,
     };
@@ -35,4 +40,18 @@ function candidateScope(entry) {
     scenario: entry.scenario,
     candidateDigest: outcome?.candidateDigest,
   });
+}
+
+function predictionQuality(outcome) {
+  const verification = outcome?.verification;
+  if (outcome?.status !== 'APPLIED' || verification === null ||
+      typeof verification !== 'object' || Array.isArray(verification) ||
+      !Array.isArray(verification.error) || verification.error.length === 0 ||
+      verification.error.some((value) => !Number.isFinite(value))) return null;
+  let total = 0;
+  for (const value of verification.error) total += Math.abs(value);
+  return {
+    errorMagnitude: total / verification.error.length,
+    verified: verification.attribution === 'ACTION' && verification.learnable === true,
+  };
 }
