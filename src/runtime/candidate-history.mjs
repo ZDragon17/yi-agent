@@ -5,10 +5,11 @@ export function annotateCandidateHistory(history) {
   const attempts = new Map();
   const contextAttempts = new Map();
   let previousKernelStep = null;
-  return history.map((entry) => {
+  return history.map((entry, index) => {
     const scope = candidateScope(entry);
     const decisionContext = decisionContextDigest(entry);
     const quality = predictionQuality(entry.candidateOutcome, entry);
+    const supersededStepDistance = stepsSinceSupersededCandidate(history, index, entry);
     const { valueSpec: _valueSpec, beforeVector: _beforeVector, afterVector: _afterVector, ...publicEntry } = entry ?? {};
     const kernelStep = Number.isSafeInteger(entry?.kernelStep) && entry.kernelStep >= 0 ? entry.kernelStep : null;
     const stepGap = kernelStep !== null && previousKernelStep !== null && kernelStep >= previousKernelStep
@@ -18,6 +19,7 @@ export function annotateCandidateHistory(history) {
       ...publicEntry,
       ...(quality === null ? {} : { quality }),
       ...(stepGap === null ? {} : { stepsSincePreviousCandidate: stepGap }),
+      ...(supersededStepDistance === null ? {} : { stepsSinceSupersededCandidate: supersededStepDistance }),
     };
     if (kernelStep !== null) previousKernelStep = kernelStep;
     const annotated = scope === null
@@ -64,6 +66,30 @@ function candidateScope(entry) {
     scenario: entry.scenario,
     candidateDigest: outcome?.candidateDigest,
   });
+}
+
+function stepsSinceSupersededCandidate(history, index, entry) {
+  const requestedDigest = entry?.supersedesCandidateDigest;
+  if (typeof requestedDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(requestedDigest)) return null;
+  const currentStep = kernelStep(entry);
+  if (currentStep === null) return null;
+  const previous = history.slice(0, index).findLast((candidate) =>
+    sameWorldPortScope(candidate, entry) && candidate?.candidateOutcome?.candidateDigest === requestedDigest,
+  );
+  const previousStep = kernelStep(previous);
+  return previousStep !== null && currentStep >= previousStep ? currentStep - previousStep : null;
+}
+
+function sameWorldPortScope(left, right) {
+  return left !== null && typeof left === 'object' && !Array.isArray(left) &&
+    right !== null && typeof right === 'object' && !Array.isArray(right) &&
+    left.worldVersion === right.worldVersion &&
+    left.tokenMapDigest === right.tokenMapDigest &&
+    left.scenario === right.scenario;
+}
+
+function kernelStep(entry) {
+  return Number.isSafeInteger(entry?.kernelStep) && entry.kernelStep >= 0 ? entry.kernelStep : null;
 }
 
 function predictionQuality(outcome, entry) {

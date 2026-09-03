@@ -743,3 +743,10 @@
 - 实现：ModelAdvisor 可返回可选 `supersedesCandidateDigest`；应用层只接受同一 `worldVersion + tokenMapDigest + scenario` 且候选历史中确实存在的摘要，并将接受后的引用写入 policy evidence 与 candidate history。LabStore/Replay 只校验字段形状和原有摘要链，旧账本继续兼容；ModelAdvisor 明确把该字段当作存在性线索而非因果证明。
 - 验证：候选谱系单测 2/2；ModelAdvisor 17/17；repo 修复 E2E 9/9，确认错误候选的摘要被引用、跨边界引用不被接受、两个 Run Replay 均 `CONSISTENT`。
 - 边界：当前只证明“引用存在且作用域正确”，不证明模型语义修复、回滚关系或真实修复成本；下一节点应在多个候选、同初始状态和独立终态判别器下建立反事实对照，并检验谱系是否能预测额外工作量。
+
+## F-89 谱系引用的有界修正间隔
+
+- 反例：F-88 只记录了被修正候选的身份；若仍只看“上一候选步距”，无法区分当前候选是在修正明确的历史节点，还是仅仅恰好晚到了一步。
+- 实现：Runtime 在同一 WorldPort 作用域的历史前缀中查找 `supersedesCandidateDigest` 对应候选，并在两端 `kernelStep` 单调时派生 `stepsSinceSupersededCandidate`；跨作用域、缺失源节点和非单调记录均不推断。ModelAdvisor 只接收该有界字段，并明确它不是修复成本。
+- 验证：候选历史用例 6/6；ModelAdvisor 17/17；repo 修复 E2E 继续确认错误候选到修复候选的间隔为 4，两个 Run Replay 均 `CONSISTENT`。
+- 边界：该间隔仍不能归因中间动作、测量真实资源消耗或证明修复因果；下一节点应把它与独立终态判别器、同初始状态对照和失败候选链结合，形成可反驳的修复成本估计。

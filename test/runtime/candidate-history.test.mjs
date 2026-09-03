@@ -151,3 +151,34 @@ test('candidate history preserves continuous step distance without inferring rep
   assert.equal(history[1].kernelStep, 7);
   assert.equal(history[1].stepsSincePreviousCandidate, 4);
 });
+
+test('candidate history derives a bounded interval only for an accepted same-scope supersession', () => {
+  const history = annotateCandidateHistory([
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      kernelStep: 3,
+      candidateOutcome: { candidateDigest: CANDIDATE_DIGEST },
+    },
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      kernelStep: 7,
+      supersedesCandidateDigest: CANDIDATE_DIGEST,
+      candidateOutcome: { candidateDigest: OTHER_CANDIDATE_DIGEST },
+    },
+    {
+      worldVersion: 'world-v2',
+      tokenMapDigest: `sha256:${'2'.repeat(64)}`,
+      scenario: 'steady',
+      kernelStep: 9,
+      supersedesCandidateDigest: CANDIDATE_DIGEST,
+      candidateOutcome: { candidateDigest: `sha256:${'d'.repeat(64)}` },
+    },
+  ]);
+
+  assert.equal(history[1].stepsSinceSupersededCandidate, 4);
+  assert.equal(history[2].stepsSinceSupersededCandidate, undefined);
+});

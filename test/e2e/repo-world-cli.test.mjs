@@ -904,6 +904,7 @@ test('a current-state repo policy enables a history-guided repair across Runs', 
     assert.ok(wrongHistory);
     assert.ok(fixedHistory);
     assert.equal(fixedHistory.kernelStep - wrongHistory.kernelStep, 4);
+    assert.equal(fixedHistory.stepsSinceSupersededCandidate, 4);
     assert.equal(fixedHistory.supersedesCandidateDigest, wrongHistory.candidateOutcome.candidateDigest);
     const firstEvents = (await store.readRun(first.stdout[0].data.runId)).events;
     const secondEvents = (await store.readRun(second.stdout[0].data.runId)).events;
