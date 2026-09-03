@@ -701,3 +701,10 @@
 - 实现：repo patch spec 增加显式 `beforeDigestMode: current`。descriptor/worldVersion 仍绑定不变的 patch spec；每个新 nonce 在写入前读取当前普通文件并校验 proposal before 摘要，同 nonce 恢复只依据 nonce journal 的 PREPARED/APPLIED 绑定，不重复要求文件回到旧 before 状态。
 - 验证：同一 adapter 配置下，第一 Run 提交格式合法但语义错误的乘法 proposal，第二次独立 CLI Run 从候选历史识别该 proposal 并提交加法修复；文件最终正确，两个 Run Replay 均 `CONSISTENT`，repo E2E 9/9。
 - 边界：这是 repo 示例的受控状态演化，不是通用写权限或自动回滚；策略仍限定单文件完整替换，current 模式也不证明外部并发修改可自动归因。下一节点应把“当前状态读取、候选尝试、验证失败、重试成本”抽象成跨 WorldPort 的实验契约，并继续测量而非默认修复成功。
+
+## F-83 候选历史的 WorldPort 作用域与重复尝试证据
+
+- 反例：F-82 的候选历史虽然能指导第二次修复，但原始记录没有统一表达“这是同一 WorldPort 下的第几次尝试”；如果只按 `token+proposal` 聚合，跨 WorldPort 恰好同名的候选可能被错误混淆；如果不保留观测摘要，也无法判断候选是否来自同一可观测上下文。
+- 实现：新增 Runtime 级候选历史标注器，按 `{worldVersion,tokenMapDigest,scenario,candidateDigest}` 生成 `candidateScopeDigest` 并计算有界 `attempt`；持久化投影与同进程连续 Run 复用同一标注逻辑，同时携带 `observationDigest`、WorldPort 版本和 token 映射摘要。ModelAdvisor 只接收这些有界派生字段，不改变 Kernel Memory、候选身份摘要或 Replay。
+- 验证：同一作用域相同候选得到 attempt 1/2；WorldPort 版本或 token 映射不同即使候选摘要相同也各自从 attempt 1 开始；重启后的第三个 Run 能继续看到前两次来源并将重复候选标为 attempt 2；候选历史单测 1/1，ModelAdvisor 13/13，agent CLI 12/12。
+- 边界：作用域摘要只是防止历史混淆，不代表跨 WorldPort 语义可迁移；attempt 也不是质量分数，时间衰减、修复成本和反事实归因仍未进入 Kernel。下一节点应在多个 WorldPort/多个场景的真实长跑中测量历史筛选与候选结果，而不是把来源字段当成学习完成。

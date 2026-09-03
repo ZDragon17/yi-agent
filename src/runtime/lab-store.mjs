@@ -27,6 +27,7 @@ import {
   withSelfDigest,
 } from './schema.mjs';
 import { isValidCandidateOutcome } from './candidate-evidence.mjs';
+import { annotateCandidateHistory } from './candidate-history.mjs';
 import {
   externalInputUnsigned,
   isValidEvidencePublicKey,
@@ -406,16 +407,21 @@ export class LabStore {
           runId,
           worldId: run.start.worldId,
           scenario: run.start.scenario,
+          worldVersion: run.manifest.worldVersion,
+          tokenMapDigest: run.manifest.tokenMap.digest,
           sequence: event.sequence,
           recordedAt: event.payload.recordedAt,
           candidateOutcome: cloneJson(event.payload.candidateOutcome),
+          ...(event.payload.policyEvidence?.observationDigest === undefined
+            ? {}
+            : { observationDigest: event.payload.policyEvidence.observationDigest }),
           ...proposalSummary,
         });
       }
     }
     outcomes.sort((left, right) => left.recordedAt.localeCompare(right.recordedAt) ||
       left.runId.localeCompare(right.runId) || left.sequence - right.sequence);
-    return cloneJson(outcomes.slice(-limit));
+    return cloneJson(annotateCandidateHistory(outcomes).slice(-limit));
   }
 
   async readLoopContinuation() {

@@ -110,6 +110,11 @@ test('model advisor receives small prior proposals and marks oversized ones as t
       {
         runId: 'run-small',
         sequence: 2,
+        worldVersion: 'world-v1',
+        tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+        candidateScopeDigest: `sha256:${'2'.repeat(64)}`,
+        observationDigest: `sha256:${'3'.repeat(64)}`,
+        attempt: 2,
         proposal: { replacement: 'small fix' },
         candidateOutcome: { candidateDigest: 'sha256:small', token: TOKEN_A, status: 'APPLIED' },
       },
@@ -124,6 +129,8 @@ test('model advisor receives small prior proposals and marks oversized ones as t
   });
   const context = JSON.parse(prompt.split('\n').at(-1));
   assert.deepEqual(context.candidateHistory[0].proposal, { replacement: 'small fix' });
+  assert.equal(context.candidateHistory[0].worldVersion, 'world-v1');
+  assert.equal(context.candidateHistory[0].attempt, 2);
   assert.equal(context.candidateHistory[1].proposal, undefined);
   assert.equal(context.candidateHistory[1].proposalDigest, `sha256:${'a'.repeat(64)}`);
   assert.equal(context.candidateHistory[1].proposalTruncated, true);

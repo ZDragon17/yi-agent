@@ -187,17 +187,25 @@ test('a restarted agent run can use candidate history to choose a different safe
     assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'candidate-history-seed', '--json'], process.env)).code, 0);
     const first = await invoke(['agent', 'run', '--lab', lab, '--steps', '1', '--json'], env);
     const second = await invoke(['agent', 'run', '--lab', lab, '--steps', '1', '--json'], env);
+    const third = await invoke(['agent', 'run', '--lab', lab, '--steps', '1', '--json'], env);
     assert.equal(first.code, 0);
     assert.equal(second.code, 0);
-    assert.equal(requests.length, 2);
+    assert.equal(third.code, 0);
+    assert.equal(requests.length, 3);
     assert.equal(requests[0].candidateHistory.length, 0);
     assert.equal(requests[1].candidateHistory.length, 1);
+    assert.equal(requests[2].candidateHistory.at(-1).attempt, 1);
     const store = await LabStore.open({ labPath: lab });
     const firstEvent = (await store.readRun(first.stdout[0].data.runId)).events.find((event) => event.kind === 'STEP');
     const secondEvent = (await store.readRun(second.stdout[0].data.runId)).events.find((event) => event.kind === 'STEP');
+    const thirdEvent = (await store.readRun(third.stdout[0].data.runId)).events.find((event) => event.kind === 'STEP');
     assert.notEqual(firstEvent.payload.choice.token, secondEvent.payload.choice.token);
-    assert.equal((await store.readCandidateOutcomes()).length, 2);
-    for (const runId of [first.stdout[0].data.runId, second.stdout[0].data.runId]) {
+    assert.equal(secondEvent.payload.choice.token, thirdEvent.payload.choice.token);
+    const history = await store.readCandidateOutcomes();
+    assert.equal(history.length, 3);
+    assert.equal(history.at(-1).attempt, 2);
+    assert.match(history.at(-1).candidateScopeDigest, /^sha256:[0-9a-f]{64}$/u);
+    for (const runId of [first.stdout[0].data.runId, second.stdout[0].data.runId, third.stdout[0].data.runId]) {
       const replay = await invoke(['replay', '--lab', lab, '--run', runId, '--json'], process.env);
       assert.equal(replay.code, 0, JSON.stringify(replay));
       assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');

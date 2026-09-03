@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { INTERNAL_RUN_APPEND, LabStore, LabStoreError } from '../runtime/lab-store.mjs';
 import { candidateDigest, canonicalDigest, canonicalJson, cloneJson, MAX_CANDIDATE_HISTORY, MAX_MODEL_PROPOSAL_BYTES, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { buildCandidateOutcome } from '../runtime/candidate-evidence.mjs';
+import { annotateCandidateHistory } from '../runtime/candidate-history.mjs';
 import { learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
@@ -602,14 +603,22 @@ export async function runLab(input) {
       },
     }, { returnReference: true, [INTERNAL_RUN_APPEND]: true });
     if (candidateOutcome !== undefined) {
-      candidateHistory = [...candidateHistory, {
+      candidateHistory = annotateCandidateHistory([...candidateHistory, {
         runId,
         worldId: manifest.worldId,
         scenario,
+        worldVersion: manifest.worldVersion,
+        tokenMapDigest: manifest.tokenMap.digest,
         sequence: event.sequence,
         recordedAt: event.payload.recordedAt,
         candidateOutcome,
-      }].slice(-MAX_CANDIDATE_HISTORY);
+        ...(committedPolicyEvidence?.observationDigest === undefined
+          ? {}
+          : { observationDigest: committedPolicyEvidence.observationDigest }),
+        ...(committedPolicyEvidence?.proposal === undefined
+          ? {}
+          : { proposal: cloneJson(committedPolicyEvidence.proposal) }),
+      }]).slice(-MAX_CANDIDATE_HISTORY);
       if (sharedCandidateHistory !== null) {
         sharedCandidateHistory.splice(0, sharedCandidateHistory.length, ...candidateHistory);
       }
