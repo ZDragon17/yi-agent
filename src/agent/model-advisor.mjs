@@ -1,4 +1,4 @@
-import { canonicalDigest, canonicalJson, cloneJson, MAX_CANDIDATE_HISTORY, MAX_MODEL_PROPOSAL_BYTES } from '../runtime/schema.mjs';
+import { canonicalDigest, canonicalJson, cloneJson, MAX_CANDIDATE_HISTORY, MAX_CANDIDATE_HISTORY_PROMPT_BYTES, MAX_CANDIDATE_PROPOSAL_BYTES, MAX_MODEL_PROPOSAL_BYTES } from '../runtime/schema.mjs';
 import { projectModelObservation } from './observation-context.mjs';
 
 const SCHEMA_VERSION = 1;
@@ -54,13 +54,15 @@ export function createModelAdvisor({ client, model, goal = null } = {}) {
 export function buildDecisionPrompt({ observation, observationEvidence = [], observationEvidenceTruncated = false, memory, candidateHistory = [], valueSpec, capabilities, manifest, step = 0, goal = null } = {}) {
   const modelObservation = projectModelObservation(observation, observationEvidence, observationEvidenceTruncated);
   const capabilityIds = new Map((manifest?.tokenMap?.entries ?? []).map((entry) => [entry.token, entry.capabilityId]));
+  const candidateHistoryProjection = candidateHistorySummary(candidateHistory);
   const context = {
     goal: typeof goal === 'string' && goal.length > 0 ? goal : null,
     step,
     observation: modelObservation.observation,
     observationEvidence: modelObservation.observationEvidence,
     observationEvidenceTruncated: modelObservation.observationEvidenceTruncated,
-    candidateHistory: candidateHistorySummary(candidateHistory),
+    candidateHistory: candidateHistoryProjection.entries,
+    candidateHistoryTruncated: candidateHistoryProjection.truncated,
     valueSpec,
     capabilities: Array.isArray(capabilities)
       ? capabilities.map((capability) => ({
@@ -106,8 +108,8 @@ function memorySummary(memory) {
 }
 
 function candidateHistorySummary(history) {
-  if (!Array.isArray(history)) return [];
-  return history.slice(-MAX_CANDIDATE_HISTORY).flatMap((entry) => {
+  if (!Array.isArray(history)) return { entries: [], truncated: false };
+  const entries = history.slice(-MAX_CANDIDATE_HISTORY).flatMap((entry) => {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry) ||
         entry.candidateOutcome === null || typeof entry.candidateOutcome !== 'object' ||
         Array.isArray(entry.candidateOutcome)) return [];
@@ -117,6 +119,7 @@ function candidateHistorySummary(history) {
       token: outcome.token === null ? null : boundedText(outcome.token),
       status: boundedText(outcome.status),
     };
+    const proposalSummary = candidateProposalSummary(entry);
     if (outcome.receiptStatus !== undefined) summary.receiptStatus = boundedText(outcome.receiptStatus);
     if (outcome.reason !== undefined) summary.reason = boundedText(outcome.reason);
     if (outcome.verification !== undefined && outcome.verification !== null &&
@@ -130,15 +133,40 @@ function candidateHistorySummary(history) {
         learnable: typeof outcome.verification.learnable === 'boolean' ? outcome.verification.learnable : null,
       };
     }
-    return [{
+    const entrySummary = {
       runId: boundedText(entry.runId),
       worldId: boundedText(entry.worldId),
       scenario: boundedText(entry.scenario),
       sequence: Number.isSafeInteger(entry.sequence) ? entry.sequence : null,
       recordedAt: boundedText(entry.recordedAt),
       candidateOutcome: summary,
-    }];
+    };
+    if (proposalSummary.proposal !== undefined) entrySummary.proposal = proposalSummary.proposal;
+    if (proposalSummary.proposalDigest !== undefined) entrySummary.proposalDigest = proposalSummary.proposalDigest;
+    if (proposalSummary.proposalTruncated === true) entrySummary.proposalTruncated = true;
+    return [entrySummary];
   });
+  let truncated = entries.length < Math.min(history.length, MAX_CANDIDATE_HISTORY);
+  while (entries.length > 0 && Buffer.byteLength(canonicalJson(entries), 'utf8') > MAX_CANDIDATE_HISTORY_PROMPT_BYTES) {
+    entries.shift();
+    truncated = true;
+  }
+  return { entries, truncated };
+}
+
+function candidateProposalSummary(entry) {
+  if (!Object.hasOwn(entry, 'proposal')) return {};
+  try {
+    const digest = typeof entry.proposalDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(entry.proposalDigest)
+      ? entry.proposalDigest
+      : canonicalDigest(entry.proposal);
+    if (Buffer.byteLength(canonicalJson(entry.proposal), 'utf8') > MAX_CANDIDATE_PROPOSAL_BYTES) {
+      return { proposalDigest: digest, proposalTruncated: true };
+    }
+    return { proposal: cloneJson(entry.proposal), proposalDigest: digest };
+  } catch {
+    return { proposalTruncated: true };
+  }
 }
 
 function boundedText(value) {

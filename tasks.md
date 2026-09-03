@@ -687,3 +687,10 @@
 - 实现：增加独立 CLI Run 的判别实验：空历史时选择第一个安全 Token，重启后看到上一条候选结果时选择第二个安全 Token；不改变 Kernel 的安全校验和 actionModels。
 - 验证：两次 Run 的模型请求分别看到 0/1 条历史，实际选择不同且都安全；两条 Run 的 Replay 均为 `CONSISTENT`，账本累计 2 条候选结果。
 - 边界：测试模型是确定性脚本，只证明历史能够成为后续选择的输入，不证明真实模型会正确利用它。下一节点应测量“历史是否导致更低验证误差/更低修复成本”，并处理同一候选的重复尝试、时间衰减和跨 WorldPort 来源匹配。
+
+## F-81 历史携带有界 proposal 语义线索
+
+- 反例：F-80 的历史只有候选摘要；对带参数的动作，模型无法知道失败摘要对应哪份 proposal，不能据此形成可操作修复。
+- 实现：从已提交 STEP 的 policy evidence 投影小于 8 KiB 的 proposal 预览及独立 `proposalDigest`；更大的 proposal 只保留摘要并标记 `proposalTruncated`。ModelAdvisor 侧再施加 32 KiB 总预算，避免 32 条历史撑爆 128 KiB prompt 上限。
+- 验证：repo 质量矩阵能按 `candidateDigest` 找回对应 proposal；ModelAdvisor 13/13，repo 质量矩阵继续通过；大 proposal 历史被截断且 prompt 保持在 128 KiB 内。
+- 边界：proposal 仍是不可信上下文，截断预览不等价于完整候选，也没有验证“模型依据历史能修复错误”。下一节点应做跨 Run 的真实错误 proposal→修复 proposal 实验，并记录重复尝试、时间衰减和修复成本。

@@ -404,6 +404,9 @@ test('repo proposal quality is externally distinguishable under one bounded cont
           token: evidence.token,
           proposal: evidence.proposal,
         }));
+        const historyEntry = inspection.stdout[0].data.candidateHistory.find((item) =>
+          item.candidateOutcome.candidateDigest === evidence.candidateDigest);
+        assert.equal(historyEntry?.proposal?.replacement, candidate.replacement);
         const outcome = appliedProposalEvent.payload.candidateOutcome;
         assert.equal(outcome.candidateDigest, evidence.candidateDigest);
         assert.equal(outcome.token, evidence.token);

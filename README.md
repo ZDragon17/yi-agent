@@ -256,7 +256,7 @@ powershell -ExecutionPolicy Bypass `
 
 当候选进入 STEP 后，账本还会记录 `candidateOutcome`：候选是否被采用、WorldPort 回执状态，以及验证的误差、归因、置信度和是否可学习。Replay 会重新计算该结果；这为后续的候选历史和修复成本实验提供共同证据，但当前仍不会把它自动写入 Kernel 的动作模型。
 
-`inspect` 会从已提交的终态 Run 中返回最近 32 条 `candidateHistory`，模型提示也会接收同样的有界摘要，并保留 `worldId/scenario` 来源。连续 loop 会在多个 Run 间复用这段有界尾部，重启时再从 immutable 账本恢复；这样历史是可读证据而不是隐含进程状态。它目前只辅助观察和模型排序，尚未参与 Kernel 的因果学习。
+`inspect` 会从已提交的终态 Run 中返回最近 32 条 `candidateHistory`，包含候选结果和有界 proposal 预览；模型提示也会接收同样的字段筛选摘要，并保留 `worldId/scenario` 来源。单个 proposal 预览最多 8 KiB，历史上下文最多 32 KiB，超出时保留摘要并标记截断。连续 loop 会在多个 Run 间复用这段有界尾部，重启时再从 immutable 账本恢复；这样历史是可读证据而不是隐含进程状态。它目前只辅助观察和模型排序，尚未参与 Kernel 的因果学习。
 
 当前 E2E 还验证了一个最小因果边界：第一次独立 Run 在空历史下选择一个安全动作，第二次重启后的 Run 读取上一条候选结果并选择另一个安全动作；两次 Run 都能独立 Replay。这证明的是“历史可以影响后续提议”，不是“提议因此变得正确”。
 

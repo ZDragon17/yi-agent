@@ -17,6 +17,7 @@ import {
   SCHEMA_VERSION,
   MAX_PERSISTED_EVENT_BYTES,
   MAX_CANDIDATE_HISTORY,
+  MAX_CANDIDATE_PROPOSAL_BYTES,
   MAX_MODEL_PROPOSAL_BYTES,
   candidateDigest,
   canonicalDigest,
@@ -392,6 +393,15 @@ export class LabStore {
       }
       for (const event of run.events) {
         if (event.kind !== 'STEP' || event.payload.candidateOutcome === undefined) continue;
+        const proposal = event.payload.policyEvidence?.proposal;
+        let proposalSummary = {};
+        if (proposal !== undefined) {
+          const proposalJson = canonicalJson(proposal);
+          const proposalDigest = canonicalDigest(proposal);
+          proposalSummary = Buffer.byteLength(proposalJson, 'utf8') <= MAX_CANDIDATE_PROPOSAL_BYTES
+            ? { proposal: cloneJson(proposal), proposalDigest }
+            : { proposalDigest, proposalTruncated: true };
+        }
         outcomes.push({
           runId,
           worldId: run.start.worldId,
@@ -399,6 +409,7 @@ export class LabStore {
           sequence: event.sequence,
           recordedAt: event.payload.recordedAt,
           candidateOutcome: cloneJson(event.payload.candidateOutcome),
+          ...proposalSummary,
         });
       }
     }

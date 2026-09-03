@@ -92,6 +92,60 @@ test('model advisor receives only a bounded candidate history', async () => {
   assert.equal(context.candidateHistory.at(-1).runId, 'run-39');
 });
 
+test('model advisor receives small prior proposals and marks oversized ones as truncated', async () => {
+  let prompt;
+  const advisor = createModelAdvisor({
+    model: 'model-candidate-proposal-history',
+    client: {
+      async chat(value) {
+        prompt = value;
+        return { model: 'model-candidate-proposal-history', content: 'not json' };
+      },
+    },
+  });
+  await advisor({
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    memory: {},
+    candidateHistory: [
+      {
+        runId: 'run-small',
+        sequence: 2,
+        proposal: { replacement: 'small fix' },
+        candidateOutcome: { candidateDigest: 'sha256:small', token: TOKEN_A, status: 'APPLIED' },
+      },
+      {
+        runId: 'run-large',
+        sequence: 2,
+        proposal: { replacement: 'x'.repeat(12_000) },
+        proposalDigest: `sha256:${'a'.repeat(64)}`,
+        candidateOutcome: { candidateDigest: 'sha256:large', token: TOKEN_A, status: 'APPLIED' },
+      },
+    ],
+  });
+  const context = JSON.parse(prompt.split('\n').at(-1));
+  assert.deepEqual(context.candidateHistory[0].proposal, { replacement: 'small fix' });
+  assert.equal(context.candidateHistory[1].proposal, undefined);
+  assert.equal(context.candidateHistory[1].proposalDigest, `sha256:${'a'.repeat(64)}`);
+  assert.equal(context.candidateHistory[1].proposalTruncated, true);
+});
+
+test('model advisor keeps many large candidate proposals below the prompt history budget', () => {
+  const prompt = buildDecisionPrompt({
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    memory: {},
+    candidateHistory: Array.from({ length: 32 }, (_, index) => ({
+      runId: `run-${index}`,
+      sequence: 2,
+      proposal: { replacement: 'x'.repeat(8_000) },
+      candidateOutcome: { candidateDigest: `sha256:${'a'.repeat(64)}`, token: TOKEN_A, status: 'APPLIED' },
+    })),
+  });
+  const context = JSON.parse(prompt.split('\n').at(-1));
+  assert.equal(context.candidateHistoryTruncated, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(context.candidateHistory), 'utf8') <= 32 * 1024);
+  assert.ok(Buffer.byteLength(prompt, 'utf8') < 128 * 1024);
+});
+
 test('model advisor preserves a bounded proposal as untrusted action data', async () => {
   const proposal = { schemaVersion: 1, targetPath: 'src/math.mjs', replacement: 'export const value = 2;\n' };
   const advisor = createModelAdvisor({
