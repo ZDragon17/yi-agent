@@ -15,6 +15,7 @@ export const MAX_PERSISTED_WORLD_STATE_BYTES =
 // observations, verification, and policy evidence.
 export const MAX_PERSISTED_EXTERNAL_INPUT_BYTES =
   (MAX_PERSISTED_EVENT_BYTES - MAX_PERSISTED_MEMORY_BYTES - MAX_PERSISTED_WORLD_STATE_BYTES) / 2;
+export const MAX_MODEL_PROPOSAL_BYTES = 64 * 1024;
 // WorldPort versions are opaque, but they are persisted in every STEP.
 export const MAX_BOUNDARY_IDENTIFIER_LENGTH = 4096;
 export const MAX_EXECUTION_NONCE_LENGTH = 256;

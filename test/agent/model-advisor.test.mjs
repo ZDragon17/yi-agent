@@ -55,6 +55,25 @@ test('model advisor receives bounded WorldPort evidence without changing the tok
   assert.match(result.observationDigest, /^sha256:[0-9a-f]{64}$/u);
 });
 
+test('model advisor preserves a bounded proposal as untrusted action data', async () => {
+  const proposal = { schemaVersion: 1, targetPath: 'src/math.mjs', replacement: 'export const value = 2;\n' };
+  const advisor = createModelAdvisor({
+    model: 'model-proposal',
+    client: {
+      async chat() {
+        return { model: 'model-proposal', content: JSON.stringify({ token: TOKEN_A, proposal }) };
+      },
+    },
+  });
+  const result = await advisor({
+    observation: { vector: [1], stateVersion: 'state-1', intervalId: 'interval-1' },
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    memory: {},
+  });
+  assert.deepEqual(result.proposal, proposal);
+  assert.equal(result.token, TOKEN_A);
+});
+
 test('model advisor bounds oversized observation evidence and marks the projection', async () => {
   let prompt;
   const advisor = createModelAdvisor({

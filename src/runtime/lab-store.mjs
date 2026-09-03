@@ -16,6 +16,7 @@ import path from 'node:path';
 import {
   SCHEMA_VERSION,
   MAX_PERSISTED_EVENT_BYTES,
+  MAX_MODEL_PROPOSAL_BYTES,
   canonicalDigest,
   canonicalJson,
   cloneJson,
@@ -1657,6 +1658,7 @@ function validateExternalPolicyEvidence(value, runId) {
     (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
     typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
     (value.observationDigest !== undefined && (typeof value.observationDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.observationDigest))) ||
+    (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
     typeof value.applied !== 'boolean' ||
     (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))
   ) {
@@ -2038,9 +2040,19 @@ function validatePolicyEvidence(value, field, corruptOnFailure) {
       (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
       typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
       (value.observationDigest !== undefined && (typeof value.observationDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.observationDigest))) ||
+      (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
       typeof value.applied !== 'boolean' ||
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
     fail('STEP model policy evidence is invalid.');
+  }
+}
+
+function isValidModelProposal(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  try {
+    return Buffer.byteLength(canonicalJson(value), 'utf8') <= MAX_MODEL_PROPOSAL_BYTES;
+  } catch {
+    return false;
   }
 }
 

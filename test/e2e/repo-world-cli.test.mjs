@@ -187,8 +187,13 @@ test('writable repo WorldPort applies a digest-bound patch and verifies the reta
     schemaVersion: 1,
     targetPath: 'src/math.mjs',
     expectedBeforeDigest: canonicalDigest({ content: buggySource }),
-    replacement: fixedSource,
   }), 'utf8');
+  const patchProposal = {
+    schemaVersion: 1,
+    targetPath: 'src/math.mjs',
+    expectedBeforeDigest: canonicalDigest({ content: buggySource }),
+    replacement: fixedSource,
+  };
 
   let modelCalls = 0;
   const server = createServer(async (request, response) => {
@@ -200,12 +205,20 @@ test('writable repo WorldPort applies a digest-bound patch and verifies the reta
       'repo.read-file', 'repo.run-tests', 'repo.apply-patch', 'repo.run-tests',
     ][modelCalls]);
     assert.ok(capability, `model context is missing step ${modelCalls} capability`);
+    if (modelCalls === 1) {
+      const actionEvidence = context.observationEvidence.find((item) => item.kind === 'repo-action');
+      assert.equal(actionEvidence.readFileContent, buggySource);
+    }
     modelCalls += 1;
     response.setHeader('Content-Type', 'application/json');
+    const proposal = capability.capabilityId === 'repo.apply-patch' ? patchProposal : undefined;
     response.end(JSON.stringify({
       id: 'repo-write-chat',
       model: body.model,
-      choices: [{ message: { content: JSON.stringify({ token: capability.token }) } }],
+      choices: [{ message: { content: JSON.stringify({
+        token: capability.token,
+        ...(proposal === undefined ? {} : { proposal }),
+      }) } }],
     }));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -282,7 +295,6 @@ test('writable repo WorldPort rejects a nonce journal inside the scanned reposit
     schemaVersion: 1,
     targetPath: 'src/math.mjs',
     expectedBeforeDigest: canonicalDigest({ content: source }),
-    replacement: 'export const value = 2;\n',
   }), 'utf8');
   await writeFile(adapterConfig, JSON.stringify({
     executable: process.execPath,
@@ -329,8 +341,13 @@ test('writable repo WorldPort resumes a lost patch response without applying twi
     schemaVersion: 1,
     targetPath: 'src/math.mjs',
     expectedBeforeDigest: canonicalDigest({ content: buggySource }),
-    replacement: fixedSource,
   }), 'utf8');
+  const patchProposal = {
+    schemaVersion: 1,
+    targetPath: 'src/math.mjs',
+    expectedBeforeDigest: canonicalDigest({ content: buggySource }),
+    replacement: fixedSource,
+  };
 
   let modelCalls = 0;
   const server = createServer(async (request, response) => {
@@ -344,10 +361,14 @@ test('writable repo WorldPort resumes a lost patch response without applying twi
     assert.ok(capability, `model context is missing recovery step ${modelCalls} capability`);
     modelCalls += 1;
     response.setHeader('Content-Type', 'application/json');
+    const proposal = capability.capabilityId === 'repo.apply-patch' ? patchProposal : undefined;
     response.end(JSON.stringify({
       id: 'repo-write-recovery-chat',
       model: body.model,
-      choices: [{ message: { content: JSON.stringify({ token: capability.token }) } }],
+      choices: [{ message: { content: JSON.stringify({
+        token: capability.token,
+        ...(proposal === undefined ? {} : { proposal }),
+      }) } }],
     }));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -394,6 +415,20 @@ test('writable repo WorldPort resumes a lost patch response without applying twi
     assert.notEqual(lost.code, 0, JSON.stringify(lost));
     assert.equal(modelCalls, 3);
     assert.equal(await readFile(sourcePath, 'utf8'), fixedSource);
+    const preparedRecord = JSON.parse((await readFile(nonceJournalPath, 'utf8')).trim().split(/\r?\n/u)[0]);
+    const recoveryStore = await LabStore.open({ labPath: lab });
+    const unresolved = await recoveryStore.findUnresolvedExternalTransition();
+    assert.deepEqual(unresolved.evidence.policyEvidence.proposal, patchProposal);
+    assert.equal(preparedRecord.patchDigest, canonicalDigest(patchProposal));
+    assert.equal(preparedRecord.requestDigest, canonicalDigest({
+      schemaVersion: 1,
+      token: unresolved.evidence.token,
+      basedOnVersion: unresolved.evidence.basedOnVersion,
+      policyVersion: recoveryStore.manifest.authorityPolicy.policyVersion,
+      constraintsDigest: recoveryStore.manifest.authorityPolicy.constraintsDigest,
+      executionNonce: unresolved.evidence.executionNonce,
+      proposal: patchProposal,
+    }));
 
     const resumed = await invoke([
       'agent', 'loop', '--lab', lab, '--resume', '--adapter', adapterConfig, '--json',

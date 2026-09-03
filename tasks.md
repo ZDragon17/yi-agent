@@ -631,3 +631,10 @@
 - 实现：repo adapter 在显式补丁描述和 nonce 日志存在时才增加 `repo.apply-patch`，补丁绑定相对目标、修改前摘要和完整替换内容；先刷盘 `PREPARED`，再校验并原子替换普通文件，最后追加 `APPLIED`。writable descriptor 声明 `supportsIdempotentTransitions:true`，同 nonce 重试复用保存的原始 transition 结果；默认只读模式的能力和配置保持不变。
 - 验证：隔离临时仓库中的故意减法 bug 经 `read-file→run-tests(FAIL)→apply-patch→run-tests(PASS)` 完成，文件修改保留，账本保存四个 STEP，Replay 为 `CONSISTENT`；补丁 transition 响应丢失后，离线 `resume` 不再调用模型，nonce 日志仍只对应一次修改，文件和 Replay 均一致。
 - 边界：补丁内容目前由外部配置预先提供，模型仍只选择 Token；这是“受控修改进入闭环”的证据，不是任意 patch 生成、代码审查、OS 沙箱、回滚、真实当前仓库修改或生产权限授权。下一节点才是把修改提议本身变成可验证的受限数据，并继续经过人工/EffectBroker 门禁。
+
+## F-73 模型 proposal 进入受控 repo 写入边界
+
+- 反例：F-72 的完整替换内容仍由 adapter 外部配置预置，模型只选择 `repo.apply-patch` Token；因此“模型看见真实文件后提出修改”尚未进入共同的恢复、账本和 Replay 契约。直接把模型原文交给文件系统又会把参数权力绕过边界。
+- 实现：公共 schema 增加有界 `MAX_MODEL_PROPOSAL_BYTES`；ModelAdvisor 解析并保留可规范化的对象 proposal，应用层只在模型 Token 与 Kernel 最终选择一致时把 proposal 放入外部 transition request，同时写入 policy evidence。LabStore、外部 transition marker、恢复请求和 Replay 校验/复用同一 proposal；Kernel 仍不读取 proposal。repo 策略改为只授权目标与 before 摘要，adapter 从 request proposal 读取 replacement，并对目标、摘要、大小、nonce 和普通文件原子写入独立校验；读文件向模型提供最多 2 KiB 内容。
+- 验证：ModelAdvisor proposal 单测 9/9；repo WorldPort 6/6，包含模型读取文件内容、proposal 修复故意 bug、PREPARED/APPLIED、响应丢失离线恢复和 Replay；既有全量基线待本节点完成后复跑。
+- 边界：proposal 仍是不可信数据，只覆盖实验仓库中的完整文件替换；没有通用 diff、自动代码审查、OS 级沙箱、回滚或生产授权。下一步必须用错误 proposal、超限 proposal 和真实模型响应测量“候选质量能否改善”，不能把 proposal 通道本身称为自主智能。

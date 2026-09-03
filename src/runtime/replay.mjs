@@ -1,6 +1,7 @@
 import { learn, mergeObservationFeedback, step, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import {
   SCHEMA_VERSION,
+  MAX_MODEL_PROPOSAL_BYTES,
   canonicalDigest,
   canonicalJson,
   cloneJson,
@@ -241,6 +242,9 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       policyVersion: manifest.authorityPolicy.policyVersion,
       constraintsDigest: manifest.authorityPolicy.constraintsDigest,
       executionNonce: payload.receipt.executionNonce,
+      ...(payload.policyEvidence?.applied === true && payload.policyEvidence.proposal !== undefined
+        ? { proposal: cloneJson(payload.policyEvidence.proposal) }
+        : {}),
     });
   } catch (error) {
     corrupt('Replay world transition failed.', { sequence: event.sequence, cause: errorName(error) });
@@ -546,9 +550,19 @@ function validatePolicyEvidence(value, sequence) {
       (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
       typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
       (value.observationDigest !== undefined && (typeof value.observationDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.observationDigest))) ||
+      (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
       typeof value.applied !== 'boolean' ||
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
     corrupt('STEP model policy evidence is invalid.', { sequence });
+  }
+}
+
+function isValidModelProposal(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  try {
+    return Buffer.byteLength(canonicalJson(value), 'utf8') <= MAX_MODEL_PROPOSAL_BYTES;
+  } catch {
+    return false;
   }
 }
 

@@ -216,7 +216,10 @@ export function createReplayWorld(run) {
       const payload = event.payload;
       if (canonicalJson(state) !== canonicalJson(expectedState()) ||
           request.executionNonce !== payload.receipt.executionNonce ||
-          request.token !== payload.receipt.token) {
+          request.token !== payload.receipt.token ||
+          canonicalJson(request.proposal ?? null) !== canonicalJson(payload.policyEvidence?.applied === true
+            ? payload.policyEvidence.proposal ?? null
+            : null)) {
         throw new Error('Replay evidence tape transition request does not match.');
       }
       cursor += 1;

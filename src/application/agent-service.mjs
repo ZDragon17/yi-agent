@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { INTERNAL_RUN_APPEND, LabStore, LabStoreError } from '../runtime/lab-store.mjs';
-import { canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../runtime/schema.mjs';
+import { canonicalDigest, canonicalJson, cloneJson, MAX_MODEL_PROPOSAL_BYTES, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
@@ -275,7 +275,7 @@ export async function runLab(input) {
   let persistedRecoveryCapabilities = world.supportsIdempotentTransitions === true
     ? null
     : unresolvedExternalTransition?.evidence.capabilities ?? null;
-  let persistedRecoveryRequest = persistedRecoveryIntent === null
+  let persistedRecoveryRequest = unresolvedExternalTransition === null
     ? null
     : {
         schemaVersion: SCHEMA_VERSION,
@@ -284,6 +284,10 @@ export async function runLab(input) {
         policyVersion: manifest.authorityPolicy.policyVersion,
         constraintsDigest: manifest.authorityPolicy.constraintsDigest,
         executionNonce: unresolvedExternalTransition.evidence.executionNonce,
+        ...(unresolvedExternalTransition.evidence.policyEvidence?.applied === true &&
+          unresolvedExternalTransition.evidence.policyEvidence.proposal !== undefined
+          ? { proposal: cloneJson(unresolvedExternalTransition.evidence.policyEvidence.proposal) }
+          : {}),
       };
   let executed = 0;
   let accepted = 0;
@@ -398,6 +402,8 @@ export async function runLab(input) {
       return runSummary(runId, 'HALTED', stopReason, index, { executed, accepted, rejected: 0 });
     }
 
+    const selectedProposal = persistedRecoveryRequest?.proposal ??
+      (modelDecision?.token === intent.choice.token ? modelDecision.proposal : undefined);
     const receiptRequest = persistedRecoveryRequest ?? {
       schemaVersion: SCHEMA_VERSION,
       token: intent.choice.token,
@@ -405,6 +411,7 @@ export async function runLab(input) {
       policyVersion: manifest.authorityPolicy.policyVersion,
       constraintsDigest: manifest.authorityPolicy.constraintsDigest,
       executionNonce: `execution:step:${state.kernelStep + 1}`,
+      ...(selectedProposal === undefined ? {} : { proposal: cloneJson(selectedProposal) }),
     };
     if (unresolvedExternalTransition !== null) {
       assertExternalTransitionRetry(
@@ -846,7 +853,8 @@ function normalizedAdvice(result, fallbackReason) {
     const tokenValid = hasToken && (token === null || (typeof token === 'string' && TOKEN_PATTERN.test(token)));
     const reasonValid = result.reason === undefined || result.reason === null ||
       (typeof result.reason === 'string' && result.reason.length > 0 && result.reason.length <= 256);
-    const valid = tokenValid && reasonValid;
+    const proposal = normalizeModelProposal(result.proposal);
+    const valid = tokenValid && reasonValid && proposal.valid;
     const reason = valid ? (result.reason ?? null) : 'INVALID_ADVISOR_RESULT';
     const responseDigest = validDigest(result.responseDigest)
       ? result.responseDigest
@@ -859,10 +867,24 @@ function normalizedAdvice(result, fallbackReason) {
       token: valid ? token : null,
       responseDigest,
       ...(observationDigest === null ? {} : { observationDigest }),
+      ...(proposal.value === undefined ? {} : { proposal: proposal.value }),
       reason,
     };
   } catch {
     return fallbackAdvice('INVALID_ADVISOR_RESULT');
+  }
+}
+
+function normalizeModelProposal(value) {
+  if (value === undefined) return { valid: true, value: undefined };
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return { valid: false, value: undefined };
+  try {
+    if (Buffer.byteLength(canonicalJson(value), 'utf8') > MAX_MODEL_PROPOSAL_BYTES) {
+      return { valid: false, value: undefined };
+    }
+    return { valid: true, value: cloneJson(value) };
+  } catch {
+    return { valid: false, value: undefined };
   }
 }
 
@@ -902,6 +924,9 @@ function assertExternalTransitionRetry(unresolved, request, state, planningHoriz
   if (request.executionNonce !== evidence.executionNonce) mismatches.push('executionNonce');
   if (request.token !== evidence.token) mismatches.push('token');
   if (request.basedOnVersion !== evidence.basedOnVersion) mismatches.push('basedOnVersion');
+  if (canonicalJson(request.proposal ?? null) !== canonicalJson(evidence.policyEvidence?.applied === true
+    ? evidence.policyEvidence.proposal ?? null
+    : null)) mismatches.push('proposal');
   if (canonicalDigest(state) !== evidence.beforeDigest) mismatches.push('beforeDigest');
   if ((evidence.planning?.horizon ?? 1) !== planningHorizon) mismatches.push('planningHorizon');
   if ((evidence.planning?.contextMode ?? 'legacy-v1') !== planningContextMode) mismatches.push('planningContextMode');
@@ -1028,6 +1053,7 @@ function policyEvidence(modelDecision, intent, capabilities) {
     token: modelDecision.token,
     responseDigest: modelDecision.responseDigest,
     ...(observationDigest === null ? {} : { observationDigest }),
+    ...(modelDecision.proposal === undefined ? {} : { proposal: cloneJson(modelDecision.proposal) }),
     applied,
     reason: applied ? null : (modelDecision.reason ?? (safe ? 'KERNEL_SELECTION_REJECTED' : 'TOKEN_NOT_SAFE')),
   };

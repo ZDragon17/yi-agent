@@ -37,6 +37,8 @@ const MAX_FILE_BYTES = 512 * 1024;
 const MAX_TREE_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 16 * 1024;
 const MAX_PATCH_BYTES = 128 * 1024;
+const MAX_PROPOSAL_BYTES = 64 * 1024;
+const MAX_MODEL_READ_CONTENT = 2 * 1024;
 const MAX_NONCE_JOURNAL_BYTES = 2 * 1024 * 1024;
 
 const repositoryRoot = path.resolve(process.argv[2] ?? '.');
@@ -136,6 +138,8 @@ function transition(previous, request, manifest) {
     next = makeState(previous.revision + 1, null, request.executionNonce, previous.usedExecutionNonces, testCount);
     next.lastReadPath = normalizeRelative(readPath);
     next.lastReadDigest = canonicalDigest({ bytes: content.length, content });
+    next.lastReadContent = content.slice(0, MAX_MODEL_READ_CONTENT);
+    next.lastReadContentTruncated = content.length > MAX_MODEL_READ_CONTENT;
   } else if (capabilityId === 'repo.run-tests') {
     const result = runTests();
     testCount += 1;
@@ -192,6 +196,8 @@ function makeState(revision, repository, executionNonce = null, previousNonces =
     lastAction: null,
     lastReadPath: null,
     lastReadDigest: null,
+    lastReadContent: null,
+    lastReadContentTruncated: false,
     lastTestStatus: 'NOT_RUN',
     lastTestExitCode: null,
     lastTestOutputDigest: null,
@@ -213,6 +219,8 @@ function observation(state) {
         kind: 'repo-action',
         action: state.lastAction,
         readPath: state.lastReadPath,
+        readFileContent: state.lastReadContent,
+        readFileContentTruncated: state.lastReadContentTruncated,
         testStatus: state.lastTestStatus,
         patchPath: state.lastPatchPath,
         patchBeforeDigest: state.lastPatchBeforeDigest,
@@ -303,38 +311,37 @@ function readPatchSpec(filePath) {
   if (source === null || typeof source !== 'object' || Array.isArray(source) ||
       source.schemaVersion !== VERSION ||
       typeof source.targetPath !== 'string' || source.targetPath.length === 0 || source.targetPath.length > 4096 ||
-      typeof source.expectedBeforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(source.expectedBeforeDigest) ||
-      typeof source.replacement !== 'string' || Buffer.byteLength(source.replacement, 'utf8') > MAX_FILE_BYTES) {
+      typeof source.expectedBeforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(source.expectedBeforeDigest)) {
     throw new Error('patch spec is invalid');
   }
   const normalized = {
     schemaVersion: VERSION,
     targetPath: normalizeRelative(source.targetPath),
     expectedBeforeDigest: source.expectedBeforeDigest,
-    replacement: source.replacement,
   };
   if (normalized.targetPath.includes('\0') || path.isAbsolute(normalized.targetPath)) {
     throw new Error('patch target must be a relative path');
   }
   return Object.freeze({
     ...normalized,
-    afterDigest: contentDigest(normalized.replacement),
     digest: canonicalDigest(normalized),
   });
 }
 
 function prepareOrResumePatch(request) {
   if (patchSpec === null || nonceJournalPath === null) throw new Error('repo.apply-patch is not enabled');
+  const proposal = readPatchProposal(request.proposal);
+  const proposalDigest = canonicalDigest(proposal);
   const requestDigest = canonicalDigest(request);
   const records = readNonceJournal();
   const existing = records.find((record) => record.executionNonce === request.executionNonce) ?? null;
   if (existing !== null) {
-    if (existing.requestDigest !== requestDigest || existing.patchDigest !== patchSpec.digest) {
+    if (existing.requestDigest !== requestDigest || existing.patchDigest !== proposalDigest) {
       throw new Error('execution nonce is already bound to a different patch request');
     }
     if (existing.status === 'APPLIED') return { kind: 'COMMITTED', result: existing.result };
     if (existing.status !== 'PREPARED') throw new Error('patch nonce journal status is invalid');
-    return completePreparedPatch(existing);
+    return completePreparedPatch(existing, proposal);
   }
 
   const target = resolveRepositoryPath(patchSpec.targetPath);
@@ -348,43 +355,44 @@ function prepareOrResumePatch(request) {
     status: 'PREPARED',
     executionNonce: request.executionNonce,
     requestDigest,
-    patchDigest: patchSpec.digest,
+    patchDigest: proposalDigest,
     targetPath: patchSpec.targetPath,
     beforeDigest,
-    afterDigest: patchSpec.afterDigest,
+    afterDigest: contentDigest(proposal.replacement),
   };
   appendNonceRecord(prepared);
-  return completePreparedPatch(prepared);
+  return completePreparedPatch(prepared, proposal);
 }
 
-function completePreparedPatch(prepared) {
+function completePreparedPatch(prepared, proposal) {
   const target = resolveRepositoryPath(prepared.targetPath);
   const status = lstatSync(target);
   if (!status.isFile() || status.isSymbolicLink()) throw new Error('patch target must remain a regular file');
   const current = readFileSync(target, 'utf8');
   const currentDigest = contentDigest(current);
-  if (currentDigest === prepared.afterDigest && current === patchSpec.replacement) {
+  if (currentDigest === prepared.afterDigest && current === proposal.replacement) {
     return { beforeDigest: prepared.beforeDigest, afterDigest: prepared.afterDigest };
   }
   if (currentDigest !== prepared.beforeDigest) {
     throw new Error('patch target changed after the prepared write boundary');
   }
-  atomicReplace(target, patchSpec.replacement, status.mode);
+  atomicReplace(target, proposal.replacement, status.mode);
   const after = readFileSync(target, 'utf8');
   const afterDigest = contentDigest(after);
-  if (after !== patchSpec.replacement || afterDigest !== prepared.afterDigest) {
+  if (after !== proposal.replacement || afterDigest !== prepared.afterDigest) {
     throw new Error('patch target did not reach its expected after content');
   }
   return { beforeDigest: prepared.beforeDigest, afterDigest };
 }
 
 function persistAppliedPatch(request, result) {
+  const proposalDigest = canonicalDigest(readPatchProposal(request.proposal));
   const requestDigest = canonicalDigest(request);
   const records = readNonceJournal();
   const index = records.findIndex((record) => record.executionNonce === request.executionNonce);
   if (index === -1) throw new Error('patch nonce journal entry disappeared');
   const existing = records[index];
-  if (existing.requestDigest !== requestDigest || existing.patchDigest !== patchSpec.digest) {
+  if (existing.requestDigest !== requestDigest || existing.patchDigest !== proposalDigest) {
     throw new Error('patch nonce journal request changed');
   }
   if (existing.status === 'APPLIED') {
@@ -392,6 +400,28 @@ function persistAppliedPatch(request, result) {
     return;
   }
   appendNonceRecord({ ...existing, status: 'APPLIED', result });
+}
+
+function readPatchProposal(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== VERSION || typeof value.targetPath !== 'string' ||
+      typeof value.expectedBeforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.expectedBeforeDigest) ||
+      typeof value.replacement !== 'string' || Buffer.byteLength(value.replacement, 'utf8') > MAX_FILE_BYTES ||
+      Buffer.byteLength(canonicalJson(value), 'utf8') > MAX_PROPOSAL_BYTES) {
+    throw new Error('repo.apply-patch proposal is invalid');
+  }
+  const normalized = {
+    schemaVersion: VERSION,
+    targetPath: normalizeRelative(value.targetPath),
+    expectedBeforeDigest: value.expectedBeforeDigest,
+    replacement: value.replacement,
+  };
+  if (normalized.targetPath !== patchSpec.targetPath ||
+      normalized.expectedBeforeDigest !== patchSpec.expectedBeforeDigest ||
+      normalized.targetPath.includes('\0') || path.isAbsolute(normalized.targetPath)) {
+    throw new Error('repo.apply-patch proposal is not authorized by the patch policy');
+  }
+  return normalized;
 }
 
 function readNonceJournal() {
