@@ -673,3 +673,10 @@
 - 实现：新增可选 `candidateOutcome`，由宿主在 STEP 中记录 `candidateDigest`、采用状态、回执状态和验证摘要；Replay 根据 immutable policy evidence、receipt、verification 重新计算；旧账本没有该字段时继续兼容回放。
 - 验证：repo 同上下文质量矩阵同时核对正确/语义错误 proposal 的 outcome；Replay 单测 14/14，agent CLI 回归 11/11，伪造 outcome 在重算事件摘要后仍判为 `CORRUPT`。
 - 边界：这只是通用结果证据，不会自动改变 Kernel 的 actionModels，也没有定义修复成本或候选历史选择。下一节点应从多个 Run 聚合这些证据，先证明候选结果在重启和跨 WorldPort 场景下可读取，再决定是否进入模型提示或新的学习层。
+
+## F-79 候选历史跨 Run 恢复并进入模型上下文
+
+- 反例：F-78 的候选结果虽已落账，但下一次进程启动或新的 Run 无法读取它；若直接放进 Kernel memory，又会把跨 WorldPort 的模型候选结果混入 Token 动力学模型。
+- 实现：LabStore 从已提交终态 Run 投影最近 32 条候选历史，带上 `worldId/scenario` 来源；`inspect` 输出该历史，ModelAdvisor 只接收有界、字段筛选后的摘要；同一 Run 内由应用维护有界尾部，连续 loop 在 Run 间复用，重启时从账本恢复。
+- 验证：ModelAdvisor 11/11；agent CLI 22/22；多 Run 测试确认第二个 Run 能看到第一个 Run 的候选结果，`inspect` 能读到 3 条且保留 `inventory/steady` 来源。
+- 边界：候选历史仍是不可信排序上下文，不改变 Kernel actionModels，不做跨 WorldPort 语义迁移，也没有修复成本、反事实比较或候选淘汰策略。下一节点应先定义这些历史的时间/来源/归因一致性，再用真实多候选运行检验它是否改善决策，而不是默认“看到了历史”就等于学习。

@@ -16,6 +16,7 @@ import path from 'node:path';
 import {
   SCHEMA_VERSION,
   MAX_PERSISTED_EVENT_BYTES,
+  MAX_CANDIDATE_HISTORY,
   MAX_MODEL_PROPOSAL_BYTES,
   candidateDigest,
   canonicalDigest,
@@ -371,6 +372,39 @@ export class LabStore {
       events,
       end: cloneJson(end),
     };
+  }
+
+  async readCandidateOutcomes(limit = MAX_CANDIDATE_HISTORY) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_CANDIDATE_HISTORY) {
+      throw new LabStoreError('INVALID_INPUT', 'candidate outcome history limit is invalid.', { field: 'limit' });
+    }
+    const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
+    validateCurrentShape(current);
+    const outcomes = [];
+    for (const runId of await listRunIds(this.root)) {
+      if (current.status === 'RUNNING' && runId === current.lastRunId) continue;
+      let run;
+      try {
+        run = await this.readRun(runId);
+      } catch (error) {
+        if (error instanceof LabStoreError && error.code === 'BUSY' && runId === current.lastRunId) continue;
+        throw error;
+      }
+      for (const event of run.events) {
+        if (event.kind !== 'STEP' || event.payload.candidateOutcome === undefined) continue;
+        outcomes.push({
+          runId,
+          worldId: run.start.worldId,
+          scenario: run.start.scenario,
+          sequence: event.sequence,
+          recordedAt: event.payload.recordedAt,
+          candidateOutcome: cloneJson(event.payload.candidateOutcome),
+        });
+      }
+    }
+    outcomes.sort((left, right) => left.recordedAt.localeCompare(right.recordedAt) ||
+      left.runId.localeCompare(right.runId) || left.sequence - right.sequence);
+    return cloneJson(outcomes.slice(-limit));
   }
 
   async readLoopContinuation() {

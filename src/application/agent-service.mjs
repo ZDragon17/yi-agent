@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { INTERNAL_RUN_APPEND, LabStore, LabStoreError } from '../runtime/lab-store.mjs';
-import { candidateDigest, canonicalDigest, canonicalJson, cloneJson, MAX_MODEL_PROPOSAL_BYTES, SCHEMA_VERSION } from '../runtime/schema.mjs';
+import { candidateDigest, canonicalDigest, canonicalJson, cloneJson, MAX_CANDIDATE_HISTORY, MAX_MODEL_PROPOSAL_BYTES, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { buildCandidateOutcome } from '../runtime/candidate-evidence.mjs';
 import { learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
@@ -111,6 +111,10 @@ export async function runLab(input) {
   const spec = registry.valueSpec(manifest.worldId);
   const world = registry.createWorld(manifest, scenario);
   const current = (await store.inspect()).current;
+  const sharedCandidateHistory = Array.isArray(source.candidateHistory) ? source.candidateHistory : null;
+  let candidateHistory = source.advisor === undefined
+    ? []
+    : sharedCandidateHistory ?? await store.readCandidateOutcomes();
   let unresolvedExternalTransition = manifest.adapter === undefined
     ? null
     : await store.findUnresolvedExternalTransition();
@@ -384,6 +388,7 @@ export async function runLab(input) {
           step: state.kernelStep,
           observationEvidence: beforeModelObservation.observationEvidence,
           observationEvidenceTruncated: beforeModelObservation.observationEvidenceTruncated,
+          candidateHistory,
           goal: supervisor?.goal ?? requestedGoal,
         })
       : null;
@@ -596,6 +601,19 @@ export async function runLab(input) {
         ...(candidateOutcome === undefined ? {} : { candidateOutcome }),
       },
     }, { returnReference: true, [INTERNAL_RUN_APPEND]: true });
+    if (candidateOutcome !== undefined) {
+      candidateHistory = [...candidateHistory, {
+        runId,
+        worldId: manifest.worldId,
+        scenario,
+        sequence: event.sequence,
+        recordedAt: event.payload.recordedAt,
+        candidateOutcome,
+      }].slice(-MAX_CANDIDATE_HISTORY);
+      if (sharedCandidateHistory !== null) {
+        sharedCandidateHistory.splice(0, sharedCandidateHistory.length, ...candidateHistory);
+      }
+    }
     if (manifest.adapter !== undefined) {
       if (durability === 'checkpoint') await run.flushLedger();
       await run.clearExternalTransition();
@@ -760,6 +778,13 @@ export async function runContinuous(input) {
       ...(forever ? {} : { maxRuns: requestedRuns }),
     };
   }
+  let candidateHistory = [];
+  if (source.advisor !== undefined) {
+    const historyStore = await LabStore.open({ labPath: requireText(source.labPath, 'labPath') });
+    candidateHistory = Array.isArray(source.candidateHistory)
+      ? source.candidateHistory
+      : await historyStore.readCandidateOutcomes();
+  }
   const stepsPerRun = continuation.stepsPerRun;
   const runLimit = continuation.mode === 'finite'
     ? continuation.maxRuns
@@ -794,6 +819,7 @@ export async function runContinuous(input) {
       steps: stepsPerRun,
       planningHorizon: continuation.planningHorizon,
       planningBranchingMode: continuation.planningBranchingMode,
+      candidateHistory,
       stepsPerRun: undefined,
       runs: undefined,
       durability,
@@ -1097,6 +1123,7 @@ export async function inspectLab(input) {
     }
   }
   const manifest = inspection.manifest;
+  const candidateHistory = await store.readCandidateOutcomes();
   registry.assertManifest(manifest);
   const recordedBoundary = run?.events?.findLast((event) => event.kind === 'STEP')?.payload?.boundary;
   const recordedCapabilities = recordedBoundary?.afterCapabilities ?? recordedBoundary?.capabilities;
@@ -1116,6 +1143,7 @@ export async function inspectLab(input) {
   return {
     manifest,
     current: inspection.current,
+    candidateHistory,
     inspectView: buildInspectView({
       manifest,
       current: inspection.current,

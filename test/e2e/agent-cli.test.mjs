@@ -103,10 +103,12 @@ test('agent CLI isolates an unavailable HTTP advisor and replays the kernel fall
 
 test('agent loop commits multiple runs and resumes from the persisted current state', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-loop-e2e-'));
+  const contexts = [];
   const server = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    contexts.push(JSON.parse(body.messages[0].content.split('\n').at(-1)));
     const token = /tok_[A-Z0-9]{8,128}/u.exec(body.messages[0].content)?.[0] ?? null;
     response.setHeader('Content-Type', 'application/json');
     response.end(JSON.stringify({ id: 'agent-loop', model: body.model, choices: [{ message: { content: JSON.stringify({ token }) } }] }));
@@ -128,6 +130,12 @@ test('agent loop commits multiple runs and resumes from the persisted current st
     assert.equal(loop.stdout[0].data.metrics.executed, 3);
     const inspection = await invoke(['inspect', '--lab', lab, '--json'], process.env);
     assert.equal(inspection.stdout[0].data.current.kernelStep, 3);
+    assert.equal(contexts[0].candidateHistory.length, 0);
+    assert.ok(contexts[1].candidateHistory.length >= 1, 'a later Run must receive prior candidate outcomes');
+    assert.equal(contexts[1].candidateHistory.at(-1).worldId, 'inventory');
+    assert.equal(contexts[1].candidateHistory.at(-1).scenario, 'steady');
+    assert.equal(inspection.stdout[0].data.candidateHistory.length, 3);
+    assert.equal(inspection.stdout[0].data.candidateHistory.at(-1).worldId, 'inventory');
     for (const result of loop.stdout[0].data.results) {
       const replay = await invoke(['replay', '--lab', lab, '--run', result.runId, '--json'], process.env);
       assert.equal(replay.code, 0);

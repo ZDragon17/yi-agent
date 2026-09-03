@@ -56,6 +56,42 @@ test('model advisor receives bounded WorldPort evidence without changing the tok
   assert.match(result.observationDigest, /^sha256:[0-9a-f]{64}$/u);
 });
 
+test('model advisor receives only a bounded candidate history', async () => {
+  let prompt;
+  const advisor = createModelAdvisor({
+    model: 'model-candidate-history',
+    client: {
+      async chat(value) {
+        prompt = value;
+        return { model: 'model-candidate-history', content: 'not json' };
+      },
+    },
+  });
+  const candidateHistory = Array.from({ length: 40 }, (_, index) => ({
+    runId: `run-${index}`,
+    sequence: index + 1,
+    recordedAt: `2026-01-01T00:00:${String(index).padStart(2, '0')}.000Z`,
+    candidateOutcome: {
+      schemaVersion: 1,
+      candidateDigest: `sha256:${String(index).padStart(64, '0')}`,
+      token: TOKEN_A,
+      status: 'APPLIED',
+      receiptStatus: 'ACCEPTED',
+      verification: { error: [index], attribution: 'ACTION', confidence: 1, learnable: true },
+    },
+  }));
+  await advisor({
+    observation: { vector: [1], stateVersion: 'state-1', intervalId: 'interval-1' },
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    memory: {},
+    candidateHistory,
+  });
+  const context = JSON.parse(prompt.split('\n').at(-1));
+  assert.equal(context.candidateHistory.length, 32);
+  assert.equal(context.candidateHistory[0].runId, 'run-8');
+  assert.equal(context.candidateHistory.at(-1).runId, 'run-39');
+});
+
 test('model advisor preserves a bounded proposal as untrusted action data', async () => {
   const proposal = { schemaVersion: 1, targetPath: 'src/math.mjs', replacement: 'export const value = 2;\n' };
   const advisor = createModelAdvisor({
