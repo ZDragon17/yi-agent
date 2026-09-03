@@ -4,15 +4,22 @@ export function annotateCandidateHistory(history) {
   if (!Array.isArray(history)) return [];
   const attempts = new Map();
   const contextAttempts = new Map();
+  let previousKernelStep = null;
   return history.map((entry) => {
     const scope = candidateScope(entry);
     const decisionContext = decisionContextDigest(entry);
     const quality = predictionQuality(entry.candidateOutcome, entry);
     const { valueSpec: _valueSpec, beforeVector: _beforeVector, afterVector: _afterVector, ...publicEntry } = entry ?? {};
+    const kernelStep = Number.isSafeInteger(entry?.kernelStep) && entry.kernelStep >= 0 ? entry.kernelStep : null;
+    const stepGap = kernelStep !== null && previousKernelStep !== null && kernelStep >= previousKernelStep
+      ? kernelStep - previousKernelStep
+      : null;
     const enriched = {
       ...publicEntry,
       ...(quality === null ? {} : { quality }),
+      ...(stepGap === null ? {} : { stepsSincePreviousCandidate: stepGap }),
     };
+    if (kernelStep !== null) previousKernelStep = kernelStep;
     const annotated = scope === null
       ? enriched
       : {

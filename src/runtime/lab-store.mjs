@@ -411,6 +411,7 @@ export class LabStore {
           tokenMapDigest: run.manifest.tokenMap.digest,
           sequence: event.sequence,
           recordedAt: event.payload.recordedAt,
+          kernelStep: event.payload.afterState.kernelStep,
           candidateOutcome: cloneJson(event.payload.candidateOutcome),
           valueSpec: cloneJson(event.payload.boundary.valueSpec),
           beforeVector: [...event.payload.beforeObservation.vector],

@@ -611,6 +611,7 @@ export async function runLab(input) {
         tokenMapDigest: manifest.tokenMap.digest,
         sequence: event.sequence,
         recordedAt: event.payload.recordedAt,
+        kernelStep: nextState.kernelStep,
         candidateOutcome,
         valueSpec: cloneJson(stepValueSpec),
         beforeVector: [...beforeObservation.vector],

@@ -125,3 +125,29 @@ test('candidate history orders different candidates inside one observable decisi
   assert.notEqual(history[1].decisionContextDigest, history[2].decisionContextDigest);
   assert.equal(history[2].contextAttempt, 1);
 });
+
+test('candidate history preserves continuous step distance without inferring repair lineage', () => {
+  const history = annotateCandidateHistory([
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      observationDigest: `sha256:${'c'.repeat(64)}`,
+      kernelStep: 3,
+      candidateOutcome: { candidateDigest: CANDIDATE_DIGEST },
+    },
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      observationDigest: `sha256:${'d'.repeat(64)}`,
+      kernelStep: 7,
+      candidateOutcome: { candidateDigest: OTHER_CANDIDATE_DIGEST },
+    },
+  ]);
+
+  assert.equal(history[0].kernelStep, 3);
+  assert.equal(history[0].stepsSincePreviousCandidate, undefined);
+  assert.equal(history[1].kernelStep, 7);
+  assert.equal(history[1].stepsSincePreviousCandidate, 4);
+});

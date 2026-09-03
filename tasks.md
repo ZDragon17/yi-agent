@@ -729,3 +729,10 @@
 - 实现：候选历史标注器按 `{worldVersion,tokenMapDigest,scenario,observationDigest}` 生成 `decisionContextDigest`，在同一上下文中递增 `contextAttempt`；候选自己的 `candidateScopeDigest/attempt` 保持独立。ModelAdvisor 仅接收有界派生字段，Kernel、STEP schema 和 Replay 不变。
 - 验证：同一上下文的两个不同候选得到 contextAttempt 1/2；观测摘要变化后重新从 1 开始；候选历史 4/4、ModelAdvisor 13/13、agent CLI 13/13、repo WorldPort 9/9。
 - 边界：上下文序号只是可比性和尝试顺序，不是反事实因果证明，也不能判断哪个 proposal 真正修复了领域目标；下一步要在同一初始状态的多候选实验中，把 `goalProgress`、测试结果和跨 Run 步数关联起来，测量修复成本而不是只增加标签。
+
+## F-87 候选之间的连续步距证据
+
+- 反例：F-86 能区分同一观测上下文的不同候选，但 Run 分段会隐藏全局连续步数；若只看各自的 `sequence`，无法知道两个候选之间隔了多少真实闭环工作；若直接把步距叫作修复成本，又会把中间动作错误归因给后一个候选。
+- 实现：从 immutable `afterState.kernelStep` 投影 `kernelStep`，并由同一 Runtime 标注器计算 `stepsSincePreviousCandidate`；连续 loop 与重启读取复用同一派生逻辑，ModelAdvisor 明确收到“步距仅是时间证据、不是修复因果”的约束。
+- 验证：第 3 步和第 7 步的候选得到步距 4；首条候选不伪造步距；candidate-history 5/5、ModelAdvisor 13/13、agent CLI 13/13、repo WorldPort 9/9。
+- 边界：步距仍不等于修复成本，尚未有候选谱系、反事实对照或多候选同初始状态的真实比较；下一节点应把显式实验标识与终态目标证据结合起来，才能测量“某个候选带来的额外工作量”。
