@@ -588,3 +588,10 @@
 - 实现：外部输入逐条摘要校验纳入 canonical JSON 异常捕获，并复用既有协议错误上下文；聚合计量继续在所有条目校验后执行。这样摘要、签名和持久化预算三个边界对不可表示证据使用同一 fail-closed 语义。
 - 验证：深层签名反例返回 `WORLD_ADAPTER_PROTOCOL` 且不追加 STEP；超大输入预算反例仍在 `transition` 前拒绝；外部 CLI、LabStore、Replay、连续运行和晚绑定 Oracle 继续回归。
 - 边界：这只保证宿主不把不可规范化证据误报为内部故障，不证明 adapter 提供的事实真实；签名密钥、外部系统身份和现实数据语义仍属于 WorldPort 契约。
+
+## F-68 大压缩账本读路径
+
+- 反例：构造 128 个接近 4096 字符上限的阶段目标，并先激活计划、再跨 Run 执行 1000 步。每个 STEP 的逻辑 payload 和压缩账本都分别在上限内，但旧 `readRun` 对解码后的完整事件数组执行 `cloneJson`，应用 inspect 实测在 `schema.mjs:serialize` 触发 `RangeError: Invalid string length`。
+- 实现：`LabStore.readRun` 保留 `readLedger` 逐事件解析、校验和解压后的结果，移除对整个 `events` 数组的二次 canonical JSON 序列化；其它返回字段和事件摘要链不变。
+- 验证：真实应用回归创建大计划并跨两个 Run 执行 1000 步，修复后第二 Run 完成、inspect 返回 `READY`、计划保持 128 阶段且 Kernel 步数为 1001；修复前同一输入稳定失败。完整回归和晚绑定 Oracle 在本节点继续复跑。
+- 边界：该修复只消除一次性聚合复制，不等于分页/流式 Replay；读取端仍会解码整个 Run，未来更大历史需要新的索引或流式契约。

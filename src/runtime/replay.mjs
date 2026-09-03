@@ -60,7 +60,7 @@ function replayRunInternal(input) {
   const source = requireRecord(input, 'replay input');
   const manifest = cloneReplayValue(source.manifest, 'manifest');
   const start = cloneReplayValue(source.start, 'run start');
-  const events = cloneReplayValue(source.events, 'events');
+  const events = cloneReplayEvents(source.events);
   const end = cloneReplayValue(source.end, 'run end');
   const worldFactories = source.worldFactories;
   const kernel = source.kernel ?? { step, stepWithPreference, verify, learn };
@@ -718,6 +718,15 @@ function cloneReplayValue(value, label) {
     return cloneJson(value);
   } catch (error) {
     corrupt(`${label} is not canonical JSON.`, { cause: errorName(error) });
+  }
+}
+
+function cloneReplayEvents(value) {
+  if (!Array.isArray(value)) return cloneReplayValue(value, 'events');
+  try {
+    return value.map((event) => cloneJson(event));
+  } catch (error) {
+    corrupt('events is not canonical JSON.', { cause: errorName(error) });
   }
 }
 

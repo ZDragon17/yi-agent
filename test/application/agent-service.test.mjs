@@ -585,6 +585,32 @@ test('continuous runner preserves a goal plan across multiple Run boundaries', a
   });
 });
 
+test('large compressed plan histories remain inspectable across Run boundaries', async () => {
+  await withLab(async (root) => {
+    const lab = path.join(root, 'combined-plan-memory-lab');
+    const registry = createGeneratedRegistry({ capabilityCount: 128, target: 1000 });
+    const goalPlan = {
+      schemaVersion: 1,
+      rootGoal: '大计划与记忆共同增长',
+      stages: Array.from({ length: 128 }, (_, index) => ({
+        id: `stage-${index}`,
+        goal: 'x'.repeat(4096),
+      })),
+    };
+    goalPlan.stages[0].objective = { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1000] };
+    await initLab({ labPath: lab, labId: 'combined-plan-memory-lab', worldId: 'generated', seed: 'combined-plan-memory-seed', registry });
+    const first = await runLab({ labPath: lab, runId: 'run-1', steps: 1, scenario: 'generated', goalPlan, registry });
+    const second = await runLab({ labPath: lab, runId: 'run-2', steps: 1000, scenario: 'generated', registry });
+    assert.equal(first.status, 'COMPLETED');
+    assert.equal(second.status, 'COMPLETED');
+    const current = (await inspectLab({ labPath: lab, registry })).current;
+    assert.equal(current.status, 'READY');
+    assert.equal(current.changeSupervisor.plan.stages.length, 128);
+    assert.equal(current.kernelStep, 1001);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-2', registry })).verdict, 'CONSISTENT');
+  });
+});
+
 test('automatic planner is called once, persists its validated plan, and is not needed after restart', async () => {
   await withLab(async (root) => {
     const lab = path.join(root, 'auto-planned-lab');
@@ -1043,11 +1069,13 @@ function project(current) {
   };
 }
 
-function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelta = 1, worldVersion, worldImplementationDigest } = {}) {
+function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelta = 1, target = 2, capabilityCount = 1, worldVersion, worldImplementationDigest } = {}) {
   const worldId = 'generated';
   const scenarioIds = adaptive ? ['baseline', 'shifted'] : ['generated'];
-  const capabilityId = 'generated.advance';
-  const valueSpec = { observationDimensions: 1, weights: [1], target: [2] };
+  const capabilityIds = capabilityCount === 1
+    ? ['generated.advance']
+    : Array.from({ length: capabilityCount }, (_, index) => `generated.advance${index}`);
+  const valueSpec = { observationDimensions: 1, weights: [1], target: [target] };
 
   function createWorld(manifest, scenario = scenarioIds[0]) {
     const options = normalizeWorldFactoryOptions({ manifest, scenario }, worldId, scenarioIds);
@@ -1059,7 +1087,7 @@ function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelt
         authorityPolicy: options.manifest.authorityPolicy,
       },
       scenario: options.scenario,
-      capabilityIds: [capabilityId],
+      capabilityIds,
       makeInitialDomainState: () => ({ value: 0 }),
       normalizeState: (value) => {
         const state = assertExactKeys(
@@ -1077,7 +1105,10 @@ function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelt
       },
       observeVector: (state) => [state.value],
       scenarioEvidence: () => Array.from({ length: evidenceCount }, (_, index) => ({ kind: `signal-${index}` })),
-      projectCapability: ({ authority }) => ({ allowed: authority.allowed, safe: authority.safe }),
+      projectCapability: ({ authority, capabilityId, state }) => ({
+        allowed: authority.allowed,
+        safe: capabilityIds.length === 1 || state?.revision % capabilityIds.length === Number.parseInt(capabilityId.replace(`${worldId}.advance`, ''), 10),
+      }),
       applyEffect: ({ state, scenario: activeScenario }) => ({
         accepted: true,
         patch: { value: state.value + (adaptive && activeScenario === 'shifted' ? 10 : stepDelta) },
@@ -1097,7 +1128,10 @@ function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelt
     createWorld,
     createManifestParts({ labId, seed, worldId: requestedWorldId }) {
       if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
-      const entries = [{ token: 'tok_GENERATED01', capabilityId }];
+      const entries = capabilityIds.map((capabilityId, index) => ({
+        token: capabilityIds.length === 1 ? 'tok_GENERATED01' : `tok_GENERATED${index.toString().padStart(3, '0')}`,
+        capabilityId,
+      }));
       const tokenMap = {
         schemaVersion: 1,
         entries,
@@ -1112,7 +1146,7 @@ function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelt
           schemaVersion: 1,
           policyVersion: `policy:${worldId}:1`,
           constraintsDigest: `sha256:${createHash('sha256').update(`${labId}|${seed}|${worldId}|constraints`).digest('hex')}`,
-          capabilities: { [capabilityId]: { allowed: true, safe: true, cost: 1 } },
+          capabilities: Object.fromEntries(capabilityIds.map((capabilityId) => [capabilityId, { allowed: true, safe: true, cost: 1 }])),
         },
       };
     },

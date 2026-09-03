@@ -361,7 +361,11 @@ export class LabStore {
     return {
       manifest: cloneJson(this.manifest),
       start: cloneJson(start),
-      events: cloneJson(events),
+      // readLedger already parsed and validated each event. Re-serializing the
+      // entire decoded ledger here creates one giant canonical JSON string and
+      // makes highly compressible, bounded STEP histories fail with
+      // RangeError even though the ledger itself is within its byte budget.
+      events,
       end: cloneJson(end),
     };
   }
