@@ -214,6 +214,41 @@ test('replay rejects semantically impossible goal replan evidence after the dige
   }
 });
 
+test('replay rejects a candidate digest that is inconsistent with its policy evidence', async () => {
+  const fixture = await createRunFixture();
+  try {
+    const events = fixture.events.map((event) => JSON.parse(JSON.stringify(event)));
+    events[1].payload.policyEvidence = {
+      schemaVersion: SCHEMA_VERSION,
+      source: 'model',
+      model: 'candidate-digest-test',
+      token: null,
+      responseDigest: `sha256:${'a'.repeat(64)}`,
+      candidateDigest: `sha256:${'b'.repeat(64)}`,
+      applied: false,
+      reason: 'MODEL_UNAVAILABLE',
+    };
+    events[1].digest = canonicalDigest(omit(events[1], 'digest'));
+    events[2].prevDigest = events[1].digest;
+    events[2].digest = canonicalDigest(omit(events[2], 'digest'));
+    const end = { ...fixture.end, finalEventDigest: events[2].digest };
+    end.selfDigest = canonicalDigest(omit(end, 'selfDigest'));
+
+    assert.throws(
+      () => replayRun({
+        manifest: fixture.manifest,
+        start: fixture.start,
+        events,
+        end,
+        worldFactories: { temperature: createTemperatureWorld },
+      }),
+      (error) => error instanceof ReplayError && error.code === 'CORRUPT',
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('replay rejects a missing or start-unbound scenario before executing a world', async () => {
   const fixture = await createRunFixture();
   try {

@@ -1050,12 +1050,17 @@ function policyEvidence(modelDecision, intent, capabilities) {
   const safe = capabilities.some((capability) => capability.token === modelDecision.token && capability.allowed && capability.safe);
   const applied = safe && intent.status === 'READY' && intent.choice.token === modelDecision.token;
   const observationDigest = validDigest(modelDecision.observationDigest) ? modelDecision.observationDigest : null;
+  const candidate = {
+    token: modelDecision.token,
+    proposal: modelDecision.proposal ?? null,
+  };
   return {
     schemaVersion: SCHEMA_VERSION,
     source: 'model',
     model: modelDecision.model,
     token: modelDecision.token,
     responseDigest: modelDecision.responseDigest,
+    candidateDigest: canonicalDigest(candidate),
     ...(observationDigest === null ? {} : { observationDigest }),
     ...(modelDecision.proposal === undefined ? {} : { proposal: cloneJson(modelDecision.proposal) }),
     applied,

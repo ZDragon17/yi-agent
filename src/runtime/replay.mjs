@@ -550,6 +550,7 @@ function validatePolicyEvidence(value, sequence) {
       (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
       typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
       (value.observationDigest !== undefined && (typeof value.observationDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.observationDigest))) ||
+      (value.candidateDigest !== undefined && !isValidCandidateDigest(value)) ||
       (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
       typeof value.applied !== 'boolean' ||
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
@@ -561,6 +562,15 @@ function isValidModelProposal(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   try {
     return Buffer.byteLength(canonicalJson(value), 'utf8') <= MAX_MODEL_PROPOSAL_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+function isValidCandidateDigest(value) {
+  if (typeof value.candidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.candidateDigest)) return false;
+  try {
+    return value.candidateDigest === canonicalDigest({ token: value.token, proposal: value.proposal ?? null });
   } catch {
     return false;
   }

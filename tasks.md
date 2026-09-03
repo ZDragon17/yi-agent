@@ -659,3 +659,10 @@
 - 实现：增加同一初始 observation context 下的三路隔离实验：正确替换、格式合法但语义错误的替换、超限 proposal。对每路记录模型调用次数、文件最终内容、测试状态、拒绝是否发生和 Replay 结果，并断言三路初始上下文字节一致。
 - 验证：正确候选真实测试为 `PASS` 且 Replay `CONSISTENT`；语义错误候选被保留但测试为 `FAIL` 且 Replay `CONSISTENT`；超限候选不产生写入或 nonce 日志。新增矩阵用例通过，ModelAdvisor 10/10、repo WorldPort 7/7 继续通过。
 - 边界：这是外部可观测的候选结果测量，不是模型能力证明；当前质量判据只覆盖实验仓库的一次完整文件替换和单个测试入口。后续需要把多次候选的质量、修复成本和跨 WorldPort 迁移能力纳入长期账本，而不是只看一次 PASS。
+
+## F-77 候选身份摘要与 Replay 绑定
+
+- 反例：F-76 已证明同一动作 Token 下可以出现正确和语义错误的不同 proposal，但 policy evidence 没有通用候选身份；后续若按动作聚合结果，可能把不同候选的反馈混在一起。
+- 实现：宿主按 `{token, proposal}` 计算有界 `candidateDigest`，写入模型 policy evidence；LabStore 与 Replay 在不改变旧账本读取能力的前提下校验摘要和候选内容一致。
+- 验证：F-76 三路矩阵中正确与语义错误 proposal 的摘要不同；repo WorldPort E2E 8/8、Replay 单测 13/13；人为重算事件摘要后伪造 `candidateDigest` 仍被 Replay 判为 `CORRUPT`。
+- 边界：摘要只提供稳定身份和防混淆绑定，不提供语义判断、候选质量学习或跨 WorldPort 迁移。下一节点应在不污染 Kernel 原有 action 聚合的前提下，记录候选的验证结果与修复成本，再用长期样本反证是否值得改变学习契约。

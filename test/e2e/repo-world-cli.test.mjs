@@ -302,6 +302,7 @@ test('repo proposal quality is externally distinguishable under one bounded cont
     { name: 'oversized', replacement: 'x'.repeat(MAX_MODEL_PROPOSAL_BYTES), expectedStatus: null, writes: false },
   ];
   const firstContexts = [];
+  const appliedCandidateDigests = [];
 
   for (const candidate of cases) {
     const root = await mkdtemp(path.join(tmpdir(), `yi-agent-repo-quality-${candidate.name}-`));
@@ -392,6 +393,18 @@ test('repo proposal quality is externally distinguishable under one bounded cont
         assert.equal(inspection.code, 0, `${candidate.name} inspect: ${JSON.stringify(inspection)}`);
         assert.equal(inspection.stdout[0].data.current.worldState.lastTestStatus, candidate.expectedStatus);
         assert.equal(await readFile(sourcePath, 'utf8'), candidate.replacement);
+        const store = await LabStore.open({ labPath: lab });
+        const events = (await store.readRun(run.stdout[0].data.runId)).events;
+        const appliedProposalEvent = events.find((event) =>
+          event.payload?.policyEvidence?.applied === true &&
+          event.payload.policyEvidence.proposal?.replacement === candidate.replacement);
+        assert.ok(appliedProposalEvent, `${candidate.name} must persist its applied proposal`);
+        const evidence = appliedProposalEvent.payload.policyEvidence;
+        assert.equal(evidence.candidateDigest, canonicalDigest({
+          token: evidence.token,
+          proposal: evidence.proposal,
+        }));
+        appliedCandidateDigests.push(evidence.candidateDigest);
         const replay = await invoke([
           'replay', '--lab', lab, '--run', run.stdout[0].data.runId,
           '--adapter', adapterConfig, '--json',
@@ -413,6 +426,7 @@ test('repo proposal quality is externally distinguishable under one bounded cont
   }
 
   assert.equal(new Set(firstContexts).size, 1, 'candidate comparison must use one initial bounded context');
+  assert.equal(new Set(appliedCandidateDigests).size, 2, 'different applied proposals must have different candidate identities');
 });
 
 test('writable repo WorldPort rejects a nonce journal inside the scanned repository', async () => {
