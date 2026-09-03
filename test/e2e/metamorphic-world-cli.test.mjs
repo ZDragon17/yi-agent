@@ -48,7 +48,7 @@ async function writeAdapterConfig(root, name, args = []) {
     args: [ADAPTER, ...args],
     adapterId: 'metamorphic-adapter-v1',
     worldId: 'metamorphic',
-    timeoutMs: 2000,
+    timeoutMs: 30000,
   }));
   return config;
 }
