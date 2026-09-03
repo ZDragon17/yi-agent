@@ -273,3 +273,5 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 签名输入固定为规范化对象 `{schemaVersion,type,algorithm,worldId,scenario,state,request,status,transition,requestDigest,resultDigest}`；`requestDigest` 覆盖本次世界身份、场景、完整 before state 和 execution request，`resultDigest` 覆盖 status 及可选 transition。宿主先验签并重新计算两个摘要，再执行现有的 `APPLIED` 状态/回执校验；验签失败、摘要错配、跨 nonce 或跨状态复用均为协议错误。签名的 `ABSENT`/`UNKNOWN` 仍然只证明“adapter 的否定声明”，不能自动升级为可执行重试。Replay 永不调用 `reconcile`，而是继续只消费已提交证据。
 
 这项草案尚未进入运行时协议。正式实现前必须由独立 WorldPort 的拥有者确认字段命名、签名覆盖范围、密钥轮换和“同一 nonce 的签名结果是否可缓存”语义；确认后再同步协议校验、manifest 版本边界、测试 adapter 和伪造/重放反例。
+
+活跃 Run 的锁身份使用稳定 `dev+ino`，每次写入同时重新校验锁 JSON 的自摘要；时间戳变化不再构成所有权变化，内容篡改仍会 fail-closed。身份与内容分层只收敛本地锁误报，不把 PID liveness 或分布式文件系统误称为可靠锁服务。

@@ -8,6 +8,7 @@ import {
   rename,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -376,6 +377,19 @@ test('an active run detects an in-place writer lock mutation', async () => withL
     run.append(stepEvent()),
     (error) => assertCode(error, 'CORRUPT'),
   );
+}));
+
+test('an active run ignores writer lock timestamp changes while retaining content ownership checks', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  const lockPath = path.join(lab, 'locks/writer.lock');
+  const lockStatus = await lstat(lockPath);
+  await utimes(lockPath, lockStatus.atime, new Date(lockStatus.mtimeMs + 60_000));
+
+  const event = await run.append(stepEvent());
+  assert.equal(event.kind, 'STEP');
+  await run.finish({ terminalStatus: 'COMPLETED', finalState: finalState() });
 }));
 
 test('recovery selects the current nonterminal run when historical terminal runs exist', async () => withLab(async ({ lab }) => {

@@ -370,3 +370,5 @@ WorldPort 状态不是“只要是对象就无限容纳”。公共 `MAX_PERSIST
 需要让模型提出阶段序列时，可使用 `--goal TEXT --auto-plan`。Planner 只能返回阶段目标向量，宿主会继承当前 WorldPort 的维度和权重并进行有限性、边界和阶段顺序校验；非法或不可用提议退回单一根目标阶段，不会改变权限、Token 或执行规则。首次激活时，已校验计划和 `planEvidence` 一起写入 STEP；之后的普通 Run、进程重启和 Replay 都使用账本中的计划，不重复请求 Planner。只有持久化的停滞策略触发未完成计划修订，且修订计划同样进入 STEP 并由 Replay 冻结重演。`--auto-plan` 与 `--goal-plan` 互斥。
 
 当前 CLI 不会替你保存密钥；真实连通性需要你在本机配置上述环境变量后执行 `yi-agent api test`。模型调用只负责提出候选 Token，仍由 WorldPort、Kernel、verify、learn 和 replay 闭环裁决。
+
+运行时锁的所有权检查把文件身份与内容完整性分开：活跃 Run 只依赖稳定的 `dev+ino` 文件身份，并在每次写入前重新验证锁 JSON 的自摘要；因此备份/杀软改变锁时间戳不会误杀活跃 Run，而原地改写锁内容仍会 fail-closed。这个边界减少的是本地锁误报，不解决 Windows PID 复用或分布式文件系统语义。

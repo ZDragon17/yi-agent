@@ -618,7 +618,7 @@ export class LabStore {
       await atomicWriteJson(this.root, childPath(this.root, 'state', 'current.json'), current);
       inject(failpoint, 'current:running');
 
-      const writerLockIdentity = await captureWriterLockIdentity(this.root);
+      const writerLockIdentity = await captureWriterLockIdentity(this.root, writerLock);
       return new ActiveRun(
         this,
         start,
@@ -2340,7 +2340,7 @@ async function removeOwnedLock(root, expected) {
   await rm(lockPath);
 }
 
-async function captureWriterLockIdentity(root) {
+async function captureWriterLockIdentity(root, expectedLock) {
   const lockPath = childPath(root, 'locks', 'writer.lock');
   let status;
   try {
@@ -2352,7 +2352,11 @@ async function captureWriterLockIdentity(root) {
   if (!status.isFile() || status.isSymbolicLink()) {
     pathEscape('Writer lock is not a plain file.', { phase: 'start' });
   }
-  return fileIdentity(status);
+  const lock = await readOptionalVerifiedObject(lockPath, 'writer lock');
+  if (lock === null || lock.selfDigest !== expectedLock.selfDigest) {
+    corrupt('Writer lock ownership changed while the run was starting.', { phase: 'start' });
+  }
+  return { ...fileIdentity(status), selfDigest: lock.selfDigest };
 }
 
 async function assertOwnedLock(root, expectedIdentity) {
@@ -2367,25 +2371,23 @@ async function assertOwnedLock(root, expectedIdentity) {
   if (!actual.isFile() || actual.isSymbolicLink() || !sameFileIdentity(actual, expectedIdentity)) {
     corrupt('Writer lock ownership changed while the run was active.', { phase: 'write' });
   }
+  const lock = await readOptionalVerifiedObject(lockPath, 'writer lock');
+  if (lock === null || lock.selfDigest !== expectedIdentity.selfDigest) {
+    corrupt('Writer lock ownership changed while the run was active.', { phase: 'write' });
+  }
 }
 
 function fileIdentity(status) {
   return {
     dev: status.dev,
     ino: status.ino,
-    size: status.size,
-    mtimeMs: status.mtimeMs,
-    ctimeMs: status.ctimeMs,
   };
 }
 
 function sameFileIdentity(status, expected) {
   return expected !== undefined &&
     status.dev === expected.dev &&
-    status.ino === expected.ino &&
-    status.size === expected.size &&
-    status.mtimeMs === expected.mtimeMs &&
-    status.ctimeMs === expected.ctimeMs;
+    status.ino === expected.ino;
 }
 
 function validateWriterLock(lock, manifest) {
