@@ -1129,6 +1129,90 @@ test('inspect reads only its fixed active watermark and ignores a concurrent par
   assert.equal(view.current.status, 'RUNNING');
 }));
 
+test('recovery truncates a torn trailing ledger line after the last complete event', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  await store.startRun(runInput());
+  const eventsPath = path.join(lab, 'runs/run-1/events.jsonl');
+  await writeFile(eventsPath, '{"partial":', { encoding: 'utf8', flag: 'a' });
+
+  const recovered = await LabStore.recover({ labPath: lab, livenessProbe: () => false });
+
+  assert.equal(recovered.current.status, 'HALTED');
+  assert.equal(recovered.reason, 'CRASH_HALTED');
+  assert.deepEqual((await readJsonLines(eventsPath)).map((event) => event.kind), ['RUN_STARTED', 'RUN_HALTED']);
+}));
+
+test('recovery keeps a newline-terminated malformed ledger line corrupt', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  await store.startRun(runInput());
+  await writeFile(path.join(lab, 'runs/run-1/events.jsonl'), '{\n', { encoding: 'utf8', flag: 'a' });
+
+  await assert.rejects(
+    LabStore.recover({ labPath: lab, livenessProbe: () => false }),
+    (error) => assertCode(error, 'CORRUPT'),
+  );
+}));
+
+test('recovery does not truncate a torn tail when the complete prefix is semantically corrupt', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  await store.startRun(runInput());
+  const eventsPath = path.join(lab, 'runs/run-1/events.jsonl');
+  const [started] = await readJsonLines(eventsPath);
+  started.payload.startDigest = 'bad';
+  started.digest = canonicalDigest(omit(started, 'digest'));
+  await writeFile(eventsPath, `${JSON.stringify(started)}\n{"partial":`, 'utf8');
+  const before = await readFile(eventsPath, 'utf8');
+
+  await assert.rejects(
+    LabStore.recover({ labPath: lab, livenessProbe: () => false }),
+    (error) => assertCode(error, 'CORRUPT'),
+  );
+  assert.equal(await readFile(eventsPath, 'utf8'), before);
+}));
+
+test('recovery does not truncate a torn tail before validating the complete prefix', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  await store.startRun(runInput());
+  const eventsPath = path.join(lab, 'runs/run-1/events.jsonl');
+  const malformed = '{\npartial';
+  await writeFile(eventsPath, malformed, { encoding: 'utf8', flag: 'a' });
+  const before = await readFile(eventsPath, 'utf8');
+
+  await assert.rejects(
+    LabStore.recover({ labPath: lab, livenessProbe: () => false }),
+    (error) => assertCode(error, 'CORRUPT'),
+  );
+  assert.equal(await readFile(eventsPath, 'utf8'), before);
+}));
+
+test('recovery rejects a torn tail after a terminal event even when current is still running', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  await assert.rejects(
+    run.finish({
+      terminalStatus: 'HALTED',
+      finalState: runInput().initialState,
+      reason: 'bounded',
+      failpoint: failAfter('terminal:appended'),
+    }),
+    (error) => assertCode(error, 'INJECTED_FAILURE'),
+  );
+  const eventsPath = path.join(lab, 'runs/run-1/events.jsonl');
+  await writeFile(eventsPath, '{"partial":', { encoding: 'utf8', flag: 'a' });
+  const before = await readFile(eventsPath, 'utf8');
+
+  await assert.rejects(
+    LabStore.recover({ labPath: lab, livenessProbe: () => false }),
+    (error) => assertCode(error, 'CORRUPT'),
+  );
+  assert.equal(await readFile(eventsPath, 'utf8'), before);
+}));
+
 test('deeply nested ledger data is reported as CORRUPT instead of a raw TypeError', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

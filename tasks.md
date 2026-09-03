@@ -602,3 +602,10 @@
 - 实现：增加专用 `ChallengeFalsifiedError`。判别器失败通过该类型返回 case 级 `FALSIFIED` 与结构化证据；其它异常继续返回 `INCONCLUSIVE` 与 `invalidator`，不把装置故障伪装成系统反例。
 - 验证：Challenge 现有 9 个真实隔离 case 仍全部 PASS；分类回归确认专用判别器错误与普通基础设施错误类型不同，CLI 既有 `FALSIFIED→2` 映射继续可用。
 - 边界：当前内置 case 仍是演示性有限判别器；本节点修的是结果分类可达性，不增加新的世界事实，也不把 PASS 表述为通用智能证明。未来新增 case 必须明确区分判别器失败、无效装置和真实内部错误。
+
+## F-70 活动账本撕裂尾行恢复
+
+- 反例：活动 Run 的 `events.jsonl` 在完整 `RUN_STARTED` 后追加半行且没有换行时，普通 recovery 先在 `readLedger` 抛 `CORRUPT`，即使前缀完整、current 仍明确指向该活动 Run，也无法生成设计要求的 `CRASH_HALTED`；但 inspect 的 fixed watermark 已经证明该前缀可安全读取。
+- 实现：recovery 专用读取允许且只允许活动、未终态 Run 的最后无换行尾部；验证完整前缀、current watermark、end 与外部 marker 边界后，将文件同步截回最后一个完整换行，再沿已校验前缀追加唯一 `RUN_HALTED/CRASH_HALTED`。固定 watermark inspect、终态账本、语义损坏前缀和带换行的坏 JSON 不走该修复路径。
+- 验证：Runtime 真实测试 60/60 覆盖活动半行恢复为 `HALTED`、截断后事件为 `RUN_STARTED→RUN_HALTED`，以及所有 CORRUPT 边界保留原始尾部；CLI 重启/恢复与非幂等外部 WorldPort 对账回归 11/11，独立 late-bound Oracle 48/48。
+- 边界：这是本地 JSONL 单 writer 下对“最后写入未完成”的确定性恢复，不证明任意中间文件损坏可修复；目录 fsync、PID 复用、分布式存储和真实设备副作用仍是独立可靠性边界。

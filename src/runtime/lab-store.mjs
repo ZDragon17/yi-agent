@@ -1086,7 +1086,11 @@ async function recoverRun(root, manifest) {
   }
   const start = await readVerifiedObject(childPath(root, 'runs', runId, 'start.json'), 'run start');
   validateStart(start, manifest, runId);
-  const events = await readLedger(root, runId, start, {}, manifest);
+  const tornTail = { byteLength: null };
+  const events = await readLedger(root, runId, start, {
+    allowTornTrailingLine: current.status === 'RUNNING' && current.lastRunId === runId,
+    tornTail,
+  }, manifest);
   validateLedgerIdentity(start, events);
   validateCurrentReference(current, runId, events);
   if (current.lastRunId === runId) validateCurrentProjection(current, start, events);
@@ -1124,6 +1128,9 @@ async function recoverRun(root, manifest) {
     }
   }
   const externalTransition = externalMarker === null ? null : externalTransitionEvidence(externalMarker, start);
+  if (tornTail.byteLength !== null) {
+    await truncateLedger(childPath(root, 'runs', runId, 'events.jsonl'), tornTail.byteLength);
+  }
   let reason;
   if (end === null && !TERMINAL_KINDS.has(last?.kind)) {
     if (events.length === 0) {
@@ -1310,6 +1317,19 @@ async function readLedger(root, runId, start, options = {}, manifest = null) {
   }
   if (raw === '') return [];
   const maxSequence = options.maxSequence;
+  let tornTailByteLength = null;
+  if (!Number.isSafeInteger(maxSequence) && !raw.endsWith('\n')) {
+    if (options.allowTornTrailingLine !== true) corrupt('Ledger has an incomplete trailing line.', { runId });
+    const lastNewline = raw.lastIndexOf('\n');
+    const completeRaw = lastNewline < 0 ? '' : raw.slice(0, lastNewline + 1);
+    const tornTail = lastNewline < 0 ? raw : raw.slice(lastNewline + 1);
+    if (Buffer.byteLength(tornTail, 'utf8') > MAX_EVENT_LINE_BYTES) {
+      corrupt('Ledger torn trailing line exceeds the size limit.', { runId });
+    }
+    tornTailByteLength = Buffer.byteLength(completeRaw, 'utf8');
+    if (options.tornTail !== undefined) options.tornTail.byteLength = tornTailByteLength;
+    raw = completeRaw;
+  }
   let lines;
   if (Number.isSafeInteger(maxSequence)) {
     if ((raw.match(/\n/g) ?? []).length < maxSequence) {
@@ -1345,7 +1365,21 @@ async function readLedger(root, runId, start, options = {}, manifest = null) {
     }
     events.push(event);
   }
+  if (tornTailByteLength !== null && TERMINAL_KINDS.has(events.at(-1)?.kind)) {
+    corrupt('Ledger has a torn tail after a terminal event.', { runId });
+  }
   return events;
+}
+
+async function truncateLedger(filePath, byteLength) {
+  let handle;
+  try {
+    handle = await open(filePath, 'r+');
+    await handle.truncate(byteLength);
+    await handle.sync();
+  } finally {
+    await handle?.close();
+  }
 }
 
 function validateEvent(event, runId, sequence, prevDigest, start, manifest = null) {
