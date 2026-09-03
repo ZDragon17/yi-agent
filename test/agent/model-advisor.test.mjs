@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildDecisionPrompt, createModelAdvisor } from '../../src/agent/model-advisor.mjs';
 import { projectModelObservation } from '../../src/agent/observation-context.mjs';
+import { MAX_MODEL_PROPOSAL_BYTES } from '../../src/runtime/schema.mjs';
 
 const TOKEN_A = 'tok_8MW7Q5V2FJ9C4RX6P1KD0ZAN3B';
 
@@ -72,6 +73,28 @@ test('model advisor preserves a bounded proposal as untrusted action data', asyn
   });
   assert.deepEqual(result.proposal, proposal);
   assert.equal(result.token, TOKEN_A);
+});
+
+test('model advisor rejects an oversized action proposal before it reaches the kernel', async () => {
+  const advisor = createModelAdvisor({
+    model: 'model-oversized-proposal',
+    client: {
+      async chat() {
+        return {
+          model: 'model-oversized-proposal',
+          content: JSON.stringify({ token: TOKEN_A, proposal: { replacement: 'x'.repeat(MAX_MODEL_PROPOSAL_BYTES) } }),
+        };
+      },
+    },
+  });
+  const result = await advisor({
+    observation: { vector: [1], stateVersion: 'state-1', intervalId: 'interval-1' },
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    memory: {},
+  });
+  assert.equal(result.token, null);
+  assert.equal(result.reason, 'INVALID_MODEL_OUTPUT');
+  assert.equal(Object.hasOwn(result, 'proposal'), false);
 });
 
 test('model advisor bounds oversized observation evidence and marks the projection', async () => {

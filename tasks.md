@@ -638,3 +638,10 @@
 - 实现：公共 schema 增加有界 `MAX_MODEL_PROPOSAL_BYTES`；ModelAdvisor 解析并保留可规范化的对象 proposal，应用层只在模型 Token 与 Kernel 最终选择一致时把 proposal 放入外部 transition request，同时写入 policy evidence。LabStore、外部 transition marker、恢复请求和 Replay 校验/复用同一 proposal；Kernel 仍不读取 proposal。repo 策略改为只授权目标与 before 摘要，adapter 从 request proposal 读取 replacement，并对目标、摘要、大小、nonce 和普通文件原子写入独立校验；读文件向模型提供最多 2 KiB 内容。
 - 验证：ModelAdvisor proposal 单测 9/9；repo WorldPort 6/6，包含模型读取文件内容、proposal 修复故意 bug、PREPARED/APPLIED、响应丢失离线恢复和 Replay；既有全量基线待本节点完成后复跑。
 - 边界：proposal 仍是不可信数据，只覆盖实验仓库中的完整文件替换；没有通用 diff、自动代码审查、OS 级沙箱、回滚或生产授权。下一步必须用错误 proposal、超限 proposal 和真实模型响应测量“候选质量能否改善”，不能把 proposal 通道本身称为自主智能。
+
+## F-74 proposal 错误候选的双边界反证
+
+- 反例：F-73 只覆盖了正确 proposal；若仅依赖应用层预算，应用层并不知道每个 WorldPort 的参数语义，目标错配仍可能进入外部执行边界；若仅依赖 adapter，又无法证明模型响应解析会在 Kernel 前截断超限候选。
+- 实现：不增加生产兼容分支；补充 ModelAdvisor 超限 proposal 的无效化测试，以及 repo adapter 对目标错配、超限替换的写入前拒绝测试。
+- 验证：ModelAdvisor 10/10；repo WorldPort 7/7。错误候选均返回拒绝，原文件保持不变，nonce 日志未创建；原有正确 proposal、响应丢失恢复、Replay 回归继续通过。
+- 边界：这只证明输入边界与副作用前置拒绝，不证明 proposal 的代码语义正确，也不证明模型能生成高质量候选。下一节点应测量错误候选、正确候选和 Kernel fallback 的结果差异，并把“候选质量”纳入可复盘证据。

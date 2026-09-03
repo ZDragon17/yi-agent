@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { test } from 'node:test';
 import { LabStore } from '../../src/runtime/lab-store.mjs';
@@ -316,6 +316,81 @@ test('writable repo WorldPort rejects a nonce journal inside the scanned reposit
   }
 });
 
+test('writable repo WorldPort rejects invalid proposals before journaling or writing', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-write-proposal-boundary-e2e-'));
+  const repository = path.join(root, 'repository');
+  const sourcePath = path.join(repository, 'src', 'math.mjs');
+  const patchSpecPath = path.join(root, 'patch.json');
+  const nonceJournalPath = path.join(root, 'patch-nonces.json');
+  const buggySource = 'export const value = 1;\n';
+  await mkdir(path.dirname(sourcePath), { recursive: true });
+  await writeFile(sourcePath, buggySource, 'utf8');
+  await writeFile(patchSpecPath, JSON.stringify({
+    schemaVersion: 1,
+    targetPath: 'src/math.mjs',
+    expectedBeforeDigest: canonicalDigest({ content: buggySource }),
+  }), 'utf8');
+  const adapterArgs = [
+    ADAPTER, repository, 'src/math.mjs', 'test/math.test.mjs', patchSpecPath, nonceJournalPath,
+  ];
+  const initial = invokeAdapterOnce(adapterArgs, 'initialState', {});
+  assert.equal(initial.ok, true, JSON.stringify(initial));
+  const manifest = {
+    tokenMap: {
+      entries: [
+        { schemaVersion: 1, token: 'tok_REPO_READ_01', capabilityId: 'repo.read-file' },
+        { schemaVersion: 1, token: 'tok_REPO_TEST_01', capabilityId: 'repo.run-tests' },
+        { schemaVersion: 1, token: 'tok_REPO_APPLY_01', capabilityId: 'repo.apply-patch' },
+      ],
+    },
+  };
+  const requests = [
+    {
+      executionNonce: 'execution:invalid-target',
+      proposal: {
+        schemaVersion: 1,
+        targetPath: 'src/other.mjs',
+        expectedBeforeDigest: canonicalDigest({ content: buggySource }),
+        replacement: 'export const value = 2;\n',
+      },
+      message: /not authorized/u,
+    },
+    {
+      executionNonce: 'execution:oversized-replacement',
+      proposal: {
+        schemaVersion: 1,
+        targetPath: 'src/math.mjs',
+        expectedBeforeDigest: canonicalDigest({ content: buggySource }),
+        replacement: 'x'.repeat(512 * 1024 + 1),
+      },
+      message: /proposal is invalid/u,
+    },
+  ];
+  try {
+    for (const item of requests) {
+      const response = invokeAdapterOnce(adapterArgs, 'transition', {
+        manifest,
+        state: initial.result.state,
+        request: {
+          schemaVersion: 1,
+          token: 'tok_REPO_APPLY_01',
+          basedOnVersion: initial.result.state.stateVersion,
+          policyVersion: 'policy-1',
+          constraintsDigest: 'sha256:' + 'a'.repeat(64),
+          executionNonce: item.executionNonce,
+          proposal: item.proposal,
+        },
+      });
+      assert.equal(response.ok, false, JSON.stringify(response));
+      assert.match(response.error, item.message);
+    }
+    assert.equal(await readFile(sourcePath, 'utf8'), buggySource);
+    await assert.rejects(access(nonceJournalPath));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('writable repo WorldPort resumes a lost patch response without applying twice', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-write-recovery-e2e-'));
   const repository = path.join(root, 'repository');
@@ -567,6 +642,19 @@ function invoke(args, env) {
     child.on('error', reject);
     child.on('close', (code) => resolve({ code, stdout: parseJsonLines(stdout), stderr }));
   });
+}
+
+function invokeAdapterOnce(args, op, payload) {
+  const request = { protocol: 'yi-world-cli', version: 1, id: 'boundary-test', op, payload };
+  const result = spawnSync(process.execPath, args, {
+    input: `${JSON.stringify(request)}\n`,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const lines = result.stdout.trim().split(/\r?\n/u);
+  assert.equal(lines.length, 1, result.stdout);
+  return JSON.parse(lines[0]);
 }
 
 function invokeChildClose(child) {
