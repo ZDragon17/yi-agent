@@ -624,3 +624,10 @@
 - 实现：锁文件身份只保留稳定的 `dev+ino`；Run 启动时记录锁自摘要，每次写入前重新读取并验证锁 JSON 的结构、自摘要和预期摘要，将文件身份检查与内容完整性检查分层。
 - 验证：LabStore 锁/恢复回归 61/61；原地篡改仍返回 `CORRUPT`，仅修改锁时间戳的活跃 Run 可以继续追加 STEP 并正常完成。
 - 边界：这是本地文件系统上的锁误报收敛，不解决 Windows PID 复用、网络/分布式文件系统的 inode 语义或跨主机锁服务。
+
+## F-72 repo WorldPort 受控写入与响应丢失恢复
+
+- 反例：只读 repo WorldPort 能读取文件和运行测试，却不能证明“一个真实修改被保留并由独立测试验证”；若直接给 adapter 任意写权限，又无法把路径、修改前提和响应丢失后的重复写入绑定进共同账本。
+- 实现：repo adapter 在显式补丁描述和 nonce 日志存在时才增加 `repo.apply-patch`，补丁绑定相对目标、修改前摘要和完整替换内容；先刷盘 `PREPARED`，再校验并原子替换普通文件，最后追加 `APPLIED`。writable descriptor 声明 `supportsIdempotentTransitions:true`，同 nonce 重试复用保存的原始 transition 结果；默认只读模式的能力和配置保持不变。
+- 验证：隔离临时仓库中的故意减法 bug 经 `read-file→run-tests(FAIL)→apply-patch→run-tests(PASS)` 完成，文件修改保留，账本保存四个 STEP，Replay 为 `CONSISTENT`；补丁 transition 响应丢失后，离线 `resume` 不再调用模型，nonce 日志仍只对应一次修改，文件和 Replay 均一致。
+- 边界：补丁内容目前由外部配置预先提供，模型仍只选择 Token；这是“受控修改进入闭环”的证据，不是任意 patch 生成、代码审查、OS 沙箱、回滚、真实当前仓库修改或生产权限授权。下一节点才是把修改提议本身变成可验证的受限数据，并继续经过人工/EffectBroker 门禁。

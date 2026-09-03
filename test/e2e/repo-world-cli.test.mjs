@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { access, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { test } from 'node:test';
 import { LabStore } from '../../src/runtime/lab-store.mjs';
+import { canonicalDigest } from '../../src/runtime/schema.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const ADAPTER = path.resolve('examples/repo-world/adapter.mjs');
@@ -154,7 +155,270 @@ test('read-only repo WorldPort completes the shared loop without writing the rep
     assert.deepEqual(await readFile(path.join(REPOSITORY_ROOT, READ_PATH)), beforeReadme);
     await assert.rejects(access(sentinel));
   } finally {
+    server.closeAllConnections?.();
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('writable repo WorldPort applies a digest-bound patch and verifies the retained fix', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-write-e2e-'));
+  const repository = path.join(root, 'repository');
+  const sourcePath = path.join(repository, 'src', 'math.mjs');
+  const testPath = path.join(repository, 'test', 'math.test.mjs');
+  const patchSpecPath = path.join(root, 'patch.json');
+  const nonceJournalPath = path.join(root, 'patch-nonces.json');
+  const adapterConfig = path.join(root, 'adapter.json');
+  const lab = path.join(root, 'lab');
+  const buggySource = 'export function add(left, right) { return left - right; }\n';
+  const fixedSource = 'export function add(left, right) { return left + right; }\n';
+  await mkdir(path.dirname(sourcePath), { recursive: true });
+  await mkdir(path.dirname(testPath), { recursive: true });
+  await writeFile(sourcePath, buggySource, 'utf8');
+  if (process.platform !== 'win32') await chmod(sourcePath, 0o755);
+  await writeFile(testPath, [
+    "import assert from 'node:assert/strict';",
+    "import { test } from 'node:test';",
+    "import { add } from '../src/math.mjs';",
+    "test('add returns the sum', () => assert.equal(add(2, 3), 5));",
+    '',
+  ].join('\n'), 'utf8');
+  await writeFile(patchSpecPath, JSON.stringify({
+    schemaVersion: 1,
+    targetPath: 'src/math.mjs',
+    expectedBeforeDigest: canonicalDigest({ content: buggySource }),
+    replacement: fixedSource,
+  }), 'utf8');
+
+  let modelCalls = 0;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    const capability = context.capabilities.find((item) => item.capabilityId === [
+      'repo.read-file', 'repo.run-tests', 'repo.apply-patch', 'repo.run-tests',
+    ][modelCalls]);
+    assert.ok(capability, `model context is missing step ${modelCalls} capability`);
+    modelCalls += 1;
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'repo-write-chat',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({ token: capability.token }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const environment = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'repo-write-local-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'repo-write-local-model',
+  };
+  await writeFile(adapterConfig, JSON.stringify({
+    executable: process.execPath,
+    args: [ADAPTER, repository, 'src/math.mjs', 'test/math.test.mjs', patchSpecPath, nonceJournalPath],
+    adapterId: 'repo-writable-example-v1',
+    worldId: 'repo',
+    timeoutMs: 30000,
+  }), 'utf8');
+
+  try {
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'repo', '--seed', 'repo-write-seed',
+      '--adapter', adapterConfig, '--json',
+    ], environment);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const run = await invoke([
+      'agent', 'run', '--lab', lab, '--steps', '4', '--scenario', 'working-tree',
+      '--adapter', adapterConfig, '--goal', '修复加法并用测试验证', '--json',
+    ], environment);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    assert.equal(modelCalls, 4);
+
+    const store = await LabStore.open({ labPath: lab });
+    const events = (await store.readRun(run.stdout[0].data.runId)).events;
+    const steps = events.filter((event) => event.kind === 'STEP');
+    assert.deepEqual(steps.map((event) => event.payload.afterState.worldState.lastAction), [
+      'repo.read-file', 'repo.run-tests', 'repo.apply-patch', 'repo.run-tests',
+    ]);
+    assert.equal(steps[1].payload.afterState.worldState.lastTestStatus, 'FAIL');
+    assert.equal(steps[3].payload.afterState.worldState.lastTestStatus, 'PASS');
+    assert.equal(await readFile(sourcePath, 'utf8'), fixedSource);
+    if (process.platform !== 'win32') assert.equal((await stat(sourcePath)).mode & 0o777, 0o755);
+    const nonceJournal = (await readFile(nonceJournalPath, 'utf8'))
+      .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    assert.equal(nonceJournal.length, 2);
+    assert.equal(nonceJournal[0].status, 'PREPARED');
+    assert.equal(nonceJournal[1].status, 'APPLIED');
+
+    const replay = await invoke([
+      'replay', '--lab', lab, '--run', run.stdout[0].data.runId,
+      '--adapter', adapterConfig, '--json',
+    ], environment);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal(modelCalls, 4, 'replay must not call the model again');
+    assert.equal(await readFile(sourcePath, 'utf8'), fixedSource);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('writable repo WorldPort rejects a nonce journal inside the scanned repository', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-write-boundary-e2e-'));
+  const repository = path.join(root, 'repository');
+  const sourcePath = path.join(repository, 'src', 'math.mjs');
+  const patchSpecPath = path.join(root, 'patch.json');
+  const adapterConfig = path.join(root, 'adapter.json');
+  await mkdir(path.dirname(sourcePath), { recursive: true });
+  const source = 'export const value = 1;\n';
+  await writeFile(sourcePath, source, 'utf8');
+  await writeFile(patchSpecPath, JSON.stringify({
+    schemaVersion: 1,
+    targetPath: 'src/math.mjs',
+    expectedBeforeDigest: canonicalDigest({ content: source }),
+    replacement: 'export const value = 2;\n',
+  }), 'utf8');
+  await writeFile(adapterConfig, JSON.stringify({
+    executable: process.execPath,
+    args: [ADAPTER, repository, 'src/math.mjs', 'src/math.mjs', patchSpecPath, path.join(repository, 'nonce.log')],
+    adapterId: 'repo-writable-example-v1',
+    worldId: 'repo',
+    timeoutMs: 30000,
+  }), 'utf8');
+
+  try {
+    const init = await invoke([
+      'init', '--lab', path.join(root, 'lab'), '--world', 'repo', '--seed', 'boundary-seed',
+      '--adapter', adapterConfig, '--json',
+    ], process.env);
+    assert.equal(init.code, 70);
+    await assert.rejects(access(path.join(repository, 'nonce.log')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('writable repo WorldPort resumes a lost patch response without applying twice', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-write-recovery-e2e-'));
+  const repository = path.join(root, 'repository');
+  const sourcePath = path.join(repository, 'src', 'math.mjs');
+  const testPath = path.join(repository, 'test', 'math.test.mjs');
+  const patchSpecPath = path.join(root, 'patch.json');
+  const nonceJournalPath = path.join(root, 'patch-nonces.json');
+  const adapterConfig = path.join(root, 'adapter.json');
+  const lab = path.join(root, 'lab');
+  const buggySource = 'export function add(left, right) { return left - right; }\n';
+  const fixedSource = 'export function add(left, right) { return left + right; }\n';
+  await mkdir(path.dirname(sourcePath), { recursive: true });
+  await mkdir(path.dirname(testPath), { recursive: true });
+  await writeFile(sourcePath, buggySource, 'utf8');
+  await writeFile(testPath, [
+    "import assert from 'node:assert/strict';",
+    "import { test } from 'node:test';",
+    "import { add } from '../src/math.mjs';",
+    "test('add returns the sum', () => assert.equal(add(2, 3), 5));",
+    '',
+  ].join('\n'), 'utf8');
+  await writeFile(patchSpecPath, JSON.stringify({
+    schemaVersion: 1,
+    targetPath: 'src/math.mjs',
+    expectedBeforeDigest: canonicalDigest({ content: buggySource }),
+    replacement: fixedSource,
+  }), 'utf8');
+
+  let modelCalls = 0;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    const capability = context.capabilities.find((item) => item.capabilityId === [
+      'repo.read-file', 'repo.run-tests', 'repo.apply-patch',
+    ][modelCalls]);
+    assert.ok(capability, `model context is missing recovery step ${modelCalls} capability`);
+    modelCalls += 1;
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'repo-write-recovery-chat',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({ token: capability.token }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const environment = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'repo-write-recovery-local-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'repo-write-recovery-local-model',
+  };
+  const offlineEnvironment = { ...environment };
+  delete offlineEnvironment.YI_AGENT_API_KEY;
+  delete offlineEnvironment.ZAI_API_KEY;
+  delete offlineEnvironment.YI_AGENT_MODEL;
+  await writeFile(adapterConfig, JSON.stringify({
+    executable: process.execPath,
+    args: [
+      ADAPTER, repository, 'src/math.mjs', 'test/math.test.mjs', patchSpecPath,
+      nonceJournalPath, '--drop-patch-response',
+    ],
+    adapterId: 'repo-writable-example-v1',
+    worldId: 'repo',
+    timeoutMs: 30000,
+  }), 'utf8');
+
+  try {
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'repo', '--seed', 'repo-write-recovery-seed',
+      '--adapter', adapterConfig, '--json',
+    ], environment);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const prepared = await invoke([
+      'agent', 'run', '--lab', lab, '--steps', '2', '--scenario', 'working-tree',
+      '--adapter', adapterConfig, '--goal', '修复加法并用测试验证', '--json',
+    ], environment);
+    assert.equal(prepared.code, 0, JSON.stringify(prepared));
+    assert.equal(modelCalls, 2);
+    const lost = await invoke([
+      'agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '1',
+      '--scenario', 'working-tree', '--adapter', adapterConfig,
+      '--goal', '修复加法并用测试验证', '--json',
+    ], environment);
+    assert.notEqual(lost.code, 0, JSON.stringify(lost));
+    assert.equal(modelCalls, 3);
+    assert.equal(await readFile(sourcePath, 'utf8'), fixedSource);
+
+    const resumed = await invoke([
+      'agent', 'loop', '--lab', lab, '--resume', '--adapter', adapterConfig, '--json',
+    ], offlineEnvironment);
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.stdout[0].data.status, 'COMPLETED');
+    assert.equal(resumed.stdout[0].data.runs, 1);
+    assert.equal(modelCalls, 3, 'retry must use persisted intent instead of calling the model');
+    assert.equal(await readFile(sourcePath, 'utf8'), fixedSource);
+    const nonceJournal = (await readFile(nonceJournalPath, 'utf8'))
+      .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    assert.equal(nonceJournal.length, 2);
+    assert.equal(nonceJournal[0].status, 'PREPARED');
+    assert.equal(nonceJournal[1].status, 'APPLIED');
+    const inspection = await invoke(['inspect', '--lab', lab, '--adapter', adapterConfig, '--json']);
+    assert.equal(inspection.code, 0, JSON.stringify(inspection));
+    assert.equal(inspection.stdout[0].data.current.kernelStep, 3);
+    for (const runId of await listRunIds(lab)) {
+      const replay = await invoke(['replay', '--lab', lab, '--run', runId, '--adapter', adapterConfig, '--json']);
+      assert.equal(replay.code, 0, JSON.stringify(replay));
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    }
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(() => resolve()));
     await rm(root, { recursive: true, force: true });
   }
 });

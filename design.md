@@ -275,3 +275,5 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 这项草案尚未进入运行时协议。正式实现前必须由独立 WorldPort 的拥有者确认字段命名、签名覆盖范围、密钥轮换和“同一 nonce 的签名结果是否可缓存”语义；确认后再同步协议校验、manifest 版本边界、测试 adapter 和伪造/重放反例。
 
 活跃 Run 的锁身份使用稳定 `dev+ino`，每次写入同时重新校验锁 JSON 的自摘要；时间戳变化不再构成所有权变化，内容篡改仍会 fail-closed。身份与内容分层只收敛本地锁误报，不把 PID liveness 或分布式文件系统误称为可靠锁服务。
+
+repo WorldPort 的 writable 实验是 adapter 层的最小真实修改边界，不改变通用 Kernel 的 Token-only 决策契约：只有显式提供补丁描述和 nonce 日志时才暴露 `repo.apply-patch`。补丁以目标相对路径、修改前 `contentDigest` 和完整替换内容为输入；adapter 先持久化 `PREPARED`，再做普通文件的原子替换，随后追加 `APPLIED`，同一 nonce 的重试复用已保存结果。该顺序覆盖写入前崩溃、替换中断和响应丢失的有限实验矩阵，但不提供 OS 级沙箱、通用 patch 解析、并发写入隔离或回滚保证；真实项目写权限仍属于 EffectBroker/Future-Gate。补丁由外部配置预先授权也意味着当前实验尚未验证模型自行生成可审查修改。
