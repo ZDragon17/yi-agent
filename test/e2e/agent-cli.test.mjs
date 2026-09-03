@@ -157,6 +157,57 @@ test('agent loop accepts an explicit forever policy without confusing it with a 
   assert.equal(help.stderr.includes('forever and runs are mutually exclusive'), false);
 });
 
+test('a restarted agent run can use candidate history to choose a different safe action', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-candidate-history-e2e-'));
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    requests.push(context);
+    const choice = context.capabilities[context.candidateHistory.length === 0 ? 0 : 1];
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'candidate-history-agent',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({ token: choice.token }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'local-candidate-history-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'local-candidate-history-model',
+  };
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'candidate-history-seed', '--json'], process.env)).code, 0);
+    const first = await invoke(['agent', 'run', '--lab', lab, '--steps', '1', '--json'], env);
+    const second = await invoke(['agent', 'run', '--lab', lab, '--steps', '1', '--json'], env);
+    assert.equal(first.code, 0);
+    assert.equal(second.code, 0);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].candidateHistory.length, 0);
+    assert.equal(requests[1].candidateHistory.length, 1);
+    const store = await LabStore.open({ labPath: lab });
+    const firstEvent = (await store.readRun(first.stdout[0].data.runId)).events.find((event) => event.kind === 'STEP');
+    const secondEvent = (await store.readRun(second.stdout[0].data.runId)).events.find((event) => event.kind === 'STEP');
+    assert.notEqual(firstEvent.payload.choice.token, secondEvent.payload.choice.token);
+    assert.equal((await store.readCandidateOutcomes()).length, 2);
+    for (const runId of [first.stdout[0].data.runId, second.stdout[0].data.runId]) {
+      const replay = await invoke(['replay', '--lab', lab, '--run', runId, '--json'], process.env);
+      assert.equal(replay.code, 0, JSON.stringify(replay));
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    }
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('a new agent loop still requires model configuration', async () => {
   const env = { ...process.env };
   delete env.YI_AGENT_API_KEY;
