@@ -120,6 +120,8 @@ test('model advisor receives small prior proposals and marks oversized ones as t
         kernelStep: 7,
         stepsSincePreviousCandidate: 4,
         stepsSinceSupersededCandidate: 4,
+        goalDistanceDeltaFromSuperseded: 2,
+        goalImprovedFromSuperseded: true,
         supersedesCandidateDigest: `sha256:${'9'.repeat(64)}`,
         quality: { errorMagnitude: 0.5, verified: true, goalDistanceBefore: 4, goalDistanceAfter: 2, goalProgress: 2, goalReached: false },
         proposal: { replacement: 'small fix' },
@@ -141,6 +143,8 @@ test('model advisor receives small prior proposals and marks oversized ones as t
   assert.equal(context.candidateHistory[0].contextAttempt, 3);
   assert.equal(context.candidateHistory[0].stepsSincePreviousCandidate, 4);
   assert.equal(context.candidateHistory[0].stepsSinceSupersededCandidate, 4);
+  assert.equal(context.candidateHistory[0].goalDistanceDeltaFromSuperseded, 2);
+  assert.equal(context.candidateHistory[0].goalImprovedFromSuperseded, true);
   assert.equal(context.candidateHistory[0].supersedesCandidateDigest, `sha256:${'9'.repeat(64)}`);
   assert.deepEqual(context.candidateHistory[0].candidateOutcome.quality, {
     errorMagnitude: 0.5,

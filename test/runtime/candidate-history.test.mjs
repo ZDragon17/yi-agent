@@ -182,3 +182,48 @@ test('candidate history derives a bounded interval only for an accepted same-sco
   assert.equal(history[1].stepsSinceSupersededCandidate, 4);
   assert.equal(history[2].stepsSinceSupersededCandidate, undefined);
 });
+
+test('candidate history compares superseded and current target distance with one geometry', () => {
+  const valueSpec = {
+    schemaVersion: 1,
+    observationDimensions: 1,
+    weights: [1],
+    target: [0],
+    tolerance: 0,
+    valueMode: 'distance-v2',
+  };
+  const history = annotateCandidateHistory([
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      kernelStep: 3,
+      valueSpec,
+      beforeVector: [5],
+      afterVector: [3],
+      candidateOutcome: {
+        candidateDigest: CANDIDATE_DIGEST,
+        status: 'APPLIED',
+        verification: { error: [2], attribution: 'ACTION', learnable: true },
+      },
+    },
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      kernelStep: 7,
+      valueSpec,
+      beforeVector: [3],
+      afterVector: [1],
+      supersedesCandidateDigest: CANDIDATE_DIGEST,
+      candidateOutcome: {
+        candidateDigest: OTHER_CANDIDATE_DIGEST,
+        status: 'APPLIED',
+        verification: { error: [2], attribution: 'ACTION', learnable: true },
+      },
+    },
+  ]);
+
+  assert.equal(history[1].goalDistanceDeltaFromSuperseded, 2);
+  assert.equal(history[1].goalImprovedFromSuperseded, true);
+});

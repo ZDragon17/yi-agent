@@ -10,6 +10,7 @@ export function annotateCandidateHistory(history) {
     const decisionContext = decisionContextDigest(entry);
     const quality = predictionQuality(entry.candidateOutcome, entry);
     const supersededStepDistance = stepsSinceSupersededCandidate(history, index, entry);
+    const supersededQuality = compareSupersededQuality(history, index, entry, quality);
     const { valueSpec: _valueSpec, beforeVector: _beforeVector, afterVector: _afterVector, ...publicEntry } = entry ?? {};
     const kernelStep = Number.isSafeInteger(entry?.kernelStep) && entry.kernelStep >= 0 ? entry.kernelStep : null;
     const stepGap = kernelStep !== null && previousKernelStep !== null && kernelStep >= previousKernelStep
@@ -20,6 +21,7 @@ export function annotateCandidateHistory(history) {
       ...(quality === null ? {} : { quality }),
       ...(stepGap === null ? {} : { stepsSincePreviousCandidate: stepGap }),
       ...(supersededStepDistance === null ? {} : { stepsSinceSupersededCandidate: supersededStepDistance }),
+      ...(supersededQuality === null ? {} : supersededQuality),
     };
     if (kernelStep !== null) previousKernelStep = kernelStep;
     const annotated = scope === null
@@ -69,15 +71,34 @@ function candidateScope(entry) {
 }
 
 function stepsSinceSupersededCandidate(history, index, entry) {
-  const requestedDigest = entry?.supersedesCandidateDigest;
-  if (typeof requestedDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(requestedDigest)) return null;
   const currentStep = kernelStep(entry);
   if (currentStep === null) return null;
-  const previous = history.slice(0, index).findLast((candidate) =>
-    sameWorldPortScope(candidate, entry) && candidate?.candidateOutcome?.candidateDigest === requestedDigest,
-  );
+  const previous = findSupersededCandidate(history, index, entry);
   const previousStep = kernelStep(previous);
   return previousStep !== null && currentStep >= previousStep ? currentStep - previousStep : null;
+}
+
+function compareSupersededQuality(history, index, entry, quality) {
+  const currentDistance = quality?.goalDistanceAfter;
+  if (!Number.isFinite(currentDistance)) return null;
+  const previous = findSupersededCandidate(history, index, entry);
+  const previousQuality = predictionQuality(previous?.candidateOutcome, previous);
+  const previousDistance = previousQuality?.goalDistanceAfter;
+  if (!Number.isFinite(previousDistance)) return null;
+  const delta = previousDistance - currentDistance;
+  if (!Number.isFinite(delta)) return null;
+  return {
+    goalDistanceDeltaFromSuperseded: delta,
+    goalImprovedFromSuperseded: delta > 0,
+  };
+}
+
+function findSupersededCandidate(history, index, entry) {
+  const requestedDigest = entry?.supersedesCandidateDigest;
+  if (typeof requestedDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(requestedDigest)) return null;
+  return history.slice(0, index).findLast((candidate) =>
+    sameWorldPortScope(candidate, entry) && candidate?.candidateOutcome?.candidateDigest === requestedDigest,
+  ) ?? null;
 }
 
 function sameWorldPortScope(left, right) {

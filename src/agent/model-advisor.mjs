@@ -183,6 +183,12 @@ function candidateHistorySummary(history) {
         entry.stepsSincePreviousCandidate >= 0 ? entry.stepsSincePreviousCandidate : null,
       stepsSinceSupersededCandidate: Number.isSafeInteger(entry.stepsSinceSupersededCandidate) &&
         entry.stepsSinceSupersededCandidate >= 0 ? entry.stepsSinceSupersededCandidate : null,
+      goalDistanceDeltaFromSuperseded: Number.isFinite(entry.goalDistanceDeltaFromSuperseded)
+        ? entry.goalDistanceDeltaFromSuperseded
+        : null,
+      goalImprovedFromSuperseded: typeof entry.goalImprovedFromSuperseded === 'boolean'
+        ? entry.goalImprovedFromSuperseded
+        : null,
       sequence: Number.isSafeInteger(entry.sequence) ? entry.sequence : null,
       recordedAt: boundedText(entry.recordedAt),
       candidateOutcome: summary,

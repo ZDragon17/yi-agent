@@ -750,3 +750,10 @@
 - 实现：Runtime 在同一 WorldPort 作用域的历史前缀中查找 `supersedesCandidateDigest` 对应候选，并在两端 `kernelStep` 单调时派生 `stepsSinceSupersededCandidate`；跨作用域、缺失源节点和非单调记录均不推断。ModelAdvisor 只接收该有界字段，并明确它不是修复成本。
 - 验证：候选历史用例 6/6；ModelAdvisor 17/17；repo 修复 E2E 继续确认错误候选到修复候选的间隔为 4，两个 Run Replay 均 `CONSISTENT`。
 - 边界：该间隔仍不能归因中间动作、测量真实资源消耗或证明修复因果；下一节点应把它与独立终态判别器、同初始状态对照和失败候选链结合，形成可反驳的修复成本估计。
+
+## F-90 谱系候选的统一目标差证据
+
+- 反例：F-89 能看到候选之间隔了多少闭环步数，但仍不能确定当前候选是否让状态更接近同一个目标；若由不同消费者自行计算目标差，又会产生口径漂移。
+- 实现：Runtime 复用已有 `distance-v2` 几何，从被引用候选和当前候选的目标后距离派生 `goalDistanceDeltaFromSuperseded` 与 `goalImprovedFromSuperseded`；只有同一作用域、历史顺序有效且两端几何完整时才输出，模型侧只接收有界结果。
+- 验证：候选历史用例 7/7；ModelAdvisor 15/15；目标后距离从 3 降到 1 时派生差值 2 和 improved=true；缺失源节点或跨 WorldPort 不生成。
+- 边界：这是统一数值几何上的结果比较，不是独立领域终态判别器、反事实对照或因果归因；下一节点仍需把可插拔、隔离的领域判别器接入实验流程，并保持其结果不越过 Kernel 权限边界。
