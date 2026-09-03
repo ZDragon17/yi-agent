@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { test } from 'node:test';
 import { LabStore } from '../../src/runtime/lab-store.mjs';
-import { canonicalDigest } from '../../src/runtime/schema.mjs';
+import { canonicalDigest, MAX_MODEL_PROPOSAL_BYTES } from '../../src/runtime/schema.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const ADAPTER = path.resolve('examples/repo-world/adapter.mjs');
@@ -291,6 +291,128 @@ test('writable repo WorldPort applies a digest-bound patch and verifies the reta
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('repo proposal quality is externally distinguishable under one bounded context', async () => {
+  const buggySource = 'export function add(left, right) { return left - right; }\n';
+  const fixedSource = 'export function add(left, right) { return left + right; }\n';
+  const cases = [
+    { name: 'correct', replacement: fixedSource, expectedStatus: 'PASS', writes: true },
+    { name: 'semantic-error', replacement: 'export function add(left, right) { return left * right; }\n', expectedStatus: 'FAIL', writes: true },
+    { name: 'oversized', replacement: 'x'.repeat(MAX_MODEL_PROPOSAL_BYTES), expectedStatus: null, writes: false },
+  ];
+  const firstContexts = [];
+
+  for (const candidate of cases) {
+    const root = await mkdtemp(path.join(tmpdir(), `yi-agent-repo-quality-${candidate.name}-`));
+    const repository = path.join(root, 'repository');
+    const sourcePath = path.join(repository, 'src', 'math.mjs');
+    const testPath = path.join(repository, 'test', 'math.test.mjs');
+    const patchSpecPath = path.join(root, 'patch.json');
+    const nonceJournalPath = path.join(root, 'patch-nonces.json');
+    const adapterConfig = path.join(root, 'adapter.json');
+    const lab = path.join(root, 'lab');
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await mkdir(path.dirname(testPath), { recursive: true });
+    await writeFile(sourcePath, buggySource, 'utf8');
+    await writeFile(testPath, [
+      "import assert from 'node:assert/strict';",
+      "import { test } from 'node:test';",
+      "import { add } from '../src/math.mjs';",
+      "test('add returns the sum', () => assert.equal(add(2, 3), 5));",
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(patchSpecPath, JSON.stringify({
+      schemaVersion: 1,
+      targetPath: 'src/math.mjs',
+      expectedBeforeDigest: canonicalDigest({ content: buggySource }),
+    }), 'utf8');
+
+    let modelCalls = 0;
+    let firstContext = null;
+    const server = createServer(async (request, response) => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+      if (firstContext === null) firstContext = JSON.stringify(context);
+      const capability = context.capabilities.find((item) => item.capabilityId === [
+        'repo.read-file', 'repo.run-tests', 'repo.apply-patch', 'repo.run-tests',
+      ][modelCalls]);
+      assert.ok(capability, `${candidate.name} missing capability at step ${modelCalls}`);
+      modelCalls += 1;
+      const patchPolicy = context.observationEvidence.find((item) => item.kind === 'repo-patch-policy');
+      const proposal = capability.capabilityId === 'repo.apply-patch'
+        ? {
+            schemaVersion: 1,
+            targetPath: patchPolicy.targetPath,
+            expectedBeforeDigest: patchPolicy.expectedBeforeDigest,
+            replacement: candidate.replacement,
+          }
+        : undefined;
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({
+        id: `repo-quality-${candidate.name}`,
+        model: body.model,
+        choices: [{ message: { content: JSON.stringify({
+          token: capability.token,
+          ...(proposal === undefined ? {} : { proposal }),
+        }) } }],
+      }));
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    const environment = {
+      ...process.env,
+      YI_AGENT_API_KEY: `repo-quality-${candidate.name}-secret`,
+      YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+      YI_AGENT_MODEL: 'repo-quality-model',
+    };
+    await writeFile(adapterConfig, JSON.stringify({
+      executable: process.execPath,
+      args: [ADAPTER, repository, 'src/math.mjs', 'test/math.test.mjs', patchSpecPath, nonceJournalPath],
+      adapterId: 'repo-writable-example-v1',
+      worldId: 'repo',
+      timeoutMs: 30000,
+    }), 'utf8');
+
+    try {
+      const init = await invoke([
+        'init', '--lab', lab, '--world', 'repo', '--seed', 'repo-quality-seed',
+        '--adapter', adapterConfig, '--json',
+      ], environment);
+      assert.equal(init.code, 0, `${candidate.name} init: ${JSON.stringify(init)}`);
+      const run = await invoke([
+        'agent', 'run', '--lab', lab, '--steps', '4', '--scenario', 'working-tree',
+        '--adapter', adapterConfig, '--goal', '修复加法并用测试验证', '--json',
+      ], environment);
+      if (candidate.writes) {
+        assert.equal(run.code, 0, `${candidate.name} run: ${JSON.stringify(run)}`);
+        const inspection = await invoke(['inspect', '--lab', lab, '--adapter', adapterConfig, '--json'], environment);
+        assert.equal(inspection.code, 0, `${candidate.name} inspect: ${JSON.stringify(inspection)}`);
+        assert.equal(inspection.stdout[0].data.current.worldState.lastTestStatus, candidate.expectedStatus);
+        assert.equal(await readFile(sourcePath, 'utf8'), candidate.replacement);
+        const replay = await invoke([
+          'replay', '--lab', lab, '--run', run.stdout[0].data.runId,
+          '--adapter', adapterConfig, '--json',
+        ], environment);
+        assert.equal(replay.code, 0, `${candidate.name} replay: ${JSON.stringify(replay)}`);
+        assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+      } else {
+        assert.notEqual(run.code, 0, `${candidate.name} must be rejected: ${JSON.stringify(run)}`);
+        assert.equal(await readFile(sourcePath, 'utf8'), buggySource);
+        await assert.rejects(access(nonceJournalPath));
+      }
+      assert.equal(modelCalls, candidate.writes ? 4 : 3);
+      firstContexts.push(firstContext);
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  assert.equal(new Set(firstContexts).size, 1, 'candidate comparison must use one initial bounded context');
 });
 
 test('writable repo WorldPort rejects a nonce journal inside the scanned repository', async () => {
