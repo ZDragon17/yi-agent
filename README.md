@@ -232,6 +232,20 @@ yi-agent agent run `
 
 这段示例的意义不是计数器本身，而是说明领域变化发生在 `WorldPort`，不是发生在 Kernel：换掉 `adapter.mjs` 的状态和行动，只要仍满足协议，CLI、账本、验证、学习和 Replay 可以保持不变。
 
+### MVP-1：把真实仓库接入同一条闭环
+
+`examples/repo-world/adapter.mjs` 是第一个 repo WorldPort 实验。它不修改 `src/**`，只把一个真实本地仓库映射成通用外部世界：观察包含有界文件树摘要，两个能力分别是读取一个配置的相对文件和运行一个配置的 Node 测试文件。它通过绝对子进程、`shell:false` 和路径/符号链接检查限制操作面；这是协议级只读约束，不等同于操作系统沙箱，生产环境仍应在独立低权限账户或容器中运行。
+
+```powershell
+$exampleRoot = Join-Path $PWD 'repo-run'
+powershell -ExecutionPolicy Bypass `
+  -File .\examples\repo-world\run-example.ps1 `
+  -RepoPath $PWD `
+  -RootPath $exampleRoot
+```
+
+该实验真实走 `ModelAdvisor（可选）→ Kernel → repo WorldPort → verify → ledger`，之后 `inspect` 读取已固化证据，`replay` 不重新启动 adapter。它的意义不是把“仓库”做成特殊业务，而是验证新的现实对象只需遵守共同的 `WorldPort` 边界，就能进入同一套观察、行动、验证、持久化和回放链路；下一步应继续用真实反例检验只读权限、重启恢复和跨 WorldPort 一致性。
+
 ## 当前明确不是什么
 
 当前版本还不是通用自主智能，也不会自动操作真实桌面、任意 Shell 或用户文件。它没有证明“智能已经出现”，只提供一个可以持续做实验、记录证据、制造反例和检查回放一致性的底座。

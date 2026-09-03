@@ -609,3 +609,10 @@
 - 实现：recovery 专用读取允许且只允许活动、未终态 Run 的最后无换行尾部；验证完整前缀、current watermark、end 与外部 marker 边界后，将文件同步截回最后一个完整换行，再沿已校验前缀追加唯一 `RUN_HALTED/CRASH_HALTED`。固定 watermark inspect、终态账本、语义损坏前缀和带换行的坏 JSON 不走该修复路径。
 - 验证：Runtime 真实测试 60/60 覆盖活动半行恢复为 `HALTED`、截断后事件为 `RUN_STARTED→RUN_HALTED`，以及所有 CORRUPT 边界保留原始尾部；CLI 重启/恢复与非幂等外部 WorldPort 对账回归 11/11，独立 late-bound Oracle 48/48。
 - 边界：这是本地 JSONL 单 writer 下对“最后写入未完成”的确定性恢复，不证明任意中间文件损坏可修复；目录 fsync、PID 复用、分布式存储和真实设备副作用仍是独立可靠性边界。
+
+## MVP-1 repo WorldPort：真实仓库只读闭环
+
+- 反例：已有外部 WorldPort 只用计数器验证抽象边界，尚未证明真实本地仓库的文件树、文件读取和测试结果能沿同一条 `observe→action→transition→verify→ledger→replay` 链路运行；多能力 token 也不能由一次性 adapter 进程凭空猜测。
+- 实现：外部 `transition` 请求补充与 `actions` 相同的冻结 manifest，保持旧 adapter 读取 `state/request` 的兼容性；新增 `examples/repo-world/adapter.mjs`、PowerShell 配置/运行脚本和 CLI E2E，adapter 只提供 `repo.read-file` 与 `repo.run-tests`，对仓库文件树、相对路径、符号链接、测试输出和状态摘要执行有界只读处理。
+- 验证：在当前真实仓库中启动多个 CLI 子进程，完成 `init→agent run→inspect→replay`；模型提议依次触发两个 repo 能力，测试结果为 PASS，STEP 保存动作与状态证据，Replay 为 `CONSISTENT`，Replay 不再请求模型，README 文件内容和写入哨兵保持不变。
+- 边界：adapter 的“只读”是协议与实现约束，不是 OS 级权限隔离；测试命令本身可能包含副作用，生产接入必须使用低权限执行环境。当前只证明一个仓库、一个文件和一个测试入口，尚未证明任意仓库安全、长期恢复或学习泛化。

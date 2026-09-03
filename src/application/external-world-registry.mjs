@@ -340,6 +340,7 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
       const response = client.request('transition', {
         worldId: descriptor.worldId,
         scenario,
+        manifest: worldManifest,
         state,
         request,
       });
