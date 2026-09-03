@@ -2356,7 +2356,11 @@ async function captureWriterLockIdentity(root, expectedLock) {
   if (lock === null || lock.selfDigest !== expectedLock.selfDigest) {
     corrupt('Writer lock ownership changed while the run was starting.', { phase: 'start' });
   }
-  return { ...fileIdentity(status), selfDigest: lock.selfDigest };
+  return {
+    ...fileIdentity(status),
+    selfDigest: lock.selfDigest,
+    rawDigest: rawContentDigest(await readFile(lockPath)),
+  };
 }
 
 async function assertOwnedLock(root, expectedIdentity) {
@@ -2371,10 +2375,13 @@ async function assertOwnedLock(root, expectedIdentity) {
   if (!actual.isFile() || actual.isSymbolicLink() || !sameFileIdentity(actual, expectedIdentity)) {
     corrupt('Writer lock ownership changed while the run was active.', { phase: 'write' });
   }
-  const lock = await readOptionalVerifiedObject(lockPath, 'writer lock');
-  if (lock === null || lock.selfDigest !== expectedIdentity.selfDigest) {
+  if (actual.size > MAX_JSON_BYTES || rawContentDigest(await readFile(lockPath)) !== expectedIdentity.rawDigest) {
     corrupt('Writer lock ownership changed while the run was active.', { phase: 'write' });
   }
+}
+
+function rawContentDigest(content) {
+  return createHash('sha256').update(content).digest('hex');
 }
 
 function fileIdentity(status) {
