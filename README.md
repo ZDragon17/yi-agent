@@ -244,7 +244,7 @@ powershell -ExecutionPolicy Bypass `
   -RootPath $exampleRoot
 ```
 
-该实验真实走 `ModelAdvisor（可选）→ Kernel → repo WorldPort → verify → ledger`，之后 `inspect` 读取已固化证据，`replay` 不重新启动 adapter。它的意义不是把“仓库”做成特殊业务，而是验证新的现实对象只需遵守共同的 `WorldPort` 边界，就能进入同一套观察、行动、验证、持久化和回放链路；下一步应继续用真实反例检验只读权限、重启恢复和跨 WorldPort 一致性。
+该实验真实走 `ModelAdvisor（可选）→ Kernel → repo WorldPort → verify → ledger`，之后 `inspect` 读取已固化证据，`replay` 不重新启动 adapter。它的意义不是把“仓库”做成特殊业务，而是验证新的现实对象只需遵守共同的 `WorldPort` 边界，就能进入同一套观察、行动、验证、持久化和回放链路。当前 E2E 已补上连续 Run 外壳对照，以及第二个 Run 模型边界强制中断后的 `recover→resume→Replay`；仍未覆盖外部 transition 执行到一半崩溃后的非幂等对账，也不等于任意仓库的 OS 级安全隔离。
 
 ## 当前明确不是什么
 

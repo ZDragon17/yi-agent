@@ -101,7 +101,7 @@ ModelAdvisor 的结果是外部非确定输入，不进入连续性状态。每�
 
 Advisor 的异常和非法结果也按同一证据边界处理：宿主不把异常文本写入账本，不把未经校验的 Token 交给 Kernel；只保存稳定的模型标识、摘要指纹、标准化 Token 和故障原因。故障回退不是把模型错误算作成功，而是让共同底座在没有模型提议时继续走可验证的安全选择路径。CLI 的 `--kernel-only` 则把这种可替换关系显式化：从启动时就不创建模型工具。
 
-MVP-1 的 repo WorldPort 使用上述共同边界验证真实对象接入：仓库文件树是有界 observation evidence，读取文件和运行测试是两个只读能力，结果进入连续 worldState、STEP 和 Replay。它刻意不进入 Kernel，也不声称提供操作系统级权限隔离；测试命令的副作用风险属于部署边界，必须由低权限执行环境承担。
+MVP-1 的 repo WorldPort 使用上述共同边界验证真实对象接入：仓库文件树是有界 observation evidence，读取文件和运行测试是两个只读能力，结果进入连续 worldState、STEP 和 Replay。它已通过与内置 `temperature` WorldPort 的连续 Run 外壳对照，并通过第二个 Run 模型边界强制中断后的 `recover→resume→Replay` 验证；这证明的是宿主连续性契约可复用，不是证明仓库动作具备外部幂等或对账能力。它刻意不进入 Kernel，也不声称提供操作系统级权限隔离；测试命令的副作用风险属于部署边界，必须由低权限执行环境承担。
 
 为验证真实执行器仍可被同一底座约束，`src/effects/sandbox-file-executor.mjs` 提供了临时目录级文件移动：它拒绝路径穿越和符号链接，只在带用户显式创建 `.yi-agent-sandbox` 标记的沙箱根内操作，并复用 Broker 的确认、executionNonce、durable journal、reconcile 与 compensation。CLI 的 `effect` 命令跨进程恢复这个 Broker，支持安全实验；它不是用户桌面授权层。
 

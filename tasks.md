@@ -615,4 +615,5 @@
 - 反例：已有外部 WorldPort 只用计数器验证抽象边界，尚未证明真实本地仓库的文件树、文件读取和测试结果能沿同一条 `observe→action→transition→verify→ledger→replay` 链路运行；多能力 token 也不能由一次性 adapter 进程凭空猜测。
 - 实现：外部 `transition` 请求补充与 `actions` 相同的冻结 manifest，保持旧 adapter 读取 `state/request` 的兼容性；新增 `examples/repo-world/adapter.mjs`、PowerShell 配置/运行脚本和 CLI E2E，adapter 只提供 `repo.read-file` 与 `repo.run-tests`，对仓库文件树、相对路径、符号链接、测试输出和状态摘要执行有界只读处理。
 - 验证：在当前真实仓库中启动多个 CLI 子进程，完成 `init→agent run→inspect→replay`；模型提议依次触发两个 repo 能力，测试结果为 PASS，STEP 保存动作与状态证据，Replay 为 `CONSISTENT`，Replay 不再请求模型，README 文件内容和写入哨兵保持不变。
-- 边界：adapter 的“只读”是协议与实现约束，不是 OS 级权限隔离；测试命令本身可能包含副作用，生产接入必须使用低权限执行环境。当前只证明一个仓库、一个文件和一个测试入口，尚未证明任意仓库安全、长期恢复或学习泛化。
+- 连续性验证：repo 与 `temperature` 共用同一 `agent loop` 的 Run 结果外壳；repo 真实 CLI 在第二个 Run 的模型边界被强制中断后，经显式 `recover→resume` 完成剩余预算，两个 Run 均 Replay 为 `CONSISTENT`，测试能力结果仍为 PASS，仓库内容和写入哨兵不变。
+- 边界：adapter 的“只读”是协议与实现约束，不是 OS 级权限隔离；测试命令本身可能包含副作用，生产接入必须使用低权限执行环境。当前仍只证明一个仓库、一个文件和一个测试入口；外部 transition 执行到一半崩溃、任意仓库安全性和学习泛化仍未证明。
