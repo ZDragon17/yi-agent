@@ -612,6 +612,9 @@ export async function runLab(input) {
         sequence: event.sequence,
         recordedAt: event.payload.recordedAt,
         candidateOutcome,
+        valueSpec: cloneJson(stepValueSpec),
+        beforeVector: [...beforeObservation.vector],
+        afterVector: [...postObservation.vector],
         ...(committedPolicyEvidence?.observationDigest === undefined
           ? {}
           : { observationDigest: committedPolicyEvidence.observationDigest }),

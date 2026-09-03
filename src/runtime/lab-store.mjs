@@ -412,6 +412,9 @@ export class LabStore {
           sequence: event.sequence,
           recordedAt: event.payload.recordedAt,
           candidateOutcome: cloneJson(event.payload.candidateOutcome),
+          valueSpec: cloneJson(event.payload.boundary.valueSpec),
+          beforeVector: [...event.payload.beforeObservation.vector],
+          afterVector: [...event.payload.postObservation.vector],
           ...(event.payload.policyEvidence?.observationDigest === undefined
             ? {}
             : { observationDigest: event.payload.policyEvidence.observationDigest }),

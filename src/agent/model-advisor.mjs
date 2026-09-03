@@ -141,6 +141,22 @@ function candidateHistorySummary(history) {
           : null,
         verified: typeof entry.quality.verified === 'boolean' ? entry.quality.verified : null,
       };
+      if (Object.hasOwn(entry.quality, 'goalDistanceBefore')) {
+        summary.quality.goalDistanceBefore = Number.isFinite(entry.quality.goalDistanceBefore) && entry.quality.goalDistanceBefore >= 0
+          ? entry.quality.goalDistanceBefore
+          : null;
+      }
+      if (Object.hasOwn(entry.quality, 'goalDistanceAfter')) {
+        summary.quality.goalDistanceAfter = Number.isFinite(entry.quality.goalDistanceAfter) && entry.quality.goalDistanceAfter >= 0
+          ? entry.quality.goalDistanceAfter
+          : null;
+      }
+      if (Object.hasOwn(entry.quality, 'goalProgress')) {
+        summary.quality.goalProgress = Number.isFinite(entry.quality.goalProgress) ? entry.quality.goalProgress : null;
+      }
+      if (Object.hasOwn(entry.quality, 'goalReached')) {
+        summary.quality.goalReached = typeof entry.quality.goalReached === 'boolean' ? entry.quality.goalReached : null;
+      }
     }
     const entrySummary = {
       runId: boundedText(entry.runId),
@@ -151,6 +167,10 @@ function candidateHistorySummary(history) {
       candidateScopeDigest: boundedText(entry.candidateScopeDigest),
       observationDigest: boundedText(entry.observationDigest),
       attempt: Number.isSafeInteger(entry.attempt) && entry.attempt > 0 ? entry.attempt : null,
+      decisionContextDigest: boundedText(entry.decisionContextDigest),
+      contextAttempt: Number.isSafeInteger(entry.contextAttempt) && entry.contextAttempt > 0
+        ? entry.contextAttempt
+        : null,
       sequence: Number.isSafeInteger(entry.sequence) ? entry.sequence : null,
       recordedAt: boundedText(entry.recordedAt),
       candidateOutcome: summary,

@@ -722,3 +722,10 @@
 - 实现：共同 Runtime 从已有 `candidateOutcome.verification` 派生 `quality.errorMagnitude` 与 `quality.verified`；该字段不写入 Kernel Memory、不修改 STEP schema、不参与安全选择，ModelAdvisor 只接收经过既有历史预算筛选的摘要。
 - 验证：`[1,-3]` 的误差得到平均绝对值 `2`；ACTION 且 learnable 的反馈标记为 verified；ModelAdvisor 能携带质量摘要；candidate-history 2/2、ModelAdvisor 13/13、agent CLI 13/13、repo WorldPort 9/9。
 - 边界：这是预测质量线索，不是业务目标成功率、修复成本或因果归因；尚未定义跨候选的反事实比较，也未让质量自动改变 Kernel。下一节点应使用同一初始状态的多次候选与真实测试结果，测量质量线索是否能预测修复成本，并保留失败反例。
+
+## F-86 同一可观测上下文中的多候选比较
+
+- 反例：F-85 已能比较单个候选的预测误差和目标距离，但不同 proposal 仍没有共同的上下文序号；如果只看 candidate digest，无法知道它们是否回应同一次观测；如果把不同观测强行并列，又会把不可比结果混在一起。
+- 实现：候选历史标注器按 `{worldVersion,tokenMapDigest,scenario,observationDigest}` 生成 `decisionContextDigest`，在同一上下文中递增 `contextAttempt`；候选自己的 `candidateScopeDigest/attempt` 保持独立。ModelAdvisor 仅接收有界派生字段，Kernel、STEP schema 和 Replay 不变。
+- 验证：同一上下文的两个不同候选得到 contextAttempt 1/2；观测摘要变化后重新从 1 开始；候选历史 4/4、ModelAdvisor 13/13、agent CLI 13/13、repo WorldPort 9/9。
+- 边界：上下文序号只是可比性和尝试顺序，不是反事实因果证明，也不能判断哪个 proposal 真正修复了领域目标；下一步要在同一初始状态的多候选实验中，把 `goalProgress`、测试结果和跨 Run 步数关联起来，测量修复成本而不是只增加标签。
