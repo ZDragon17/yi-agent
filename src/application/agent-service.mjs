@@ -275,7 +275,7 @@ export async function runLab(input) {
   let persistedRecoveryCapabilities = world.supportsIdempotentTransitions === true
     ? null
     : unresolvedExternalTransition?.evidence.capabilities ?? null;
-  let persistedRecoveryRequest = unresolvedExternalTransition === null
+  let persistedRecoveryRequest = persistedRecoveryIntent === null
     ? null
     : {
         schemaVersion: SCHEMA_VERSION,
@@ -284,11 +284,11 @@ export async function runLab(input) {
         policyVersion: manifest.authorityPolicy.policyVersion,
         constraintsDigest: manifest.authorityPolicy.constraintsDigest,
         executionNonce: unresolvedExternalTransition.evidence.executionNonce,
-        ...(unresolvedExternalTransition.evidence.policyEvidence?.applied === true &&
-          unresolvedExternalTransition.evidence.policyEvidence.proposal !== undefined
-          ? { proposal: cloneJson(unresolvedExternalTransition.evidence.policyEvidence.proposal) }
-          : {}),
       };
+  const persistedRecoveryProposal = unresolvedExternalTransition?.evidence.policyEvidence?.applied === true &&
+    unresolvedExternalTransition.evidence.policyEvidence.proposal !== undefined
+    ? cloneJson(unresolvedExternalTransition.evidence.policyEvidence.proposal)
+    : undefined;
   let executed = 0;
   let accepted = 0;
   let stopReason = 'COMPLETED';
@@ -403,7 +403,10 @@ export async function runLab(input) {
     }
 
     const selectedProposal = persistedRecoveryRequest?.proposal ??
-      (modelDecision?.token === intent.choice.token ? modelDecision.proposal : undefined);
+      (modelDecision?.token === intent.choice.token ? modelDecision.proposal : undefined) ??
+      (unresolvedExternalTransition !== null && intent.choice.token === unresolvedExternalTransition.evidence.token
+        ? persistedRecoveryProposal
+        : undefined);
     const receiptRequest = persistedRecoveryRequest ?? {
       schemaVersion: SCHEMA_VERSION,
       token: intent.choice.token,
@@ -924,9 +927,10 @@ function assertExternalTransitionRetry(unresolved, request, state, planningHoriz
   if (request.executionNonce !== evidence.executionNonce) mismatches.push('executionNonce');
   if (request.token !== evidence.token) mismatches.push('token');
   if (request.basedOnVersion !== evidence.basedOnVersion) mismatches.push('basedOnVersion');
-  if (canonicalJson(request.proposal ?? null) !== canonicalJson(evidence.policyEvidence?.applied === true
-    ? evidence.policyEvidence.proposal ?? null
-    : null)) mismatches.push('proposal');
+  if (request.token === evidence.token &&
+      canonicalJson(request.proposal ?? null) !== canonicalJson(evidence.policyEvidence?.applied === true
+        ? evidence.policyEvidence.proposal ?? null
+        : null)) mismatches.push('proposal');
   if (canonicalDigest(state) !== evidence.beforeDigest) mismatches.push('beforeDigest');
   if ((evidence.planning?.horizon ?? 1) !== planningHorizon) mismatches.push('planningHorizon');
   if ((evidence.planning?.contextMode ?? 'legacy-v1') !== planningContextMode) mismatches.push('planningContextMode');
