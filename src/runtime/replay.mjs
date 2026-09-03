@@ -564,6 +564,8 @@ function validatePolicyEvidence(value, sequence) {
       (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
       typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
       (value.observationDigest !== undefined && (typeof value.observationDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.observationDigest))) ||
+      (value.supersedesCandidateDigest !== undefined &&
+        (typeof value.supersedesCandidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.supersedesCandidateDigest))) ||
       (value.candidateDigest !== undefined && !isValidCandidateDigest(value)) ||
       (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
       typeof value.applied !== 'boolean' ||

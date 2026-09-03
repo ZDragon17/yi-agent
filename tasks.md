@@ -736,3 +736,10 @@
 - 实现：从 immutable `afterState.kernelStep` 投影 `kernelStep`，并由同一 Runtime 标注器计算 `stepsSincePreviousCandidate`；连续 loop 与重启读取复用同一派生逻辑，ModelAdvisor 明确收到“步距仅是时间证据、不是修复因果”的约束。
 - 验证：第 3 步和第 7 步的候选得到步距 4；首条候选不伪造步距；candidate-history 5/5、ModelAdvisor 13/13、agent CLI 13/13、repo WorldPort 9/9。
 - 边界：步距仍不等于修复成本，尚未有候选谱系、反事实对照或多候选同初始状态的真实比较；下一节点应把显式实验标识与终态目标证据结合起来，才能测量“某个候选带来的额外工作量”。
+
+## F-88 候选显式谱系与 WorldPort 边界校验
+
+- 反例：F-87 只有时间步距，模型即使看到了错误候选，也无法在账本中明确表达“当前候选想修正哪一条历史候选”；若直接相信模型返回的 digest，又会接受不存在或跨 WorldPort 的伪谱系。
+- 实现：ModelAdvisor 可返回可选 `supersedesCandidateDigest`；应用层只接受同一 `worldVersion + tokenMapDigest + scenario` 且候选历史中确实存在的摘要，并将接受后的引用写入 policy evidence 与 candidate history。LabStore/Replay 只校验字段形状和原有摘要链，旧账本继续兼容；ModelAdvisor 明确把该字段当作存在性线索而非因果证明。
+- 验证：候选谱系单测 2/2；ModelAdvisor 17/17；repo 修复 E2E 9/9，确认错误候选的摘要被引用、跨边界引用不被接受、两个 Run Replay 均 `CONSISTENT`。
+- 边界：当前只证明“引用存在且作用域正确”，不证明模型语义修复、回滚关系或真实修复成本；下一节点应在多个候选、同初始状态和独立终态判别器下建立反事实对照，并检验谱系是否能预测额外工作量。

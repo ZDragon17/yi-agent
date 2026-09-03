@@ -3,6 +3,7 @@ import { INTERNAL_RUN_APPEND, LabStore, LabStoreError } from '../runtime/lab-sto
 import { candidateDigest, canonicalDigest, canonicalJson, cloneJson, MAX_CANDIDATE_HISTORY, MAX_MODEL_PROPOSAL_BYTES, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { buildCandidateOutcome } from '../runtime/candidate-evidence.mjs';
 import { annotateCandidateHistory } from '../runtime/candidate-history.mjs';
+import { acceptedSupersessionDigest } from '../runtime/candidate-lineage.mjs';
 import { learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
@@ -434,7 +435,12 @@ export async function runLab(input) {
       );
     }
     const committedPolicyEvidence = retryPolicyEvidence ??
-      (modelDecision === null ? null : policyEvidence(modelDecision, intent, capabilities));
+      (modelDecision === null ? null : policyEvidence(modelDecision, intent, capabilities, {
+        candidateHistory,
+        worldVersion: manifest.worldVersion,
+        tokenMapDigest: manifest.tokenMap.digest,
+        scenario,
+      }));
     const externalInputs = registry.scenarioExternalInputs(
       manifest.worldId,
       scenario,
@@ -622,6 +628,9 @@ export async function runLab(input) {
         ...(committedPolicyEvidence?.proposal === undefined
           ? {}
           : { proposal: cloneJson(committedPolicyEvidence.proposal) }),
+        ...(committedPolicyEvidence?.supersedesCandidateDigest === undefined
+          ? {}
+          : { supersedesCandidateDigest: committedPolicyEvidence.supersedesCandidateDigest }),
       }]).slice(-MAX_CANDIDATE_HISTORY);
       if (sharedCandidateHistory !== null) {
         sharedCandidateHistory.splice(0, sharedCandidateHistory.length, ...candidateHistory);
@@ -899,7 +908,8 @@ function normalizedAdvice(result, fallbackReason) {
     const reasonValid = result.reason === undefined || result.reason === null ||
       (typeof result.reason === 'string' && result.reason.length > 0 && result.reason.length <= 256);
     const proposal = normalizeModelProposal(result.proposal);
-    const valid = tokenValid && reasonValid && proposal.valid;
+    const supersessionValid = result.supersedesCandidateDigest === undefined || validDigest(result.supersedesCandidateDigest);
+    const valid = tokenValid && reasonValid && proposal.valid && supersessionValid;
     const reason = valid ? (result.reason ?? null) : 'INVALID_ADVISOR_RESULT';
     const responseDigest = validDigest(result.responseDigest)
       ? result.responseDigest
@@ -913,6 +923,9 @@ function normalizedAdvice(result, fallbackReason) {
       responseDigest,
       ...(observationDigest === null ? {} : { observationDigest }),
       ...(proposal.value === undefined ? {} : { proposal: proposal.value }),
+      ...(valid && result.supersedesCandidateDigest !== undefined
+        ? { supersedesCandidateDigest: result.supersedesCandidateDigest }
+        : {}),
       reason,
     };
   } catch {
@@ -1088,7 +1101,7 @@ function plannerEvidence(result, applied, reason) {
   };
 }
 
-function policyEvidence(modelDecision, intent, capabilities) {
+function policyEvidence(modelDecision, intent, capabilities, { candidateHistory, worldVersion, tokenMapDigest, scenario }) {
   const safe = capabilities.some((capability) => capability.token === modelDecision.token && capability.allowed && capability.safe);
   const applied = safe && intent.status === 'READY' && intent.choice.token === modelDecision.token;
   const observationDigest = validDigest(modelDecision.observationDigest) ? modelDecision.observationDigest : null;
@@ -1096,6 +1109,13 @@ function policyEvidence(modelDecision, intent, capabilities) {
     token: modelDecision.token,
     proposal: modelDecision.proposal ?? null,
   };
+  const supersedesCandidateDigest = acceptedSupersessionDigest({
+    requestedDigest: modelDecision.supersedesCandidateDigest,
+    history: candidateHistory,
+    worldVersion,
+    tokenMapDigest,
+    scenario,
+  });
   return {
     schemaVersion: SCHEMA_VERSION,
     source: 'model',
@@ -1105,6 +1125,7 @@ function policyEvidence(modelDecision, intent, capabilities) {
     candidateDigest: candidateDigest(candidate),
     ...(observationDigest === null ? {} : { observationDigest }),
     ...(modelDecision.proposal === undefined ? {} : { proposal: cloneJson(modelDecision.proposal) }),
+    ...(supersedesCandidateDigest === null ? {} : { supersedesCandidateDigest }),
     applied,
     reason: applied ? null : (modelDecision.reason ?? (safe ? 'KERNEL_SELECTION_REJECTED' : 'TOKEN_NOT_SAFE')),
   };

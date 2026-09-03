@@ -842,6 +842,8 @@ test('a current-state repo policy enables a history-guided repair across Runs', 
     requests.push(context);
     const hasFailedProposal = context.candidateHistory.some((entry) =>
       entry.proposal?.replacement === wrongSource && entry.candidateOutcome.verification?.attribution === 'ACTION');
+    const failedCandidate = context.candidateHistory.find((entry) =>
+      entry.proposal?.replacement === wrongSource && entry.candidateOutcome.verification?.attribution === 'ACTION');
     const policy = context.observationEvidence.find((item) => item.kind === 'repo-patch-policy');
     const proposal = capability.capabilityId === 'repo.apply-patch'
       ? {
@@ -858,6 +860,9 @@ test('a current-state repo policy enables a history-guided repair across Runs', 
       choices: [{ message: { content: JSON.stringify({
         token: capability.token,
         ...(proposal === undefined ? {} : { proposal }),
+        ...(proposal === undefined || failedCandidate === undefined
+          ? {}
+          : { supersedesCandidateDigest: failedCandidate.candidateOutcome.candidateDigest }),
       }) } }],
     }));
   });
@@ -891,6 +896,7 @@ test('a current-state repo policy enables a history-guided repair across Runs', 
       entry.proposal?.replacement === wrongSource && entry.candidateOutcome.quality?.verified === true &&
       Number.isFinite(entry.candidateOutcome.quality.errorMagnitude)));
     assert.ok(requests[6].candidateHistory.some((entry) => entry.proposal?.replacement === wrongSource));
+    assert.equal(requests[6].candidateHistory.find((entry) => entry.proposal?.replacement === fixedSource), undefined);
     const store = await LabStore.open({ labPath: lab });
     const candidateHistory = await store.readCandidateOutcomes();
     const wrongHistory = candidateHistory.find((entry) => entry.proposal?.replacement === wrongSource);
@@ -898,10 +904,14 @@ test('a current-state repo policy enables a history-guided repair across Runs', 
     assert.ok(wrongHistory);
     assert.ok(fixedHistory);
     assert.equal(fixedHistory.kernelStep - wrongHistory.kernelStep, 4);
+    assert.equal(fixedHistory.supersedesCandidateDigest, wrongHistory.candidateOutcome.candidateDigest);
     const firstEvents = (await store.readRun(first.stdout[0].data.runId)).events;
     const secondEvents = (await store.readRun(second.stdout[0].data.runId)).events;
     assert.ok(firstEvents.some((event) => event.kind === 'STEP' && event.payload.policyEvidence?.proposal?.replacement === wrongSource));
     assert.ok(secondEvents.some((event) => event.kind === 'STEP' && event.payload.policyEvidence?.proposal?.replacement === fixedSource));
+    assert.ok(secondEvents.some((event) =>
+      event.kind === 'STEP' && event.payload.policyEvidence?.proposal?.replacement === fixedSource &&
+      event.payload.policyEvidence.supersedesCandidateDigest === wrongHistory.candidateOutcome.candidateDigest));
     for (const runId of [first.stdout[0].data.runId, second.stdout[0].data.runId]) {
       const replay = await invoke(['replay', '--lab', lab, '--run', runId, '--adapter', adapterConfig, '--json'], env);
       assert.equal(replay.code, 0, JSON.stringify(replay));

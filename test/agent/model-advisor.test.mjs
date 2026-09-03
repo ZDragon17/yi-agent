@@ -187,6 +187,41 @@ test('model advisor preserves a bounded proposal as untrusted action data', asyn
   assert.equal(result.token, TOKEN_A);
 });
 
+test('model advisor preserves a bounded candidate supersession reference', async () => {
+  const supersedesCandidateDigest = `sha256:${'a'.repeat(64)}`;
+  const advisor = createModelAdvisor({
+    model: 'model-lineage',
+    client: {
+      async chat() {
+        return { model: 'model-lineage', content: JSON.stringify({ token: TOKEN_A, supersedesCandidateDigest }) };
+      },
+    },
+  });
+  const result = await advisor({
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    memory: {},
+  });
+  assert.equal(result.token, TOKEN_A);
+  assert.equal(result.supersedesCandidateDigest, supersedesCandidateDigest);
+});
+
+test('model advisor rejects a malformed candidate supersession reference', async () => {
+  const advisor = createModelAdvisor({
+    model: 'model-invalid-lineage',
+    client: {
+      async chat() {
+        return { model: 'model-invalid-lineage', content: JSON.stringify({ token: TOKEN_A, supersedesCandidateDigest: 'not-a-digest' }) };
+      },
+    },
+  });
+  const result = await advisor({
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    memory: {},
+  });
+  assert.equal(result.token, null);
+  assert.equal(result.reason, 'INVALID_MODEL_OUTPUT');
+});
+
 test('model advisor rejects an oversized action proposal before it reaches the kernel', async () => {
   const advisor = createModelAdvisor({
     model: 'model-oversized-proposal',
