@@ -1,4 +1,5 @@
 import { canonicalDigest } from './schema.mjs';
+import { comparePairedCandidates } from './candidate-comparison.mjs';
 
 export function annotateCandidateHistory(history) {
   if (!Array.isArray(history)) return [];
@@ -11,6 +12,7 @@ export function annotateCandidateHistory(history) {
     const quality = predictionQuality(entry.candidateOutcome, entry);
     const supersededStepDistance = stepsSinceSupersededCandidate(history, index, entry);
     const supersededQuality = compareSupersededQuality(history, index, entry, quality);
+    const pairedComparison = compareWithPreviousPairedCandidate(history, index, entry);
     const { valueSpec: _valueSpec, beforeVector: _beforeVector, afterVector: _afterVector, ...publicEntry } = entry ?? {};
     const kernelStep = Number.isSafeInteger(entry?.kernelStep) && entry.kernelStep >= 0 ? entry.kernelStep : null;
     const stepGap = kernelStep !== null && previousKernelStep !== null && kernelStep >= previousKernelStep
@@ -22,6 +24,7 @@ export function annotateCandidateHistory(history) {
       ...(stepGap === null ? {} : { stepsSincePreviousCandidate: stepGap }),
       ...(supersededStepDistance === null ? {} : { stepsSinceSupersededCandidate: supersededStepDistance }),
       ...(supersededQuality === null ? {} : supersededQuality),
+      ...(pairedComparison === null ? {} : { pairedComparison }),
     };
     if (kernelStep !== null) previousKernelStep = kernelStep;
     const annotated = scope === null
@@ -37,6 +40,15 @@ export function annotateCandidateHistory(history) {
     contextAttempts.set(decisionContext, contextAttempt);
     return { ...annotated, decisionContextDigest: decisionContext, contextAttempt };
   });
+}
+
+function compareWithPreviousPairedCandidate(history, index, entry) {
+  const previous = history.slice(0, index).findLast((candidate) =>
+    sameWorldPortScope(candidate, entry) &&
+    candidate.beforeStateDigest === entry?.beforeStateDigest &&
+    candidate?.candidateOutcome?.candidateDigest !== entry?.candidateOutcome?.candidateDigest,
+  );
+  return previous === undefined ? null : comparePairedCandidates(previous, entry);
 }
 
 export function candidateScopeDigest({ worldVersion, tokenMapDigest, scenario, candidateDigest } = {}) {

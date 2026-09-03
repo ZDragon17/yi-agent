@@ -251,6 +251,12 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 - loop 的自动恢复是显式 opt-in：`--resume --auto-recover` 仅在 current 为 `RUNNING` 且 `LabStore.recover` 的系统 liveness probe 证明旧 writer owner 已死亡时接管；若检查与正常完成之间出现短暂无锁窗口，仍用初始 writer owner 身份复探测，活跃 owner、无法确认死亡或非运行态均不自动接管。它复用原有恢复意图、陈旧锁证据、canonical recovery lock 和 completion，不另造一套恢复状态机。
 - `forever` 的热路径不在每个新 Run 或正常 `--resume` 中重复扫描全部历史：`startRun` 已持有唯一 writer lock 后，`--resume` 在进入下一 Run 前，均根据 verified current 指向的最新 terminal Run 重建当前 continuation；显式 `readLoopContinuation()` 审计和恢复候选扫描仍使用全量账本校验，避免性能优化替代历史完整性检查。
 
+## 8.1 同初始状态的候选配对
+
+F-91 增加 `beforeStateDigest` 作为候选产生前连续状态的不可变引用，并在共同 Runtime 中派生最近同状态候选的配对结果。配对条件同时绑定 WorldPort 版本、Token 映射、场景和 before 摘要；候选必须不同且两端质量已验证。比较器优先使用 `distance-v2` 的目标后距离，缺少该几何时才使用验证误差幅度，较小者为优，差值方向固定为左值减右值。该结果只作为历史和 ModelAdvisor 的证据，不改变 Kernel 选择、权限或 Replay 语义。
+
+配对结果的语义是匹配状态的终态比较，不是因果证明：两个候选即便拥有相同 before 摘要，也可能受到外部时间、隐藏副作用或执行环境影响。要把它升级为反事实证据，仍需隔离、随机化/交叉运行和独立领域判别器；在这些条件缺失时，系统宁可不生成比较结果。
+
 ## 9. 有界近期变化上下文
 
 历史隐藏状态反例进一步区分出：保存“同一动作可能有多个结果”并不等于能够利用已验证历史选择动作。新 Lab 的 Memory 可选保存最近两个已验证变化条目 `{token,actualDelta}`，以固定顺序形成 `h1:` 上下文签名；`contextModels` 按该签名和不透明 Token 保存动作模型。Kernel 在当前上下文已有样本时优先使用它，再回退到关系模型和总体模型；学习只在 `ACTION && learnable` 或已闭合 clean feedback 时把变化写入上下文，拒绝、混杂和未闭合反馈不写入。

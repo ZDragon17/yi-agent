@@ -112,6 +112,7 @@ test('model advisor receives small prior proposals and marks oversized ones as t
         sequence: 2,
         worldVersion: 'world-v1',
         tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+        beforeStateDigest: `sha256:${'5'.repeat(64)}`,
         candidateScopeDigest: `sha256:${'2'.repeat(64)}`,
         observationDigest: `sha256:${'3'.repeat(64)}`,
         attempt: 2,
@@ -122,6 +123,17 @@ test('model advisor receives small prior proposals and marks oversized ones as t
         stepsSinceSupersededCandidate: 4,
         goalDistanceDeltaFromSuperseded: 2,
         goalImprovedFromSuperseded: true,
+        pairedComparison: {
+          pair: 'same-before-state-v1',
+          beforeStateDigest: `sha256:${'5'.repeat(64)}`,
+          metric: 'errorMagnitude',
+          leftCandidateDigest: `sha256:${'6'.repeat(64)}`,
+          rightCandidateDigest: `sha256:${'7'.repeat(64)}`,
+          leftValue: 3,
+          rightValue: 1,
+          delta: 2,
+          verdict: 'RIGHT_BETTER',
+        },
         supersedesCandidateDigest: `sha256:${'9'.repeat(64)}`,
         quality: { errorMagnitude: 0.5, verified: true, goalDistanceBefore: 4, goalDistanceAfter: 2, goalProgress: 2, goalReached: false },
         proposal: { replacement: 'small fix' },
@@ -139,12 +151,24 @@ test('model advisor receives small prior proposals and marks oversized ones as t
   const context = JSON.parse(prompt.split('\n').at(-1));
   assert.deepEqual(context.candidateHistory[0].proposal, { replacement: 'small fix' });
   assert.equal(context.candidateHistory[0].worldVersion, 'world-v1');
+  assert.equal(context.candidateHistory[0].beforeStateDigest, `sha256:${'5'.repeat(64)}`);
   assert.equal(context.candidateHistory[0].attempt, 2);
   assert.equal(context.candidateHistory[0].contextAttempt, 3);
   assert.equal(context.candidateHistory[0].stepsSincePreviousCandidate, 4);
   assert.equal(context.candidateHistory[0].stepsSinceSupersededCandidate, 4);
   assert.equal(context.candidateHistory[0].goalDistanceDeltaFromSuperseded, 2);
   assert.equal(context.candidateHistory[0].goalImprovedFromSuperseded, true);
+  assert.deepEqual(context.candidateHistory[0].pairedComparison, {
+    pair: 'same-before-state-v1',
+    beforeStateDigest: `sha256:${'5'.repeat(64)}`,
+    metric: 'errorMagnitude',
+    leftCandidateDigest: `sha256:${'6'.repeat(64)}`,
+    rightCandidateDigest: `sha256:${'7'.repeat(64)}`,
+    leftValue: 3,
+    rightValue: 1,
+    delta: 2,
+    verdict: 'RIGHT_BETTER',
+  });
   assert.equal(context.candidateHistory[0].supersedesCandidateDigest, `sha256:${'9'.repeat(64)}`);
   assert.deepEqual(context.candidateHistory[0].candidateOutcome.quality, {
     errorMagnitude: 0.5,

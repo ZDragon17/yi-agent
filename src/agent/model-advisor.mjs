@@ -171,6 +171,7 @@ function candidateHistorySummary(history) {
       scenario: boundedText(entry.scenario),
       worldVersion: boundedText(entry.worldVersion),
       tokenMapDigest: boundedText(entry.tokenMapDigest),
+      beforeStateDigest: boundedText(entry.beforeStateDigest),
       candidateScopeDigest: boundedText(entry.candidateScopeDigest),
       observationDigest: boundedText(entry.observationDigest),
       attempt: Number.isSafeInteger(entry.attempt) && entry.attempt > 0 ? entry.attempt : null,
@@ -193,6 +194,8 @@ function candidateHistorySummary(history) {
       recordedAt: boundedText(entry.recordedAt),
       candidateOutcome: summary,
     };
+    const pairedComparison = boundedPairedComparison(entry.pairedComparison);
+    if (pairedComparison !== null) entrySummary.pairedComparison = pairedComparison;
     if (DIGEST_PATTERN.test(entry.supersedesCandidateDigest ?? '')) {
       entrySummary.supersedesCandidateDigest = entry.supersedesCandidateDigest;
     }
@@ -207,6 +210,30 @@ function candidateHistorySummary(history) {
     truncated = true;
   }
   return { entries, truncated };
+}
+
+function boundedPairedComparison(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.pair !== 'same-before-state-v1' ||
+      !DIGEST_PATTERN.test(value.beforeStateDigest ?? '') ||
+      !DIGEST_PATTERN.test(value.leftCandidateDigest ?? '') ||
+      !DIGEST_PATTERN.test(value.rightCandidateDigest ?? '') ||
+      !['goalDistanceAfter', 'errorMagnitude'].includes(value.metric) ||
+      !Number.isFinite(value.leftValue) || value.leftValue < 0 ||
+      !Number.isFinite(value.rightValue) || value.rightValue < 0 ||
+      !Number.isFinite(value.delta) ||
+      !['LEFT_BETTER', 'RIGHT_BETTER', 'TIE'].includes(value.verdict)) return null;
+  return {
+    pair: value.pair,
+    beforeStateDigest: value.beforeStateDigest,
+    metric: value.metric,
+    leftCandidateDigest: value.leftCandidateDigest,
+    rightCandidateDigest: value.rightCandidateDigest,
+    leftValue: value.leftValue,
+    rightValue: value.rightValue,
+    delta: value.delta,
+    verdict: value.verdict,
+  };
 }
 
 function candidateProposalSummary(entry) {

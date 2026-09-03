@@ -757,3 +757,10 @@
 - 实现：Runtime 复用已有 `distance-v2` 几何，从被引用候选和当前候选的目标后距离派生 `goalDistanceDeltaFromSuperseded` 与 `goalImprovedFromSuperseded`；只有同一作用域、历史顺序有效且两端几何完整时才输出，模型侧只接收有界结果。
 - 验证：候选历史用例 7/7；ModelAdvisor 15/15；目标后距离从 3 降到 1 时派生差值 2 和 improved=true；缺失源节点或跨 WorldPort 不生成。
 - 边界：这是统一数值几何上的结果比较，不是独立领域终态判别器、反事实对照或因果归因；下一节点仍需把可插拔、隔离的领域判别器接入实验流程，并保持其结果不越过 Kernel 权限边界。
+
+## F-91 同初始状态的候选配对比较
+
+- 反例：F-90 只比较有显式谱系关系的先后候选；若两个独立 Run 从同一个初始状态尝试不同候选，却没有保存 before 摘要，仍无法区分“可匹配的终态差异”和“不同状态下的顺序差异”。
+- 实现：候选历史从 STEP 的 `beforeDigest` 投影 `beforeStateDigest`；Runtime 只在同一 `worldVersion + tokenMapDigest + scenario + beforeStateDigest` 下，将当前候选与最近的不同候选配对。比较器要求两端 `quality.verified=true`，优先比较 `goalDistanceAfter`，否则比较 `errorMagnitude`；结果经过 ModelAdvisor 有界投影进入后续提议上下文。
+- 验证：比较器覆盖同状态优先目标距离、误差回退、不同 before 摘要、同候选、跨场景和非有限数值边界；candidate-history、ModelAdvisor 与 repo E2E 继续验证历史投影和 Replay 不被破坏。
+- 边界：这是匹配初始状态的终态比较，不是隔离反事实、现实因果、领域成功判别或 Kernel 自动学习；下一步应构造真正的分支/隔离 WorldPort，使多个候选共享可审计的初始快照并接受独立终态判别器。

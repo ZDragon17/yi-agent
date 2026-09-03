@@ -412,6 +412,7 @@ export class LabStore {
           sequence: event.sequence,
           recordedAt: event.payload.recordedAt,
           kernelStep: event.payload.afterState.kernelStep,
+          beforeStateDigest: event.payload.beforeDigest,
           candidateOutcome: cloneJson(event.payload.candidateOutcome),
           valueSpec: cloneJson(event.payload.boundary.valueSpec),
           beforeVector: [...event.payload.beforeObservation.vector],

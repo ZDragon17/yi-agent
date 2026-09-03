@@ -227,3 +227,37 @@ test('candidate history compares superseded and current target distance with one
   assert.equal(history[1].goalDistanceDeltaFromSuperseded, 2);
   assert.equal(history[1].goalImprovedFromSuperseded, true);
 });
+
+test('candidate history compares the nearest candidates sharing one initial state', () => {
+  const beforeStateDigest = `sha256:${'e'.repeat(64)}`;
+  const history = annotateCandidateHistory([
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      beforeStateDigest,
+      quality: { errorMagnitude: 3, verified: true },
+      candidateOutcome: { candidateDigest: CANDIDATE_DIGEST },
+    },
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      beforeStateDigest,
+      quality: { errorMagnitude: 1, verified: true },
+      candidateOutcome: { candidateDigest: OTHER_CANDIDATE_DIGEST },
+    },
+  ]);
+
+  assert.deepEqual(history[1].pairedComparison, {
+    pair: 'same-before-state-v1',
+    beforeStateDigest,
+    metric: 'errorMagnitude',
+    leftCandidateDigest: CANDIDATE_DIGEST,
+    rightCandidateDigest: OTHER_CANDIDATE_DIGEST,
+    leftValue: 3,
+    rightValue: 1,
+    delta: 2,
+    verdict: 'RIGHT_BETTER',
+  });
+});

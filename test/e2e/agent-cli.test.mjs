@@ -136,6 +136,9 @@ test('agent loop commits multiple runs and resumes from the persisted current st
     assert.equal(contexts[1].candidateHistory.at(-1).scenario, 'steady');
     assert.equal(inspection.stdout[0].data.candidateHistory.length, 3);
     assert.equal(inspection.stdout[0].data.candidateHistory.at(-1).worldId, 'inventory');
+    for (const candidate of inspection.stdout[0].data.candidateHistory) {
+      assert.match(candidate.beforeStateDigest, /^sha256:[0-9a-f]{64}$/u);
+    }
     for (const result of loop.stdout[0].data.results) {
       const replay = await invoke(['replay', '--lab', lab, '--run', result.runId, '--json'], process.env);
       assert.equal(replay.code, 0);

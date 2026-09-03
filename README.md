@@ -268,6 +268,8 @@ F-89 在接受谱系引用后派生 `stepsSinceSupersededCandidate`：它是被�
 
 F-90 在同一条件成立时继续派生 `goalDistanceDeltaFromSuperseded` 与 `goalImprovedFromSuperseded`：Runtime 用两个候选各自的 `distance-v2` 目标后距离相减，正值表示当前候选在这套统一几何上更接近目标。缺少完整 ValueSpec、源候选或有效顺序时不生成；这是一种可复核的终态几何比较，不是独立领域判别器，也不是因果证明或任务成功率。
 
+F-91 把候选比较推进到同初始状态配对：每条候选历史保留产生该 STEP 前的 `beforeStateDigest`，Runtime 只将同一 `worldVersion + tokenMapDigest + scenario + beforeStateDigest` 下最近的两个不同候选配对；两端必须有 `quality.verified=true`，优先比较统一 `distance-v2` 的 `goalDistanceAfter`，否则比较验证误差 `errorMagnitude`。结果记录 `metric/leftValue/rightValue/delta/verdict` 并进入模型有界上下文。它证明的是“匹配初始状态下的终态结果差异”，不是顺序执行的反事实、领域判别器或真实修复因果；没有同初始摘要或验证质量不足时不生成。
+
 ## 当前明确不是什么
 
 当前版本还不是通用自主智能，也不会自动操作真实桌面、任意 Shell 或用户文件。它没有证明“智能已经出现”，只提供一个可以持续做实验、记录证据、制造反例和检查回放一致性的底座。

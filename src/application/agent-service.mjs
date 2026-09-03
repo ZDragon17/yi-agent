@@ -618,6 +618,7 @@ export async function runLab(input) {
         sequence: event.sequence,
         recordedAt: event.payload.recordedAt,
         kernelStep: nextState.kernelStep,
+        beforeStateDigest: event.payload.beforeDigest,
         candidateOutcome,
         valueSpec: cloneJson(stepValueSpec),
         beforeVector: [...beforeObservation.vector],
