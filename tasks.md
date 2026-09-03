@@ -708,3 +708,10 @@
 - 实现：新增 Runtime 级候选历史标注器，按 `{worldVersion,tokenMapDigest,scenario,candidateDigest}` 生成 `candidateScopeDigest` 并计算有界 `attempt`；持久化投影与同进程连续 Run 复用同一标注逻辑，同时携带 `observationDigest`、WorldPort 版本和 token 映射摘要。ModelAdvisor 只接收这些有界派生字段，不改变 Kernel Memory、候选身份摘要或 Replay。
 - 验证：同一作用域相同候选得到 attempt 1/2；WorldPort 版本或 token 映射不同即使候选摘要相同也各自从 attempt 1 开始；重启后的第三个 Run 能继续看到前两次来源并将重复候选标为 attempt 2；候选历史单测 1/1，ModelAdvisor 13/13，agent CLI 12/12。
 - 边界：作用域摘要只是防止历史混淆，不代表跨 WorldPort 语义可迁移；attempt 也不是质量分数，时间衰减、修复成本和反事实归因仍未进入 Kernel。下一节点应在多个 WorldPort/多个场景的真实长跑中测量历史筛选与候选结果，而不是把来源字段当成学习完成。
+
+## F-84 候选历史的实验空间隔离
+
+- 反例：F-83 为历史条目标记了 WorldPort 作用域，但若查询层把多个 lab 空间的结果无条件汇总，模型仍可能把不同实验的同名 token/proposal 当成可迁移经验。
+- 实现：保持候选历史查询以单个 LabStore 空间为边界，在两个不同 WorldPort 的独立 lab 中分别运行同一闭环；不增加跨领域聚合分支，跨 WorldPort 仍只复用共同 Runtime/Kernel/Replay 契约。
+- 验证：temperature 与 inventory 各自首个 Run 的模型上下文历史均为空；各自账本只返回本 WorldPort 的一条候选记录，两边独立 Replay 均为 `CONSISTENT`。
+- 边界：这证明的是历史不串台与底层闭环可复用，不证明候选语义能跨 WorldPort 迁移；若未来要做跨空间经验，需要单独定义可证伪的共享关系签名、授权和归因契约，不能直接拼接历史数组。

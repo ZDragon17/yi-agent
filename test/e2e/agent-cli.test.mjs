@@ -216,6 +216,61 @@ test('a restarted agent run can use candidate history to choose a different safe
   }
 });
 
+test('candidate history stays isolated between WorldPort lab spaces', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-candidate-history-isolation-e2e-'));
+  const contexts = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    contexts.push(context);
+    const capability = context.capabilities.find((item) => item.allowed && item.safe);
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'candidate-history-isolation-agent',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({ token: capability?.token ?? null }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'local-candidate-history-isolation-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'local-candidate-history-isolation-model',
+  };
+  const temperatureLab = path.join(root, 'temperature-lab');
+  const inventoryLab = path.join(root, 'inventory-lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', temperatureLab, '--world', 'temperature', '--seed', 'isolation-temperature', '--json'], process.env)).code, 0);
+    assert.equal((await invoke(['init', '--lab', inventoryLab, '--world', 'inventory', '--seed', 'isolation-inventory', '--json'], process.env)).code, 0);
+    const temperatureRun = await invoke(['agent', 'run', '--lab', temperatureLab, '--steps', '1', '--json'], env);
+    const inventoryRun = await invoke(['agent', 'run', '--lab', inventoryLab, '--steps', '1', '--json'], env);
+    assert.equal(temperatureRun.code, 0);
+    assert.equal(inventoryRun.code, 0);
+    assert.equal(contexts.length, 2);
+    assert.equal(contexts[0].candidateHistory.length, 0);
+    assert.equal(contexts[1].candidateHistory.length, 0);
+    const temperatureHistory = await (await LabStore.open({ labPath: temperatureLab })).readCandidateOutcomes();
+    const inventoryHistory = await (await LabStore.open({ labPath: inventoryLab })).readCandidateOutcomes();
+    assert.equal(temperatureHistory.length, 1);
+    assert.equal(inventoryHistory.length, 1);
+    assert.equal(temperatureHistory[0].worldId, 'temperature');
+    assert.equal(inventoryHistory[0].worldId, 'inventory');
+    for (const [lab, run] of [[temperatureLab, temperatureRun], [inventoryLab, inventoryRun]]) {
+      const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env);
+      assert.equal(replay.code, 0, JSON.stringify(replay));
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    }
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('a new agent loop still requires model configuration', async () => {
   const env = { ...process.env };
   delete env.YI_AGENT_API_KEY;
