@@ -778,3 +778,10 @@
 - 实现：新增 `experiment pair` CLI 和持久化实验服务。首次运行在输出目录独占写入带自摘要的 `pair.start.json`，固定父 Lab manifest/current、WorldPort identity、Token map、scenario、初始状态摘要和左右 runId；两个分支使用普通 LabStore 从同一状态各自执行一个 Run，父 Lab 保持只读。左右历史重新进入共同候选比较器，两个分支 Replay 一致后才独占写入 `pair.end.json`。`--resume` 校验 start/end 的交叉摘要、候选边界和父状态，已完成分支不重复执行，缺失分支可接续。
 - 验证：服务单测覆盖正常完成、父空间无终态拒绝和“左分支完成后注入中断、仅 `--resume` 补右分支”；真实 PowerShell 子进程 CLI 完成首次配对与恢复调用，在 `steady` 场景观察到 `LEFT_BETTER`，左右 Replay 均 `CONSISTENT`，父 current 摘要不变；其它合法动力学可得到 `TIE` 或另一侧更优，不预设结果。
 - 边界：当前只允许内置纯模拟 WorldPort；不能把 JSON 初始快照当成外部设备、文件、金融或医疗现实的安全 fork。独立终态判别器、随机化候选、多分支预算、外部幂等/隔离/对账及人工确认仍是后续实验，不把本节点描述为长期自主智能。
+
+## F-94 配对终态引用完整性复核
+
+- 反例：F-93 的 `pair.end.json` 自身摘要有效，但它引用的分支 current 或 events 在完成后仍可能被篡改；如果恢复只读取 end，旧的 `CONSISTENT/PASS` 会被误当成当前事实。
+- 实现：end 保存左右分支的 manifest/current 摘要；完成结果的 `--resume` 校验固定分支路径、runId、WorldPort identity，重新打开两个 LabStore 并执行只读 Replay。分支缺失、摘要漂移、账本损坏或 Replay 非一致统一返回带分支路径的 `CORRUPT`。没有新增摘要的旧 end 仍通过真实 Replay 复核，保持向后读取。
+- 验证：先以旧实现观察到“篡改分支 current 后仍返回 PASS”的有效反例；新增服务测试确认篡改后 `--resume` 拒绝，正常完成、部分中断恢复、非法候选边界仍通过；完整回归需覆盖新增分支摘要字段与既有 Replay/WorldPort 契约。
+- 边界：这是本地持久化引用完整性，不是文件系统防篡改、现实事实认证或并发写者共识；后续仍需独立终态判别器、随机多候选/多步轨迹及外部 WorldPort 的人工对账契约。

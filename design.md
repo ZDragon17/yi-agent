@@ -264,6 +264,18 @@ F-92 的 `paired-candidates` challenge 建立三个隔离 LabStore：父空间�
 
 该挑战的判定链为：父状态摘要保持不变、分支 before 摘要相等、WorldPort identity 相等、候选摘要不同、质量已验证、配对 verdict 可观察、左右 Replay 均 `CONSISTENT`。它仍是纯模拟 WorldPort 的隔离实验；外部 adapter 的真实副作用不能通过复制初始 JSON 安全分叉，必须等显式幂等/隔离/对账契约后再扩展。
 
+## 8.3 持久化候选配对实验
+
+F-93 的 `experiment pair` 把隔离分支从一次性 challenge 提升为可恢复工件。首次调用要求父 Lab 已有终态 Run，并在用户指定的空输出目录中独占写入 `pair.start.json`；该 start 固定父 manifest/current 摘要、WorldPort identity、Token map、scenario、连续性初始状态摘要、候选 Token 和左右分支 runId。随后两个普通 LabStore 分支从同一初始状态各执行一次 Run，父 Lab 只读。
+
+实验完成前必须重新按同一 `candidate-history` 比较器配对，且左右分支都通过 Replay；只有这样才写入不可覆盖的 `pair.end.json`。如果进程在中间停止，`--resume` 根据 start 继续，已提交的分支不会重复执行。外部 adapter 被拒绝，因为复制一个 JSON 快照不能证明现实副作用可分叉、可回滚或可对账。
+
+## 8.4 配对终态的引用完整性
+
+F-94 修复了持久化结果的引用断裂：`pair.end.json` 不仅保存比较结果，还保存左右分支的 manifest/current 摘要。对已完成实验执行 `--resume` 时，宿主必须校验分支路径和 runId，重新打开对应 LabStore，确认 WorldPort identity 未漂移，并重新执行只读 Replay；缺失、篡改或不一致一律 `CORRUPT`，不能直接返回旧的 PASS。旧版 end 若没有新增摘要字段，仍会经过实际分支 Replay，保持向后读取能力；新生成的 end 保存完整摘要。
+
+这条复核只证明本地持久化工件仍对应其分支账本，不证明现实世界事实或领域任务成功。并发写者、外部副作用、独立终态判别器和人工对账仍属于各自的安全边界。
+
 ## 9. 有界近期变化上下文
 
 历史隐藏状态反例进一步区分出：保存“同一动作可能有多个结果”并不等于能够利用已验证历史选择动作。新 Lab 的 Memory 可选保存最近两个已验证变化条目 `{token,actualDelta}`，以固定顺序形成 `h1:` 上下文签名；`contextModels` 按该签名和不透明 Token 保存动作模型。Kernel 在当前上下文已有样本时优先使用它，再回退到关系模型和总体模型；学习只在 `ACTION && learnable` 或已闭合 clean feedback 时把变化写入上下文，拒绝、混杂和未闭合反馈不写入。

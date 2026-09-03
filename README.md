@@ -415,3 +415,5 @@ yi-agent experiment pair --lab E:\labs\temperature --output E:\labs\temperature-
 ```
 
 这是共同底层变化逻辑的实验工具：候选只是不透明 Token，比较必须绑定相同 WorldPort 身份、Token map、scenario 和 before 状态摘要。当前故意只允许内置纯模拟 WorldPort；外部设备、文件、金融或医疗副作用不能通过复制 JSON 被假定为可安全分叉，必须先有幂等、隔离、对账和人工确认契约。该能力验证的是可恢复的反事实实验基础，不是已经实现长期自主智能。
+
+F-94 进一步把完成结果的引用也纳入完整性边界：`pair.end.json` 保存左右分支的 manifest/current 摘要。对已完成实验再次执行 `--resume` 时，CLI 会重新打开两个分支并做只读 Replay；如果分支账本、WorldPort identity、路径或 runId 已经漂移，不会返回旧的 PASS，而是返回 `CORRUPT` 并指出具体分支。旧版缺少分支摘要的 end 仍可读取，但同样必须通过真实 Replay 复核。

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -126,6 +126,35 @@ test('paired experiment rejects a candidate outside the parent token map before 
       (error) => error.code === 'INVALID_INPUT' && error.context.fields.includes('rightToken'),
     );
     await assert.rejects(() => lstat(output), (error) => error.code === 'ENOENT');
+  });
+});
+
+test('paired experiment revalidates referenced branch evidence when resuming a completed result', async () => {
+  await withTemp(async (root) => {
+    const parent = path.join(root, 'parent');
+    const output = path.join(root, 'experiment');
+    await initLab({ labPath: parent, labId: 'paired-integrity-lab', worldId: 'temperature', seed: 'paired-integrity-seed' });
+    const parentStore = await LabStore.open({ labPath: parent });
+    const parentManifest = parentStore.manifest;
+    const parentToken = parentManifest.tokenMap.entries[0].token;
+    await runLab({ labPath: parent, runId: 'run-1', steps: 1, advisor: fixedAdvisor(parentToken, 'parent') });
+    await runPairedCandidates({
+      labPath: parent,
+      outputPath: output,
+      leftToken: parentManifest.tokenMap.entries[0].token,
+      rightToken: parentManifest.tokenMap.entries[1].token,
+      scenario: 'steady',
+    });
+
+    const currentPath = path.join(output, 'left', 'state', 'current.json');
+    const current = JSON.parse(await readFile(currentPath, 'utf8'));
+    current.worldState.temperatureC += 1;
+    await writeFile(currentPath, `${JSON.stringify(current)}\n`, 'utf8');
+
+    await assert.rejects(
+      () => runPairedCandidates({ labPath: parent, outputPath: output, resume: true }),
+      (error) => error.code === 'CORRUPT' && error.context.labPath === path.resolve(output, 'left'),
+    );
   });
 });
 

@@ -39,6 +39,13 @@ export async function runPairedCandidates(input) {
     }
     validatePairStart(existingStart, parentLabPath, parentStore.manifest, parentInspection.current);
     validatePairParent(existingEnd, existingStart, parentInspection.current);
+    await validatePersistedBranches({
+      end: existingEnd,
+      start: existingStart,
+      outputPath,
+      manifest: parentStore.manifest,
+      registry,
+    });
     return existingEnd;
   }
   if (existingStart !== null) {
@@ -146,6 +153,10 @@ export async function runPairedCandidates(input) {
       field: 'parentCurrentDigest',
     });
   }
+  const branchEvidence = {
+    left: await collectBranchEvidence(branchResults.left, existingStart.runIds.left),
+    right: await collectBranchEvidence(branchResults.right, existingStart.runIds.right),
+  };
   const end = withSelfDigest({
     schemaVersion: SCHEMA_VERSION,
     type: EXPERIMENT_TYPE,
@@ -157,8 +168,8 @@ export async function runPairedCandidates(input) {
     replayVerdicts,
     parentCurrentDigest: existingStart.parentCurrentDigest,
     branches: {
-      left: { path: path.join(outputPath, 'left'), runId: existingStart.runIds.left },
-      right: { path: path.join(outputPath, 'right'), runId: existingStart.runIds.right },
+      left: branchEvidence.left,
+      right: branchEvidence.right,
     },
   });
   await writeExclusiveJson(pairEndPath, end);
@@ -262,6 +273,62 @@ function validatePairParent(end, start, current) {
       field: 'pair.end.json',
     });
   }
+}
+
+async function validatePersistedBranches({ end, start, outputPath, manifest, registry }) {
+  for (const side of ['left', 'right']) {
+    const expectedPath = path.resolve(path.join(outputPath, side));
+    const reference = end.branches?.[side];
+    if (reference === null || typeof reference !== 'object' || Array.isArray(reference) ||
+        typeof reference.path !== 'string' || path.resolve(reference.path) !== expectedPath ||
+        reference.runId !== start.runIds[side] ||
+        (reference.manifestDigest !== undefined && !DIGEST_PATTERN.test(reference.manifestDigest)) ||
+        (reference.currentDigest !== undefined && !DIGEST_PATTERN.test(reference.currentDigest))) {
+      throw new LabStoreError('CORRUPT', 'Paired experiment branch reference is invalid.', {
+        field: `branches.${side}`,
+      });
+    }
+    let store;
+    try {
+      store = await LabStore.open({ labPath: expectedPath });
+      registry.assertManifest(store.manifest);
+      if (store.manifest.worldId !== manifest.worldId ||
+          store.manifest.worldVersion !== manifest.worldVersion ||
+          store.manifest.tokenMap.digest !== manifest.tokenMap.digest ||
+          store.manifest.selfDigest !== (reference.manifestDigest ?? store.manifest.selfDigest)) {
+        throw new LabStoreError('CORRUPT', 'Paired experiment branch manifest drifted.', {
+          field: `branches.${side}.manifestDigest`,
+        });
+      }
+      const inspection = await store.inspect();
+      if (reference.currentDigest !== undefined && inspection.current.selfDigest !== reference.currentDigest) {
+        throw new LabStoreError('CORRUPT', 'Paired experiment branch current state drifted.', {
+          field: `branches.${side}.currentDigest`,
+        });
+      }
+      const replay = await replayLab({ labPath: expectedPath, runId: reference.runId, registry });
+      if (replay.verdict !== 'CONSISTENT') {
+        throw new LabStoreError('CORRUPT', 'Paired experiment branch Replay is no longer consistent.', {
+          field: `branches.${side}.replay`,
+        });
+      }
+    } catch (error) {
+      throw new LabStoreError('CORRUPT', 'Paired experiment branch evidence cannot be revalidated.', {
+        field: `branches.${side}`,
+        labPath: expectedPath,
+      }, { cause: error });
+    }
+  }
+}
+
+async function collectBranchEvidence(branchResult, runId) {
+  const inspection = await branchResult.store.inspect();
+  return {
+    path: branchResult.path,
+    runId,
+    manifestDigest: branchResult.store.manifest.selfDigest,
+    currentDigest: inspection.current.selfDigest,
+  };
 }
 
 async function ensureNewExperimentDirectory(outputPath, pairStartPath) {
