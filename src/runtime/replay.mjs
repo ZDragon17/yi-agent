@@ -2,11 +2,13 @@ import { learn, mergeObservationFeedback, step, stepWithPreference, validateObse
 import {
   SCHEMA_VERSION,
   MAX_MODEL_PROPOSAL_BYTES,
+  candidateDigest,
   canonicalDigest,
   canonicalJson,
   cloneJson,
   verifySelfDigest,
 } from './schema.mjs';
+import { buildCandidateOutcome, isValidCandidateOutcome } from './candidate-evidence.mjs';
 import {
   isValidEvidencePublicKey,
   verifyExternalInputAttestation,
@@ -161,6 +163,10 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
     validateGoalReplan(payload.boundary.goalReplan, event.sequence);
   }
   if (payload.policyEvidence !== undefined) validatePolicyEvidence(payload.policyEvidence, event.sequence);
+  if (payload.candidateOutcome !== undefined &&
+      (payload.policyEvidence === undefined || !isValidCandidateOutcome(payload.candidateOutcome, payload.policyEvidence))) {
+    corrupt('STEP candidate outcome evidence is invalid.', { sequence: event.sequence });
+  }
   let capabilities;
   let beforeObservation;
   try {
@@ -299,6 +305,14 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   difference = compareValue(payload.verification, verification, 'payload.verification', event.sequence)
     ?? compareValue(payload.update, update, 'payload.update', event.sequence)
     ?? compareValue(payload.rngAfter, intent.nextRngState, 'payload.rngAfter', event.sequence);
+  if (!difference && payload.candidateOutcome !== undefined) {
+    difference = compareValue(
+      payload.candidateOutcome,
+      buildCandidateOutcome(payload.policyEvidence, receipt, verification),
+      'payload.candidateOutcome',
+      event.sequence,
+    );
+  }
   const nextState = {
     worldState: transition.nextWorldState,
     memory: update.nextMemory,
@@ -570,7 +584,7 @@ function isValidModelProposal(value) {
 function isValidCandidateDigest(value) {
   if (typeof value.candidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.candidateDigest)) return false;
   try {
-    return value.candidateDigest === canonicalDigest({ token: value.token, proposal: value.proposal ?? null });
+    return value.candidateDigest === candidateDigest({ token: value.token, proposal: value.proposal ?? null });
   } catch {
     return false;
   }

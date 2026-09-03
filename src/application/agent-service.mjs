@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { INTERNAL_RUN_APPEND, LabStore, LabStoreError } from '../runtime/lab-store.mjs';
-import { canonicalDigest, canonicalJson, cloneJson, MAX_MODEL_PROPOSAL_BYTES, SCHEMA_VERSION } from '../runtime/schema.mjs';
+import { candidateDigest, canonicalDigest, canonicalJson, cloneJson, MAX_MODEL_PROPOSAL_BYTES, SCHEMA_VERSION } from '../runtime/schema.mjs';
+import { buildCandidateOutcome } from '../runtime/candidate-evidence.mjs';
 import { learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
@@ -426,6 +427,8 @@ export async function runLab(input) {
         planningBranchingMode,
       );
     }
+    const committedPolicyEvidence = retryPolicyEvidence ??
+      (modelDecision === null ? null : policyEvidence(modelDecision, intent, capabilities));
     const externalInputs = registry.scenarioExternalInputs(
       manifest.worldId,
       scenario,
@@ -448,9 +451,7 @@ export async function runLab(input) {
           supervisor,
           goalActivation,
         },
-        ...(retryPolicyEvidence === null && modelDecision === null
-          ? {}
-          : { policyEvidence: retryPolicyEvidence ?? policyEvidence(modelDecision, intent, capabilities) }),
+        ...(committedPolicyEvidence === null ? {} : { policyEvidence: committedPolicyEvidence }),
       });
     }
     externalTransitionUncertain = manifest.adapter !== undefined;
@@ -492,6 +493,9 @@ export async function runLab(input) {
     );
     const postModelObservation = projectModelObservation(transition.postObservation);
     const verification = verify({ intent, receipt, postObservation });
+    const candidateOutcome = committedPolicyEvidence === null
+      ? undefined
+      : buildCandidateOutcome(committedPolicyEvidence, receipt, verification);
     const update = learn({
       memory: state.memory,
       intent,
@@ -588,9 +592,8 @@ export async function runLab(input) {
         rngAfter: nextState.rngState,
         externalInputs,
         afterState: nextState,
-        ...(retryPolicyEvidence === null && modelDecision === null
-          ? {}
-          : { policyEvidence: retryPolicyEvidence ?? policyEvidence(modelDecision, intent, capabilities) }),
+        ...(committedPolicyEvidence === null ? {} : { policyEvidence: committedPolicyEvidence }),
+        ...(candidateOutcome === undefined ? {} : { candidateOutcome }),
       },
     }, { returnReference: true, [INTERNAL_RUN_APPEND]: true });
     if (manifest.adapter !== undefined) {
@@ -1060,7 +1063,7 @@ function policyEvidence(modelDecision, intent, capabilities) {
     model: modelDecision.model,
     token: modelDecision.token,
     responseDigest: modelDecision.responseDigest,
-    candidateDigest: canonicalDigest(candidate),
+    candidateDigest: candidateDigest(candidate),
     ...(observationDigest === null ? {} : { observationDigest }),
     ...(modelDecision.proposal === undefined ? {} : { proposal: cloneJson(modelDecision.proposal) }),
     applied,

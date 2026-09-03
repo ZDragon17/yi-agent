@@ -404,6 +404,17 @@ test('repo proposal quality is externally distinguishable under one bounded cont
           token: evidence.token,
           proposal: evidence.proposal,
         }));
+        const outcome = appliedProposalEvent.payload.candidateOutcome;
+        assert.equal(outcome.candidateDigest, evidence.candidateDigest);
+        assert.equal(outcome.token, evidence.token);
+        assert.equal(outcome.status, 'APPLIED');
+        assert.equal(outcome.receiptStatus, appliedProposalEvent.payload.receipt.status);
+        assert.deepEqual(outcome.verification, {
+          error: appliedProposalEvent.payload.verification.error,
+          attribution: appliedProposalEvent.payload.verification.attribution,
+          confidence: appliedProposalEvent.payload.verification.confidence,
+          learnable: appliedProposalEvent.payload.verification.learnable,
+        });
         appliedCandidateDigests.push(evidence.candidateDigest);
         const replay = await invoke([
           'replay', '--lab', lab, '--run', run.stdout[0].data.runId,

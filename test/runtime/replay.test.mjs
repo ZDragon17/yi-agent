@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { learn, step, verify } from '../../src/kernel/index.mjs';
-import { canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../../src/runtime/schema.mjs';
+import { candidateDigest, canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../../src/runtime/schema.mjs';
 import { createTemperatureWorld } from '../../src/worlds/temperature.mjs';
 import { ReplayError, replayRun } from '../../src/runtime/replay.mjs';
 
@@ -227,6 +227,49 @@ test('replay rejects a candidate digest that is inconsistent with its policy evi
       candidateDigest: `sha256:${'b'.repeat(64)}`,
       applied: false,
       reason: 'MODEL_UNAVAILABLE',
+    };
+    events[1].digest = canonicalDigest(omit(events[1], 'digest'));
+    events[2].prevDigest = events[1].digest;
+    events[2].digest = canonicalDigest(omit(events[2], 'digest'));
+    const end = { ...fixture.end, finalEventDigest: events[2].digest };
+    end.selfDigest = canonicalDigest(omit(end, 'selfDigest'));
+
+    assert.throws(
+      () => replayRun({
+        manifest: fixture.manifest,
+        start: fixture.start,
+        events,
+        end,
+        worldFactories: { temperature: createTemperatureWorld },
+      }),
+      (error) => error instanceof ReplayError && error.code === 'CORRUPT',
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('replay rejects candidate outcome evidence that disagrees with policy selection', async () => {
+  const fixture = await createRunFixture();
+  try {
+    const events = fixture.events.map((event) => JSON.parse(JSON.stringify(event)));
+    const policyEvidence = {
+      schemaVersion: SCHEMA_VERSION,
+      source: 'model',
+      model: 'candidate-outcome-test',
+      token: null,
+      responseDigest: `sha256:${'a'.repeat(64)}`,
+      candidateDigest: candidateDigest({ token: null }),
+      applied: false,
+      reason: 'MODEL_UNAVAILABLE',
+    };
+    events[1].payload.policyEvidence = policyEvidence;
+    events[1].payload.candidateOutcome = {
+      schemaVersion: SCHEMA_VERSION,
+      candidateDigest: policyEvidence.candidateDigest,
+      token: null,
+      status: 'NOT_APPLIED',
+      reason: 'FORGED_REASON',
     };
     events[1].digest = canonicalDigest(omit(events[1], 'digest'));
     events[2].prevDigest = events[1].digest;

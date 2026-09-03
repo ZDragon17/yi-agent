@@ -29,6 +29,10 @@ export function canonicalDigest(value) {
   return `sha256:${createHash('sha256').update(canonicalJson(value)).digest('hex')}`;
 }
 
+export function candidateDigest({ token, proposal = null } = {}) {
+  return canonicalDigest({ token: token ?? null, proposal: proposal ?? null });
+}
+
 export function withSelfDigest(value) {
   const copy = cloneJson(value);
   return { ...copy, selfDigest: canonicalDigest(copy) };

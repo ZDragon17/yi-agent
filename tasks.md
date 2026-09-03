@@ -666,3 +666,10 @@
 - 实现：宿主按 `{token, proposal}` 计算有界 `candidateDigest`，写入模型 policy evidence；LabStore 与 Replay 在不改变旧账本读取能力的前提下校验摘要和候选内容一致。
 - 验证：F-76 三路矩阵中正确与语义错误 proposal 的摘要不同；repo WorldPort E2E 8/8、Replay 单测 13/13；人为重算事件摘要后伪造 `candidateDigest` 仍被 Replay 判为 `CORRUPT`。
 - 边界：摘要只提供稳定身份和防混淆绑定，不提供语义判断、候选质量学习或跨 WorldPort 迁移。下一节点应在不污染 Kernel 原有 action 聚合的前提下，记录候选的验证结果与修复成本，再用长期样本反证是否值得改变学习契约。
+
+## F-78 候选结果进入通用 STEP 证据
+
+- 反例：F-77 只保存了候选身份；如果不把“是否采用、回执状态和验证结果”绑定到同一候选，后续无法区分候选未被采用、动作执行失败和语义验证失败。
+- 实现：新增可选 `candidateOutcome`，由宿主在 STEP 中记录 `candidateDigest`、采用状态、回执状态和验证摘要；Replay 根据 immutable policy evidence、receipt、verification 重新计算；旧账本没有该字段时继续兼容回放。
+- 验证：repo 同上下文质量矩阵同时核对正确/语义错误 proposal 的 outcome；Replay 单测 14/14，agent CLI 回归 11/11，伪造 outcome 在重算事件摘要后仍判为 `CORRUPT`。
+- 边界：这只是通用结果证据，不会自动改变 Kernel 的 actionModels，也没有定义修复成本或候选历史选择。下一节点应从多个 Run 聚合这些证据，先证明候选结果在重启和跨 WorldPort 场景下可读取，再决定是否进入模型提示或新的学习层。

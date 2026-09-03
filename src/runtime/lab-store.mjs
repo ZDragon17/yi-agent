@@ -17,12 +17,14 @@ import {
   SCHEMA_VERSION,
   MAX_PERSISTED_EVENT_BYTES,
   MAX_MODEL_PROPOSAL_BYTES,
+  candidateDigest,
   canonicalDigest,
   canonicalJson,
   cloneJson,
   verifySelfDigest,
   withSelfDigest,
 } from './schema.mjs';
+import { isValidCandidateOutcome } from './candidate-evidence.mjs';
 import {
   externalInputUnsigned,
   isValidEvidencePublicKey,
@@ -2027,6 +2029,10 @@ function validateStepPayload(value, field, corruptOnFailure = false, runStart, m
     validateExternalInput(external, field, corruptOnFailure, runStart, manifest?.adapter);
   }
   if (value.policyEvidence !== undefined) validatePolicyEvidence(value.policyEvidence, field, corruptOnFailure);
+  if (value.candidateOutcome !== undefined &&
+      (value.policyEvidence === undefined || !isValidCandidateOutcome(value.candidateOutcome, value.policyEvidence))) {
+    fail('STEP candidate outcome evidence is invalid.');
+  }
 }
 
 function validatePolicyEvidence(value, field, corruptOnFailure) {
@@ -2060,7 +2066,7 @@ function isValidModelProposal(value) {
 function isValidCandidateDigest(value) {
   if (typeof value.candidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.candidateDigest)) return false;
   try {
-    return value.candidateDigest === canonicalDigest({ token: value.token, proposal: value.proposal ?? null });
+    return value.candidateDigest === candidateDigest({ token: value.token, proposal: value.proposal ?? null });
   } catch {
     return false;
   }
