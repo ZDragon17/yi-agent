@@ -40,6 +40,7 @@ const MAX_PATCH_BYTES = 128 * 1024;
 const MAX_PROPOSAL_BYTES = 64 * 1024;
 const MAX_MODEL_READ_CONTENT = 2 * 1024;
 const MAX_NONCE_JOURNAL_BYTES = 2 * 1024 * 1024;
+const BEFORE_DIGEST_MODES = new Set(['fixed', 'current']);
 
 const repositoryRoot = path.resolve(process.argv[2] ?? '.');
 const readPath = process.argv[3] ?? 'README.md';
@@ -230,7 +231,8 @@ function observation(state) {
       ...(patchSpec === null ? [] : [{
         kind: 'repo-patch-policy',
         targetPath: patchSpec.targetPath,
-        expectedBeforeDigest: patchSpec.expectedBeforeDigest,
+        expectedBeforeDigest: expectedBeforeDigestForPolicy(),
+        ...(patchSpec.beforeDigestMode === undefined ? {} : { beforeDigestMode: patchSpec.beforeDigestMode }),
         proposalSchema: {
           schemaVersion: VERSION,
           fields: ['schemaVersion', 'targetPath', 'expectedBeforeDigest', 'replacement'],
@@ -323,13 +325,15 @@ function readPatchSpec(filePath) {
   if (source === null || typeof source !== 'object' || Array.isArray(source) ||
       source.schemaVersion !== VERSION ||
       typeof source.targetPath !== 'string' || source.targetPath.length === 0 || source.targetPath.length > 4096 ||
-      typeof source.expectedBeforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(source.expectedBeforeDigest)) {
+       typeof source.expectedBeforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(source.expectedBeforeDigest) ||
+       (source.beforeDigestMode !== undefined && !BEFORE_DIGEST_MODES.has(source.beforeDigestMode))) {
     throw new Error('patch spec is invalid');
   }
   const normalized = {
     schemaVersion: VERSION,
     targetPath: normalizeRelative(source.targetPath),
     expectedBeforeDigest: source.expectedBeforeDigest,
+    ...(source.beforeDigestMode === undefined ? {} : { beforeDigestMode: source.beforeDigestMode }),
   };
   if (normalized.targetPath.includes('\0') || path.isAbsolute(normalized.targetPath)) {
     throw new Error('patch target must be a relative path');
@@ -338,6 +342,14 @@ function readPatchSpec(filePath) {
     ...normalized,
     digest: canonicalDigest(normalized),
   });
+}
+
+function expectedBeforeDigestForPolicy() {
+  if (patchSpec.beforeDigestMode !== 'current') return patchSpec.expectedBeforeDigest;
+  const target = resolveRepositoryPath(patchSpec.targetPath);
+  const status = lstatSync(target);
+  if (!status.isFile() || status.isSymbolicLink()) throw new Error('patch target must remain a regular file');
+  return contentDigest(readFileSync(target, 'utf8'));
 }
 
 function prepareOrResumePatch(request) {
@@ -359,7 +371,8 @@ function prepareOrResumePatch(request) {
   const target = resolveRepositoryPath(patchSpec.targetPath);
   const before = readFileSync(target, 'utf8');
   const beforeDigest = contentDigest(before);
-  if (beforeDigest !== patchSpec.expectedBeforeDigest) {
+  const authorizedBeforeDigest = expectedBeforeDigestForPolicy();
+  if (proposal.expectedBeforeDigest !== authorizedBeforeDigest || beforeDigest !== authorizedBeforeDigest) {
     throw new Error('patch target does not match its expected before digest');
   }
   const prepared = {
@@ -429,7 +442,6 @@ function readPatchProposal(value) {
     replacement: value.replacement,
   };
   if (normalized.targetPath !== patchSpec.targetPath ||
-      normalized.expectedBeforeDigest !== patchSpec.expectedBeforeDigest ||
       normalized.targetPath.includes('\0') || path.isAbsolute(normalized.targetPath)) {
     throw new Error('repo.apply-patch proposal is not authorized by the patch policy');
   }

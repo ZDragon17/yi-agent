@@ -694,3 +694,10 @@
 - 实现：从已提交 STEP 的 policy evidence 投影小于 8 KiB 的 proposal 预览及独立 `proposalDigest`；更大的 proposal 只保留摘要并标记 `proposalTruncated`。ModelAdvisor 侧再施加 32 KiB 总预算，避免 32 条历史撑爆 128 KiB prompt 上限。
 - 验证：repo 质量矩阵能按 `candidateDigest` 找回对应 proposal；ModelAdvisor 13/13，repo 质量矩阵继续通过；大 proposal 历史被截断且 prompt 保持在 128 KiB 内。
 - 边界：proposal 仍是不可信上下文，截断预览不等价于完整候选，也没有验证“模型依据历史能修复错误”。下一节点应做跨 Run 的真实错误 proposal→修复 proposal 实验，并记录重复尝试、时间衰减和修复成本。
+
+## F-82 受控 repo WorldPort 的 current before 演化模式
+
+- 反例：F-81 的跨 Run 修复实验若直接改 patch spec，会改变 adapter 的 `worldVersion` 并被拒绝；若固定 before 摘要不变，则第一轮写入后无法合法提交下一轮候选。
+- 实现：repo patch spec 增加显式 `beforeDigestMode: current`。descriptor/worldVersion 仍绑定不变的 patch spec；每个新 nonce 在写入前读取当前普通文件并校验 proposal before 摘要，同 nonce 恢复只依据 nonce journal 的 PREPARED/APPLIED 绑定，不重复要求文件回到旧 before 状态。
+- 验证：同一 adapter 配置下，第一 Run 提交格式合法但语义错误的乘法 proposal，第二次独立 CLI Run 从候选历史识别该 proposal 并提交加法修复；文件最终正确，两个 Run Replay 均 `CONSISTENT`，repo E2E 9/9。
+- 边界：这是 repo 示例的受控状态演化，不是通用写权限或自动回滚；策略仍限定单文件完整替换，current 模式也不证明外部并发修改可自动归因。下一节点应把“当前状态读取、候选尝试、验证失败、重试成本”抽象成跨 WorldPort 的实验契约，并继续测量而非默认修复成功。

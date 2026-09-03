@@ -793,6 +793,118 @@ test('repo WorldPort survives a process restart, resumes the remaining Run, and 
   }
 });
 
+test('a current-state repo policy enables a history-guided repair across Runs', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-history-repair-e2e-'));
+  const repository = path.join(root, 'repository');
+  const sourcePath = path.join(repository, 'src', 'math.mjs');
+  const testPath = path.join(repository, 'test', 'math.test.mjs');
+  const patchSpecPath = path.join(root, 'patch.json');
+  const nonceJournalPath = path.join(root, 'patch-nonces.json');
+  const adapterConfig = path.join(root, 'adapter.json');
+  const lab = path.join(root, 'lab');
+  const buggySource = 'export function add(left, right) { return left - right; }\n';
+  const wrongSource = 'export function add(left, right) { return left * right; }\n';
+  const fixedSource = 'export function add(left, right) { return left + right; }\n';
+  await mkdir(path.dirname(sourcePath), { recursive: true });
+  await mkdir(path.dirname(testPath), { recursive: true });
+  await writeFile(sourcePath, buggySource, 'utf8');
+  await writeFile(testPath, [
+    "import assert from 'node:assert/strict';",
+    "import { test } from 'node:test';",
+    "import { add } from '../src/math.mjs';",
+    "test('add returns the sum', () => assert.equal(add(2, 3), 5));",
+    '',
+  ].join('\n'), 'utf8');
+  await writeFile(patchSpecPath, JSON.stringify({
+    schemaVersion: 1,
+    targetPath: 'src/math.mjs',
+    expectedBeforeDigest: canonicalDigest({ content: buggySource }),
+    beforeDigestMode: 'current',
+  }), 'utf8');
+  await writeFile(adapterConfig, JSON.stringify({
+    executable: process.execPath,
+    args: [ADAPTER, repository, 'src/math.mjs', 'test/math.test.mjs', patchSpecPath, nonceJournalPath],
+    adapterId: 'repo-writable-example-v1',
+    worldId: 'repo',
+    timeoutMs: 30000,
+  }), 'utf8');
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    const step = requests.length % 4;
+    const capability = context.capabilities.find((item) => item.capabilityId === [
+      'repo.read-file', 'repo.run-tests', 'repo.apply-patch', 'repo.run-tests',
+    ][step]);
+    assert.ok(capability, `missing repo capability at step ${step}`);
+    requests.push(context);
+    const hasFailedProposal = context.candidateHistory.some((entry) =>
+      entry.proposal?.replacement === wrongSource && entry.candidateOutcome.verification?.attribution === 'ACTION');
+    const policy = context.observationEvidence.find((item) => item.kind === 'repo-patch-policy');
+    const proposal = capability.capabilityId === 'repo.apply-patch'
+      ? {
+          schemaVersion: 1,
+          targetPath: policy.targetPath,
+          expectedBeforeDigest: policy.expectedBeforeDigest,
+          replacement: hasFailedProposal ? fixedSource : wrongSource,
+        }
+      : undefined;
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'repo-history-repair-agent',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({
+        token: capability.token,
+        ...(proposal === undefined ? {} : { proposal }),
+      }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'repo-history-repair-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'repo-history-repair-model',
+  };
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'repo', '--seed', 'repo-history-repair-seed', '--adapter', adapterConfig, '--json'], env);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const first = await invoke([
+      'agent', 'run', '--lab', lab, '--steps', '4', '--scenario', 'working-tree',
+      '--adapter', adapterConfig, '--goal', '先尝试修复并验证', '--json',
+    ], env);
+    assert.equal(first.code, 0, JSON.stringify(first));
+    assert.equal(await readFile(sourcePath, 'utf8'), wrongSource);
+    const second = await invoke([
+      'agent', 'run', '--lab', lab, '--steps', '4', '--scenario', 'working-tree',
+      '--adapter', adapterConfig, '--goal', '先尝试修复并验证', '--json',
+    ], env);
+    assert.equal(second.code, 0, JSON.stringify(second));
+    assert.equal(await readFile(sourcePath, 'utf8'), fixedSource);
+    assert.equal(requests.length, 8);
+    assert.equal(requests[0].candidateHistory.length, 0);
+    assert.ok(requests[4].candidateHistory.some((entry) => entry.proposal?.replacement === wrongSource));
+    assert.ok(requests[6].candidateHistory.some((entry) => entry.proposal?.replacement === wrongSource));
+    const store = await LabStore.open({ labPath: lab });
+    const firstEvents = (await store.readRun(first.stdout[0].data.runId)).events;
+    const secondEvents = (await store.readRun(second.stdout[0].data.runId)).events;
+    assert.ok(firstEvents.some((event) => event.kind === 'STEP' && event.payload.policyEvidence?.proposal?.replacement === wrongSource));
+    assert.ok(secondEvents.some((event) => event.kind === 'STEP' && event.payload.policyEvidence?.proposal?.replacement === fixedSource));
+    for (const runId of [first.stdout[0].data.runId, second.stdout[0].data.runId]) {
+      const replay = await invoke(['replay', '--lab', lab, '--run', runId, '--adapter', adapterConfig, '--json'], env);
+      assert.equal(replay.code, 0, JSON.stringify(replay));
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    }
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function invoke(args, env) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });

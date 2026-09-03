@@ -252,6 +252,8 @@ powershell -ExecutionPolicy Bypass `
 
 这个能力只用于隔离实验仓库，不默认打开，也不代表已经获得真实项目写权限；生产写入仍需经过 EffectBroker、权限隔离、人工确认和回滚设计。本节点的 E2E 使用一个故意有 bug 的 `add` 函数：WorldPort 先通过 `repo.read-file` 向模型提供最多 2 KiB 的文件内容，再通过有界 observation evidence 提供目标路径、修改前摘要和 proposal 字段约束，依次选择“读文件→跑失败测试→应用模型 proposal→跑通过测试”，文件修改被保留，响应丢失后恢复只使用同一 nonce 的已提交回执，proposal 不会重复应用，Replay 不调用 adapter。重要的诚实边界是：这些策略 evidence 仍是不可信提示，模型 proposal 仍受实验策略限制，且只覆盖完整文件替换；这证明的是“模型候选修改可以进入共同底座并被独立边界验证”，不是“模型已经能自主生成、审查并安全修改任意真实项目”。
 
+repo 补丁策略默认是 `fixed`：修改前摘要固定，外部文件漂移或下一次修改都会被拒绝。实验性 `beforeDigestMode: current` 必须由 patch spec 显式声明，此时每次 transition 都重新读取当前普通文件的 before 摘要，并保持 adapter descriptor/worldVersion 不变；它只解决“同一受控目标的连续候选修改”这一 WorldPort 状态演化问题，不扩大目标路径或写入权限。
+
 每个模型候选还会由宿主按 `{token, proposal}` 生成稳定的 `candidateDigest`，并写入 policy evidence；账本和 Replay 会校验摘要确实对应候选内容。它只解决“同一个动作下不同候选不能互相混淆”的身份问题，不代表候选已经正确，也不代表 Kernel 已经学会跨候选泛化。
 
 当候选进入 STEP 后，账本还会记录 `candidateOutcome`：候选是否被采用、WorldPort 回执状态，以及验证的误差、归因、置信度和是否可学习。Replay 会重新计算该结果；这为后续的候选历史和修复成本实验提供共同证据，但当前仍不会把它自动写入 Kernel 的动作模型。
