@@ -346,6 +346,7 @@ export async function runLab(input) {
         observation: beforeObservation,
         observationEvidence: beforeModelObservation.observationEvidence,
         observationEvidenceTruncated: beforeModelObservation.observationEvidenceTruncated,
+        expectedObservationDigest: beforeModelObservation.digest,
         valueSpec: spec,
         memory: state.memory,
         manifest,
@@ -549,6 +550,7 @@ export async function runLab(input) {
           observation: postObservation,
           observationEvidence: postModelObservation.observationEvidence,
           observationEvidenceTruncated: postModelObservation.observationEvidenceTruncated,
+          expectedObservationDigest: postModelObservation.digest,
           valueSpec: spec,
           memory: update.nextMemory,
           manifest,
@@ -1017,7 +1019,7 @@ function assertExternalTransitionRetry(unresolved, request, state, planningHoriz
   }
 }
 
-async function requestPlan({ planner, goal, observation, observationEvidence, observationEvidenceTruncated, valueSpec, memory, manifest, plan = null, reason = null, step }) {
+async function requestPlan({ planner, goal, observation, observationEvidence, observationEvidenceTruncated, expectedObservationDigest, valueSpec, memory, manifest, plan = null, reason = null, step }) {
   let result;
   try {
     result = await planner({
@@ -1035,25 +1037,25 @@ async function requestPlan({ planner, goal, observation, observationEvidence, ob
   } catch {
     return {
       plan: undefined,
-      evidence: plannerEvidence(null, false, 'PLANNER_UNAVAILABLE'),
+      evidence: plannerEvidence(null, false, 'PLANNER_UNAVAILABLE', expectedObservationDigest),
     };
   }
   if (result === null || typeof result !== 'object' || Array.isArray(result)) {
     return {
       plan: undefined,
-      evidence: plannerEvidence(result, false, 'INVALID_PLANNER_RESULT'),
+      evidence: plannerEvidence(result, false, 'INVALID_PLANNER_RESULT', expectedObservationDigest),
     };
   }
   try {
     const plan = materializePlannerPlan(result.plan, goal, valueSpec);
     return {
       plan,
-      evidence: plannerEvidence(result, true, null),
+      evidence: plannerEvidence(result, true, null, expectedObservationDigest),
     };
   } catch {
     return {
       plan: undefined,
-      evidence: plannerEvidence(result, false, 'PLAN_REJECTED'),
+      evidence: plannerEvidence(result, false, 'PLAN_REJECTED', expectedObservationDigest),
     };
   }
 }
@@ -1098,14 +1100,17 @@ function materializePlannerPlan(candidate, rootGoal, valueSpec) {
   }).plan;
 }
 
-function plannerEvidence(result, applied, reason) {
+function plannerEvidence(result, applied, reason, expectedObservationDigest) {
   const model = typeof result?.model === 'string' && result.model.length > 0 && result.model.length <= 4096
     ? result.model
     : 'unknown';
   const responseDigest = typeof result?.responseDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(result.responseDigest)
     ? result.responseDigest
     : canonicalDigest({ model, reason });
-  const observationDigest = validDigest(result?.observationDigest) ? result.observationDigest : null;
+  const hasStructuredResult = result !== null && typeof result === 'object' && !Array.isArray(result);
+  const observationDigest = hasStructuredResult && validDigest(expectedObservationDigest)
+    ? expectedObservationDigest
+    : (validDigest(result?.observationDigest) ? result.observationDigest : null);
   return {
     schemaVersion: SCHEMA_VERSION,
     source: 'model',

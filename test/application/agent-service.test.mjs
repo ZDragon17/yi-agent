@@ -679,6 +679,7 @@ test('application forwards bounded WorldPort evidence and its truncation marker 
       return {
         model: 'boundary-planner',
         responseDigest: `sha256:${'b'.repeat(64)}`,
+        observationDigest: `sha256:${'e'.repeat(64)}`,
         plan: {
           rootGoal: input.goal,
           stages: [{ id: 'advance', goal: '推进到目标', target: [2] }],
@@ -709,6 +710,14 @@ test('application forwards bounded WorldPort evidence and its truncation marker 
     assert.equal(result.status, 'COMPLETED');
     assert.equal(plannerInput.observationEvidence.length, 32);
     assert.equal(plannerInput.observationEvidenceTruncated, true);
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const planEvidence = run.events.find((event) => event.kind === 'STEP').payload.boundary.goalActivation.planEvidence;
+    assert.equal(planEvidence.observationDigest, projectModelObservation(
+      plannerInput.observation,
+      plannerInput.observationEvidence,
+      plannerInput.observationEvidenceTruncated,
+    ).digest);
+    assert.notEqual(planEvidence.observationDigest, `sha256:${'e'.repeat(64)}`);
     assert.equal(advisorInput.observationEvidence.length, 32);
     assert.equal(advisorInput.observationEvidenceTruncated, true);
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
@@ -807,10 +816,12 @@ test('invalid automatic planner proposals fall back to one validated root stage 
     });
     assert.equal(result.status, 'COMPLETED');
     const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
-    const activation = run.events.find((event) => event.kind === 'STEP').payload.boundary.goalActivation;
+    const step = run.events.find((event) => event.kind === 'STEP');
+    const activation = step.payload.boundary.goalActivation;
     assert.equal(activation.planEvidence.applied, false);
     assert.equal(activation.planEvidence.reason, 'PLAN_REJECTED');
-    assert.equal(Object.hasOwn(activation.planEvidence, 'observationDigest'), false);
+    assert.equal(activation.planEvidence.observationDigest, projectModelObservation(step.payload.beforeObservation).digest);
+    assert.notEqual(activation.planEvidence.observationDigest, 'not-a-digest');
     assert.equal((await inspectLab({ labPath: lab, registry })).current.changeSupervisor.plan.stages.length, 1);
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
   });

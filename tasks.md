@@ -827,3 +827,10 @@
 - 实现：不新增学习器或领域分支；把既有 overlap-feedback 外部 WorldPort 的 CLI 回归切到 `agent run` 目标监督路径，两个独立 adapter 进程分别以相反顺序返回同一共享观测边界的 feedback。应用继续按 nonce 结算、按共享边界标记 `AMBIGUOUS`，Kernel 不写入 action model；ChangeSupervisor 只记录 `confirmed=false/improved=false`，连续停滞达到阈值时可显式 REPLAN，但该重规划不伪造进步证据。
 - 验证：跨两个独立 Lab/WorldPort 进程运行相同三步前缀，identity/reverse 两种 feedback 顺序的 Memory、监督器状态和 settled attribution 完全一致；两条 Run Replay 均为 `CONSISTENT`。`node --test --test-name-pattern="shared-boundary multi-action" test/e2e/cli.test.mjs`：1/1 通过。
 - 边界：这证明的是缺失/混杂证据不会成为可学习动作模型或已确认目标进步，并不保证现实反馈完整、因果可识别或策略永远不变；停滞策略仍可触发有界重规划，后续仍需把对账、独立终态判别和更复杂 WorldPort 纳入实验。
+
+## F-101 规划观测证据的宿主绑定
+
+- 反例：F-99 绑定了 Advisor 的 `policyEvidence.observationDigest`，但自定义 Planner 仍可返回格式正确的伪造摘要；若直接持久化，目标激活或重规划证据会把模型自报内容冒充成实际输入上下文。
+- 实现：`requestPlan` 把本步宿主计算的 `projectModelObservation` 摘要传入 Application 证据构造；结构化 Planner 响应的 `planEvidence.observationDigest` 固定使用该摘要，Planner 返回的同名字段不再有权威性。Planner 未返回结构化结果或调用抛错时保持原有无观测摘要的故障证据语义。
+- 验证：应用层先用伪造摘要得到失败反例；修复后真实有界上下文摘要覆盖 Planner 的伪造值，非法计划仍回退到单根阶段且 Replay 为 `CONSISTENT`；规划器、应用层相关回归 10/10 通过。
+- 边界：这只保证规划证据与宿主实际输入绑定，不证明 Planner 方案正确、目标真的可达或 WorldPort 观测真实；模型回答摘要和供应商真实性仍不是密码学证明。
