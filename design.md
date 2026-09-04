@@ -232,6 +232,8 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 
 `verificationAge` 进入 Expectation，供账本和 Inspect 解释选择。该机制是固定成本的再验证策略，不是隐藏状态检测、变化点证明或概率校准；如果变化在再验证周期内发生，或 WorldPort 永远不给出可归因反馈，底座仍只能保留不确定性。外部漂移 WorldPort 必须通过独立子进程、跨 Run、幂等 transition 和 Replay 证明这条边界；旧版本 Replay 显式剥离 freshness 字段。
 
+F-98 的漂移实验把“重新取证”与“取证后的策略改变”分开验收：动作 A 在早期每次产生 `+4`，隐藏动力学漂移后变为 `-2`；达到固定新鲜度窗口时，Kernel 仍会选择 A 获取新证据，随后下一步转向动作 B 的 `+1`。只有回执经过 `verify` 并进入 `learn`，旧模型才被有限近期证据修正；未验证的猜测不能直接触发策略切换。该机制保证的是有界的再组织能力，不是检测任意变化、推断隐藏状态或证明切换由单一原因造成。
+
 ## 7.2 有界序列规划与假设记忆
 
 单步预测之外，规划器必须能够回答“如果这一步发生，下一步会处于什么关系中”。v16 的 bounded planning 为每个候选分支复制一份临时 Memory，把预测的 `Token+actualDelta` 写入近期历史和顺序累积摘要，再用同一 `buildPredictions` 生成下一步候选。该临时状态只存在于纯规划计算中，不写入真实 Lab，也不授予任何额外安全或执行权限；真实状态仍必须经过 WorldPort 回执、`verify` 和 `learn` 才能改变。

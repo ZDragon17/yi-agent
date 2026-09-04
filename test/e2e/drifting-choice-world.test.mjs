@@ -43,6 +43,14 @@ test('periodic revalidation adapts to hidden drift across CLI runs and replay', 
       revalidation.payload.postObservation.vector[0],
       revalidation.payload.beforeObservation.vector[0] - 2,
     );
+    const revalidationIndex = steps.indexOf(revalidation);
+    const adapted = steps[revalidationIndex + 1];
+    assert.ok(adapted);
+    assert.equal(adapted.payload.choice.token, tokens['drifting-choice.b']);
+    assert.equal(
+      adapted.payload.postObservation.vector[0],
+      adapted.payload.beforeObservation.vector[0] + 1,
+    );
     assert.equal(JSON.parse(await readFile(stateFile, 'utf8')).effects.length, 15);
 
     const current = (await store.inspect()).current;
