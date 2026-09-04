@@ -20,6 +20,9 @@ const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
 const PLANNING_BRANCHING_MODES = ['tree-v1', 'recursive-v1', 'legacy-v1'];
 const KERNEL_LEARNING_VERSION = 24;
+const DEFAULT_MODEL_TIMEOUT_MS = 60_000;
+const MIN_MODEL_TIMEOUT_MS = 100;
+const MAX_MODEL_TIMEOUT_MS = 300_000;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -94,6 +97,12 @@ export async function runLab(input) {
   if (durability !== 'strict' && durability !== 'checkpoint') {
     throw new LabStoreError('INVALID_INPUT', 'durability must be strict or checkpoint.', { field: 'durability' });
   }
+  const modelTimeoutMs = requireBoundedOptional(
+    source.modelTimeoutMs,
+    MIN_MODEL_TIMEOUT_MS,
+    MAX_MODEL_TIMEOUT_MS,
+    'modelTimeoutMs',
+  ) ?? DEFAULT_MODEL_TIMEOUT_MS;
   const supervisorMaxCycles = requireBoundedOptional(source.maxCycles, 1, 1_000_000, 'maxCycles') ?? 1_000_000;
   const supervisorStagnationLimit = requireBoundedOptional(source.stagnationLimit, 1, 100_000, 'stagnationLimit') ?? 3;
   const requestedPlanningHorizon = source.planningHorizon === undefined
@@ -342,6 +351,7 @@ export async function runLab(input) {
     } else if (plannerRequested && previousSupervisor?.enabled !== true) {
       const plannerResult = await requestPlan({
         planner: source.planner,
+        timeoutMs: modelTimeoutMs,
         goal: requestedGoal,
         observation: beforeObservation,
         observationEvidence: beforeModelObservation.observationEvidence,
@@ -397,6 +407,7 @@ export async function runLab(input) {
       source.advisor !== undefined && capabilities.some((capability) => capability.allowed && capability.safe)
       ? await requestAdvice({
           advisor: source.advisor,
+          timeoutMs: modelTimeoutMs,
           observation: beforeObservation,
           memory: state.memory,
           valueSpec: stepValueSpec,
@@ -546,6 +557,7 @@ export async function runLab(input) {
       if (plannerRequested) {
         const plannerResult = await requestPlan({
           planner: source.planner,
+          timeoutMs: modelTimeoutMs,
           goal: requestedGoal,
           observation: postObservation,
           observationEvidence: postModelObservation.observationEvidence,
@@ -902,14 +914,35 @@ function preferenceFor(modelDecision, required = false) {
       };
 }
 
-async function requestAdvice({ advisor, ...input }) {
+async function requestAdvice({ advisor, timeoutMs, ...input }) {
   let result;
   try {
-    result = await advisor(cloneJson(input));
-  } catch {
-    return normalizedAdvice(null, 'MODEL_UNAVAILABLE');
+    result = await invokeModelCallback(advisor, cloneJson(input), timeoutMs);
+  } catch (error) {
+    return normalizedAdvice(null, error?.code === 'MODEL_CALLBACK_TIMEOUT'
+      ? 'MODEL_TIMEOUT'
+      : 'MODEL_UNAVAILABLE');
   }
   return normalizedAdvice(result, null);
+}
+
+async function invokeModelCallback(callback, input, timeoutMs) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(Object.assign(new Error('Model callback timed out.'), {
+        code: 'MODEL_CALLBACK_TIMEOUT',
+      }));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => callback(input)),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizedAdvice(result, fallbackReason) {
@@ -1019,10 +1052,10 @@ function assertExternalTransitionRetry(unresolved, request, state, planningHoriz
   }
 }
 
-async function requestPlan({ planner, goal, observation, observationEvidence, observationEvidenceTruncated, expectedObservationDigest, valueSpec, memory, manifest, plan = null, reason = null, step }) {
+async function requestPlan({ planner, timeoutMs, goal, observation, observationEvidence, observationEvidenceTruncated, expectedObservationDigest, valueSpec, memory, manifest, plan = null, reason = null, step }) {
   let result;
   try {
-    result = await planner(cloneJson({
+    result = await invokeModelCallback(planner, cloneJson({
       goal,
       observation,
       observationEvidence,
@@ -1033,11 +1066,13 @@ async function requestPlan({ planner, goal, observation, observationEvidence, ob
       plan,
       reason,
       step,
-    }));
-  } catch {
+    }), timeoutMs);
+  } catch (error) {
     return {
       plan: undefined,
-      evidence: plannerEvidence(null, false, 'PLANNER_UNAVAILABLE', expectedObservationDigest),
+      evidence: plannerEvidence(null, false, error?.code === 'MODEL_CALLBACK_TIMEOUT'
+        ? 'PLANNER_TIMEOUT'
+        : 'PLANNER_UNAVAILABLE', expectedObservationDigest),
     };
   }
   if (result === null || typeof result !== 'object' || Array.isArray(result)) {

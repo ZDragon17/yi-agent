@@ -144,9 +144,11 @@ async function dispatchAgent(options) {
   }
   let advisor;
   let planner;
+  let modelTimeoutMs;
   if (options['kernel-only'] !== true) {
     try {
       const config = loadApiConfig();
+      modelTimeoutMs = config.timeoutMs;
       const client = createOpenAICompatibleClient(config);
       advisor = createModelAdvisor({
         client,
@@ -188,6 +190,7 @@ async function dispatchAgent(options) {
         runId: options['run-id'],
         scenario: options.scenario,
         registry: loadRegistry(options),
+        ...(modelTimeoutMs === undefined ? {} : { modelTimeoutMs }),
         advisor,
         planner,
         autoPlan: options['auto-plan'] === true,
@@ -220,6 +223,7 @@ async function dispatchAgent(options) {
     runId: options['run-id'],
     scenario: options.scenario,
     registry: loadRegistry(options),
+    ...(modelTimeoutMs === undefined ? {} : { modelTimeoutMs }),
     advisor,
     planner,
     autoPlan: options['auto-plan'] === true,

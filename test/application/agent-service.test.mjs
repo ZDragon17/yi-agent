@@ -799,6 +799,79 @@ test('application isolates mutable planner and advisor inputs from the closed-lo
   });
 });
 
+test('application bounds a model callback that never resolves', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'model-timeout-lab', worldId: 'temperature', seed: 'model-timeout-seed' });
+    const result = await Promise.race([
+      runLab({
+        labPath: lab,
+        runId: 'run-1',
+        steps: 1,
+        modelTimeoutMs: 100,
+        advisor: async () => new Promise(() => {}),
+      }),
+      new Promise((resolve) => setTimeout(() => resolve({ status: 'TEST_TIMEOUT' }), 2000)),
+    ]);
+    assert.notEqual(result.status, 'TEST_TIMEOUT');
+    assert.equal(result.status, 'COMPLETED');
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const policyEvidence = run.events.find((event) => event.kind === 'STEP').payload.policyEvidence;
+    assert.equal(policyEvidence.reason, 'MODEL_TIMEOUT');
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
+test('application bounds a planner callback that never resolves', async () => {
+  await withLab(async (root) => {
+    const lab = path.join(root, 'planner-timeout-lab');
+    const registry = createGeneratedRegistry();
+    await initLab({ labPath: lab, labId: 'planner-timeout-lab', worldId: 'generated', seed: 'planner-timeout-seed', registry });
+    const result = await Promise.race([
+      runLab({
+        labPath: lab,
+        runId: 'run-1',
+        steps: 1,
+        modelTimeoutMs: 100,
+        scenario: 'generated',
+        goal: '超时后继续执行',
+        autoPlan: true,
+        planner: async () => new Promise(() => {}),
+        registry,
+      }),
+      new Promise((resolve) => setTimeout(() => resolve({ status: 'TEST_TIMEOUT' }), 2000)),
+    ]);
+    assert.notEqual(result.status, 'TEST_TIMEOUT');
+    assert.equal(result.status, 'COMPLETED');
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const planEvidence = run.events.find((event) => event.kind === 'STEP').payload.boundary.goalActivation.planEvidence;
+    assert.equal(planEvidence.reason, 'PLANNER_TIMEOUT');
+    assert.equal(planEvidence.applied, false);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+  });
+});
+
+test('continuous runner keeps committing runs after model callback timeouts', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'continuous-model-timeout-lab', worldId: 'temperature', seed: 'continuous-model-timeout-seed' });
+    const result = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      runs: 2,
+      modelTimeoutMs: 100,
+      advisor: async () => new Promise(() => {}),
+    });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(result.runs, 2);
+    assert.equal(result.metrics.executed, 2);
+    const store = await LabStore.open({ labPath: lab });
+    for (const run of result.results) {
+      const events = (await store.readRun(run.runId)).events;
+      assert.equal(events.find((event) => event.kind === 'STEP').payload.policyEvidence.reason, 'MODEL_TIMEOUT');
+      assert.equal((await replayLab({ labPath: lab, runId: run.runId })).verdict, 'CONSISTENT');
+    }
+  });
+});
+
 test('model advisor failure is isolated, falls back to the kernel, and remains replayable', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'advisor-outage-lab', worldId: 'temperature', seed: 'advisor-outage-seed' });

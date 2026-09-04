@@ -101,6 +101,57 @@ test('agent CLI isolates an unavailable HTTP advisor and replays the kernel fall
   }
 });
 
+test('agent CLI bounds a hanging HTTP advisor and records a timeout fallback', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-model-timeout-e2e-'));
+  let requestCount = 0;
+  const server = createServer((request) => {
+    requestCount += 1;
+    request.resume();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'local-timeout-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'local-timeout-model',
+    YI_AGENT_API_TIMEOUT_MS: '1000',
+  };
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'timeout-seed', '--json'], process.env)).code, 0);
+    let child;
+    let guard;
+    try {
+      const runPromise = invoke(
+        ['agent', 'run', '--lab', lab, '--steps', '1', '--json'],
+        env,
+        (value) => { child = value; },
+      );
+      const timeout = new Promise((_, reject) => {
+        guard = setTimeout(() => {
+          child?.kill();
+          reject(new Error('agent CLI did not honor the model timeout.'));
+        }, 5000);
+      });
+      const run = await Promise.race([runPromise, timeout]);
+      assert.equal(run.code, 0);
+      assert.equal(run.stdout[0].data.status, 'COMPLETED');
+      const events = (await (await LabStore.open({ labPath: lab })).readRun(run.stdout[0].data.runId)).events;
+      const policyEvidence = events.find((event) => event.kind === 'STEP').payload.policyEvidence;
+      assert.equal(policyEvidence.reason, 'MODEL_TIMEOUT');
+      assert.equal((await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+    } finally {
+      clearTimeout(guard);
+    }
+    assert.equal(requestCount, 1);
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent loop commits multiple runs and resumes from the persisted current state', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-loop-e2e-'));
   const contexts = [];

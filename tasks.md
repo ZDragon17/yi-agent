@@ -841,3 +841,10 @@
 - 实现：`requestPlan` 与 `requestAdvice` 在调用外部回调前对全部模型输入做结构化深复制；宿主继续用自己的观测摘要、Kernel Memory、能力和 manifest 计算后续决策，模型返回值仍经过既有规范化和提议校验。
 - 验证：先用会原地修改 Planner/Advisor 输入的回调得到 STEP 连续性失败反例；修复后观测仍为 `[0]`、能力成本仍为 `1`、Memory 时钟未被污染，自动计划、动作执行和 Replay 均正常；模型/应用相关定向回归通过。
 - 边界：副本隔离只防止进程内回调通过对象别名写入宿主状态，不限制模型回答的语义错误、资源消耗或恶意网络行为；真正的插件/外部模型仍需进程权限、超时和网络沙箱。
+
+## F-103 模型回调的有界等待与连续 Runner 生存性
+
+- 反例：F-102 只隔离了模型输入对象；一个永不 resolve 的 Planner/Advisor 仍会让 Application 永久等待，连续 Runner 无法提交当前 Run，也没有可 Replay 的故障证据。HTTP 客户端自身有请求超时，但共同 Application 边界不能假设所有嵌入式回调都使用该客户端。
+- 实现：`runLab` 在 Planner/Advisor 调用边界统一使用默认 60 秒、可配置 100～300000ms 的有界等待；超时分别标准化为 `PLANNER_TIMEOUT`/`MODEL_TIMEOUT`，沿既有非法/不可用模型 fallback，不改变 Kernel 权限、WorldPort transition 或 Replay 语义。CLI 将 `YI_AGENT_API_TIMEOUT_MS` 传入同一边界，避免配置只约束 HTTP 而不约束宿主。
+- 验证：Advisor 与 Planner 的永不返回回调在 100ms 边界内完成一个可 Replay Run；连续 Runner 连续提交两个超时 Run；真实 CLI 子进程以挂起 HTTP 服务和 `YI_AGENT_API_TIMEOUT_MS=1000` 完成并记录 `MODEL_TIMEOUT`，全部 Replay 为 `CONSISTENT`。
+- 边界：Promise 截止时间只停止宿主等待，不能强制终止已经运行的任意进程内回调或撤销其外部副作用；模型资源消耗、恶意网络行为、进程崩溃和真正的插件权限隔离仍需外部进程/容器边界与 Effect Broker 对账，不能把本节点称为沙箱或通用智能。
