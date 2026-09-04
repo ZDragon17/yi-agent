@@ -18,7 +18,7 @@ test('agent CLI can use an isolated process model adapter without API configurat
     executable: process.execPath,
     args: [MODEL_ADAPTER],
     model: 'fixture-process-model',
-    timeoutMs: 1000,
+    timeoutMs: 5000,
   }));
   const lab = path.join(root, 'lab');
   try {

@@ -124,6 +124,11 @@ function invokeProcess({ config, spawnImpl, signal, request }) {
       finish(new ModelAdapterError('MODEL_ADAPTER_START', 'Model adapter process could not be started.', {}, { cause: error }));
       return;
     }
+    if (settled) {
+      child.on('error', () => {});
+      terminate();
+      return;
+    }
 
     timer = setTimeout(timeout, config.timeoutMs);
     child.stdout.on('data', (chunk) => {

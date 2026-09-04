@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 import { createProcessModelClient } from '../../src/agent/process-model-client.mjs';
 
@@ -64,4 +66,36 @@ test('process model client kills an uncooperative child on caller cancellation',
   }
   assert.notEqual(error?.code, 'TEST_TIMEOUT');
   assert.equal(error?.code, 'MODEL_ADAPTER_CANCELLED');
+});
+
+test('process model client terminates a child when cancellation races with spawn', async () => {
+  const controller = new AbortController();
+  let child;
+  const client = createProcessModelClient({
+    executable: process.execPath,
+    args: [],
+    timeoutMs: 1000,
+  }, {
+    spawnImpl: () => {
+      controller.abort();
+      child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.stdin = new PassThrough();
+      child.exitCode = null;
+      child.signalCode = null;
+      child.killed = false;
+      child.kill = () => {
+        child.killed = true;
+        child.exitCode = null;
+        child.signalCode = 'SIGTERM';
+        child.emit('close', null, 'SIGTERM');
+        return true;
+      };
+      return child;
+    },
+  });
+
+  await assert.rejects(client.chat('race', { signal: controller.signal }), { code: 'MODEL_ADAPTER_CANCELLED' });
+  assert.equal(child.killed, true);
 });

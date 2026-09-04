@@ -876,3 +876,10 @@
 - 实现：增加可选 `--model-adapter` 配置。Advisor/Planner 共用一个固定可执行文件的一次一进程 `yi-model-cli` JSONL 客户端；宿主限制配置、显式环境变量、请求/回包和 stdout/stderr 大小，校验 protocol/version/id/content，并在 caller abort 或 timeout 时终止子进程。模型仍只能产生普通 chat 内容，继续经过既有 Advisor/Planner、Kernel、权限和 Replay 边界。
 - 验证：真实 Node 子进程返回结构化 Token 时，CLI 在无 API 配置下完成两步闭环且 Replay 为 `CONSISTENT`；真实子进程永不回包时，100ms 超时内回到 Kernel fallback 并 Replay 为 `CONSISTENT`；直接客户端回归验证 caller cancellation 会杀掉不合作子进程。
 - 边界：这是 liveness 和资源回收边界，不是 OS 沙箱、网络隔离、子孙进程树的完整 kill、模型可信性或副作用撤销；适配器凭据、权限和真实 WorldPort 仍必须由部署环境与 Effect Broker/对账契约控制。`--kernel-only` 与 `--model-adapter` 互斥。
+
+## F-108 模型进程 spawn 交接竞态
+
+- 反例：F-107 在监听取消信号后调用 `spawn()`；若取消恰好发生在初始 aborted 检查与 child 对象返回之间，Promise 会先结束，但新进程尚未绑定到宿主变量，无法被终止。
+- 实现：spawn 返回后增加已结束二次检查；竞态命中时先绑定最小 child error 处理，再立即终止 child，不继续写入 stdin 或启动超时计时器。
+- 验证：可控 `spawnImpl` 在返回 child 前触发 AbortSignal；旧实现留下 `killed=false`，修复后 `MODEL_ADAPTER_CANCELLED` 与 child `killed=true` 同时成立；UTF-8、正常回包、不合作取消和 CLI 进程适配器回归继续通过。
+- 边界：该修复只封闭宿主与直接 child 的交接窗口，不提供子孙进程树清理、OS 沙箱、外部副作用撤销或跨主机进程共识。
