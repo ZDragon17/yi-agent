@@ -897,3 +897,10 @@
 - 实现：保留 Kernel 公共输入边界和有 feedback 时的归因校验，只在空 feedback 时跳过无结果结算；没有 Advisor/Planner 时按需跳过模型上下文投影；宿主为运行生成深冻结的 action manifest，内置 WorldPort 对该不可变身份复用已通过校验的 manifest 规范化结果。外部 WorldPort、动态能力、账本、恢复和 Replay 契约不改。
 - 验证：NFR 长跑 2/2 通过，10,000 步门槛重新低于 60 秒；此前约 84 秒的空结算版本先降至约 70 秒，再降至约 65 秒，最终通过门槛。WorldPort/应用定向回归 77/77 通过，覆盖连续 Run、恢复、动态能力、WorldPort 身份和 Replay。
 - 边界：该节点只消除已证明不会产生事实的重复计算，不把内部状态当作无条件可信，也不宣称解决模型质量、因果归因或长期自主智能；下一步仍需在外部 adapter、模型调用和更大 Memory 规模下测量收益与压力边界。
+
+## F-111 Replay 长运行空工作对齐
+
+- 反例：F-110 已让运行时在无 feedback 的连续步骤中跳过无结果结算，但 Replay 仍对每个空 feedback STEP 无条件调用同一结算入口；因此恢复后的验证路径与生产路径在长历史上承担了不对称的重复工作。
+- 实现：Replay 只在当前 observation 携带 feedback 时调用 `validateObservationFeedback`；有 feedback 的延迟归因、未知 nonce、混杂证据和旧账本兼容路径保持不变。
+- 验证：Replay/真实 repo WorldPort E2E 23/23 通过；独立 1,000 步 checkpoint Run 用时约 5.2 秒，随后 Replay 为 `CONSISTENT`、用时约 9.3 秒，证明优化没有把回放变成跳过事实检查。
+- 边界：这是对已知空事实路径的性能对齐，不是流式 Replay、无限历史或外部事实认证；更大账本仍需要分页/流式契约，外部副作用仍必须靠 WorldPort 对账和人工门禁。

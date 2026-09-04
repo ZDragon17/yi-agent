@@ -172,7 +172,9 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   try {
     capabilities = world.actions(manifest, state.worldState);
     beforeObservation = projectObservation(world.observe(state.worldState));
-    validateObservationFeedback(state.memory, beforeObservation);
+    if ((beforeObservation.feedback?.length ?? 0) > 0) {
+      validateObservationFeedback(state.memory, beforeObservation);
+    }
   } catch (error) {
     corrupt('Replay could not observe the world before a STEP.', { sequence: event.sequence, cause: errorName(error) });
   }
