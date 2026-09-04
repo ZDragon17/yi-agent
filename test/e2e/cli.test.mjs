@@ -212,6 +212,9 @@ test('CLI maps a safe stop to exit code 2 and keeps the result machine-readable'
     assert.equal(result.code, 2);
     assert.equal(result.stdout[0].data.stopReason, 'NO_SAFE_ACTION');
     assert.equal(result.stdout[0].data.metrics.executed, 0);
+    const inspection = await invoke('inspect', '--lab', lab, '--json');
+    assert.equal(inspection.code, 0);
+    assert.equal(inspection.stdout[0].data.inspectView.stopReason, 'NO_SAFE_ACTION');
   });
 });
 

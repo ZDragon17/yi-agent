@@ -361,6 +361,8 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 
 `agent run` 会在每一步把当前观测和可用能力交给模型提出一个 token，再由 Kernel 独立计算预期、复核安全性、执行、验证和学习。模型不能直接执行动作；每一步只保存结构化提议摘要，`replay` 不会再次调用模型。
 
+`inspect` 的 `inspectView.stopReason` 直接读取所选终态 Run 的账本终止原因，例如 `NO_SAFE_ACTION`、`EXECUTION_REJECTED`、`OBJECTIVE_REACHED`、`MAX_CYCLES`、`CRASH_HALTED` 或 `EXTERNAL_TRANSITION_UNKNOWN`；没有终态 Run 时返回 `null`，不靠最后一步的表面状态猜测原因。
+
 如果 Advisor 的 API 超时、断开或返回非法 Token，应用边界会记录 `MODEL_UNAVAILABLE` 或 `INVALID_ADVISOR_RESULT`，然后让 Kernel 在同一状态上选择安全候选继续闭环；该回退也会进入账本，因此重启和 `replay` 不依赖模型再次返回相同结果。
 
 `--kernel-only` 显式关闭 Advisor/Planner，只运行共同的 Kernel—WorldPort—verify—learn 闭环，不需要 API Key；它用于证明模型是可替换工具，而不是 Agent 的启动前提。若需要 `--auto-plan`，仍应提供模型配置，或接受 Planner 不可用并回退为根目标阶段。

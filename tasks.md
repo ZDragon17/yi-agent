@@ -904,3 +904,10 @@
 - 实现：Replay 只在当前 observation 携带 feedback 时调用 `validateObservationFeedback`；有 feedback 的延迟归因、未知 nonce、混杂证据和旧账本兼容路径保持不变。
 - 验证：Replay/真实 repo WorldPort E2E 23/23 通过；独立 1,000 步 checkpoint Run 用时约 5.2 秒，随后 Replay 为 `CONSISTENT`、用时约 9.3 秒，证明优化没有把回放变成跳过事实检查。
 - 边界：这是对已知空事实路径的性能对齐，不是流式 Replay、无限历史或外部事实认证；更大账本仍需要分页/流式契约，外部副作用仍必须靠 WorldPort 对账和人工门禁。
+
+## F-112 Inspect 终止原因事实投影
+
+- 反例：终态账本已经保存 `reason`，但 `inspectView.stopReason` 只根据 HALTED 状态和最后一步 receipt 猜测；`NO_SAFE_ACTION`、`MAX_CYCLES`、`CRASH_HALTED` 与其它停止原因因此无法在观察面区分。
+- 实现：`inspectView.stopReason` 直接投影所选终态事件的 `payload.reason`，没有可读终态事件时返回 `null`；不改变终止事件、恢复、连续 Runner 或 Replay 的写入语义。
+- 验证：应用层“无安全动作”和“目标达成”回归 2/2 通过；CLI safe-stop 端到端回归 1/1 通过，并确认 inspect 返回 `NO_SAFE_ACTION`；文档同步说明可见原因集合与无终态行为。
+- 边界：这是本地账本事实的准确展示，不是对外部世界因果的证明；外部 transition 未决、进程崩溃和现实执行结果仍以各自 WorldPort/EffectBroker 对账为准。

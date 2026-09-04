@@ -71,9 +71,7 @@ export function buildInspectView({ manifest, current, run = null, actions, value
       verification: cloneJson(selectedAction.payload.verification),
       evidence: `${selectedAction.runId}:${selectedAction.sequence}`,
     },
-    stopReason: viewStatus === 'HALTED'
-      ? latestStep?.payload.receipt.status === 'REJECTED' ? 'EXECUTION_REJECTED' : 'HALTED'
-      : null,
+    stopReason: terminal?.payload?.reason ?? null,
   };
 }
 

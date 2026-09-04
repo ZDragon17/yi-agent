@@ -83,7 +83,9 @@ test('application service halts without acting when every capability is unsafe',
     assert.equal(result.status, 'HALTED');
     assert.equal(result.stopReason, 'NO_SAFE_ACTION');
     assert.equal(result.metrics.executed, 0);
-    assert.equal((await inspectLab({ labPath: lab })).current.status, 'HALTED');
+    const inspection = await inspectLab({ labPath: lab });
+    assert.equal(inspection.current.status, 'HALTED');
+    assert.equal(inspection.inspectView.stopReason, 'NO_SAFE_ACTION');
   });
 });
 
@@ -188,6 +190,7 @@ test('application service stops early when an explicit goal is reached', async (
     assert.equal(result.stopReason, 'OBJECTIVE_REACHED');
     assert.equal(result.metrics.executed, 2);
     assert.equal(callCount, 2);
+    assert.equal((await inspectLab({ labPath: lab })).inspectView.stopReason, 'OBJECTIVE_REACHED');
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
   });
 });
