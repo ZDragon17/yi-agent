@@ -77,6 +77,29 @@ test('API client sends a non-streaming chat request and returns the assistant co
   });
 });
 
+test('API client propagates a caller cancellation signal to the HTTP request', async () => {
+  const controller = new AbortController();
+  let requestSignal;
+  const client = createOpenAICompatibleClient({
+    apiKey: 'secret-key',
+    model: 'model-1',
+    fetchImpl: async (_url, options) => {
+      requestSignal = options.signal;
+      await new Promise((_, reject) => {
+        options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    },
+  });
+
+  const pending = client.chat('请停止', { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.code, 'API_ERROR');
+    return true;
+  });
+  assert.equal(requestSignal.aborted, true);
+});
+
 test('API client exposes provider failures without exposing authorization data', async () => {
   const client = createOpenAICompatibleClient({
     apiKey: 'secret-key',

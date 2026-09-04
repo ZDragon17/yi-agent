@@ -164,6 +164,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 规划证据不自证：`goalActivation/goalReplan.planEvidence.observationDigest` 同样由 Application 按 Planner 实际收到的有界观测上下文重新计算；非法计划或 Planner 故障不会获得伪造的观测来源；
 - 模型输入隔离：传给 Planner/Advisor 的观测、Memory、ValueSpec、能力和 manifest 都是闭环内部状态的副本；模型回调即使原地改写输入，也不能改变 Kernel 选择、权限或账本连续性；
 - 模型回调截止时间：Application 对 Planner/Advisor 统一施加有界等待，默认 60 秒；CLI 沿用 `YI_AGENT_API_TIMEOUT_MS`，超时分别记录 `MODEL_TIMEOUT`/`PLANNER_TIMEOUT` 并回退到可验证 Kernel 路径，连续 Runner 不会因一个永不返回的模型永久占住 Run；该截止时间只停止宿主等待，不等于能取消任意进程内回调，真正不可信插件仍需进程级隔离；
+- 合作式模型取消：截止时间会通过回调第二参数传递 `AbortSignal`，内置 Advisor/Planner 继续把它交给 OpenAI-compatible HTTP 请求；因此可合作的模型调用会主动释放网络等待，忽略信号的任意进程内回调仍受前一条“只停止宿主等待”的边界约束；
 - 有界感知上下文：WorldPort 的结构化 observation evidence 只经过大小/深度/数据类型边界后提供给 Advisor/Planner；Kernel 仍只接收数值观测，账本只保存上下文摘要，不把原始证据当作事实或执行权限；
 - 模型故障隔离：Advisor 不可用、返回非法能力 Token 或破坏输出契约时，应用边界回退到 Kernel 的确定性选择，并把故障证据写入 STEP；不会因为模型暂时不可用而扩大权限，也不会让模型成为连续运行的单点故障；
 - 安全边界：模型不能绕过 Kernel 直接执行动作；

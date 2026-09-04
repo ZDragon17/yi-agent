@@ -927,9 +927,11 @@ async function requestAdvice({ advisor, timeoutMs, ...input }) {
 }
 
 async function invokeModelCallback(callback, input, timeoutMs) {
+  const controller = new AbortController();
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
+      controller.abort();
       reject(Object.assign(new Error('Model callback timed out.'), {
         code: 'MODEL_CALLBACK_TIMEOUT',
       }));
@@ -937,7 +939,7 @@ async function invokeModelCallback(callback, input, timeoutMs) {
   });
   try {
     return await Promise.race([
-      Promise.resolve().then(() => callback(input)),
+      Promise.resolve().then(() => callback(input, controller.signal)),
       timeout,
     ]);
   } finally {

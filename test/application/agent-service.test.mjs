@@ -872,6 +872,26 @@ test('continuous runner keeps committing runs after model callback timeouts', as
   });
 });
 
+test('application aborts a timed-out model callback through its cancellation signal', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'model-abort-lab', worldId: 'temperature', seed: 'model-abort-seed' });
+    let observedSignal;
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 1,
+      modelTimeoutMs: 100,
+      advisor: async (_input, signal) => {
+        observedSignal = signal;
+        return new Promise(() => {});
+      },
+    });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(observedSignal?.aborted, true);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
 test('model advisor failure is isolated, falls back to the kernel, and remains replayable', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'advisor-outage-lab', worldId: 'temperature', seed: 'advisor-outage-seed' });

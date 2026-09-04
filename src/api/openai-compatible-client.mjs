@@ -52,7 +52,7 @@ export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs
       };
     },
 
-    async chat(prompt) {
+    async chat(prompt, { signal } = {}) {
       if (typeof prompt !== 'string' || prompt.trim().length === 0) {
         throw new ApiClientError('INVALID_INPUT', 'Prompt must be a non-empty string.', { field: 'prompt' });
       }
@@ -63,7 +63,7 @@ export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs
           messages: [{ role: 'user', content: prompt }],
           stream: false,
         }),
-      });
+      }, signal);
       const content = payload?.choices?.[0]?.message?.content;
       if (typeof content !== 'string') {
         throw new ApiClientError('API_PROTOCOL_ERROR', 'API response did not contain choices[0].message.content.');
@@ -77,8 +77,14 @@ export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs
     },
   };
 
-  async function request(endpoint, options) {
+  async function request(endpoint, options, externalSignal) {
     const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(externalSignal.reason);
+    if (externalSignal?.aborted === true) {
+      controller.abort(externalSignal.reason);
+    } else if (externalSignal !== undefined) {
+      externalSignal.addEventListener('abort', abortFromCaller, { once: true });
+    }
     const timer = setTimeout(() => controller.abort(), normalizedTimeoutMs);
     try {
       let response;
@@ -113,6 +119,7 @@ export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs
       return payload;
     } finally {
       clearTimeout(timer);
+      externalSignal?.removeEventListener('abort', abortFromCaller);
     }
   }
 }

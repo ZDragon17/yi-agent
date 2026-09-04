@@ -12,7 +12,7 @@ export function createModelAdvisor({ client, model, goal = null } = {}) {
     throw new Error('Model advisor requires a chat client.');
   }
 
-  return async function advise(input) {
+  return async function advise(input, signal) {
     const modelObservation = projectModelObservation(
       input.observation,
       input.observationEvidence,
@@ -25,7 +25,7 @@ export function createModelAdvisor({ client, model, goal = null } = {}) {
       observationEvidenceTruncated: modelObservation.observationEvidenceTruncated,
       goal: goal ?? input.goal ?? null,
     });
-    const response = await client.chat(prompt);
+    const response = await client.chat(prompt, { signal });
     const responseDigest = canonicalDigest({ model: response.model ?? model, content: response.content });
     const parsed = parseProposal(response.content);
     if (parsed.token === null) {

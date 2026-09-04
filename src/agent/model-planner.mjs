@@ -12,7 +12,7 @@ export function createModelPlanner({ client, model } = {}) {
     throw new Error('Model planner requires a chat client.');
   }
 
-  return async function plan(input = {}) {
+  return async function plan(input = {}, signal) {
     const modelObservation = projectModelObservation(
       input.observation,
       input.observationEvidence,
@@ -24,7 +24,7 @@ export function createModelPlanner({ client, model } = {}) {
       observationEvidence: modelObservation.observationEvidence,
       observationEvidenceTruncated: modelObservation.observationEvidenceTruncated,
     });
-    const response = await client.chat(prompt);
+    const response = await client.chat(prompt, { signal });
     const modelName = response.model ?? model;
     const responseDigest = canonicalDigest({ model: modelName, content: response.content });
     const parsed = parsePlanProposal(response.content);

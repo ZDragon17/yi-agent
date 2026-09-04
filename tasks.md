@@ -848,3 +848,10 @@
 - 实现：`runLab` 在 Planner/Advisor 调用边界统一使用默认 60 秒、可配置 100～300000ms 的有界等待；超时分别标准化为 `PLANNER_TIMEOUT`/`MODEL_TIMEOUT`，沿既有非法/不可用模型 fallback，不改变 Kernel 权限、WorldPort transition 或 Replay 语义。CLI 将 `YI_AGENT_API_TIMEOUT_MS` 传入同一边界，避免配置只约束 HTTP 而不约束宿主。
 - 验证：Advisor 与 Planner 的永不返回回调在 100ms 边界内完成一个可 Replay Run；连续 Runner 连续提交两个超时 Run；真实 CLI 子进程以挂起 HTTP 服务和 `YI_AGENT_API_TIMEOUT_MS=1000` 完成并记录 `MODEL_TIMEOUT`，全部 Replay 为 `CONSISTENT`。
 - 边界：Promise 截止时间只停止宿主等待，不能强制终止已经运行的任意进程内回调或撤销其外部副作用；模型资源消耗、恶意网络行为、进程崩溃和真正的插件权限隔离仍需外部进程/容器边界与 Effect Broker 对账，不能把本节点称为沙箱或通用智能。
+
+## F-104 合作式模型取消信号
+
+- 反例：F-103 的 `Promise.race` 能让 Application 继续提交 Run，但超时后模型回调仍可能持有 HTTP/socket 等等待；若回调支持取消，却收不到宿主的停止意图，连续运行会留下不必要的资源和外部等待。
+- 实现：Application 在统一模型回调边界创建 `AbortController`，截止时先 abort 再记录既有 `MODEL_TIMEOUT`/`PLANNER_TIMEOUT`；以不改变 JSON 输入契约的第二参数把 `AbortSignal` 传给 Advisor/Planner，内置模型适配器再传给 OpenAI-compatible client。HTTP client 将调用方取消转发到请求控制器，并在请求结束时移除监听器，同时保留自身截止时间。
+- 验证：进程内永不返回 Advisor 在超时返回前能观察到 `signal.aborted`；HTTP client 的真实 fetch 选项收到同一信号并在 abort 后释放等待；F-103 的 Planner/Advisor/连续 Runner/CLI/Replay 回归继续通过。
+- 边界：这是合作式取消，不是强制终止；忽略信号的任意回调、已经发出的外部副作用、恶意网络行为和不可信插件仍需外部进程/容器隔离与 Effect Broker 对账。
