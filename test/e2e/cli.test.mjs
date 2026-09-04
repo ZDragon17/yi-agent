@@ -1141,7 +1141,7 @@ async function writeAdapterConfig(root, args = []) {
     args: [ADAPTER_FIXTURE, ...args],
     adapterId: 'generated-adapter-v1',
     worldId: 'generated',
-    timeoutMs: 2000,
+    timeoutMs: 5000,
   }));
   return config;
 }

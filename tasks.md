@@ -883,3 +883,10 @@
 - 实现：spawn 返回后增加已结束二次检查；竞态命中时先绑定最小 child error 处理，再立即终止 child，不继续写入 stdin 或启动超时计时器。
 - 验证：可控 `spawnImpl` 在返回 child 前触发 AbortSignal；旧实现留下 `killed=false`，修复后 `MODEL_ADAPTER_CANCELLED` 与 child `killed=true` 同时成立；UTF-8、正常回包、不合作取消和 CLI 进程适配器回归继续通过。
 - 边界：该修复只封闭宿主与直接 child 的交接窗口，不提供子孙进程树清理、OS 沙箱、外部副作用撤销或跨主机进程共识。
+
+## F-109 外部 adapter E2E 的调度预算
+
+- 反例：全量门禁在长跑账本用例后运行生成式外部 WorldPort 时，合法 CRLF 回包被统一报告为进程失败，超大状态的大小错误也被更早的子进程超时遮蔽；同一源码与输入单 case 串行运行可通过，直接 `main()` 可得到正确的协议错误。
+- 实现：只将生成式 adapter 的 E2E 配置预算从 2 秒提高到 5 秒；生产 adapter 的 100～30000ms 合法范围、协议校验、资源上限和故障语义不变，故意的 timeout/nonzero/pollution 等反例仍使用同一配置路径。
+- 验证：`node --test --test-concurrency=1 test/e2e/cli.test.mjs` 的 38/38 case 通过，包含未知 WorldPort 闭环、CRLF/ stderr 诊断、大状态大小拒绝及全部外部 adapter 故障回归；此前失败的 case 138、CRLF 和 oversized-domain-state 均恢复为预期信号。
+- 边界：这只修正宿主测试观察装置在重负载后的时间预算，不增加真实运行时吞吐或外部进程可靠性；全量 `npm test` 仍需在该新预算下重新验证，长跑 case 74/92 的分钟级耗时仍是独立性能问题。
