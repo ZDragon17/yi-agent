@@ -1020,12 +1020,14 @@ async function invoke(...args) {
     let stdout = '';
     let stderr = '';
     let settled = false;
+    // Paired experiments perform durable Run creation, Replay, and a second
+    // process startup on Windows; keep the timeout above that real boundary.
     const timer = setTimeout(() => {
       if (settled) return;
       child.kill();
       settled = true;
       resolve({ code: null, timedOut: true, stdout: parseOutput(stdout), stderr });
-    }, 10000);
+    }, 30000);
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('close', (code) => {
