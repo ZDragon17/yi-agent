@@ -130,6 +130,7 @@ export async function runLab(input) {
   registry.assertManifest(manifest);
   const spec = registry.valueSpec(manifest.worldId);
   const world = registry.createWorld(manifest, scenario);
+  const actionManifest = worldManifest(manifest);
   const current = (await store.inspect()).current;
   if (suppliedInitialState !== undefined && current.lastRunId !== null) {
     throw new LabStoreError('CONFLICT', 'initialState is only valid when starting an isolated fresh Run.', {
@@ -332,9 +333,13 @@ export async function runLab(input) {
     for (let index = 0; index < steps; index += 1) {
     const observedBefore = world.observe(state.worldState);
     const beforeObservation = projectObservation(observedBefore);
-    validateObservationFeedback(state.memory, beforeObservation);
-    const beforeModelObservation = projectModelObservation(observedBefore);
-    const capabilities = persistedRecoveryCapabilities ?? world.actions(worldManifest(manifest), state.worldState);
+    if ((beforeObservation.feedback?.length ?? 0) > 0) {
+      validateObservationFeedback(state.memory, beforeObservation);
+    }
+    const beforeModelObservation = source.advisor !== undefined || plannerRequested
+      ? projectModelObservation(observedBefore)
+      : null;
+    const capabilities = persistedRecoveryCapabilities ?? world.actions(actionManifest, state.worldState);
     // The state has already crossed the store/kernel validation boundary on
     // entry and every prior supervisor transition returns a normalized value.
     // Avoid re-normalizing this immutable internal value on every long-run
@@ -518,7 +523,7 @@ export async function runLab(input) {
         point: 'external-transition:returned',
       });
     }
-    const afterCapabilities = world.actions(worldManifest(manifest), transition.nextWorldState);
+    const afterCapabilities = world.actions(actionManifest, transition.nextWorldState);
     const receipt = externalInputs.length === 0
       ? transition.receipt
       : {
@@ -530,7 +535,9 @@ export async function runLab(input) {
       beforeObservation,
       projectObservation(transition.postObservation),
     );
-    const postModelObservation = projectModelObservation(transition.postObservation);
+    const postModelObservation = plannerRequested
+      ? projectModelObservation(transition.postObservation)
+      : null;
     const verification = verify({ intent, receipt, postObservation });
     const candidateOutcome = committedPolicyEvidence === null
       ? undefined
@@ -1331,11 +1338,23 @@ export function recoverLab(input) {
 }
 
 function worldManifest(manifest) {
-  return {
+  return Object.freeze({
     schemaVersion: manifest.schemaVersion,
-    tokenMap: manifest.tokenMap,
-    authorityPolicy: manifest.authorityPolicy,
-  };
+    tokenMap: Object.freeze({
+      schemaVersion: manifest.tokenMap.schemaVersion,
+      entries: Object.freeze(manifest.tokenMap.entries.map((entry) => Object.freeze({ ...entry }))),
+      digest: manifest.tokenMap.digest,
+    }),
+    authorityPolicy: Object.freeze({
+      schemaVersion: manifest.authorityPolicy.schemaVersion,
+      policyVersion: manifest.authorityPolicy.policyVersion,
+      constraintsDigest: manifest.authorityPolicy.constraintsDigest,
+      capabilities: Object.freeze(Object.fromEntries(
+        Object.entries(manifest.authorityPolicy.capabilities)
+          .map(([capabilityId, policy]) => [capabilityId, Object.freeze({ ...policy })]),
+      )),
+    }),
+  });
 }
 
 function projectObservation(observation) {

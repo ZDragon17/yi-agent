@@ -213,6 +213,7 @@ export function mergeObservationFeedback(before, after) {
 export function validateObservationFeedback(memoryValue, observationValue) {
   const observation = normalizeObservation(observationValue, 'observation');
   const memory = normalizeMemory(memoryValue, 'memory', observation.vector.length);
+  if ((observation.feedback?.length ?? 0) === 0) return;
   settlePendingCredits(
     cloneMemory(memory),
     observation,

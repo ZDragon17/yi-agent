@@ -56,6 +56,8 @@ export function createWorldPort({
 }) {
   const capturedManifest = normalizeManifest(manifest, capabilityIds, worldId);
   const manifestFingerprint = canonicalJson(capturedManifest);
+  let cachedActionsManifest = null;
+  let cachedActionsNormalizedManifest = null;
 
   function initialState() {
     const state = {
@@ -74,16 +76,25 @@ export function createWorldPort({
   }
 
   function actions(suppliedManifest, suppliedState = undefined) {
-    const normalizedManifest = normalizeManifest(
-      suppliedManifest,
-      capabilityIds,
-      worldId,
-    );
+    let normalizedManifest;
+    if (suppliedManifest === cachedActionsManifest && cachedActionsNormalizedManifest !== null) {
+      normalizedManifest = cachedActionsNormalizedManifest;
+    } else {
+      normalizedManifest = normalizeManifest(
+        suppliedManifest,
+        capabilityIds,
+        worldId,
+      );
 
-    if (canonicalJson(normalizedManifest) !== manifestFingerprint) {
-      contractViolation('actions manifest does not match the world manifest', {
-        field: `${worldId}.actions.manifest`,
-      });
+      if (canonicalJson(normalizedManifest) !== manifestFingerprint) {
+        contractViolation('actions manifest does not match the world manifest', {
+          field: `${worldId}.actions.manifest`,
+        });
+      }
+      if (isFrozenManifest(suppliedManifest)) {
+        cachedActionsManifest = suppliedManifest;
+        cachedActionsNormalizedManifest = normalizedManifest;
+      }
     }
 
     const state = suppliedState === undefined
@@ -388,6 +399,16 @@ export function createWorldPort({
   }
 
   return { initialState, observe, actions, transition };
+}
+
+function isFrozenManifest(value) {
+  return Object.isFrozen(value) &&
+    Object.isFrozen(value?.tokenMap) &&
+    Object.isFrozen(value?.tokenMap?.entries) &&
+    value.tokenMap.entries.every((entry) => Object.isFrozen(entry)) &&
+    Object.isFrozen(value?.authorityPolicy) &&
+    Object.isFrozen(value?.authorityPolicy?.capabilities) &&
+    Object.values(value.authorityPolicy.capabilities).every((policy) => Object.isFrozen(policy));
 }
 
 export function assertPlainRecord(value, field) {

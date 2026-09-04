@@ -890,3 +890,10 @@
 - 实现：只将生成式 adapter 的 E2E 配置预算从 2 秒提高到 5 秒；生产 adapter 的 100～30000ms 合法范围、协议校验、资源上限和故障语义不变，故意的 timeout/nonzero/pollution 等反例仍使用同一配置路径。
 - 验证：`node --test --test-concurrency=1 test/e2e/cli.test.mjs` 的 38/38 case 通过，包含未知 WorldPort 闭环、CRLF/ stderr 诊断、大状态大小拒绝及全部外部 adapter 故障回归；此前失败的 case 138、CRLF 和 oversized-domain-state 均恢复为预期信号。
 - 边界：这只修正宿主测试观察装置在重负载后的时间预算，不增加真实运行时吞吐或外部进程可靠性；全量 `npm test` 仍需在该新预算下重新验证，长跑 case 74/92 的分钟级耗时仍是独立性能问题。
+
+## F-110 长运行闭环的空工作收束
+
+- 反例：10,000 步 kernel-only 长跑虽然账本与 Replay 语义完整，但每一步仍会对空 feedback 克隆并压缩一份不会被使用的 Memory；在没有 Advisor/Planner 时还会构造并哈希两份不会被消费的模型 observation；内置 WorldPort 的同一个不可变 manifest 也会重复做闭合字段检查和规范化。
+- 实现：保留 Kernel 公共输入边界和有 feedback 时的归因校验，只在空 feedback 时跳过无结果结算；没有 Advisor/Planner 时按需跳过模型上下文投影；宿主为运行生成深冻结的 action manifest，内置 WorldPort 对该不可变身份复用已通过校验的 manifest 规范化结果。外部 WorldPort、动态能力、账本、恢复和 Replay 契约不改。
+- 验证：NFR 长跑 2/2 通过，10,000 步门槛重新低于 60 秒；此前约 84 秒的空结算版本先降至约 70 秒，再降至约 65 秒，最终通过门槛。WorldPort/应用定向回归 77/77 通过，覆盖连续 Run、恢复、动态能力、WorldPort 身份和 Replay。
+- 边界：该节点只消除已证明不会产生事实的重复计算，不把内部状态当作无条件可信，也不宣称解决模型质量、因果归因或长期自主智能；下一步仍需在外部 adapter、模型调用和更大 Memory 规模下测量收益与压力边界。
