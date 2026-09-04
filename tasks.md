@@ -869,3 +869,10 @@
 - 实现：调用方取消回调只有在内部 controller 尚未 aborted 时才写入 `callerAborted` 并触发 abort；controller 第一次进入 aborted 状态即成为请求的唯一中止来源，后续信号只触发既有释放路径。
 - 验证：内部 1000ms 截止先发生、调用方 1050ms 才取消、底层再延迟拒绝时仍得到 `API_ERROR` 和 `timeoutMs=1000`；建连取消、响应体取消、正常截止及 Application/CLI 回归继续通过。
 - 边界：该锁只保证本地请求错误归因的时序稳定，不提供跨进程共识、外部请求撤销或真实世界事实认证；强制终止和外部副作用仍属于进程/Effect Broker 边界。
+
+## F-107 不合作模型的进程级 liveness 边界
+
+- 反例：F-106 只稳定了 HTTP 请求的中止归因；任意进程内模型回调即使收到 `AbortSignal` 也可能完全忽略它，Application 的 Promise 截止只能停止宿主等待，不能结束回调占用的进程、句柄或计算。
+- 实现：增加可选 `--model-adapter` 配置。Advisor/Planner 共用一个固定可执行文件的一次一进程 `yi-model-cli` JSONL 客户端；宿主限制配置、显式环境变量、请求/回包和 stdout/stderr 大小，校验 protocol/version/id/content，并在 caller abort 或 timeout 时终止子进程。模型仍只能产生普通 chat 内容，继续经过既有 Advisor/Planner、Kernel、权限和 Replay 边界。
+- 验证：真实 Node 子进程返回结构化 Token 时，CLI 在无 API 配置下完成两步闭环且 Replay 为 `CONSISTENT`；真实子进程永不回包时，100ms 超时内回到 Kernel fallback 并 Replay 为 `CONSISTENT`；直接客户端回归验证 caller cancellation 会杀掉不合作子进程。
+- 边界：这是 liveness 和资源回收边界，不是 OS 沙箱、网络隔离、子孙进程树的完整 kill、模型可信性或副作用撤销；适配器凭据、权限和真实 WorldPort 仍必须由部署环境与 Effect Broker/对账契约控制。`--kernel-only` 与 `--model-adapter` 互斥。

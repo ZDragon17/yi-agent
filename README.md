@@ -167,6 +167,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 合作式模型取消：截止时间会通过回调第二参数传递 `AbortSignal`，内置 Advisor/Planner 继续把它交给 OpenAI-compatible HTTP 请求；因此可合作的模型调用会主动释放网络等待，忽略信号的任意进程内回调仍受前一条“只停止宿主等待”的边界约束；
 - 取消来源可审计：HTTP client 将调用方主动取消报告为 `API_CANCELLED`，将自身请求截止报告为 `API_ERROR`；两者都不会把模型回答伪装成成功，Application 自身的模型截止仍记录为 `MODEL_TIMEOUT`/`PLANNER_TIMEOUT`；
 - 首次中止来源锁定：同一请求若内部截止先发生、底层稍后才拒绝且调用方又迟到取消，仍保持最先发生的 `API_ERROR` 归因，不让后续信号改写历史事实；
+- 模型进程边界：`agent run|loop --model-adapter CONFIG` 可把 Advisor/Planner 放到固定可执行文件的一次一进程 JSONL 边界；请求、回包、stdout/stderr、模型内容和等待时间均有界，宿主在取消或截止时终止子进程，再由既有 Application fallback 和 Replay 规则收束；配置只按显式环境变量名向子进程传递凭据，不把宿主完整环境默认泄露给模型；
 - 有界感知上下文：WorldPort 的结构化 observation evidence 只经过大小/深度/数据类型边界后提供给 Advisor/Planner；Kernel 仍只接收数值观测，账本只保存上下文摘要，不把原始证据当作事实或执行权限；
 - 模型故障隔离：Advisor 不可用、返回非法能力 Token 或破坏输出契约时，应用边界回退到 Kernel 的确定性选择，并把故障证据写入 STEP；不会因为模型暂时不可用而扩大权限，也不会让模型成为连续运行的单点故障；
 - 安全边界：模型不能绕过 Kernel 直接执行动作；
@@ -174,6 +175,8 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - Effect Broker：对明确声明的副作用提供计划、确认、执行、对账和补偿流程；
 - EffectJournal：跨进程 append 使用原子 writer lock，并在锁内重读账本；stale-lock 回收另有固定 reclaim reservation，避免并发回收者互删或误删新 owner；副作用执行/对账/补偿期间持有可恢复的 nonce 级操作锁；Broker 还以全局日志头摘要做 CAS，陈旧状态不会重复提交语义转换；CLI 重启或并发调用不会各自基于陈旧 sequence 写入；
 - Windows PowerShell CLI：所有核心实验可以脚本化运行。
+
+模型进程适配器是可选的可靠性边界，不是权限沙箱。配置格式为 `{ "executable": "绝对路径", "args": [], "model": "名称", "timeoutMs": 5000, "env": ["显式允许传递的环境变量名"] }`；适配器从 stdin 读取一条 `yi-model-cli` JSONL 请求，并返回一条 `{protocol,version,id,ok,result:{model,content}}` 回包。它解决的是“不合作的模型回调不能永久占住 CLI”这一 liveness 问题，不证明模型安全、不会访问网络，也不撤销已经发生的副作用。
 
 ### 内置世界的测试面
 

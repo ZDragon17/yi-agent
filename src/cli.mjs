@@ -9,6 +9,7 @@ import { assertSandboxRoot, createSandboxFileExecutor } from './effects/sandbox-
 import { createOpenAICompatibleClient, loadApiConfig } from './api/openai-compatible-client.mjs';
 import { createModelAdvisor } from './agent/model-advisor.mjs';
 import { createModelPlanner } from './agent/model-planner.mjs';
+import { createProcessModelClient, loadProcessModelConfig } from './agent/process-model-client.mjs';
 import { runPairedCandidates } from './application/paired-experiment-service.mjs';
 import { runPairedTrajectories } from './application/paired-trajectory-service.mjs';
 import { runPairedPolicies } from './application/paired-policy-service.mjs';
@@ -142,14 +143,21 @@ async function dispatchAgent(options) {
   if (options['auto-plan'] === true && options['goal-plan'] !== undefined) {
     throw cliError('INVALID_INPUT', '--auto-plan and --goal-plan are mutually exclusive.', { fields: ['auto-plan', 'goal-plan'] }, 64);
   }
+  if (options['kernel-only'] === true && options['model-adapter'] !== undefined) {
+    throw cliError('INVALID_INPUT', '--kernel-only and --model-adapter are mutually exclusive.', { fields: ['kernel-only', 'model-adapter'] }, 64);
+  }
   let advisor;
   let planner;
   let modelTimeoutMs;
   if (options['kernel-only'] !== true) {
     try {
-      const config = loadApiConfig();
+      const config = options['model-adapter'] === undefined
+        ? loadApiConfig()
+        : loadProcessModelConfig(requiredAbsolute(options, 'model-adapter'));
       modelTimeoutMs = config.timeoutMs;
-      const client = createOpenAICompatibleClient(config);
+      const client = options['model-adapter'] === undefined
+        ? createOpenAICompatibleClient(config)
+        : createProcessModelClient(config);
       advisor = createModelAdvisor({
         client,
         model: config.model,
@@ -326,7 +334,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
@@ -560,7 +568,7 @@ function helpText() {
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
-    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--planning-horizon N] [--kernel-only] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
+    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--planning-horizon N] [--kernel-only] [--model-adapter CONFIG] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
     '  yi-agent agent loop --lab PATH --resume [--auto-recover] [--kernel-only] [--adapter CONFIG] [--json]',
     '',
     '实验室:',

@@ -9,6 +9,52 @@ import { LabStore } from '../../src/runtime/lab-store.mjs';
 import { main } from '../../src/cli.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
+const MODEL_ADAPTER = path.resolve('test/fixtures/model-adapter.mjs');
+
+test('agent CLI can use an isolated process model adapter without API configuration', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-process-model-e2e-'));
+  const config = path.join(root, 'model-adapter.json');
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [MODEL_ADAPTER],
+    model: 'fixture-process-model',
+    timeoutMs: 1000,
+  }));
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'process-model-seed', '--json'], process.env)).code, 0);
+    const run = await invoke(['agent', 'run', '--lab', lab, '--steps', '2', '--model-adapter', config, '--json'], process.env);
+    assert.equal(run.code, 0);
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    const events = (await (await LabStore.open({ labPath: lab })).readRun(run.stdout[0].data.runId)).events;
+    assert.equal(events.filter((event) => event.kind === 'STEP').every((event) => event.payload.policyEvidence?.model === 'fixture-process-model'), true);
+    assert.equal((await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('agent CLI turns an uncooperative process model into a bounded fallback', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-process-model-timeout-e2e-'));
+  const config = path.join(root, 'model-adapter.json');
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [MODEL_ADAPTER, '--hang'],
+    timeoutMs: 100,
+  }));
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'process-model-timeout-seed', '--json'], process.env)).code, 0);
+    const run = await invoke(['agent', 'run', '--lab', lab, '--steps', '1', '--model-adapter', config, '--json'], process.env);
+    assert.equal(run.code, 0);
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    const events = (await (await LabStore.open({ labPath: lab })).readRun(run.stdout[0].data.runId)).events;
+    assert.equal(events.find((event) => event.kind === 'STEP').payload.policyEvidence.reason, 'MODEL_TIMEOUT');
+    assert.equal((await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('agent run uses model proposals inside the replayable closed loop', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-model-e2e-'));
