@@ -163,6 +163,28 @@ test('API client classifies caller cancellation while reading the response body'
   });
 });
 
+test('API client keeps the first abort source when caller cancellation arrives late', async () => {
+  const controller = new AbortController();
+  const client = createOpenAICompatibleClient({
+    apiKey: 'secret-key',
+    model: 'model-1',
+    timeoutMs: 1000,
+    fetchImpl: async (_url, options) => new Promise((_, reject) => {
+      options.signal.addEventListener('abort', () => {
+        setTimeout(() => reject(new Error('late abort')), 200);
+      }, { once: true });
+    }),
+  });
+
+  const pending = client.chat('先超时', { signal: controller.signal });
+  setTimeout(() => controller.abort(), 1050);
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.code, 'API_ERROR');
+    assert.equal(error.context.timeoutMs, 1000);
+    return true;
+  });
+});
+
 test('API client exposes provider failures without exposing authorization data', async () => {
   const client = createOpenAICompatibleClient({
     apiKey: 'secret-key',

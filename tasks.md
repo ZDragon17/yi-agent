@@ -862,3 +862,10 @@
 - 实现：HTTP client 在统一请求边界记录 abort 来源；调用方信号触发时返回 `API_CANCELLED` 并带稳定的 `context.cancelled`，自身截止仍返回 `API_ERROR` 并带实际 `timeoutMs`。fetch 建连和响应体读取都经过同一中止分类，正常 provider/API 协议错误保持原有契约。
 - 验证：调用方取消与 client 自身 1000ms 截止分别命中不同错误码和上下文；既有鉴权、聊天响应、Provider 错误、模型取消传播和 Application/CLI 回归继续通过。
 - 边界：这是错误来源的语义区分，不是强制杀死任务、撤销已发出的请求或证明 provider 真实性；Application 的模型截止仍使用 `MODEL_TIMEOUT`/`PLANNER_TIMEOUT`，不被 HTTP 错误码替代。
+
+## F-106 锁定请求的首次中止来源
+
+- 反例：F-105 记录了调用方取消与自身截止，但 `callerAborted` 可以在 controller 已经因自身截止进入 aborted 后被迟到的调用方信号改写；底层 fetch/响应体若延迟拒绝，最终错误归因会随信号到达顺序漂移。
+- 实现：调用方取消回调只有在内部 controller 尚未 aborted 时才写入 `callerAborted` 并触发 abort；controller 第一次进入 aborted 状态即成为请求的唯一中止来源，后续信号只触发既有释放路径。
+- 验证：内部 1000ms 截止先发生、调用方 1050ms 才取消、底层再延迟拒绝时仍得到 `API_ERROR` 和 `timeoutMs=1000`；建连取消、响应体取消、正常截止及 Application/CLI 回归继续通过。
+- 边界：该锁只保证本地请求错误归因的时序稳定，不提供跨进程共识、外部请求撤销或真实世界事实认证；强制终止和外部副作用仍属于进程/Effect Broker 边界。

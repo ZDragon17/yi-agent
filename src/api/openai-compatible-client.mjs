@@ -81,6 +81,7 @@ export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs
     const controller = new AbortController();
     let callerAborted = false;
     const abortFromCaller = () => {
+      if (controller.signal.aborted) return;
       callerAborted = true;
       controller.abort(externalSignal.reason);
     };
