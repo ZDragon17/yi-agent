@@ -905,7 +905,7 @@ function preferenceFor(modelDecision, required = false) {
 async function requestAdvice({ advisor, ...input }) {
   let result;
   try {
-    result = await advisor(input);
+    result = await advisor(cloneJson(input));
   } catch {
     return normalizedAdvice(null, 'MODEL_UNAVAILABLE');
   }
@@ -1022,7 +1022,7 @@ function assertExternalTransitionRetry(unresolved, request, state, planningHoriz
 async function requestPlan({ planner, goal, observation, observationEvidence, observationEvidenceTruncated, expectedObservationDigest, valueSpec, memory, manifest, plan = null, reason = null, step }) {
   let result;
   try {
-    result = await planner({
+    result = await planner(cloneJson({
       goal,
       observation,
       observationEvidence,
@@ -1033,7 +1033,7 @@ async function requestPlan({ planner, goal, observation, observationEvidence, ob
       plan,
       reason,
       step,
-    });
+    }));
   } catch {
     return {
       plan: undefined,

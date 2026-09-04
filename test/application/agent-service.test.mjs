@@ -749,6 +749,56 @@ test('application binds policy evidence to the observed boundary instead of a mo
   });
 });
 
+test('application isolates mutable planner and advisor inputs from the closed-loop state', async () => {
+  await withLab(async (lab) => {
+    const registry = createGeneratedRegistry();
+    const planner = async (input) => {
+      input.observation.vector[0] = 999;
+      input.memory.historyClock = 8000;
+      return {
+        model: 'mutating-planner',
+        responseDigest: `sha256:${'a'.repeat(64)}`,
+        plan: {
+          rootGoal: input.goal,
+          stages: [{ id: 'advance', goal: '推进', target: [2] }],
+        },
+      };
+    };
+    const advisor = async (input) => {
+      const token = input.capabilities[0].token;
+      input.observation.vector[0] = 888;
+      input.valueSpec.target[0] = 999;
+      input.capabilities[0].cost = 999;
+      input.memory.historyClock = 9000;
+      return {
+        model: 'mutating-advisor',
+        responseDigest: `sha256:${'b'.repeat(64)}`,
+        token,
+      };
+    };
+    await initLab({ labPath: lab, labId: 'model-input-isolation-lab', worldId: 'generated', seed: 'model-input-isolation-seed', registry });
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 1,
+      scenario: 'generated',
+      goal: '隔离模型输入',
+      autoPlan: true,
+      planner,
+      advisor,
+      registry,
+    });
+    assert.equal(result.status, 'COMPLETED');
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const step = run.events.find((event) => event.kind === 'STEP');
+    assert.deepEqual(step.payload.beforeObservation.vector, [0]);
+    assert.equal(step.payload.boundary.valueSpec.target[0], 2);
+    assert.equal(step.payload.boundary.capabilities[0].cost, 1);
+    assert.ok(step.payload.afterState.memory.historyClock < 8000);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+  });
+});
+
 test('model advisor failure is isolated, falls back to the kernel, and remains replayable', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'advisor-outage-lab', worldId: 'temperature', seed: 'advisor-outage-seed' });
