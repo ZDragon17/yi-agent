@@ -276,6 +276,16 @@ F-94 修复了持久化结果的引用断裂：`pair.end.json` 不仅保存比�
 
 这条复核只证明本地持久化工件仍对应其分支账本，不证明现实世界事实或领域任务成功。并发写者、外部副作用、独立终态判别器和人工对账仍属于各自的安全边界。
 
+## 8.5 有界多步轨迹实验
+
+F-95 新增 `experiment trajectory`，把候选从一个 Token 扩展为两个等长且不同的 Token 序列。输入是自描述的 `candidate-trajectory` 文件，长度固定为 1～8；序列只引用父 Lab manifest 已授权的 Token，因此它表达的是共同底座上的动作轨迹，而不是自由代码或领域命令。
+
+实验先固定父 Lab 的终态连续性状态、WorldPort identity、Token map 和 scenario，再创建左右纯模拟分支。每个轨迹元素对应一个普通 Run，使用稳定的 `run-1`… runId，并在每一步完成后落盘；start 工件保存完整序列和预期步数，进程中断后根据分支 current 的 kernelStep 继续，不重放已经提交的步骤。父 Lab 在实验前后都必须保持不变。
+
+完成判据是双分支每个 Run 都能 Replay 为 `CONSISTENT`，并且两端最后候选都具备可验证质量。比较器只使用共同的初始状态摘要、轨迹摘要、终态摘要和统一目标几何（优先 `terminalGoalDistance`，否则 `terminalErrorMagnitude`），不把任何 WorldPort 名称或领域字段写入比较逻辑。end 工件保存每个分支的 manifest/current 摘要；完成后的 resume 会重新打开分支并复核引用，不能只相信旧 PASS。
+
+这里的“轨迹”明确是 open-loop：序列在实验开始时已经固定，运行中不会根据新观测改写后续 Token。它因此能检验连续策略结果、持久化恢复和跨分支一致性，但不能证明闭环自适应、现实副作用可分叉、领域任务成功或长期自主性；外部 adapter 仍需独立的幂等、隔离、对账和人工确认契约。
+
 ## 9. 有界近期变化上下文
 
 历史隐藏状态反例进一步区分出：保存“同一动作可能有多个结果”并不等于能够利用已验证历史选择动作。新 Lab 的 Memory 可选保存最近两个已验证变化条目 `{token,actualDelta}`，以固定顺序形成 `h1:` 上下文签名；`contextModels` 按该签名和不透明 Token 保存动作模型。Kernel 在当前上下文已有样本时优先使用它，再回退到关系模型和总体模型；学习只在 `ACTION && learnable` 或已闭合 clean feedback 时把变化写入上下文，拒绝、混杂和未闭合反馈不写入。

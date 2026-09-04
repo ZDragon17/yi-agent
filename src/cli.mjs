@@ -10,6 +10,7 @@ import { createOpenAICompatibleClient, loadApiConfig } from './api/openai-compat
 import { createModelAdvisor } from './agent/model-advisor.mjs';
 import { createModelPlanner } from './agent/model-planner.mjs';
 import { runPairedCandidates } from './application/paired-experiment-service.mjs';
+import { runPairedTrajectories } from './application/paired-trajectory-service.mjs';
 
 export async function main(argv, io = defaultIo()) {
   const json = argv.includes('--json');
@@ -37,6 +38,19 @@ async function dispatch(command, options) {
   if (command === 'ask') return askApi(options);
   if (command === 'effect') return dispatchEffect(options);
   if (command === 'experiment') {
+    if (options.experimentOperation === 'trajectory') {
+      const trajectories = options.resume === true ? {} : {
+        leftTokens: await readTrajectoryFile(requiredAbsolute(options, 'left-trajectory'), 'left-trajectory'),
+        rightTokens: await readTrajectoryFile(requiredAbsolute(options, 'right-trajectory'), 'right-trajectory'),
+      };
+      return runPairedTrajectories({
+        labPath: required(options, 'lab'),
+        outputPath: requiredAbsolute(options, 'output'),
+        ...trajectories,
+        scenario: options.scenario,
+        resume: options.resume === true,
+      });
+    }
     if (options.experimentOperation !== 'pair') {
       throw cliError('INVALID_INPUT', `Unsupported experiment operation: ${options.experimentOperation ?? '(missing)'}`, {}, 64);
     }
@@ -271,7 +285,7 @@ function parseArguments(argv) {
   }
   if (command === 'experiment') {
     const operation = args.shift();
-    if (operation !== 'pair') {
+    if (!['pair', 'trajectory'].includes(operation)) {
       throw cliError('INVALID_INPUT', `Unsupported experiment operation: ${operation ?? '(missing)'}`, {}, 64);
     }
     options.experimentOperation = operation;
@@ -303,7 +317,7 @@ function parseArguments(argv) {
     recover: ['lab', 'confirm-lock-owner-dead'],
     challenge: ['lab', 'case'],
     effect: ['effectOperation', 'journal', 'sandbox-root', 'intent', 'nonce'],
-    experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'scenario', 'resume'],
+    experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'scenario', 'resume'],
   }[command] ?? [];
   for (const name of Object.keys(options)) {
     if (!allowed.includes(name)) throw cliError('INVALID_INPUT', `Unknown option: --${name}`, { field: name }, 64);
@@ -368,6 +382,29 @@ async function readGoalPlanFile(filePath) {
   } catch {
     throw cliError('INVALID_INPUT', 'Goal plan file is not valid JSON.', { filePath: resolvedPath }, 64);
   }
+}
+
+async function readTrajectoryFile(filePath, field) {
+  let raw;
+  try {
+    raw = await readFile(filePath, 'utf8');
+  } catch (error) {
+    throw Object.assign(new Error('Trajectory file could not be read.'), {
+      code: error?.code ?? 'EIO',
+      context: { filePath, field },
+    });
+  }
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw cliError('INVALID_INPUT', 'Trajectory file is not valid JSON.', { filePath, field }, 64);
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== 1 || value.type !== 'candidate-trajectory' || !Array.isArray(value.tokens)) {
+    throw cliError('INVALID_INPUT', 'Trajectory file must be a candidate-trajectory artifact.', { filePath, field }, 64);
+  }
+  return value.tokens;
 }
 
 function requiredAbsolute(options, name) {
@@ -487,6 +524,7 @@ function helpText() {
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',
     '  yi-agent experiment pair --lab PATH --output PATH --left-token TOK --right-token TOK [--scenario ID] [--resume] [--json]',
+    '  yi-agent experiment trajectory --lab PATH --output PATH --left-trajectory PATH --right-trajectory PATH [--scenario ID] [--resume] [--json]',
     '  yi-agent effect plan|confirm|execute|reconcile|compensate|inspect ...',
     '',
     'API 环境变量: YI_AGENT_PROVIDER, YI_AGENT_API_KEY/ZAI_API_KEY, YI_AGENT_API_BASE_URL, YI_AGENT_MODEL, YI_AGENT_API_TIMEOUT_MS',

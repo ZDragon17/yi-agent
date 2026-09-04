@@ -785,3 +785,10 @@
 - 实现：end 保存左右分支的 manifest/current 摘要；完成结果的 `--resume` 校验固定分支路径、runId、WorldPort identity，重新打开两个 LabStore 并执行只读 Replay。分支缺失、摘要漂移、账本损坏或 Replay 非一致统一返回带分支路径的 `CORRUPT`。没有新增摘要的旧 end 仍通过真实 Replay 复核，保持向后读取。
 - 验证：先以旧实现观察到“篡改分支 current 后仍返回 PASS”的有效反例；新增服务测试确认篡改后 `--resume` 拒绝，正常完成、部分中断恢复、非法候选边界仍通过；完整回归需覆盖新增分支摘要字段与既有 Replay/WorldPort 契约。
 - 边界：这是本地持久化引用完整性，不是文件系统防篡改、现实事实认证或并发写者共识；后续仍需独立终态判别器、随机多候选/多步轨迹及外部 WorldPort 的人工对账契约。
+
+## F-95 有界多步 Token 轨迹实验
+
+- 反例：F-94 只能比较一个候选动作的分支终态；单步结果可能掩盖连续动作的累积效果，也无法验证一个分支完成部分步骤后重启是否会重复已提交动作。
+- 实现：新增 `experiment trajectory` 与 `candidate-trajectory` 文件格式；每条轨迹限制为 1～8 个父 Token，左右序列等长且不同。服务把每个元素作为独立 Run 持久化，start 固定父连续性状态、完整序列和稳定 runId；`--resume` 根据分支 current 的已提交步数补齐剩余 Run。end 保存分支 manifest/current 摘要并在写入前执行所有 Run 的 Replay。
+- 验证：Runtime 比较器覆盖共同初始摘要、统一终态目标几何、不同轨迹和未验证质量边界；服务覆盖正常两步轨迹与左分支第一步提交后的中断恢复；真实 CLI 子进程覆盖首次执行和只带 `--resume` 的再次执行，父 current 不变，所有分支 Run Replay 为 `CONSISTENT`。
+- 边界：轨迹是预先固定的 open-loop Token 序列，不是根据新观测自适应的闭环策略；只允许内置纯模拟 WorldPort，不把分支 JSON 快照推广为外部现实可复制。独立领域终态判别器、随机多候选、策略级闭环和外部幂等/隔离/对账仍待后续节点。

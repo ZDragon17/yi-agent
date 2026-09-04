@@ -57,6 +57,36 @@ test('CLI executes init, run, inspect, and replay as one JSON-envelope chain', a
   });
 });
 
+test('CLI executes and resumes a bounded paired trajectory experiment across processes', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'trajectory-lab');
+    const output = path.join(root, 'trajectory-experiment');
+    const leftFile = path.join(root, 'left-trajectory.json');
+    const rightFile = path.join(root, 'right-trajectory.json');
+    const init = await invoke('init', '--lab', lab, '--world', 'temperature', '--seed', 'cli-trajectory-seed', '--json');
+    assert.equal(init.code, 0);
+    const tokens = init.stdout[0].data.tokenMap.entries.map((entry) => entry.token);
+    assert.equal((await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--json')).code, 0);
+    await writeFile(leftFile, JSON.stringify({ schemaVersion: 1, type: 'candidate-trajectory', tokens: [tokens[0], tokens[0]] }));
+    await writeFile(rightFile, JSON.stringify({ schemaVersion: 1, type: 'candidate-trajectory', tokens: [tokens[1], tokens[1]] }));
+
+    const experiment = await invoke(
+      'experiment', 'trajectory', '--lab', lab, '--output', output,
+      '--left-trajectory', leftFile, '--right-trajectory', rightFile, '--scenario', 'steady', '--json',
+    );
+    assert.equal(experiment.code, 0);
+    assert.equal(experiment.stdout[0].data.verdict, 'PASS');
+    assert.equal(experiment.stdout[0].data.comparison.pair, 'same-initial-state-trajectory-v1');
+    assert.equal(experiment.stdout[0].data.replayVerdicts.left.length, 2);
+    assert.equal(experiment.stdout[0].data.replayVerdicts.right.length, 2);
+
+    const resumed = await invoke('experiment', 'trajectory', '--lab', lab, '--output', output, '--resume', '--json');
+    assert.equal(resumed.code, 0);
+    assert.deepEqual(resumed.stdout[0].data.comparison, experiment.stdout[0].data.comparison);
+    assert.deepEqual(resumed.stdout[0].data.replayVerdicts, experiment.stdout[0].data.replayVerdicts);
+  });
+});
+
 test('CLI runs the same closed loop across multidimensional WorldPorts', async () => {
   await withTemp(async (root) => {
     const worlds = [

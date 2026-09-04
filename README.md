@@ -417,3 +417,22 @@ yi-agent experiment pair --lab E:\labs\temperature --output E:\labs\temperature-
 这是共同底层变化逻辑的实验工具：候选只是不透明 Token，比较必须绑定相同 WorldPort 身份、Token map、scenario 和 before 状态摘要。当前故意只允许内置纯模拟 WorldPort；外部设备、文件、金融或医疗副作用不能通过复制 JSON 被假定为可安全分叉，必须先有幂等、隔离、对账和人工确认契约。该能力验证的是可恢复的反事实实验基础，不是已经实现长期自主智能。
 
 F-94 进一步把完成结果的引用也纳入完整性边界：`pair.end.json` 保存左右分支的 manifest/current 摘要。对已完成实验再次执行 `--resume` 时，CLI 会重新打开两个分支并做只读 Replay；如果分支账本、WorldPort identity、路径或 runId 已经漂移，不会返回旧的 PASS，而是返回 `CORRUPT` 并指出具体分支。旧版缺少分支摘要的 end 仍可读取，但同样必须通过真实 Replay 复核。
+
+F-95 把单步配对推进为有界多步轨迹实验：`experiment trajectory` 接收两个 `candidate-trajectory` JSON 文件，每条包含 1～8 个父 Token。左右分支从同一父连续性状态开始，每一步都是独立持久化 Run（`run-1`…），中断后 `--resume` 只补齐尚未提交的步；最终必须逐 Run Replay 一致，才按同一 `distance-v2`/误差几何比较终态。该轨迹是 open-loop Token 序列，不是运行中根据新观测自适应的策略；它用于测量“连续动作序列是否比另一序列更接近目标”，仍不等于长期自主智能。
+
+轨迹文件格式：
+
+```json
+{"schemaVersion":1,"type":"candidate-trajectory","tokens":["tok_XXXXXXXX","tok_XXXXXXXX"]}
+```
+
+```powershell
+yi-agent experiment trajectory `
+  --lab E:\labs\temperature `
+  --output E:\labs\temperature-trajectory-001 `
+  --left-trajectory E:\labs\left.json `
+  --right-trajectory E:\labs\right.json `
+  --scenario steady `
+  --json
+yi-agent experiment trajectory --lab E:\labs\temperature --output E:\labs\temperature-trajectory-001 --resume --json
+```
