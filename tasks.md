@@ -792,3 +792,10 @@
 - 实现：新增 `experiment trajectory` 与 `candidate-trajectory` 文件格式；每条轨迹限制为 1～8 个父 Token，左右序列等长且不同。服务把每个元素作为独立 Run 持久化，start 固定父连续性状态、完整序列和稳定 runId；`--resume` 根据分支 current 的已提交步数补齐剩余 Run。end 保存分支 manifest/current 摘要并在写入前执行所有 Run 的 Replay。
 - 验证：Runtime 比较器覆盖共同初始摘要、统一终态目标几何、不同轨迹和未验证质量边界；服务覆盖正常两步轨迹与左分支第一步提交后的中断恢复；真实 CLI 子进程覆盖首次执行和只带 `--resume` 的再次执行，父 current 不变，所有分支 Run Replay 为 `CONSISTENT`。
 - 边界：轨迹是预先固定的 open-loop Token 序列，不是根据新观测自适应的闭环策略；只允许内置纯模拟 WorldPort，不把分支 JSON 快照推广为外部现实可复制。独立领域终态判别器、随机多候选、策略级闭环和外部幂等/隔离/对账仍待后续节点。
+
+## F-96 可观察条件的闭环策略实验
+
+- 反例：F-95 的后续 Token 在实验开始时已经固定，因此即使结果更好，也不能区分“策略读取了新观测后调整”与“预先写好的动作序列”。
+- 实现：新增 `candidate-policy` 工件和 `experiment policy`；策略只含默认父 Token 与最多 8 条 `observationDigest → Token` 规则，使用共同的有界观测投影计算摘要。左右分支每一步重新观察并经 advisor 选择，policy evidence 记录摘要和候选，start 固定策略与步数，resume 只补齐缺失 Run；end 保存策略身份、实际 Token 轨迹、分支摘要并复核 Replay。
+- 验证：Runtime 覆盖规则命中/默认回退、重复上下文和越权 Token；服务覆盖两步条件策略、实际轨迹和已提交分支步恢复；真实 CLI 子进程覆盖首次执行与只带 `--resume` 的重启，比较器保持策略身份和行为轨迹分离。
+- 边界：这是可审计的规则策略，不是自动学习或通用智能；规则没有自动归纳，观察摘要不证明现实事实，外部 adapter 仍禁止 JSON 分叉。下一步应在未知/隐藏动力学中检验策略是否能凭 verified feedback 修改自身，而不是继续堆叠静态规则。

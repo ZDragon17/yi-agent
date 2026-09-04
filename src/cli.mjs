@@ -11,6 +11,7 @@ import { createModelAdvisor } from './agent/model-advisor.mjs';
 import { createModelPlanner } from './agent/model-planner.mjs';
 import { runPairedCandidates } from './application/paired-experiment-service.mjs';
 import { runPairedTrajectories } from './application/paired-trajectory-service.mjs';
+import { runPairedPolicies } from './application/paired-policy-service.mjs';
 
 export async function main(argv, io = defaultIo()) {
   const json = argv.includes('--json');
@@ -38,6 +39,20 @@ async function dispatch(command, options) {
   if (command === 'ask') return askApi(options);
   if (command === 'effect') return dispatchEffect(options);
   if (command === 'experiment') {
+    if (options.experimentOperation === 'policy') {
+      const policies = options.resume === true ? {} : {
+        steps: parseBoundedInt(required(options, 'steps'), 1, 8, 'steps'),
+        leftPolicy: await readCandidatePolicyFile(requiredAbsolute(options, 'left-policy'), 'left-policy'),
+        rightPolicy: await readCandidatePolicyFile(requiredAbsolute(options, 'right-policy'), 'right-policy'),
+      };
+      return runPairedPolicies({
+        labPath: required(options, 'lab'),
+        outputPath: requiredAbsolute(options, 'output'),
+        ...policies,
+        scenario: options.scenario,
+        resume: options.resume === true,
+      });
+    }
     if (options.experimentOperation === 'trajectory') {
       const trajectories = options.resume === true ? {} : {
         leftTokens: await readTrajectoryFile(requiredAbsolute(options, 'left-trajectory'), 'left-trajectory'),
@@ -285,7 +300,7 @@ function parseArguments(argv) {
   }
   if (command === 'experiment') {
     const operation = args.shift();
-    if (!['pair', 'trajectory'].includes(operation)) {
+    if (!['pair', 'trajectory', 'policy'].includes(operation)) {
       throw cliError('INVALID_INPUT', `Unsupported experiment operation: ${operation ?? '(missing)'}`, {}, 64);
     }
     options.experimentOperation = operation;
@@ -317,7 +332,7 @@ function parseArguments(argv) {
     recover: ['lab', 'confirm-lock-owner-dead'],
     challenge: ['lab', 'case'],
     effect: ['effectOperation', 'journal', 'sandbox-root', 'intent', 'nonce'],
-    experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'scenario', 'resume'],
+    experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'steps', 'scenario', 'resume'],
   }[command] ?? [];
   for (const name of Object.keys(options)) {
     if (!allowed.includes(name)) throw cliError('INVALID_INPUT', `Unknown option: --${name}`, { field: name }, 64);
@@ -405,6 +420,29 @@ async function readTrajectoryFile(filePath, field) {
     throw cliError('INVALID_INPUT', 'Trajectory file must be a candidate-trajectory artifact.', { filePath, field }, 64);
   }
   return value.tokens;
+}
+
+async function readCandidatePolicyFile(filePath, field) {
+  let raw;
+  try {
+    raw = await readFile(filePath, 'utf8');
+  } catch (error) {
+    throw Object.assign(new Error('Candidate policy file could not be read.'), {
+      code: error?.code ?? 'EIO',
+      context: { filePath, field },
+    });
+  }
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw cliError('INVALID_INPUT', 'Candidate policy file is not valid JSON.', { filePath, field }, 64);
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== 1 || value.type !== 'candidate-policy' || value.version !== 1) {
+    throw cliError('INVALID_INPUT', 'Candidate policy file has an invalid envelope.', { filePath, field }, 64);
+  }
+  return value;
 }
 
 function requiredAbsolute(options, name) {
@@ -525,6 +563,7 @@ function helpText() {
     '  yi-agent init|run|inspect|replay|recover|challenge ...',
     '  yi-agent experiment pair --lab PATH --output PATH --left-token TOK --right-token TOK [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment trajectory --lab PATH --output PATH --left-trajectory PATH --right-trajectory PATH [--scenario ID] [--resume] [--json]',
+    '  yi-agent experiment policy --lab PATH --output PATH --steps N --left-policy PATH --right-policy PATH [--scenario ID] [--resume] [--json]',
     '  yi-agent effect plan|confirm|execute|reconcile|compensate|inspect ...',
     '',
     'API 环境变量: YI_AGENT_PROVIDER, YI_AGENT_API_KEY/ZAI_API_KEY, YI_AGENT_API_BASE_URL, YI_AGENT_MODEL, YI_AGENT_API_TIMEOUT_MS',

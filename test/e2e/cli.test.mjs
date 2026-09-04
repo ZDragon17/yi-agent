@@ -8,6 +8,8 @@ import { test } from 'node:test';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { canonicalDigest, canonicalJson, withSelfDigest } from '../../src/runtime/schema.mjs';
 import { advanceChangeSupervisor } from '../../src/agent/change-supervisor.mjs';
+import { projectModelObservation } from '../../src/agent/observation-context.mjs';
+import { builtInWorldRegistry } from '../../src/application/world-registry.mjs';
 import { ED25519_PUBLIC_KEY, verifyAttestation } from '../fixtures/ed25519-proof.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
@@ -84,6 +86,48 @@ test('CLI executes and resumes a bounded paired trajectory experiment across pro
     assert.equal(resumed.code, 0);
     assert.deepEqual(resumed.stdout[0].data.comparison, experiment.stdout[0].data.comparison);
     assert.deepEqual(resumed.stdout[0].data.replayVerdicts, experiment.stdout[0].data.replayVerdicts);
+  });
+});
+
+test('CLI executes and resumes a closed-loop paired policy experiment across processes', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'policy-lab');
+    const output = path.join(root, 'policy-experiment');
+    const leftFile = path.join(root, 'left-policy.json');
+    const rightFile = path.join(root, 'right-policy.json');
+    const init = await invoke('init', '--lab', lab, '--world', 'temperature', '--seed', 'cli-policy-seed', '--json');
+    assert.equal(init.code, 0);
+    const tokens = init.stdout[0].data.tokenMap.entries.map((entry) => entry.token);
+    assert.equal((await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--json')).code, 0);
+    const inspection = await invoke('inspect', '--lab', lab, '--json');
+    assert.equal(inspection.code, 0);
+    const world = builtInWorldRegistry.createWorld(init.stdout[0].data, 'steady');
+    const observationDigest = projectModelObservation(world.observe(inspection.stdout[0].data.current.worldState)).digest;
+    await writeFile(leftFile, JSON.stringify({
+      schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[0],
+      rules: [{ observationDigest, token: tokens[1] }],
+    }));
+    await writeFile(rightFile, JSON.stringify({
+      schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[1],
+      rules: [{ observationDigest, token: tokens[0] }],
+    }));
+
+    const experiment = await invoke(
+      'experiment', 'policy', '--lab', lab, '--output', output, '--steps', '2',
+      '--left-policy', leftFile, '--right-policy', rightFile, '--scenario', 'steady', '--json',
+    );
+    assert.equal(experiment.code, 0);
+    assert.equal(experiment.stdout[0].data.verdict, 'PASS');
+    assert.equal(experiment.stdout[0].data.comparison.pair, 'same-initial-state-policy-v1');
+    assert.equal(experiment.stdout[0].data.traces.left.length, 2);
+    assert.equal(experiment.stdout[0].data.traces.right.length, 2);
+    assert.deepEqual(experiment.stdout[0].data.replayVerdicts.left, ['CONSISTENT', 'CONSISTENT']);
+    assert.deepEqual(experiment.stdout[0].data.replayVerdicts.right, ['CONSISTENT', 'CONSISTENT']);
+
+    const resumed = await invoke('experiment', 'policy', '--lab', lab, '--output', output, '--resume', '--json');
+    assert.equal(resumed.code, 0);
+    assert.deepEqual(resumed.stdout[0].data.comparison, experiment.stdout[0].data.comparison);
+    assert.deepEqual(resumed.stdout[0].data.traces, experiment.stdout[0].data.traces);
   });
 });
 

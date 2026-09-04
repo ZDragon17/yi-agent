@@ -436,3 +436,11 @@ yi-agent experiment trajectory `
   --json
 yi-agent experiment trajectory --lab E:\labs\temperature --output E:\labs\temperature-trajectory-001 --resume --json
 ```
+
+F-96 增加 `experiment policy`，用 `candidate-policy` 文件表达一个受限的闭环策略：默认 Token 加上最多 8 条 `{observationDigest,token}` 规则。每个分支的每一步都会重新观察 WorldPort，再由规则选择 Token；实际选择、策略摘要和终态证据都进入可恢复实验。策略文件只允许引用父 Token map 中的能力，不允许携带代码、领域字段或新的权限。
+
+```json
+{"schemaVersion":1,"type":"candidate-policy","version":1,"defaultToken":"tok_XXXXXXXX","rules":[{"observationDigest":"sha256:...","token":"tok_YYYYYYYY"}]}
+```
+
+该实验验证的是“同一底层观察边界下，策略能否根据新观测作出可审计、可重放的下一步选择”。它不是模型训练，也不是自动发现规则：规则仍由实验输入给出；如果两策略行为相同，结果仍会记录相同轨迹证据而不宣称能力差异。外部现实 WorldPort 仍禁止直接分叉。
