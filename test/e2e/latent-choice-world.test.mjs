@@ -9,31 +9,40 @@ import { LabStore } from '../../src/runtime/lab-store.mjs';
 const CLI = path.resolve('bin/yi-agent.mjs');
 const ADAPTER = path.resolve('test/fixtures/latent-choice-world-adapter.mjs');
 
-test('an all-safe hidden WorldPort separates only after feedback and remains restartable', async () => {
+test('verified feedback changes hidden-world choices across independent CLI restarts', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-latent-choice-e2e-'));
   try {
     const worlds = await Promise.all(['A', 'B'].map((mode) => prepareWorld(root, mode)));
     for (const world of worlds) {
-      const result = await invoke(['run', '--lab', world.lab, '--run-id', `run-${world.mode}`, '--steps', '5', '--adapter', world.adapter, '--json']);
-      assert.equal(result.code, 0, JSON.stringify(result));
-      assert.equal(result.stdout[0].data.metrics.executed, 5);
+      const first = await invoke(['run', '--lab', world.lab, '--run-id', `run-${world.mode}-first`, '--steps', '2', '--adapter', world.adapter, '--json']);
+      assert.equal(first.code, 0, JSON.stringify(first));
+      assert.equal(first.stdout[0].data.metrics.executed, 2);
+      const second = await invoke(['run', '--lab', world.lab, '--run-id', `run-${world.mode}-second`, '--steps', '3', '--adapter', world.adapter, '--json']);
+      assert.equal(second.code, 0, JSON.stringify(second));
+      assert.equal(second.stdout[0].data.metrics.executed, 3);
+      world.runIds = [first.stdout[0].data.runId, second.stdout[0].data.runId];
     }
 
     const runs = await Promise.all(worlds.map(async (world) => ({
       ...world,
-      run: await (await LabStore.open({ labPath: world.lab })).readRun(`run-${world.mode}`),
+      events: (await Promise.all(world.runIds.map(async (runId) => (
+        await (await LabStore.open({ labPath: world.lab })).readRun(runId)
+      )))).flatMap((run) => run.events),
     })));
-    const choices = runs.map(({ run, tokens }) => run.events
+    const choices = runs.map(({ events, tokens }) => events
       .filter((event) => event.kind === 'STEP')
       .map((event) => tokens.get(event.payload.choice.token)));
     assert.equal(choices[0][0], choices[1][0]);
+    assert.equal(choices[0][1], choices[1][1]);
+    assert.notEqual(choices[0][2], choices[1][2]);
     assert.notDeepEqual(choices[0], choices[1]);
-    assert.ok(choices[0].findIndex((choice, index) => choice !== choices[1][index]) > 0);
 
     for (const world of worlds) {
-      const replay = await invoke(['replay', '--lab', world.lab, '--run', `run-${world.mode}`, '--adapter', world.adapter, '--json']);
-      assert.equal(replay.code, 0, JSON.stringify(replay));
-      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+      for (const runId of world.runIds) {
+        const replay = await invoke(['replay', '--lab', world.lab, '--run', runId, '--adapter', world.adapter, '--json']);
+        assert.equal(replay.code, 0, JSON.stringify(replay));
+        assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+      }
       assert.equal(JSON.parse(await readFile(world.stateFile, 'utf8')).effects.length, 5);
     }
   } finally {

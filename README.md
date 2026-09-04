@@ -124,6 +124,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 反馈顺序规范化：同一批合法的 nonce-bound feedback 无论由不同 WorldPort 按何种传输顺序返回，Kernel 都按 pending credit 的持久顺序结算，保持 `settled`、已结算收据和信念样本跨进程/Replay 一致；这不等于允许多个动作同时生效，无法归属的重叠变化仍必须由 WorldPort 标记为混杂；
 - 隐藏状态系统反例：`test/fixtures/hidden-state-world-adapter.mjs` 只向 Kernel 暴露一维 `value`，把 `hiddenMode` 和阶段机留在 WorldPort 内部；同一可见目标关系下，`advance` 实际产生 `-1/+1` 两种结果。跨两个独立 CLI Run 后，`beliefModels` 保留两种后验、外部效果不重复，两个 Run 均可 Replay 为 `CONSISTENT`。这证明的是当前信念记忆在该变化轴上没有把未知分支压成单一事实，不是隐藏状态识别或通用智能证明；
 - 隐藏状态可辨识性边界：当两个隐藏动力学的公开输入完全相同时，Kernel 必须先做同一选择；只有收到不同的可验证结果后，经验模型和后续策略才允许分化。该不变量由 `test/kernel/belief-memory.test.mjs` 固化，防止把隐藏字段、模型猜测或领域标签冒充为事实；
+- 跨进程反馈适应：`test/e2e/latent-choice-world.test.mjs` 将同一个隐藏 WorldPort 的 5 步拆成两个独立 CLI Run；前两步在两个隐藏动力学中保持同一选择，第一轮 verified feedback 持久化后，第二个进程的第三步才分化，两个 Run 均可独立 Replay。该证据支持“共同 Kernel Memory 已能形成有限策略改变”，因此没有另造一套候选策略学习器；它仍不证明隐藏状态完全辨识或长期自主性；
 - 有界周期再验证：新 Lab 在 `Memory.lastVerifiedSteps` 保存每个不透明 Token 最近一次已验证的逻辑序号；已知安全动作超过 8 个已验证动作未复核时，Kernel 在没有未尝试动作的前提下优先重新取证，并在 `Expectation.verificationAge` 中留下可审计年龄。它能在受控动力学漂移中重新发现旧模型失效，但不等于感知隐藏变化、变化点检测或现实因果证明；v15 以前的 Replay 保持旧选择语义；
 - 有界序列规划：`kernelLearningVersion: 17` 的 horizon 规划会把每个假设动作的预测变化写入临时、不可持久化的规划记忆，并在每个后续动作的已验证 belief 结果上继续有界分支，使已验证的历史上下文能影响后续假设动作；真实记忆仍只由 `verify → learn` 更新，v16 及以前的 Replay 显式保持非递归规划语义；
 - 有界策略树规划：`kernelLearningVersion: 18` 在递归 belief 分支的每个未来状态内继续评估有界安全动作树，而不是只跟随一个贪心未来动作；v17 的 `recursive-v1` Replay 保持原有贪心未来策略，v18 新 STEP 使用 `tree-v1`，所有推演仍是临时模型计算，不获得额外执行权限；

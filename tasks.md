@@ -799,3 +799,10 @@
 - 实现：新增 `candidate-policy` 工件和 `experiment policy`；策略只含默认父 Token 与最多 8 条 `observationDigest → Token` 规则，使用共同的有界观测投影计算摘要。左右分支每一步重新观察并经 advisor 选择，policy evidence 记录摘要和候选，start 固定策略与步数，resume 只补齐缺失 Run；end 保存策略身份、实际 Token 轨迹、分支摘要并复核 Replay。
 - 验证：Runtime 覆盖规则命中/默认回退、重复上下文和越权 Token；服务覆盖两步条件策略、实际轨迹和已提交分支步恢复；真实 CLI 子进程覆盖首次执行与只带 `--resume` 的重启，比较器保持策略身份和行为轨迹分离。
 - 边界：这是可审计的规则策略，不是自动学习或通用智能；规则没有自动归纳，观察摘要不证明现实事实，外部 adapter 仍禁止 JSON 分叉。下一步应在未知/隐藏动力学中检验策略是否能凭 verified feedback 修改自身，而不是继续堆叠静态规则。
+
+## F-97 verified feedback 跨 CLI 进程改变策略
+
+- 反例：F-96 的 `candidate-policy` 可以按新观测选 Token，但其规则本身永远不变；如果把它误认为学习，就没有证明反馈能改变后续策略。另一方面，若共同 Kernel 已经能通过 verified feedback 更新 Memory，再新增策略学习器会制造第二套底层逻辑。
+- 实现：不新增生产学习器；把 `latent-choice` 外部 WorldPort 的 5 步拆成两个独立 CLI Run。两个隐藏模式只公开同一数值观测和全安全 Token，第一 Run 的结果通过现有 `verify → learn → current` 持久化，第二个进程从同一 Lab 恢复并继续选择。
+- 验证：两个模式前两步选择相同；跨进程恢复后的第三步开始选择分化；两个 Run 的效果累计正确，分别 Replay 为 `CONSISTENT`。`node --test test/e2e/latent-choice-world.test.mjs`：1/1 通过。
+- 边界：这证明共同 Kernel Memory 已能在一个隐藏动力学变化轴上形成有限策略改变，排除了“必须复制独立策略状态层”的当前假设；不证明隐藏状态完全辨识、样本外迁移、无限长期记忆、概率校准或现实世界因果。下一节点应测试策略在动力学发生变化后能否通过有界再验证恢复，而不是继续增加静态规则。

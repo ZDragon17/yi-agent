@@ -294,6 +294,12 @@ F-96 在轨迹之上引入 `candidate-policy`：策略由一个默认 Token 和�
 
 恢复时 start 工件提供策略和步数，分支只依据已提交 Run 集合继续；完成后的 resume 会重新验证策略、Run 集合、选择轨迹、current 摘要和每个 Run 的 Replay。该实验把闭环中的“观察后再选择”纳入持久性边界，但仍不提供规则自动归纳、长期自我改进、现实因果或外部副作用安全保证。
 
+## 8.7 verified feedback 驱动的有限适应
+
+F-97 用不向 Kernel 暴露隐藏模式的 `latent-choice` WorldPort 反证“必须新增独立策略学习器”的假设。两个世界只公开同一维数值观测和相同的安全能力集合，但同一 Token 在隐藏模式 A/B 下产生相反变化。测试把 5 步拆成两个独立 CLI Run：前两个选择必须相同，第一 Run 的 verified feedback 经账本恢复后，第二进程的第三步才允许分化。
+
+结果由持久化 Memory 而不是策略文件驱动：`step` 读取当前 Memory，WorldPort 回执经 `verify` 后才由 `learn` 更新，下一进程从 current 重建同一 Memory；每个 Run 再由独立 Replay 验证。这样把“策略变化”归回共同的状态—反馈—更新底层，避免为 `candidate-policy` 再复制一套学习语义。该实验只证明有限后验能影响后续 Token，不能证明隐藏状态完全辨识、样本外迁移、无限记忆或现实因果。
+
 ## 9. 有界近期变化上下文
 
 历史隐藏状态反例进一步区分出：保存“同一动作可能有多个结果”并不等于能够利用已验证历史选择动作。新 Lab 的 Memory 可选保存最近两个已验证变化条目 `{token,actualDelta}`，以固定顺序形成 `h1:` 上下文签名；`contextModels` 按该签名和不透明 Token 保存动作模型。Kernel 在当前上下文已有样本时优先使用它，再回退到关系模型和总体模型；学习只在 `ACTION && learnable` 或已闭合 clean feedback 时把变化写入上下文，拒绝、混杂和未闭合反馈不写入。
