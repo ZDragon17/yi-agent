@@ -355,9 +355,9 @@ test('CLI refuses shared-boundary multi-action credit across adapter restarts an
     for (const [lab, adapter] of [[identityLab, identityAdapter], [reverseLab, reverseAdapter]]) {
       const init = await invoke('init', '--lab', lab, '--world', 'overlap-feedback', '--seed', 'overlap-seed', '--lab-id', 'overlap-lab', '--adapter', adapter, '--json');
       assert.equal(init.code, 0, `${lab}: init`);
-      const firstRun = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--scenario', 'overlap', '--adapter', adapter, '--json');
+      const firstRun = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--scenario', 'overlap', '--goal', 'reach target', '--kernel-only', '--adapter', adapter, '--json');
       assert.equal(firstRun.code, 0, `${lab}: first run`);
-      const secondRun = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'overlap', '--adapter', adapter, '--json');
+      const secondRun = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'overlap', '--kernel-only', '--adapter', adapter, '--json');
       assert.equal(secondRun.code, 0, `${lab}: second run`);
     }
 
@@ -368,6 +368,14 @@ test('CLI refuses shared-boundary multi-action credit across adapter restarts an
     assert.equal(identityCurrent.memory.pendingCredits.length, 1);
     assert.equal(Object.keys(identityCurrent.memory.actionModels).length, 0);
     assert.equal(identityCurrent.memory.settledFeedback.length, 2);
+    assert.equal(identityCurrent.changeSupervisor.lastChange.evidence, 'AMBIGUOUS');
+    assert.equal(identityCurrent.changeSupervisor.lastChange.confirmed, false);
+    assert.equal(identityCurrent.changeSupervisor.lastChange.improved, false);
+    assert.equal(identityCurrent.changeSupervisor.lastChange.decision, 'REPLAN');
+    assert.equal(identityCurrent.changeSupervisor.lastChange.stopReason, 'STAGNATION');
+    assert.equal(identityCurrent.changeSupervisor.replanCount, 1);
+    assert.equal(identityCurrent.changeSupervisor.stagnation, 0, 'replan acknowledgement resets the counter, not the evidence');
+    assert.deepEqual(identityCurrent.changeSupervisor, reverseCurrent.changeSupervisor);
 
     for (const [lab, adapter] of [[identityLab, identityAdapter], [reverseLab, reverseAdapter]]) {
       const step = decodeStoredEvent(

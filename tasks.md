@@ -820,3 +820,10 @@
 - 实现：在 Application 形成 `policyEvidence` 时使用同一步真实 `beforeModelObservation.digest`；模型返回的摘要只作为不可信输入，不再拥有持久证据的写入权。Kernel、WorldPort 权限和 Replay 的旧字段兼容不变。
 - 验证：应用层 Advisor 伪造摘要的反例先失败，绑定修复后账本保存真实观测摘要；模型正常响应、模型故障、非法 Token、ModelAdvisor、Replay 回归均通过。
 - 边界：宿主绑定保证“摘要来自本次运行计算的观测投影”，不证明 WorldPort 事实真实，也不等于 Replay 能在缺失原始 evidence 时重新证明外部事实。下一节点应检验反馈缺失/混杂时，候选历史和 Kernel Memory 是否都保持不变。
+
+## F-100 不确定反馈下的跨进程保守边界
+
+- 反例：F-99 已阻断模型伪造观测摘要，但若延迟/混杂 feedback 只在 Kernel 单测中被验证，应用层仍可能在跨 Run 重启时把同一快照的多动作变化误当成当前动作进步，或让策略记忆因传输顺序漂移。
+- 实现：不新增学习器或领域分支；把既有 overlap-feedback 外部 WorldPort 的 CLI 回归切到 `agent run` 目标监督路径，两个独立 adapter 进程分别以相反顺序返回同一共享观测边界的 feedback。应用继续按 nonce 结算、按共享边界标记 `AMBIGUOUS`，Kernel 不写入 action model；ChangeSupervisor 只记录 `confirmed=false/improved=false`，连续停滞达到阈值时可显式 REPLAN，但该重规划不伪造进步证据。
+- 验证：跨两个独立 Lab/WorldPort 进程运行相同三步前缀，identity/reverse 两种 feedback 顺序的 Memory、监督器状态和 settled attribution 完全一致；两条 Run Replay 均为 `CONSISTENT`。`node --test --test-name-pattern="shared-boundary multi-action" test/e2e/cli.test.mjs`：1/1 通过。
+- 边界：这证明的是缺失/混杂证据不会成为可学习动作模型或已确认目标进步，并不保证现实反馈完整、因果可识别或策略永远不变；停滞策略仍可触发有界重规划，后续仍需把对账、独立终态判别和更复杂 WorldPort 纳入实验。

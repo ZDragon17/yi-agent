@@ -234,6 +234,8 @@ Run 状态：`CREATED -> RUNNING -> COMPLETED | HALTED | CORRUPT`，终态不可
 
 F-98 的漂移实验把“重新取证”与“取证后的策略改变”分开验收：动作 A 在早期每次产生 `+4`，隐藏动力学漂移后变为 `-2`；达到固定新鲜度窗口时，Kernel 仍会选择 A 获取新证据，随后下一步转向动作 B 的 `+1`。只有回执经过 `verify` 并进入 `learn`，旧模型才被有限近期证据修正；未验证的猜测不能直接触发策略切换。该机制保证的是有界的再组织能力，不是检测任意变化、推断隐藏状态或证明切换由单一原因造成。
 
+F-100 的共享边界回归把“不确定性不等于不行动”进一步落到跨进程 CLI：同一 `stateVersion + intervalId` 返回多个新 feedback 时，两个相反传输顺序都必须得到相同的 `AMBIGUOUS` settled 记录；`learn` 不产生 action model，ChangeSupervisor 不把该步记为 `confirmed/improved`。若此前已连续停滞，监督器仍可按固定阈值进入显式 `REPLAN`，但这是停滞控制事件，不是把歧义反馈改写成成功证据。
+
 ## 7.2 有界序列规划与假设记忆
 
 单步预测之外，规划器必须能够回答“如果这一步发生，下一步会处于什么关系中”。v16 的 bounded planning 为每个候选分支复制一份临时 Memory，把预测的 `Token+actualDelta` 写入近期历史和顺序累积摘要，再用同一 `buildPredictions` 生成下一步候选。该临时状态只存在于纯规划计算中，不写入真实 Lab，也不授予任何额外安全或执行权限；真实状态仍必须经过 WorldPort 回执、`verify` 和 `learn` 才能改变。
