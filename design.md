@@ -102,6 +102,8 @@ ModelAdvisor 的结果是外部非确定输入，不进入连续性状态。Appl
 
 Application 的模型回调边界还通过第二参数传递 `AbortSignal`；内置 Advisor/Planner 把它继续交给 HTTP client，使合作式请求在超时后主动释放网络等待。该信号不改变 JSON 输入契约，也不能强制终止忽略信号的进程内回调或撤销已经发出的外部副作用。
 
+HTTP client 保留取消来源：调用方 `AbortSignal` 触发时返回 `API_CANCELLED`，client 自身截止时返回 `API_ERROR`；这两个错误都不产生模型事实或执行权限。Application 的宿主截止仍由自己的 `MODEL_TIMEOUT`/`PLANNER_TIMEOUT` 证据归因，避免 HTTP 层的停止原因覆盖更高层的闭环语义。
+
 Advisor 的异常和非法结果也按同一证据边界处理：宿主不把异常文本写入账本，不把未经校验的 Token 交给 Kernel；只保存稳定的模型标识、摘要指纹、标准化 Token 和故障原因。故障回退不是把模型错误算作成功，而是让共同底座在没有模型提议时继续走可验证的安全选择路径。CLI 的 `--kernel-only` 则把这种可替换关系显式化：从启动时就不创建模型工具。
 
 MVP-1 的 repo WorldPort 使用上述共同边界验证真实对象接入：仓库文件树是有界 observation evidence，读取文件和运行测试是两个只读能力，结果进入连续 worldState、STEP 和 Replay。它已通过与内置 `temperature` WorldPort 的连续 Run 外壳对照，并通过第二个 Run 模型边界强制中断后的 `recover→resume→Replay` 验证；这证明的是宿主连续性契约可复用，不是证明仓库动作具备外部幂等或对账能力。它刻意不进入 Kernel，也不声称提供操作系统级权限隔离；测试命令的副作用风险属于部署边界，必须由低权限执行环境承担。

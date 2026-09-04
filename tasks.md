@@ -855,3 +855,10 @@
 - 实现：Application 在统一模型回调边界创建 `AbortController`，截止时先 abort 再记录既有 `MODEL_TIMEOUT`/`PLANNER_TIMEOUT`；以不改变 JSON 输入契约的第二参数把 `AbortSignal` 传给 Advisor/Planner，内置模型适配器再传给 OpenAI-compatible client。HTTP client 将调用方取消转发到请求控制器，并在请求结束时移除监听器，同时保留自身截止时间。
 - 验证：进程内永不返回 Advisor 在超时返回前能观察到 `signal.aborted`；HTTP client 的真实 fetch 选项收到同一信号并在 abort 后释放等待；F-103 的 Planner/Advisor/连续 Runner/CLI/Replay 回归继续通过。
 - 边界：这是合作式取消，不是强制终止；忽略信号的任意回调、已经发出的外部副作用、恶意网络行为和不可信插件仍需外部进程/容器隔离与 Effect Broker 对账。
+
+## F-105 区分调用方取消与请求截止
+
+- 反例：F-104 的 HTTP client 虽然能把宿主 `AbortSignal` 转发到 fetch，但所有 abort 都返回 `API_ERROR / API request timed out`；调用方主动停止、client 自身超时和响应体读取阶段的中止因此无法区分，外部停止意图会被错误归因成网络超时。
+- 实现：HTTP client 在统一请求边界记录 abort 来源；调用方信号触发时返回 `API_CANCELLED` 并带稳定的 `context.cancelled`，自身截止仍返回 `API_ERROR` 并带实际 `timeoutMs`。fetch 建连和响应体读取都经过同一中止分类，正常 provider/API 协议错误保持原有契约。
+- 验证：调用方取消与 client 自身 1000ms 截止分别命中不同错误码和上下文；既有鉴权、聊天响应、Provider 错误、模型取消传播和 Application/CLI 回归继续通过。
+- 边界：这是错误来源的语义区分，不是强制杀死任务、撤销已发出的请求或证明 provider 真实性；Application 的模型截止仍使用 `MODEL_TIMEOUT`/`PLANNER_TIMEOUT`，不被 HTTP 错误码替代。

@@ -79,9 +79,13 @@ export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs
 
   async function request(endpoint, options, externalSignal) {
     const controller = new AbortController();
-    const abortFromCaller = () => controller.abort(externalSignal.reason);
-    if (externalSignal?.aborted === true) {
+    let callerAborted = false;
+    const abortFromCaller = () => {
+      callerAborted = true;
       controller.abort(externalSignal.reason);
+    };
+    if (externalSignal?.aborted === true) {
+      abortFromCaller();
     } else if (externalSignal !== undefined) {
       externalSignal.addEventListener('abort', abortFromCaller, { once: true });
     }
@@ -100,12 +104,20 @@ export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs
         });
       } catch (error) {
         if (controller.signal.aborted) {
-          throw new ApiClientError('API_ERROR', 'API request timed out.', { timeoutMs: normalizedTimeoutMs }, { cause: error });
+          throw abortError(callerAborted, normalizedTimeoutMs, error);
         }
         throw new ApiClientError('API_ERROR', 'API request could not be sent.', {}, { cause: error });
       }
 
-      const raw = await readResponseText(response);
+      let raw;
+      try {
+        raw = await readResponseText(response);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw abortError(callerAborted, normalizedTimeoutMs, error);
+        }
+        throw error;
+      }
       let payload;
       try {
         payload = raw.length === 0 ? {} : JSON.parse(raw);
@@ -122,6 +134,12 @@ export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs
       externalSignal?.removeEventListener('abort', abortFromCaller);
     }
   }
+}
+
+function abortError(callerAborted, timeoutMs, cause) {
+  return callerAborted
+    ? new ApiClientError('API_CANCELLED', 'API request was cancelled.', { cancelled: true }, { cause })
+    : new ApiClientError('API_ERROR', 'API request timed out.', { timeoutMs }, { cause });
 }
 
 async function readResponseText(response) {

@@ -94,10 +94,73 @@ test('API client propagates a caller cancellation signal to the HTTP request', a
   const pending = client.chat('请停止', { signal: controller.signal });
   controller.abort();
   await assert.rejects(pending, (error) => {
-    assert.equal(error.code, 'API_ERROR');
+    assert.equal(error.code, 'API_CANCELLED');
+    assert.equal(error.context.cancelled, true);
     return true;
   });
   assert.equal(requestSignal.aborted, true);
+});
+
+test('API client distinguishes caller cancellation from its own request timeout', async () => {
+  const controller = new AbortController();
+  const client = createOpenAICompatibleClient({
+    apiKey: 'secret-key',
+    model: 'model-1',
+    timeoutMs: 1000,
+    fetchImpl: async (_url, options) => new Promise((_, reject) => {
+      options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    }),
+  });
+
+  const pending = client.chat('请停止', { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.code, 'API_CANCELLED');
+    assert.equal(error.context.cancelled, true);
+    return true;
+  });
+
+  const timedOut = createOpenAICompatibleClient({
+    apiKey: 'secret-key',
+    model: 'model-1',
+    timeoutMs: 1000,
+    fetchImpl: async (_url, options) => new Promise((_, reject) => {
+      options.signal.addEventListener('abort', () => reject(new Error('timed out')), { once: true });
+    }),
+  });
+  await assert.rejects(timedOut.chat('请等待'), (error) => {
+    assert.equal(error.code, 'API_ERROR');
+    assert.equal(error.context.timeoutMs, 1000);
+    return true;
+  });
+});
+
+test('API client classifies caller cancellation while reading the response body', async () => {
+  const controller = new AbortController();
+  const client = createOpenAICompatibleClient({
+    apiKey: 'secret-key',
+    model: 'model-1',
+    timeoutMs: 1000,
+    fetchImpl: async (_url, options) => ({
+      ok: true,
+      status: 200,
+      headers: { get() { return null; } },
+      text: async () => {
+        if (options.signal.aborted) throw new Error('body aborted');
+        return new Promise((_, reject) => {
+          options.signal.addEventListener('abort', () => reject(new Error('body aborted')), { once: true });
+        });
+      },
+    }),
+  });
+
+  const pending = client.chat('请停止读取', { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.code, 'API_CANCELLED');
+    assert.equal(error.context.cancelled, true);
+    return true;
+  });
 });
 
 test('API client exposes provider failures without exposing authorization data', async () => {
