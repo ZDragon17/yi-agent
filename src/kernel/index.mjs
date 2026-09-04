@@ -35,10 +35,31 @@ const MAX_CONTEXT_MODELS = 8192;
 const MAX_LONG_CONTEXTS = 1;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
-const MODEL_RECENCY_LEARNING_VERSION = 23;
-const MODEL_QUALITY_RETENTION_LEARNING_VERSION = 24;
-const CURRENT_LEARNING_VERSION = MODEL_QUALITY_RETENTION_LEARNING_VERSION;
-const PERSISTED_MEMORY_BUDGET_LEARNING_VERSION = 22;
+const CURRENT_LEARNING_VERSION = 24;
+export const KERNEL_LEARNING_VERSIONS = Object.freeze({
+  settledFeedback: 3,
+  pendingCreditExpiry: 4,
+  belief: 5,
+  canonicalFeedbackOrder: 6,
+  sharedFeedbackBoundary: 7,
+  supervisorFeedbackAlignment: 8,
+  historyAccumulator: 11,
+  activeInformationPlanning: 12,
+  decisionDivergenceInformationPlanning: 13,
+  valueRelevantInformationPlanning: 14,
+  revalidation: 15,
+  contextPlanning: 16,
+  recursivePlanning: 17,
+  treePlanning: 18,
+  modelAge: 21,
+  persistedMemoryBudget: 22,
+  modelRecency: 23,
+  modelQualityRetention: CURRENT_LEARNING_VERSION,
+  current: CURRENT_LEARNING_VERSION,
+});
+const MODEL_RECENCY_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.modelRecency;
+const MODEL_QUALITY_RETENTION_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.modelQualityRetention;
+const PERSISTED_MEMORY_BUDGET_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.persistedMemoryBudget;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const HISTORY_ACCUMULATOR_HEX_LENGTH = 64;
 const HISTORY_ACCUMULATOR_PATTERN = /^[0-9a-f]{64}$/u;

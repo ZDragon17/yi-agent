@@ -87,6 +87,9 @@ test('kernel public entry exposes step and verify as the kernel contract seams',
   assert.equal(typeof kernel.stepWithPreference, 'function');
   assert.equal(typeof kernel.verify, 'function');
   assert.equal(typeof kernel.learn, 'function');
+  assert.equal(Object.isFrozen(kernel.KERNEL_LEARNING_VERSIONS), true);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.current, 24);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.modelQualityRetention, kernel.KERNEL_LEARNING_VERSIONS.current);
 });
 
 test('model preference can select only a safe capability and cannot bypass the kernel boundary', async () => {

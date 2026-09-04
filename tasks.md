@@ -911,3 +911,10 @@
 - 实现：`inspectView.stopReason` 直接投影所选终态事件的 `payload.reason`，没有可读终态事件时返回 `null`；不改变终止事件、恢复、连续 Runner 或 Replay 的写入语义。
 - 验证：应用层“无安全动作”和“目标达成”回归 2/2 通过；CLI safe-stop 端到端回归 1/1 通过，并确认 inspect 返回 `NO_SAFE_ACTION`；文档同步说明可见原因集合与无终态行为。
 - 边界：这是本地账本事实的准确展示，不是对外部世界因果的证明；外部 transition 未决、进程崩溃和现实执行结果仍以各自 WorldPort/EffectBroker 对账为准。
+
+## F-113 集中学习版本契约
+
+- 反例：Kernel、Application 和 Replay 曾分别维护当前学习版本与历史阈值；新增学习机制若只更新其中一处，可能出现写入、在线学习和 Replay 使用不同语义却不报错。
+- 实现：Kernel 导出冻结的 `KERNEL_LEARNING_VERSIONS`，集中保存历史能力阈值、持久 Memory 预算、模型年龄/保留策略和当前版本；Application 的 STEP 边界与 Replay 的历史投影统一引用该契约，删除重复数字常量。
+- 验证：Kernel 公共入口回归确认版本表不可变且 `current` 与最新保留策略一致；前置 Kernel 69/69、应用关键回归 5/5、Replay/repo WorldPort 23/23 继续通过，旧版本 Replay 的分支逻辑保持原有阈值。
+- 边界：集中契约只消除跨文件版本漂移，不自动证明新学习规则有效；新增版本仍需同时补充对应历史投影、反例和测量，不能仅递增数字。

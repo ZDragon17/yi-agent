@@ -4,7 +4,7 @@ import { candidateDigest, canonicalDigest, canonicalJson, cloneJson, MAX_CANDIDA
 import { buildCandidateOutcome } from '../runtime/candidate-evidence.mjs';
 import { annotateCandidateHistory } from '../runtime/candidate-history.mjs';
 import { acceptedSupersessionDigest } from '../runtime/candidate-lineage.mjs';
-import { learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
+import { KERNEL_LEARNING_VERSIONS, learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
 import {
@@ -19,7 +19,7 @@ const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_PLANNING_HORIZON = 8;
 const PLANNING_BRANCHING_MODES = ['tree-v1', 'recursive-v1', 'legacy-v1'];
-const KERNEL_LEARNING_VERSION = 24;
+const KERNEL_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.current;
 const DEFAULT_MODEL_TIMEOUT_MS = 60_000;
 const MIN_MODEL_TIMEOUT_MS = 100;
 const MAX_MODEL_TIMEOUT_MS = 300_000;

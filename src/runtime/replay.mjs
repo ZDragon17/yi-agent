@@ -1,4 +1,4 @@
-import { learn, mergeObservationFeedback, step, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
+import { KERNEL_LEARNING_VERSIONS, learn, mergeObservationFeedback, step, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import {
   SCHEMA_VERSION,
   MAX_MODEL_PROPOSAL_BYTES,
@@ -20,24 +20,7 @@ const REQUIRED_BOUNDARY_KEYS = ['schemaVersion', 'valueSpec'];
 const MAX_SCENARIO_IDS = 256;
 const MAX_SCENARIO_ID_LENGTH = 4096;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
-const SETTLED_FEEDBACK_LEARNING_VERSION = 3;
-const PENDING_CREDIT_EXPIRY_LEARNING_VERSION = 4;
-const BELIEF_LEARNING_VERSION = 5;
-const CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION = 6;
-const SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION = 7;
-const SUPERVISOR_FEEDBACK_ALIGNMENT_LEARNING_VERSION = 8;
-const HISTORY_ACCUMULATOR_LEARNING_VERSION = 11;
-const ACTIVE_INFORMATION_PLANNING_LEARNING_VERSION = 12;
-const DECISION_DIVERGENCE_INFORMATION_PLANNING_LEARNING_VERSION = 13;
-const VALUE_RELEVANT_INFORMATION_PLANNING_LEARNING_VERSION = 14;
-const REVALIDATION_LEARNING_VERSION = 15;
-const CONTEXT_PLANNING_LEARNING_VERSION = 16;
-const RECURSIVE_PLANNING_LEARNING_VERSION = 17;
-const TREE_PLANNING_LEARNING_VERSION = 18;
-const MODEL_AGE_LEARNING_VERSION = 21;
-const MODEL_RECENCY_LEARNING_VERSION = 23;
-const MODEL_QUALITY_RETENTION_LEARNING_VERSION = 24;
-const MAX_SUPPORTED_LEARNING_VERSION = MODEL_QUALITY_RETENTION_LEARNING_VERSION;
+const MAX_SUPPORTED_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.current;
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -201,19 +184,19 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       ? undefined
       : {
           ...payload.boundary.planning,
-          ...(learningVersion < ACTIVE_INFORMATION_PLANNING_LEARNING_VERSION
+          ...(learningVersion < KERNEL_LEARNING_VERSIONS.activeInformationPlanning
             ? { informationMode: 'legacy-v1' }
-            : learningVersion < DECISION_DIVERGENCE_INFORMATION_PLANNING_LEARNING_VERSION
+            : learningVersion < KERNEL_LEARNING_VERSIONS.decisionDivergenceInformationPlanning
               ? { informationMode: 'belief-v1' }
-              : learningVersion < VALUE_RELEVANT_INFORMATION_PLANNING_LEARNING_VERSION
+              : learningVersion < KERNEL_LEARNING_VERSIONS.valueRelevantInformationPlanning
                 ? { informationMode: 'belief-v2' }
                 : { informationMode: 'belief-v3' }),
-          contextMode: learningVersion < CONTEXT_PLANNING_LEARNING_VERSION
+          contextMode: learningVersion < KERNEL_LEARNING_VERSIONS.contextPlanning
             ? 'legacy-v1'
             : payload.boundary.planning.contextMode ?? 'context-v1',
-          branchingMode: learningVersion < RECURSIVE_PLANNING_LEARNING_VERSION
+          branchingMode: learningVersion < KERNEL_LEARNING_VERSIONS.recursivePlanning
             ? 'legacy-v1'
-            : learningVersion < TREE_PLANNING_LEARNING_VERSION
+            : learningVersion < KERNEL_LEARNING_VERSIONS.treePlanning
               ? 'recursive-v1'
               : payload.boundary.planning.branchingMode ?? 'tree-v1',
         };
@@ -282,10 +265,10 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       receipt,
       postObservation,
       verification,
-      feedbackOrder: learningVersion >= CANONICAL_FEEDBACK_ORDER_LEARNING_VERSION
+      feedbackOrder: learningVersion >= KERNEL_LEARNING_VERSIONS.canonicalFeedbackOrder
         ? 'pending-v2'
         : 'arrival-v1',
-      feedbackCausality: learningVersion >= SHARED_FEEDBACK_BOUNDARY_LEARNING_VERSION
+      feedbackCausality: learningVersion >= KERNEL_LEARNING_VERSIONS.sharedFeedbackBoundary
         ? 'boundary-v2'
         : 'legacy-v1',
       learningVersion,
@@ -349,7 +332,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
         beforeObservation,
         postObservation,
         verification,
-        hasFreshFeedbackSettlement: learningVersion >= SUPERVISOR_FEEDBACK_ALIGNMENT_LEARNING_VERSION &&
+        hasFreshFeedbackSettlement: learningVersion >= KERNEL_LEARNING_VERSIONS.supervisorFeedbackAlignment &&
           update.settled?.some((item) => item.attribution === 'ACTION' || item.attribution === 'AMBIGUOUS') === true,
       });
       if (nextSupervisor.status === 'REPLAN_REQUIRED') {
@@ -391,25 +374,25 @@ function withoutSettledFeedback(update) {
 }
 
 function projectLearningForVersion(update, learningVersion) {
-  const withoutBeliefs = learningVersion < BELIEF_LEARNING_VERSION
+  const withoutBeliefs = learningVersion < KERNEL_LEARNING_VERSIONS.belief
     ? withoutBeliefModels(update)
     : update;
-  const withoutReceipts = learningVersion < SETTLED_FEEDBACK_LEARNING_VERSION
+  const withoutReceipts = learningVersion < KERNEL_LEARNING_VERSIONS.settledFeedback
     ? withoutSettledFeedback(withoutBeliefs)
     : withoutBeliefs;
-  const withoutExpiry = learningVersion < PENDING_CREDIT_EXPIRY_LEARNING_VERSION
+  const withoutExpiry = learningVersion < KERNEL_LEARNING_VERSIONS.pendingCreditExpiry
     ? withoutPendingCreditExpiry(withoutReceipts)
     : withoutReceipts;
-  const withoutAccumulator = learningVersion < HISTORY_ACCUMULATOR_LEARNING_VERSION
+  const withoutAccumulator = learningVersion < KERNEL_LEARNING_VERSIONS.historyAccumulator
     ? withoutHistoryAccumulator(withoutExpiry)
     : withoutExpiry;
-  const withoutRevalidation = learningVersion < REVALIDATION_LEARNING_VERSION
+  const withoutRevalidation = learningVersion < KERNEL_LEARNING_VERSIONS.revalidation
     ? withoutLastVerifiedSteps(withoutAccumulator)
     : withoutAccumulator;
-  const withoutModelAge = learningVersion < MODEL_AGE_LEARNING_VERSION
+  const withoutModelAge = learningVersion < KERNEL_LEARNING_VERSIONS.modelAge
     ? withoutModelAgeState(withoutRevalidation)
     : withoutRevalidation;
-  return learningVersion < HISTORY_ACCUMULATOR_LEARNING_VERSION
+  return learningVersion < KERNEL_LEARNING_VERSIONS.historyAccumulator
     ? withoutPendingContextKeys(withoutModelAge)
     : withoutModelAge;
 }
