@@ -159,6 +159,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 跨 WorldPort 同构回归：独立外部 adapter 在坐标、状态表示和启动身份都不同的情况下，仍通过相同的应用闭环跨进程继续，并让两段 Run 的状态、记忆、监督器和 Replay 保持等价；另有文件持久化 adapter 覆盖多 Run 外部效果在响应丢失后的同 nonce 重试，验证外部效果只提交一次且 Replay 不触发副作用；
 - 证据驱动策略变化：停滞不会只写一条日志，而会把领域无关的 `BALANCED/EXPLORATORY` 策略、版本、探索覆盖策略和原因持久化；新的 `coverage-v1` 在单步选择和有界规划的首步都先覆盖样本更少的安全候选，再在同样本数内按不确定度排序，避免高残差动作垄断探索；旧策略缺少该字段时仍按历史 `uncertainty-v1` 回放；
 - 模型提议层：通过 OpenAI-compatible API 提出候选 Token；
+- 模型证据不自证：`policyEvidence.observationDigest` 由 Application 按真实本步观测重新计算，模型自报的摘要不会成为事实；模型仍只提供候选 Token、回答摘要和可选 proposal；
 - 有界感知上下文：WorldPort 的结构化 observation evidence 只经过大小/深度/数据类型边界后提供给 Advisor/Planner；Kernel 仍只接收数值观测，账本只保存上下文摘要，不把原始证据当作事实或执行权限；
 - 模型故障隔离：Advisor 不可用、返回非法能力 Token 或破坏输出契约时，应用边界回退到 Kernel 的确定性选择，并把故障证据写入 STEP；不会因为模型暂时不可用而扩大权限，也不会让模型成为连续运行的单点故障；
 - 安全边界：模型不能绕过 Kernel 直接执行动作；

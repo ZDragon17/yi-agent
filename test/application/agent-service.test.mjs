@@ -15,6 +15,7 @@ import {
   normalizeWorldFactoryOptions,
 } from '../../src/worlds/world-port-base.mjs';
 import { canonicalDigest, canonicalJson } from '../../src/runtime/schema.mjs';
+import { projectModelObservation } from '../../src/agent/observation-context.mjs';
 
 test('application service runs a real closed loop and replays it without changing the lab', async () => {
   await withLab(async (lab) => {
@@ -711,6 +712,31 @@ test('application forwards bounded WorldPort evidence and its truncation marker 
     assert.equal(advisorInput.observationEvidence.length, 32);
     assert.equal(advisorInput.observationEvidenceTruncated, true);
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+  });
+});
+
+test('application binds policy evidence to the observed boundary instead of a model-claimed digest', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'policy-boundary-lab', worldId: 'temperature', seed: 'policy-boundary-seed' });
+    await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 1,
+      advisor: async ({ capabilities }) => ({
+        model: 'untrusted-advisor',
+        responseDigest: `sha256:${'a'.repeat(64)}`,
+        observationDigest: `sha256:${'f'.repeat(64)}`,
+        token: capabilities.find((item) => item.allowed && item.safe).token,
+      }),
+    });
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const step = run.events.find((event) => event.kind === 'STEP');
+    assert.equal(
+      step.payload.policyEvidence.observationDigest,
+      projectModelObservation(step.payload.beforeObservation).digest,
+    );
+    assert.notEqual(step.payload.policyEvidence.observationDigest, `sha256:${'f'.repeat(64)}`);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
   });
 });
 

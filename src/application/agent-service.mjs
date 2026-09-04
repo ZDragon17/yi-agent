@@ -454,6 +454,7 @@ export async function runLab(input) {
         worldVersion: manifest.worldVersion,
         tokenMapDigest: manifest.tokenMap.digest,
         scenario,
+        expectedObservationDigest: beforeModelObservation.digest,
       }));
     const externalInputs = registry.scenarioExternalInputs(
       manifest.worldId,
@@ -1116,10 +1117,18 @@ function plannerEvidence(result, applied, reason) {
   };
 }
 
-function policyEvidence(modelDecision, intent, capabilities, { candidateHistory, worldVersion, tokenMapDigest, scenario }) {
+function policyEvidence(modelDecision, intent, capabilities, {
+  candidateHistory,
+  worldVersion,
+  tokenMapDigest,
+  scenario,
+  expectedObservationDigest,
+}) {
   const safe = capabilities.some((capability) => capability.token === modelDecision.token && capability.allowed && capability.safe);
   const applied = safe && intent.status === 'READY' && intent.choice.token === modelDecision.token;
-  const observationDigest = validDigest(modelDecision.observationDigest) ? modelDecision.observationDigest : null;
+  const observationDigest = validDigest(expectedObservationDigest)
+    ? expectedObservationDigest
+    : (validDigest(modelDecision.observationDigest) ? modelDecision.observationDigest : null);
   const candidate = {
     token: modelDecision.token,
     proposal: modelDecision.proposal ?? null,

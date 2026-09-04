@@ -813,3 +813,10 @@
 - 实现：不新增分支逻辑；增强漂移 WorldPort 的真实跨 CLI Run 断言，要求动作 A 由早期 `+4` 漂移为再验证时的 `-2` 后，下一步切换动作 B 并得到 `+1`。策略变化仍由已有 `step → verify → learn` 共同路径产生。
 - 验证：再验证事件的 `verificationAge >= 8`、旧动作的反向结果和后续 Token/结果均被观察；15 个外部效果只提交一次，两个 Run Replay 均 `CONSISTENT`。`node --test test/e2e/drifting-choice-world.test.mjs`：1/1 通过。
 - 边界：这证明固定窗口内“旧模型被现实反馈反证后可有限改策”，不证明变化点检测、隐藏状态识别、样本外迁移、因果归因或无限期适应。下一节点应检验反馈缺失/混杂时系统是否保持旧策略不乱改，并把“不变”也作为智能边界。
+
+## F-99 模型观测摘要的宿主绑定
+
+- 反例：Advisor 可以返回格式正确但与实际观测无关的 `observationDigest`；如果 Application 原样写入 policy evidence，候选历史会把模型自报内容误当成观测事实，后续比较和学习上下文可能跨观测边界串联。
+- 实现：在 Application 形成 `policyEvidence` 时使用同一步真实 `beforeModelObservation.digest`；模型返回的摘要只作为不可信输入，不再拥有持久证据的写入权。Kernel、WorldPort 权限和 Replay 的旧字段兼容不变。
+- 验证：应用层 Advisor 伪造摘要的反例先失败，绑定修复后账本保存真实观测摘要；模型正常响应、模型故障、非法 Token、ModelAdvisor、Replay 回归均通过。
+- 边界：宿主绑定保证“摘要来自本次运行计算的观测投影”，不证明 WorldPort 事实真实，也不等于 Replay 能在缺失原始 evidence 时重新证明外部事实。下一节点应检验反馈缺失/混杂时，候选历史和 Kernel Memory 是否都保持不变。
