@@ -192,6 +192,67 @@ test('vpp: aggregated output tracks dispatch commands with bounded deviation', a
   }
 });
 
+// 能源管理系统场景的行业判据：DR 削峰行为发生、恢复反弹以延迟反馈归因
+// （反弹不得冒充本步成果）、需量峰值受控、逆变器模式切换语义正确。
+test('ems: demand response sheds load, attributes rebound via delayed feedback, and bounds demand', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-ems-e2e-'));
+  const adapter = path.join(root, 'ems-adapter.json');
+  const lab = path.join(root, 'lab');
+  await writeFile(adapter, JSON.stringify({
+    executable: process.execPath,
+    args: [path.join(ADAPTERS, 'ems', 'adapter.mjs')],
+    adapterId: 'ems-adapter-v1',
+    worldId: 'ems',
+    timeoutMs: 5000,
+  }));
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'ems', '--seed', 'ems-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke(['run', '--lab', lab, '--run-id', 'run-1', '--steps', '96', '--adapter', adapter, '--json']);
+    assert.equal(run.code, 0, JSON.stringify(run));
+
+    const store = await LabStore.open({ labPath: lab });
+    const events = (await store.readRun('run-1')).events.filter((event) => event.kind === 'STEP');
+    assert.equal(events.length, 96);
+
+    // DR 削峰行为发生
+    const capabilityOf = new Map(init.stdout[0].data.tokenMap.entries.map((x) => [x.token, x.capabilityId]));
+    const shedSteps = events.filter((event) => capabilityOf.get(event.payload.choice.token) === 'hvac.shed');
+    assert.ok(shedSteps.length >= 2, `expected DR shed behavior, got ${shedSteps.length}`);
+
+    // 恢复反弹以延迟反馈归因：存在 settled 反馈（反弹归因到原 shed 动作，
+    // 不得记为本步可学习事实）
+    const settledSteps = events.filter((event) => (event.payload.update?.settled ?? []).length > 0);
+    assert.ok(settledSteps.length >= 1, 'rebound feedback was never settled via delayed attribution');
+    for (const event of settledSteps) {
+      for (const item of event.payload.update.settled) {
+        // 自动反弹干净归因 ACTION（可学习）；手动恢复干预混杂 AMBIGUOUS（不学习）
+        assert.ok(['ACTION', 'AMBIGUOUS'].includes(item.attribution), item.attribution);
+        if (item.attribution === 'AMBIGUOUS') assert.equal(item.learnable, false);
+      }
+    }
+
+    // 需量控制：最终需量峰值受控（探索期小幅超出合同 250 的余量为 10%）
+    const finalDemand = events.at(-1).payload.afterState.worldState.demandPeakKw;
+    assert.ok(
+      finalDemand <= 275,
+      `final demand peak ${finalDemand} kW exceeds contract 250 kW by >10%`,
+    );
+
+    // 逆变器模式状态机：状态里记录的模式始终合法
+    for (const event of events) {
+      const mode = event.payload.afterState.worldState.mode;
+      assert.ok(['grid', 'island'].includes(mode));
+    }
+
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function invoke(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });

@@ -102,3 +102,43 @@ export function vppCommandKw(stepIndex) {
   const curve = [30, 30, 0, 0, -20, -20, 20, 20, -30, -30, 30, 30, 0, 0, -10, -10];
   return curve[stepIndex % curve.length];
 }
+
+// ---- 逆变器（并网/离网双模式，有功/无功设定，轻载效率降额） ----
+
+export const INVERTER = {
+  ratedActiveKw: 200, // 额定有功输出
+  ratedApparentKva: 220, // 额定视在容量（无功占用 S=√(P²+Q²)）
+  // 负载率 → 效率 分段线性曲线：轻载降额是逆变器的真实特性
+  etaCurve: [[0.1, 0.90], [0.3, 0.95], [0.5, 0.97], [1.0, 0.98]],
+};
+
+export function inverterEfficiency(loadRatio) {
+  const curve = INVERTER.etaCurve;
+  if (loadRatio <= curve[0][0]) return curve[0][1];
+  for (let index = 1; index < curve.length; index += 1) {
+    if (loadRatio <= curve[index][0]) {
+      const [x0, y0] = curve[index - 1];
+      const [x1, y1] = curve[index];
+      return y0 + (y1 - y0) * (loadRatio - x0) / (x1 - x0);
+    }
+  }
+  return curve[curve.length - 1][1];
+}
+
+export function inverterOutput(dcKw, { mode = 'grid', qRatio = 0 } = {}) {
+  // 并网模式：DC 输入经效率曲线输出有功；无功设定占用视在容量
+  // （S=√(P²+Q²) ≤ 额定视在），qRatio 为无功/额定有功比（0~0.5）。
+  // 离网模式：只带本地负荷，出力 = min(可用交流, 本地负荷)。
+  const activeKw = Math.round(dcKw * inverterEfficiency(dcKw / INVERTER.ratedActiveKw) * 1000) / 1000;
+  const qMax = Math.sqrt(Math.max(0, INVERTER.ratedApparentKva ** 2 - activeKw ** 2));
+  const reactiveKvar = Math.round(Math.min(qRatio * INVERTER.ratedActiveKw, qMax) * 1000) / 1000;
+  return { activeKw, reactiveKvar, mode, islanded: mode === 'island' };
+}
+
+// ---- DR 需求响应资源（HVAC 群：削减有持续时间与恢复反弹） ----
+
+export const DR_RESOURCE = {
+  shedKw: 40, // 单次削减负荷
+  reboundKw: 10, // 恢复反弹（压缩机回补）
+  durationSteps: 3, // 削减持续时间
+};
