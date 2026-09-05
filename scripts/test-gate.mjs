@@ -22,7 +22,7 @@ export default async function* actualCaseReporter(source) {
       continue;
     }
 
-    const filePath = path.resolve(data.entryFile);
+    const filePath = path.resolve(completionEntryFile(data));
     const counts = files.get(filePath) ?? {
       path: filePath,
       actual: 0,
@@ -263,9 +263,15 @@ function isActualTestCompletion(event) {
 
   return (
     (event?.type === 'test:pass' || event?.type === 'test:fail') &&
-    typeof data?.entryFile === 'string' &&
+    typeof completionEntryFile(data) === 'string' &&
     data?.details?.type === 'test'
   );
+}
+
+// node:test 事件在 Node 26 用 entryFile 标注来源文件，Node 22-24 只有 file；
+// 两者都缺失时仍按零用例 fail-closed，不放松 T-0 门禁。
+function completionEntryFile(data) {
+  return data?.entryFile ?? data?.file;
 }
 
 function isMainModule() {

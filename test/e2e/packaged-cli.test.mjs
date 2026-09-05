@@ -19,7 +19,9 @@ test('installed package preserves the PowerShell CLI closed loop and replay', as
     const packed = await runCommand(NPM, ['pack', '--json', '--pack-destination', root], { cwd: PROJECT_ROOT });
     assert.equal(packed.code, 0, packed.stderr);
     const metadata = JSON.parse(packed.stdout);
-    const tarball = path.join(root, metadata[0].filename);
+    // npm >= 12 的 --json 输出从数组改为以包名为键的对象；两种形状都接受。
+    const packInfo = Array.isArray(metadata) ? metadata[0] : Object.values(metadata)[0];
+    const tarball = path.join(root, packInfo.filename);
 
     const installed = await runCommand(NPM, ['install', '--prefix', prefix, tarball, '--no-audit', '--no-fund'], { cwd: PROJECT_ROOT });
     assert.equal(installed.code, 0, installed.stderr);
