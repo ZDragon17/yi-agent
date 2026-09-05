@@ -234,7 +234,9 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       policyVersion: manifest.authorityPolicy.policyVersion,
       constraintsDigest: manifest.authorityPolicy.constraintsDigest,
       executionNonce: payload.receipt.executionNonce,
-      ...(payload.policyEvidence?.applied === true && payload.policyEvidence.proposal !== undefined
+      // proposal 只属于声明 adapter 的 WorldPort 写入边界；内置世界的封闭
+      // 键集会拒收带 proposal 的请求，重放必须与原 run 的构造规则一致。
+      ...(payload.policyEvidence?.applied === true && payload.policyEvidence.proposal !== undefined && adapter !== undefined
         ? { proposal: cloneJson(payload.policyEvidence.proposal) }
         : {}),
     });

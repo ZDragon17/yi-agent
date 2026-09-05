@@ -456,7 +456,11 @@ export async function runLab(input) {
       policyVersion: manifest.authorityPolicy.policyVersion,
       constraintsDigest: manifest.authorityPolicy.constraintsDigest,
       executionNonce: `execution:step:${state.kernelStep + 1}`,
-      ...(selectedProposal === undefined ? {} : { proposal: cloneJson(selectedProposal) }),
+      // proposal 是外部 adapter 的受控写入语义（repo WorldPort 边界）；
+      // 内置 WorldPort 的 ACTION_REQUEST_KEYS 是封闭键集，混入即 MALFORMED_REQUEST。
+      ...(selectedProposal === undefined || manifest.adapter === undefined
+        ? {}
+        : { proposal: cloneJson(selectedProposal) }),
     };
     if (unresolvedExternalTransition !== null) {
       assertExternalTransitionRetry(

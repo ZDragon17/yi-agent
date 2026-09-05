@@ -983,3 +983,16 @@
 - 意外发现二：external-during-step 的混杂防线纵深为**四层**（世界回执标记→宿主强制 AMBIGUOUS→内核 verify→账本 STEP 校验）。前三层单独突变均被余层拦截（表现为 PASS 或 INCONCLUSIVE，绝不放行可学习事实）；四层同时关闭才得 FALSIFIED（EXTERNAL_EVENT_WAS_LEARNED）。这是宪法不变量 5「双层校验、不能单点信任」的实证。
 - 收敛：全部突变还原后 `git status` 干净，全量套件复验 PASS（11 个 verdict 全 PASS），全量回归绿。突变零残留。
 - 边界：突变只覆盖每个挑战的主判别器，不穷尽全部缺陷类；突变检验证明的是「这些挑战能抓到这些缺陷」，不证明「能抓到一切缺陷」。
+
+## F-123 真实模型闭环（外部卡点跨越）
+
+- 卡点跨越：经用户授权使用宿主配置的真实模型密钥（BigModel coding-plan）跨越「真实供应商连通」卡点。供应商密钥配额挂载在 Anthropic 协议端点（/api/anthropic，paas/v4 OpenAI 端点对该 key 返回 1113 余额不足），而 yi-agent 契约是 OpenAI-compatible——以本地 Anthropic→OpenAI 协议桥（测试装置，不入仓库）接通两者。
+- 执行与结果：`api test` CONNECTED（10 模型）；`ask` 返回真实 GLM 回答；`agent run --goal` 真实闭环 2 步完成——模型 glm-5.3-flash 提议经 Kernel 校验（policyEvidence.applied=true、attribution=ACTION、learnable=true）、监督器判 OBJECTIVE_REACHED（bestDistance 0）；`replay` CONSISTENT 且经桥日志确认重放零模型调用。
+- 边界：真实供应商的模型路由（glm-5-turbo 请求 → glm-5.3-flash 服务）由上游决定；协议桥是测试装置，产品的 OpenAI-compatible 契约未变更；真实模型的小误差行为（提议使温度短暂离开目标）恰由闭环的验证/监督层正确度量。
+
+## F-124 真实模型闭环暴露的 proposal 边界缺陷
+
+- 反例：真实模型在响应中返回可选 `proposal` 字段（repo 写入语义，F-73/75）时，runLab 把它无条件塞进 transition 请求；内置 WorldPort 的 ACTION_REQUEST_KEYS 是封闭键集 → proposal 混入即 MALFORMED_REQUEST，模型闭环首步即被拒；且 replay 侧存在对称缺陷（无条件从 policyEvidence 附加 proposal），导致修复运行侧后重放仍 INCONSISTENT。此前测试未覆盖「模型返回 proposal + 内置世界」的组合。
+- 实现：runLab 与 replay 的 proposal 附加统一收敛为同一规则——proposal 只进入声明了 adapter 的 WorldPort 写入边界（runLab 按 manifest.adapter；replay 按 replayStep 的独立 adapter 参数——replayRun 传入的 manifest 是剥离 adapter 的 worldManifest，初版修复误用 manifest.adapter 被四项 repo proposal 回归当场拦截后改用 adapter 参数）。
+- 验证：新增 E2E「模型返回 proposal 时内置世界不得拒收」复现红→修复绿；agent-cli、repo-world-cli（含 F-73/74/76/77 全部 proposal 写入流）、agent-service 回归 72/72；全量回归绿。
+- 边界：proposal 的授权仍完全在 repo adapter 的补丁策略与 nonce 日志边界内；本修复只规范「proposal 不泄漏进不支持它的 WorldPort 请求」，不扩大任何写入权限。

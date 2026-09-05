@@ -56,6 +56,47 @@ test('agent CLI turns an uncooperative process model into a bounded fallback', a
   }
 });
 
+test('a model proposal with an optional proposal field cannot reject built-in WorldPort transitions', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-model-proposal-e2e-'));
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const token = /tok_[A-Z0-9]{8,128}/u.exec(body.messages[0].content)?.[0];
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'agent-chat',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({ token, proposal: { target: 'repo-file.txt', content: 'patch' } }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'local-agent-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'local-model',
+  };
+  const lab = path.join(root, 'lab');
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'temperature', '--json'], process.env);
+    assert.equal(init.code, 0);
+    const run = await invoke(['agent', 'run', '--lab', lab, '--steps', '2', '--goal', '保持系统稳定', '--json'], env);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    // proposal 是 repo 写入边界的语义：内置 WorldPort 的 transition 请求
+    // 不得携带 proposal 字段，否则封闭键集判 MALFORMED_REQUEST。
+    assert.equal(run.stdout[0].data.metrics.rejected, 0, JSON.stringify(run.stdout[0].data));
+    assert.equal(run.stdout[0].data.metrics.accepted, 2);
+    const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env);
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent run uses model proposals inside the replayable closed loop', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-model-e2e-'));
   const requests = [];
