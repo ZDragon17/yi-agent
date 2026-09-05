@@ -88,8 +88,9 @@ test('kernel public entry exposes step and verify as the kernel contract seams',
   assert.equal(typeof kernel.verify, 'function');
   assert.equal(typeof kernel.learn, 'function');
   assert.equal(Object.isFrozen(kernel.KERNEL_LEARNING_VERSIONS), true);
-  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.current, 26);
-  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.longContextWindow, kernel.KERNEL_LEARNING_VERSIONS.current);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.current, 27);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.revalidationBeliefGate, kernel.KERNEL_LEARNING_VERSIONS.current);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.longContextWindow, 26);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.multiScaleContext, 25);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.modelQualityRetention, 24);
 });

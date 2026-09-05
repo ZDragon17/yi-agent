@@ -106,3 +106,54 @@ function invoke(args) {
     }));
   });
 }
+
+test('the converged policy reaches the value target and holds it without scheduled-winner supervision', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-cyclic-collision-hold-'));
+  try {
+    const stateFile = path.join(root, 'world', 'state.json');
+    const adapter = path.join(root, 'adapter.json');
+    const lab = path.join(root, 'lab');
+    await mkdir(path.dirname(adapter), { recursive: true });
+    await writeFile(adapter, JSON.stringify({
+      executable: process.execPath,
+      args: [ADAPTER, '--state-file', stateFile],
+      adapterId: 'cyclic-collision-adapter-v1',
+      worldId: 'cyclic-collision',
+      timeoutMs: 2000,
+    }));
+    const init = await invoke(['init', '--lab', lab, '--world', 'cyclic-collision', '--seed', 'collision-hold', '--lab-id', 'collision-hold', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    for (const runId of ['hold-1', 'hold-2']) {
+      const run = await invoke(['run', '--lab', lab, '--run-id', runId, '--steps', '600', '--adapter', adapter, '--json']);
+      assert.equal(run.code, 0, JSON.stringify(run));
+    }
+
+    const store = await LabStore.open({ labPath: lab });
+    const values = [];
+    for (const runId of ['hold-1', 'hold-2']) {
+      const run = await store.readRun(runId);
+      for (const event of run.events.filter((event) => event.kind === 'STEP')) {
+        values.push({ step: values.length, value: event.payload.beforeObservation.vector[0] });
+      }
+    }
+    // 目标达成：值在预算内进入目标带。
+    const reached = values.find((entry) => Math.abs(entry.value - 400) <= 5);
+    assert.ok(reached !== undefined, 'value never reached the 400 target band');
+    assert.ok(reached.step <= 900, `target reached at step ${reached.step}`);
+
+    // 目标驻留：越过目标后平均距离保持有界——越过目标后调度赢家不再是最优，
+    // 调度赢家率失效，值距离才是正确的度量。驻留窗口取最后 100 步，
+    // 避开逼近段尾巴。
+    const hold = values.slice(-100);
+    const avgDistance = hold.reduce((sum, entry) => sum + Math.abs(entry.value - 400), 0) / hold.length;
+    assert.ok(avgDistance <= 5, `hold-phase average distance ${avgDistance.toFixed(2)} exceeds 5`);
+
+    for (const runId of ['hold-1', 'hold-2']) {
+      const replay = await invoke(['replay', '--lab', lab, '--run', runId, '--adapter', adapter, '--json']);
+      assert.equal(replay.code, 0, JSON.stringify(replay));
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

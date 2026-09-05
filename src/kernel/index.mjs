@@ -39,7 +39,7 @@ const LONG_CONTEXT_KEY_WINDOW = 8;
 const MAX_LONG_CONTEXTS = 8;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
-const CURRENT_LEARNING_VERSION = 26;
+const CURRENT_LEARNING_VERSION = 27;
 export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   settledFeedback: 3,
   pendingCreditExpiry: 4,
@@ -61,6 +61,7 @@ export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   modelQualityRetention: 24,
   multiScaleContext: 25,
   longContextWindow: 26,
+  revalidationBeliefGate: 27,
   current: CURRENT_LEARNING_VERSION,
 });
 const MODEL_RECENCY_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.modelRecency;
@@ -68,6 +69,7 @@ const MODEL_QUALITY_RETENTION_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.modelQ
 const PERSISTED_MEMORY_BUDGET_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.persistedMemoryBudget;
 const MULTI_SCALE_CONTEXT_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.multiScaleContext;
 const LONG_CONTEXT_WINDOW_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.longContextWindow;
+const REVALIDATION_BELIEF_GATE_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.revalidationBeliefGate;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const HISTORY_ACCUMULATOR_HEX_LENGTH = 64;
 const HISTORY_ACCUMULATOR_PATTERN = /^[0-9a-f]{64}$/u;
@@ -306,7 +308,7 @@ export function stepWithPreference(input, preference = null) {
       )
     : [];
   const revalidationPool = overduePool.filter((prediction) =>
-    normalized.learningVersion < LONG_CONTEXT_WINDOW_LEARNING_VERSION ||
+    normalized.learningVersion < REVALIDATION_BELIEF_GATE_LEARNING_VERSION ||
     believedEffectOf(prediction) >= bestBelievedEffect);
   const selected = normalizedPreference?.required === true
     ? preferred ?? chooseByStrategy(selectionPool, normalized.strategy, rng.unit)
