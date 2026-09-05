@@ -967,3 +967,9 @@
 - 实现：新增 E2E `test/e2e/goal-stage-reconvergence.test.mjs`（无内核变更）：预注册判据为 stage-1 完成后计划推进（前半预算内出现 activeStageId=cool-down 且 warm-up=COMPLETED）、单 run 语义下以 OBJECTIVE_REACHED 提前终止、终步观测落在 stage-2 目标带（|v-14| ≤ 2×tolerance）、Run 重放一致。
 - 验证：E2E 通过——计划在前半预算内推进，方向反转后靠既有关系/上下文模型重新收敛，42 步即到达 stage-2 目标并以 OBJECTIVE_REACHED 终止，重放一致。
 - 边界：这是单计划两阶段的受控重收敛，不是开放世界目标发现；方向反转依赖已有 increase/decrease 模型，未覆盖「新阶段需要新动作组合」的场景。至此 F-118 记录的可低成本区分方向已实测闭合；内核侧剩余候选实验与既有 drift/stage 覆盖重叠，反证循环进入当前实验手段的区分力边界，CLI 侧剩余推进（打包、真实供应商连通）均属外部/人工卡点。
+
+## F-121 内置 challenge suite 全量验收
+
+- 证据缺口：FR-5 要求内置挑战给出机器可判定的演示性结论，但 F-114~F-120 各轮只通过 test/** 间接覆盖，从未实际运行 `yi-agent challenge` 全量套件作为系统级验收证据。
+- 执行：`yi-agent challenge --lab <新初始化空间> --json`（temperature 主空间仅作证据归属；每个 case 使用隔离子实验空间）。结果：10/10 PASS——unknown-action-exploration、regime-shift、execution-rejected、external-during-step、all-unsafe、snapshot-write-failure、replay-tamper、inspect-readonly、world-diversity、paired-candidates；套件判定 PASS（exit 0），无 FALSIFIED、无 INCONCLUSIVE。
+- 边界：按宪法不变量 9，内置 suite 全 PASS 只是演示证据与「本套件上未被证伪」，不构成自主/智能证明；晚绑定生成世界与外部判别器的反证仍属独立 Tester 流程。
