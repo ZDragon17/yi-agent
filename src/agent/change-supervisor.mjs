@@ -34,8 +34,12 @@ const STATE_KEYS = [
   'stagnation',
   'replanCount',
   'strategy',
+  'exploration',
   'lastChange',
 ];
+// 探索是有界取证回合而非永久模式：没有该记录的历史监督器状态保持旧的单向切换语义。
+const EXPLORATION_VERIFICATION_BUDGET = 12;
+const EXPLORATION_KEYS = ['schemaVersion', 'enteredAtCycle', 'startBestDistance', 'verifiedSteps'];
 const LAST_CHANGE_KEYS = [
   'schemaVersion',
   'beforeStateVersion',
@@ -178,6 +182,7 @@ export function advanceChangeSupervisor(state, {
     cycle: nextCycle,
     bestDistance,
     stagnation: nextStagnation,
+    ...(nextExploration(current, status, { confirmed, afterDistance }) ?? {}),
     lastChange: {
       schemaVersion: SCHEMA_VERSION,
       beforeStateVersion: before.stateVersion,
@@ -194,6 +199,26 @@ export function advanceChangeSupervisor(state, {
   };
 }
 
+// 探索回合的出口：全局最优距离被确认突破时立即恢复价值选择，
+// 否则在固定已验证步数预算耗尽后恢复；两个出口都不产生额外权限或学习事实。
+// 没有 exploration 记录的历史状态（旧账本）不进入该路径，保持原有语义。
+function nextExploration(current, status, { confirmed, afterDistance }) {
+  const exploration = current.exploration;
+  if (status !== 'ACTIVE' || exploration === undefined ||
+      current.strategy?.mode !== 'EXPLORATORY') {
+    return exploration === undefined ? {} : { exploration };
+  }
+  if (confirmed && exploration.startBestDistance !== null && afterDistance < exploration.startBestDistance) {
+    return { exploration: undefined, strategy: nextStrategy(current.strategy, 'exploration-improved') };
+  }
+  if (!confirmed) return { exploration };
+  const verifiedSteps = exploration.verifiedSteps + 1;
+  if (verifiedSteps >= EXPLORATION_VERIFICATION_BUDGET) {
+    return { exploration: undefined, strategy: nextStrategy(current.strategy, 'exploration-budget-exhausted') };
+  }
+  return { exploration: { ...exploration, verifiedSteps } };
+}
+
 export function acknowledgeReplan(state, reason = 'strategy-change', { trusted = false } = {}) {
   const current = trusted ? state : normalizeState(state);
   if (current.status !== 'REPLAN_REQUIRED') {
@@ -201,12 +226,23 @@ export function acknowledgeReplan(state, reason = 'strategy-change', { trusted =
   }
   const normalizedReason = requireGoal(reason);
   const strategy = nextStrategy(current.strategy ?? createStrategy(), normalizedReason);
+  const { exploration: droppedExploration, ...base } = current;
   return {
-    ...current,
+    ...base,
     status: 'ACTIVE',
     stagnation: 0,
     replanCount: current.replanCount + 1,
     strategy,
+    ...(strategy.mode === 'EXPLORATORY'
+      ? {
+        exploration: {
+          schemaVersion: SCHEMA_VERSION,
+          enteredAtCycle: current.cycle,
+          startBestDistance: current.bestDistance,
+          verifiedSteps: 0,
+        },
+      }
+      : {}),
     lastChange: {
       ...current.lastChange,
       replanReason: normalizedReason,
@@ -353,7 +389,7 @@ function normalizeState(value) {
   const source = snapshotRecord(
     value,
     STATE_KEYS,
-    STATE_KEYS.filter((key) => !['strategy', 'enabled', 'plan'].includes(key)),
+    STATE_KEYS.filter((key) => !['strategy', 'enabled', 'plan', 'exploration'].includes(key)),
     'state',
   );
   if (source.schemaVersion !== SCHEMA_VERSION ||
@@ -387,7 +423,25 @@ function normalizeState(value) {
     replanCount: requireBoundedInteger(source.replanCount, 0, MAX_CYCLES, 'replanCount'),
     lastChange: source.lastChange === null ? null : normalizeLastChange(source.lastChange),
     ...(source.strategy === undefined ? {} : { strategy: normalizeStrategy(source.strategy, 'state.strategy') }),
+    ...(source.exploration === undefined ? {} : { exploration: normalizeExploration(source.exploration) }),
     ...(normalizedPlan === undefined ? {} : { plan: normalizedPlan }),
+  };
+}
+
+function normalizeExploration(value) {
+  const source = snapshotRecord(value, EXPLORATION_KEYS, EXPLORATION_KEYS, 'exploration');
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    enteredAtCycle: requireBoundedInteger(source.enteredAtCycle, 0, MAX_CYCLES, 'exploration.enteredAtCycle'),
+    startBestDistance: source.startBestDistance === null
+      ? null
+      : requireFinite(source.startBestDistance, 'exploration.startBestDistance'),
+    verifiedSteps: requireBoundedInteger(
+      source.verifiedSteps,
+      0,
+      EXPLORATION_VERIFICATION_BUDGET,
+      'exploration.verifiedSteps',
+    ),
   };
 }
 
