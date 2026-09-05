@@ -119,8 +119,10 @@ test('history context keys stay bounded for the maximum observation dimension', 
   const verification = verify({ intent, receipt, postObservation });
   const update = learn({ memory, intent, receipt, postObservation, verification });
   const contextKeys = Object.keys(update.nextMemory.contextModels);
-  assert.equal(contextKeys.length, 1);
-  assert.ok(contextKeys[0].length < 128);
+  // v26 起一次学习至多写入 h2（窗口-8）、h1（窗口-2）与 h0（窗口-1）三个有界键；
+  // 该记忆无累加器且历史为两条，写入的是 h1 与 h0。
+  assert.ok(contextKeys.length >= 1 && contextKeys.length <= 3);
+  for (const key of contextKeys) assert.ok(key.length < 128);
   assert.doesNotThrow(() => step({
     observation: postObservation,
     memory: update.nextMemory,
@@ -227,10 +229,16 @@ test('history accumulator preserves longer ordered context beyond the recent win
   const forward = tokens.reduce((memory, token, index) => commit(memory, token, index), newMemory());
   const reverse = [...tokens].reverse().reduce((memory, token, index) => commit(memory, token, index), newMemory());
 
-  assert.equal(forward.recentHistory.length, 2);
-  assert.equal(reverse.recentHistory.length, 2);
+  // v26 起 recentHistory 保留最近 8 条；三次提交全部保留。
+  assert.equal(forward.recentHistory.length, 3);
+  assert.equal(reverse.recentHistory.length, 3);
   assert.notEqual(forward.historyAccumulator, reverse.historyAccumulator);
-  assert.equal(Object.keys(forward.contextModels).filter((key) => key.startsWith('h2:')).length, 1);
+  // v26 起顺序信息由窗口 h2 键承载：正序与逆序历史产生不同的窗口键集合，
+  // 超出近期窗口的顺序差异不再依赖累加器也能进入上下文证据。
+  const forwardH2 = Object.keys(forward.contextModels).filter((key) => key.startsWith('h2:')).sort();
+  const reverseH2 = Object.keys(reverse.contextModels).filter((key) => key.startsWith('h2:')).sort();
+  assert.ok(forwardH2.length >= 1 && reverseH2.length >= 1);
+  assert.notDeepEqual(forwardH2, reverseH2);
   assert.doesNotThrow(() => step({
     observation: observation([0], 'state:accumulator:3'),
     memory: forward,
@@ -288,6 +296,53 @@ test('periodic revalidation revisits stale safe actions without domain fields', 
   });
   assert.equal(update.nextMemory.lastVerifiedSteps[stale], 10);
   assert.equal(update.nextMemory.historyClock, 10);
+});
+
+test('v26 freshness no longer forces re-verification of candidates already believed inferior', () => {
+  const stale = 'tok_REVALIDATESTAL1';
+  const fresh = 'tok_REVALIDATEFRE1';
+  const memory = {
+    schemaVersion: 1,
+    actionModels: {
+      [stale]: model([1]),
+      [fresh]: model([3]),
+    },
+    relationModels: {},
+    beliefModels: {},
+    contextModels: {},
+    recentHistory: [],
+    historyClock: 9,
+    historyAccumulator: zeroAccumulator(),
+    lastVerifiedSteps: { [stale]: 1, [fresh]: 9 },
+  };
+  const before = observation([12], 'state:revalidation:v26');
+  const capabilities = [stale, fresh].map((token) => ({
+    schemaVersion: 1,
+    token,
+    cost: 1,
+    allowed: true,
+    safe: true,
+  }));
+  const balanced = step({
+    observation: before,
+    memory,
+    valueSpec: { ...VALUE_SPEC, target: [20] },
+    capabilities,
+    rngState: rng(47),
+  });
+  assert.equal(balanced.choice.token, fresh, 'freshness must not force re-verification of a candidate believed inferior');
+
+  // v25 及更早语义：无条件强制重验过期候选，即使其全局证据已判劣。
+  const legacy = step({
+    observation: before,
+    memory,
+    valueSpec: { ...VALUE_SPEC, target: [20] },
+    capabilities,
+    rngState: rng(47),
+    learningVersion: 15,
+  });
+  assert.equal(legacy.choice.token, stale);
+  assert.equal(legacy.expectation.verificationAge, 8);
 });
 
 test('F-57 preserves revalidation freshness when action eviction leaves a relation model', () => {

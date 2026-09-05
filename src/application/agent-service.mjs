@@ -251,7 +251,9 @@ export async function runLab(input) {
           historyClock: 0,
           historyAccumulator: '0000000000000000000000000000000000000000000000000000000000000000',
           lastVerifiedSteps: {},
+          lastProbeSteps: {},
           modelClock: 0,
+          contextKeyScale: 9,
         },
         rngState: initialRng(manifest.seed),
         kernelStep: 0,
@@ -431,6 +433,7 @@ export async function runLab(input) {
       valueSpec: stepValueSpec,
       capabilities,
       rngState: state.rngState,
+      learningVersion: KERNEL_LEARNING_VERSION,
       ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
       planning: planningEvidence(planningHorizon, planningContextMode, planningBranchingMode),
     }, preferenceFor(retryPreference ?? modelDecision, retryPreference !== null));

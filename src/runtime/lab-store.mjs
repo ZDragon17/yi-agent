@@ -37,7 +37,10 @@ import { createChangeSupervisor, normalizeChangeSupervisorState } from '../agent
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
 const MAX_JSON_BYTES = MAX_PERSISTED_EVENT_BYTES;
-const MAX_LEDGER_BYTES = 32 * 1024 * 1024;
+// v25/v26 起每步证据包含多尺度上下文与探测痕迹：v25 约增 10%，v26 的 8 条
+// recentHistory 与窗口 h2 模型使每步压缩证据达 ~3.9 KiB；40 MiB 覆盖完整证据
+// 格式的 10,000 步模拟 Run，事件级 1 MiB 与 Memory 768 KiB 预算保持不变。
+const MAX_LEDGER_BYTES = 40 * 1024 * 1024;
 const MAX_EVENT_LINE_BYTES = MAX_PERSISTED_EVENT_BYTES;
 const MAX_RECENT_COMMITTED_STEPS = 32;
 const DURABILITY_MODES = new Set(['strict', 'checkpoint']);

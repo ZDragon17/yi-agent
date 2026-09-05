@@ -206,6 +206,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       valueSpec,
       capabilities,
       rngState: state.rngState,
+      learningVersion,
       ...(state.changeSupervisor?.strategy === undefined ? {} : { strategy: state.changeSupervisor.strategy }),
       ...(planning === undefined ? {} : { planning }),
     };

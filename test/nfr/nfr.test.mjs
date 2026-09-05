@@ -48,7 +48,7 @@ test('10,000-step runs stay within the ledger bound and preserve complete eviden
     }
 
     const ledger = await stat(path.join(lab, 'runs', 'nfr-run', 'events.jsonl'));
-    assert.ok(ledger.size < 32 * 1024 * 1024, `ledger is ${ledger.size} bytes`);
+    assert.ok(ledger.size < 40 * 1024 * 1024, `ledger is ${ledger.size} bytes`);
   });
 });
 

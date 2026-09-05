@@ -28,14 +28,18 @@ const MAX_SETTLED_FEEDBACK = 64;
 const MAX_PENDING_CREDIT_AGE = 8;
 const MAX_BELIEF_MODELS = 8192;
 const MAX_BELIEF_SAMPLES = 8;
-const MAX_RECENT_HISTORY = 2;
+// v26 起 recentHistory 保留最近 8 条已验证变化：h1 键取最近 2 条，h2 窗口键取
+// 全部 8 条；旧账本最多只有 2 条，切片在旧记忆上数学等价，回放不受影响。
+const MAX_RECENT_HISTORY = 8;
+const H1_CONTEXT_WINDOW = 2;
 const MAX_CONTEXT_MODELS = 8192;
-// A long-context key is an exact fingerprint, so its cache must stay tiny;
-// h1 remains the reusable generalization layer for ordinary continuous runs.
-const MAX_LONG_CONTEXTS = 1;
+// v26 起 h2 键来自最近 8 条已验证变化的窗口摘要：周期-7 碰撞反证显示窗口-1/2
+// 在碰撞相位上信息不足，而周期 < 8 的轨道每个相位拥有唯一的窗口摘要。
+const LONG_CONTEXT_KEY_WINDOW = 8;
+const MAX_LONG_CONTEXTS = 8;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
-const CURRENT_LEARNING_VERSION = 24;
+const CURRENT_LEARNING_VERSION = 26;
 export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   settledFeedback: 3,
   pendingCreditExpiry: 4,
@@ -54,12 +58,16 @@ export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   modelAge: 21,
   persistedMemoryBudget: 22,
   modelRecency: 23,
-  modelQualityRetention: CURRENT_LEARNING_VERSION,
+  modelQualityRetention: 24,
+  multiScaleContext: 25,
+  longContextWindow: 26,
   current: CURRENT_LEARNING_VERSION,
 });
 const MODEL_RECENCY_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.modelRecency;
 const MODEL_QUALITY_RETENTION_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.modelQualityRetention;
 const PERSISTED_MEMORY_BUDGET_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.persistedMemoryBudget;
+const MULTI_SCALE_CONTEXT_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.multiScaleContext;
+const LONG_CONTEXT_WINDOW_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.longContextWindow;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const HISTORY_ACCUMULATOR_HEX_LENGTH = 64;
 const HISTORY_ACCUMULATOR_PATTERN = /^[0-9a-f]{64}$/u;
@@ -78,8 +86,9 @@ const STEP_INPUT_KEYS = [
   'rngState',
   'strategy',
   'planning',
+  'learningVersion',
 ];
-const STEP_INPUT_REQUIRED_KEYS = STEP_INPUT_KEYS.filter((key) => key !== 'strategy' && key !== 'planning');
+const STEP_INPUT_REQUIRED_KEYS = STEP_INPUT_KEYS.filter((key) => key !== 'strategy' && key !== 'planning' && key !== 'learningVersion');
 const VERIFY_INPUT_KEYS = ['intent', 'receipt', 'postObservation'];
 const LEARN_INPUT_KEYS = [
   'memory',
@@ -115,7 +124,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps', 'modelClock', 'modelAges'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps', 'lastProbeSteps', 'modelClock', 'modelAges', 'contextKeyScale'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -160,7 +169,12 @@ const CHOICE_KEYS = [
   'cost',
   'allowed',
   'safe',
+  'contextProbe',
 ];
+// contextProbe 只出现在 v25+ 的探测选择里，历史账本的 choice 没有该字段。
+const CHOICE_REQUIRED_KEYS = CHOICE_KEYS.filter((key) => key !== 'contextProbe');
+// 上下文反事实探测的复验间隔：同一候选两次探测之间至少间隔的已验证动作数。
+const CONTEXT_PROBE_INTERVAL = 8;
 const RECEIPT_KEYS = [
   'schemaVersion',
   'status',
@@ -278,19 +292,29 @@ export function stepWithPreference(input, preference = null) {
     ? null
     : safePredictions.find((item) => item.choice.token === normalizedPreference.token &&
       (!item.rejectedRecently || nonRejectedPredictions.length === 0));
-  const revalidationPool = untriedPredictions.length === 0
+  // v26 起强制重验只针对「信念上仍不劣于任何候选」的过期行动：隐藏漂移只能
+  // 靠真实重验发现，而全局证据已判劣的冷门候选由上下文反事实探测负责取证，
+  // freshness 不再为它们打破已收敛的上下文轨道。v25 及更早的无条件语义按
+  // 学习版本原样保留。
+  const believedEffectOf = (prediction) => prediction.expectation.expectedDelta
+    .reduce((sum, value) => sum + value, 0);
+  const bestBelievedEffect = Math.max(...safePredictions.map(believedEffectOf));
+  const overduePool = untriedPredictions.length === 0
     ? revalidationCandidatePool(
         nonRejectedPredictions.length > 0 ? nonRejectedPredictions : safePredictions,
         normalized.memory,
       )
     : [];
+  const revalidationPool = overduePool.filter((prediction) =>
+    normalized.learningVersion < LONG_CONTEXT_WINDOW_LEARNING_VERSION ||
+    believedEffectOf(prediction) >= bestBelievedEffect);
   const selected = normalizedPreference?.required === true
     ? preferred ?? chooseByStrategy(selectionPool, normalized.strategy, rng.unit)
     : revalidationPool.length > 0
       ? chooseByStrategy(revalidationPool, normalized.strategy, rng.unit)
       : preferred ?? (normalized.planning.horizon > 1 && untriedPredictions.length === 0
         ? chooseByPlanning(selectionPool, normalized, rng.unit)
-        : chooseByStrategy(selectionPool, normalized.strategy, rng.unit));
+        : withContextualProbe(selectionPool, chooseByStrategy(selectionPool, normalized.strategy, rng.unit), normalized.memory));
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -298,6 +322,30 @@ export function stepWithPreference(input, preference = null) {
     expectation: cloneExpectation(selected.expectation),
     choice: cloneChoice(selected.choice),
     nextRngState: rng.nextState,
+  };
+}
+
+// 上下文反事实探测：当价值最优的选择依赖本上下文的证据，而另一安全候选
+// 在本上下文从未取得过自己的证据时，有界地探一次该候选。全局证据可能被
+// 早期混合样本毒化，不能作为「该候选在此上下文无用」的依据；上下文证据
+// 只能靠一次真实的 verify→learn 取得。探测只改写本步选择，不扩大权限。
+function withContextualProbe(selectionPool, selected, memory) {
+  if (memory.contextKeyScale === undefined || memory.historyClock === undefined) return selected;
+  if (selected?.contextResolved !== true) return selected;
+  let probe = undefined;
+  for (const prediction of selectionPool) {
+    if (prediction === selected || prediction.contextResolved) continue;
+    const lastProbe = memory.lastProbeSteps?.[prediction.choice.token];
+    if (lastProbe !== undefined && memory.historyClock - lastProbe < CONTEXT_PROBE_INTERVAL) continue;
+    if (probe === undefined || prediction.choice.score > probe.choice.score) {
+      probe = prediction;
+    }
+  }
+  if (probe === undefined) return selected;
+  return {
+    ...selected,
+    expectation: probe.expectation,
+    choice: { ...probe.choice, contextProbe: true },
   };
 }
 
@@ -411,7 +459,12 @@ export function learn(input) {
   assertIntentIsExecutable(intent, 'learnInput.intent.choice');
 
   const nextMemory = cloneMemory(memory, { compactAges: false });
-  const contextKeys = contextKeysForMemory(memory);
+  // 上下文证据的写入按学习版本门控：h0 只对 v25+ 写入；h2 在 v26 起改用窗口基，
+  // v25 及更早的 Replay 继续写累加器键，历史账本的记忆形状保持原样。
+  const contextKeys = contextKeysForMemory(memory, {
+    includeShortContext: learningVersion >= MULTI_SCALE_CONTEXT_LEARNING_VERSION,
+    longContextWindow: learningVersion >= LONG_CONTEXT_WINDOW_LEARNING_VERSION,
+  });
   const settlement = settlePendingCredits(
     nextMemory,
     postObservation,
@@ -559,6 +612,7 @@ export function learn(input) {
     dimensions,
     field: 'learnOutput.nextMemory',
     refreshModelAge,
+    contextProbe: intent.choice.contextProbe === true,
   });
 
   return {
@@ -818,6 +872,9 @@ function normalizeStepInput(input) {
   const rngState = normalizeRngState(source.rngState, 'stepInput.rngState');
   const strategy = normalizeStrategy(source.strategy, 'stepInput.strategy');
   const planning = normalizePlanning(source.planning, 'stepInput.planning');
+  const learningVersion = source.learningVersion === undefined
+    ? CURRENT_LEARNING_VERSION
+    : assertLearningVersion(source.learningVersion, 'stepInput.learningVersion');
 
   return {
     observation,
@@ -827,6 +884,7 @@ function normalizeStepInput(input) {
     rngState,
     strategy,
     planning,
+    learningVersion,
   };
 }
 
@@ -1067,9 +1125,15 @@ function normalizeMemory(value, field, dimensions) {
   const lastVerifiedSteps = source.lastVerifiedSteps === undefined
     ? undefined
     : normalizeLastVerifiedSteps(source.lastVerifiedSteps, `${field}.lastVerifiedSteps`);
+  const lastProbeSteps = source.lastProbeSteps === undefined
+    ? undefined
+    : normalizeLastProbeSteps(source.lastProbeSteps, `${field}.lastProbeSteps`);
   const modelClock = source.modelClock === undefined
     ? undefined
     : assertNonNegativeInteger(source.modelClock, `${field}.modelClock`);
+  const contextKeyScale = source.contextKeyScale === undefined
+    ? undefined
+    : assertContextKeyScale(source.contextKeyScale, `${field}.contextKeyScale`);
   if (source.modelAges !== undefined) {
     applyCompactModelAges(
       source.modelAges,
@@ -1108,6 +1172,16 @@ function normalizeMemory(value, field, dimensions) {
       field: `${field}.lastVerifiedSteps`,
     });
   }
+  if (lastProbeSteps !== undefined && historyClock === undefined) {
+    contractViolation('kernel context probe freshness requires a history clock', {
+      field: `${field}.lastProbeSteps`,
+    });
+  }
+  if (lastProbeSteps !== undefined && Object.values(lastProbeSteps).some((step) => step > historyClock)) {
+    contractViolation('kernel context probe freshness cannot point beyond the history clock', {
+      field: `${field}.lastProbeSteps`,
+    });
+  }
   validateHistoryOrdering(
     normalizedRecentHistory,
     normalizedPendingCredits,
@@ -1137,8 +1211,32 @@ function normalizeMemory(value, field, dimensions) {
     ...(historyClock === undefined ? {} : { historyClock }),
     ...(historyAccumulator === undefined ? {} : { historyAccumulator }),
     ...(lastVerifiedSteps === undefined ? {} : { lastVerifiedSteps }),
+    ...(lastProbeSteps === undefined ? {} : { lastProbeSteps }),
     ...(modelClock === undefined ? {} : { modelClock }),
+    ...(contextKeyScale === undefined ? {} : { contextKeyScale }),
   };
+}
+
+function normalizeLastProbeSteps(value, field) {
+  const source = assertDynamicRecord(value, field, MAX_ACTION_MODELS);
+  const normalized = Object.create(null);
+  for (const [token, step] of Object.entries(source)) {
+    assertOpaqueToken(token, `${field} token`);
+    normalized[token] = assertNonNegativeInteger(step, `${field}.${token}`);
+  }
+  return normalized;
+}
+
+// 上下文键把浮点重构残差（如 0 的 -3.7e-17 表示）量化到固定十进制精度，
+// 使语义相同的已验证变化落入同一键；缺失该字段的旧记忆按原始字节键回放。
+function assertContextKeyScale(value, field) {
+  const scale = assertNonNegativeInteger(value, field);
+  if (scale < 1 || scale > 15) {
+    contractViolation('kernel context key scale must be between 1 and 15 decimal digits', {
+      field,
+    });
+  }
+  return scale;
 }
 
 function hasModelAge(models) {
@@ -1316,10 +1414,11 @@ function validateHistoryOrdering(history, pendingCredits, historyClock, field) {
 
 function normalizeContextKeys(value, field) {
   const items = assertArray(value, field);
-  if (items.length === 0 || items.length > 2) {
+  // v25 起接受至多 3 个键（h2 + h1 + h0）；历史账本至多 2 个仍合法。
+  if (items.length === 0 || items.length > 3) {
     contractViolation('kernel context key list has an invalid size', {
       field,
-      max: 2,
+      max: 3,
       actual: items.length,
     });
   }
@@ -1689,6 +1788,7 @@ function recordActionEvidence(memory, {
   dimensions,
   field,
   refreshModelAge = false,
+  contextProbe = false,
 }) {
   let existing = memory.actionModels[token];
   let actionModelCount = existing === undefined ? cachedTopLevelModelCount(memory.actionModels) : null;
@@ -1763,6 +1863,9 @@ function recordActionEvidence(memory, {
       contractViolation('kernel verification freshness requires an action order', { field });
     }
     memory.lastVerifiedSteps[token] = historyOrder;
+  }
+  if (contextProbe === true && memory.contextKeyScale !== undefined) {
+    memory.lastProbeSteps = { ...(memory.lastProbeSteps ?? {}), [token]: historyOrder };
   }
   if (relationKey === undefined) return;
 
@@ -2168,7 +2271,7 @@ function normalizeExpectation(value, field) {
 }
 
 function normalizeChoice(value, field) {
-  const source = assertPlainRecord(value, field, CHOICE_KEYS);
+  const source = assertPlainRecord(value, field, CHOICE_KEYS, CHOICE_REQUIRED_KEYS);
 
   return {
     schemaVersion: requireSchemaVersion(source, field),
@@ -2178,6 +2281,7 @@ function normalizeChoice(value, field) {
     cost: assertNonNegativeFiniteNumber(source.cost, `${field}.cost`),
     allowed: assertBoolean(source.allowed, `${field}.allowed`),
     safe: assertBoolean(source.safe, `${field}.safe`),
+    ...(source.contextProbe === undefined ? {} : { contextProbe: assertBoolean(source.contextProbe, `${field}.contextProbe`) }),
   };
 }
 
@@ -2294,7 +2398,12 @@ function assertIntentIsExecutable(intent, field) {
 }
 
 function buildPredictions(input) {
-  const contextKeys = contextKeysForMemory(input.memory);
+  // 读取始终使用窗口 h2 基：旧记忆的累加器 h2 模型本就永不可读，行为无差异；
+  // h0 键只在其模型存在时才会命中，旧账本记忆不含 h0 模型，同样无差异。
+  const contextKeys = contextKeysForMemory(input.memory, {
+    includeShortContext: true,
+    longContextWindow: true,
+  });
   return input.capabilities.map((capability) => {
     const relationKey = input.memory.relationModels === undefined
       ? undefined
@@ -2309,6 +2418,10 @@ function buildPredictions(input) {
       input.memory.relationModels?.[capability.token]?.[relationKey] ??
       input.memory.actionModels[capability.token] ??
       defaultActionModel(input.observation.vector.length);
+    const contextModel = contextKeys
+      ?.map((contextKey) => input.memory.contextModels?.[contextKey]?.[capability.token])
+      .find((candidate) => candidate !== undefined);
+    const contextResolved = contextModel !== undefined;
     const beliefModel = input.memory.beliefModels?.[capability.token]?.[
       relationKey ?? OVERALL_BELIEF_CONTEXT
     ];
@@ -2360,6 +2473,8 @@ function buildPredictions(input) {
         safe: capability.safe,
       },
       rejectedRecently,
+      contextResolved,
+      contextModelAge: contextModel?.modelAge,
     };
   });
 }
@@ -3097,6 +3212,7 @@ function cloneMemory(
   };
   TOP_LEVEL_MODEL_COUNTS.set(cloned.actionModels, Object.keys(actionModels).length);
   if (value.modelClock !== undefined) cloned.modelClock = value.modelClock;
+  if (value.contextKeyScale !== undefined) cloned.contextKeyScale = value.contextKeyScale;
   if (value.pendingCreditPolicy !== undefined) {
     cloned.pendingCreditPolicy = {
       schemaVersion: SCHEMA_VERSION,
@@ -3189,6 +3305,7 @@ function cloneMemory(
   if (value.historyClock !== undefined) cloned.historyClock = value.historyClock;
   if (value.historyAccumulator !== undefined) cloned.historyAccumulator = value.historyAccumulator;
   if (value.lastVerifiedSteps !== undefined) cloned.lastVerifiedSteps = { ...value.lastVerifiedSteps };
+  if (value.lastProbeSteps !== undefined) cloned.lastProbeSteps = { ...value.lastProbeSteps };
   pruneOrphanedVerificationSteps(cloned);
   if (compactAges) {
     if (enforcePersistedBudget) {
@@ -3362,9 +3479,15 @@ function stripModelAges(memory) {
 }
 
 function pruneOrphanedVerificationSteps(memory) {
-  if (memory.lastVerifiedSteps === undefined) return;
-  for (const token of Object.keys(memory.lastVerifiedSteps)) {
-    if (!hasReusableModelEvidence(memory, token)) delete memory.lastVerifiedSteps[token];
+  if (memory.lastVerifiedSteps !== undefined) {
+    for (const token of Object.keys(memory.lastVerifiedSteps)) {
+      if (!hasReusableModelEvidence(memory, token)) delete memory.lastVerifiedSteps[token];
+    }
+  }
+  if (memory.lastProbeSteps !== undefined) {
+    for (const token of Object.keys(memory.lastProbeSteps)) {
+      if (!hasReusableModelEvidence(memory, token)) delete memory.lastProbeSteps[token];
+    }
   }
 }
 
@@ -3418,6 +3541,7 @@ function cloneChoice(value) {
     cost: value.cost,
     allowed: value.allowed,
     safe: value.safe,
+    ...(value.contextProbe === undefined ? {} : { contextProbe: value.contextProbe }),
   };
 }
 
@@ -3753,22 +3877,65 @@ function assertBeliefContextKey(value, field, dimensions) {
   return assertRelationKey(value, field, dimensions);
 }
 
-function contextKeysForMemory(memory) {
+function contextKeysForMemory(memory, {
+  includeShortContext = false,
+  longContextWindow = false,
+} = {}) {
   const keys = [];
-  if (memory.historyAccumulator !== undefined) {
+  if (longContextWindow) {
+    const longKey = longContextKeyForHistory(memory.recentHistory, memory.contextKeyScale);
+    if (longKey !== undefined && !keys.includes(longKey)) keys.push(longKey);
+  } else if (memory.historyAccumulator !== undefined) {
     keys.push(`h2:${canonicalDigest({ historyAccumulator: memory.historyAccumulator })}`);
   }
-  const recentKey = contextKeyForHistory(memory.recentHistory);
+  const scale = memory.contextKeyScale;
+  const recentKey = contextKeyForHistory(memory.recentHistory, scale);
   if (recentKey !== undefined && !keys.includes(recentKey)) keys.push(recentKey);
+  if (includeShortContext) {
+    const shortKey = shortContextKeyForHistory(memory.recentHistory, scale);
+    if (shortKey !== undefined && !keys.includes(shortKey)) keys.push(shortKey);
+  }
   return keys.length === 0 ? undefined : keys;
 }
 
-function contextKeyForHistory(history) {
-  if (history === undefined) return undefined;
-  return `h1:${canonicalDigest(orderedHistory(history).map((entry) => ({
+// 窗口-8 长上下文键：周期 < 8 的轨道每个相位拥有唯一的窗口摘要，可表达
+// 窗口-1/2 无法区分的碰撞相位。它取代按构造永不复现的累加器键成为 h2 的
+// 读取与写入基础；累加器字段本身仍按原样维护，仅作审计。
+function longContextKeyForHistory(history, contextKeyScale = undefined) {
+  const ordered = orderedHistory(history ?? []);
+  if (ordered.length === 0) return undefined;
+  return `h2:${canonicalDigest(ordered.slice(-LONG_CONTEXT_KEY_WINDOW).map((entry) => ({
     token: entry.token,
-    actualDelta: entry.actualDelta,
+    actualDelta: canonicalContextDelta(entry.actualDelta, contextKeyScale),
   })))}`;
+}
+
+function contextKeyForHistory(history, contextKeyScale = undefined) {
+  if (history === undefined) return undefined;
+  // 空历史保持历史怪癖：键为 digest([]) 而非 undefined，旧账本首个 STEP 依赖该形状。
+  const ordered = orderedHistory(history).slice(-H1_CONTEXT_WINDOW);
+  return `h1:${canonicalDigest(ordered.map((entry) => ({
+    token: entry.token,
+    actualDelta: canonicalContextDelta(entry.actualDelta, contextKeyScale),
+  })))}`;
+}
+
+// 窗口-1 上下文：相位类周期里最近一条已验证变化就足以区分状态，
+// 更粗的键在上下文碎片化时比窗口-2 键更早积累出可复用样本。
+function shortContextKeyForHistory(history, contextKeyScale = undefined) {
+  const ordered = orderedHistory(history ?? []);
+  if (ordered.length === 0) return undefined;
+  const last = ordered.at(-1);
+  return `h0:${canonicalDigest([{ token: last.token, actualDelta: canonicalContextDelta(last.actualDelta, contextKeyScale) }])}`;
+}
+
+function canonicalContextDelta(vector, contextKeyScale) {
+  if (contextKeyScale === undefined) return vector;
+  const factor = 10 ** contextKeyScale;
+  return vector.map((component) => {
+    if (!Number.isFinite(component)) return component;
+    return Math.round(component * factor) / factor;
+  });
 }
 
 function orderedHistory(history) {
@@ -3805,7 +3972,7 @@ function modularPower(base, exponent) {
 
 function assertContextKey(value, field) {
   const bounded = assertBoundedString(value, field, MAX_CONTEXT_KEY_LENGTH);
-  if (!/^h[12]:sha256:[0-9a-f]{64}$/u.test(bounded)) {
+  if (!/^h[012]:sha256:[0-9a-f]{64}$/u.test(bounded)) {
     contractViolation('kernel context key is invalid', { field });
   }
   return bounded;
