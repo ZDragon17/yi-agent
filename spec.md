@@ -95,6 +95,13 @@ HTML 原型证明了“预期—行动—验证—修正”能够运行，但状
 - 边界：全部动作不安全时不得 fallback；未知 action id 必须拒绝。
 - 验收：故障注入下执行计数保持 0，事件账本记录 HALTED 和原因。
 
+### FR-8 只读检查外壳
+
+- 输入：已初始化实验空间、可选端口（0 = 随机）、可选外部 adapter 配置。
+- 输出：stdout 打印一次 listening 信封后长驻；`/` 提供每 2 秒轮询的检查页，`/api/state` 返回与 `inspect --json` 同源的只读信封。
+- 边界：仅绑定 127.0.0.1；仅 GET（其余 405）；复用 inspect 只读读路径，不创建 writer lock、不改变世界、随机序列或学习状态；无 CORS 头；不打包、不注册系统命令（打包桌面端仍属人工闸）。
+- 验收：E2E 验证 listening 信封、页面与 /api/state 信封、POST 405、以及「会话前后实验目录哈希不变」的只读不变量；缺失 lab 在监听前 fail-closed。
+
 ## 非功能需求
 
 - 可移植设计：仅用跨平台 Node API、无 shell 依赖；v0.1 在当前 Windows 环境做真实 E2E，Linux/macOS 未有 CI 证据前不得宣称已验证。

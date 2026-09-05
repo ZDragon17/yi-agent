@@ -317,6 +317,17 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 
 也就是说，Codex / Claude 可以帮助我们建设实验世界，但不替代实验世界本身。
 
+## 只读检查外壳
+
+内核通过反例实验后，桌面面以只读外壳接入（不打包、不注册系统命令）：
+
+```powershell
+yi-agent ui --lab E:\labs	emperature          # http://127.0.0.1:<随机端口>
+yi-agent ui --lab E:\labs	emperature --port 7899 --json
+```
+
+页面每 2 秒轮询 `/api/state`（与 `inspect --json` 同源的只读信封）；服务仅绑定 127.0.0.1、仅 GET、不创建锁、不改变实验空间。任何写操作仍必须走 CLI 与 EffectBroker 的确认/对账边界。
+
 ## 安装
 
 需要 Node.js 22 或更高版本。PowerShell 中执行：

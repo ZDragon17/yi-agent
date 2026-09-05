@@ -37,6 +37,7 @@
 | `init --lab PATH --world ID [--seed N] [--adapter CONFIG]` | 不存在的目录、内置或外部世界、32 位种子 | manifest 与空认知快照；exit 0 | 参数 64；冲突 65；I/O 74 | world/seed/adapter 身份相同才幂等 |
 | `run --lab PATH --steps N [--scenario ID] [--adapter CONFIG] [--json]` | 已初始化空间、1..10000 | runId、指标、停止原因；exit 0 | HALTED 2；损坏 3；参数 64；内部 70；I/O 74；BUSY 75 | 单 writer；当前 Windows 机型长跑最长 60 秒 |
 | `inspect --lab PATH [--run ID|--action RUN:SEQ] [--adapter CONFIG] [--json]` | 实验空间 | 固定 snapshot watermark 的 InspectView | 损坏时部分诊断+3；参数 64；不存在 66；内部 70；I/O 74 | 原子快照只读；不创建锁 |
+| `ui --lab PATH [--port N] [--adapter CONFIG] [--json]` | 已初始化实验空间 | stdout 打印一次 listening 信封，长驻至 SIGINT/SIGTERM；页面每 2s 轮询 `/api/state`（inspect 同源只读信封）；非 GET 405 | 参数 64；不存在/路径逃逸 66/70；I/O 74 | 仅绑定 127.0.0.1；只读：不创建锁、不写文件、不消耗随机源；无 CORS 头 |
 | `replay --lab PATH --run ID [--adapter CONFIG] [--json]` | 终态 run | 一致或首个差异序号 | 不一致/损坏 3；参数 64；不存在 66；内部 70；I/O 74；未终态 75 | 终态文件不可变；严格只读 |
 | `challenge --lab PATH [--suite foundational|--case ID] [--json]` | 主实验空间仅作证据归属 | 每个 case 的 PASS/FALSIFIED/INCONCLUSIVE | 任一 FALSIFIED 2；无证伪但有 INCONCLUSIVE 3 | 每 case 使用隔离子实验空间 |
 | `recover --lab PATH --confirm-lock-owner-dead [--json]` | 显式恢复请求 | stale lock 证据、恢复后的 current | 活进程/未确认 75；损坏 3；参数 64；I/O 74 | 唯一允许处理陈旧锁的命令 |
@@ -258,7 +259,7 @@ F-100 的共享边界回归把“不确定性不等于不行动”进一步落�
 - 所有 `src/**` 不得导入 `test/**`；Kernel 不得导入 `src/worlds`，不得包含内置 world/scenario/action 领域字面量。晚绑定 Oracle 在隔离临时空间执行，只返回 verdict、冻结源码摘要和证据定位；这增加反证强度但不构成不可作弊证明。
 - JSON 对象单文件上限 1 MiB、JSON 最大嵌套深度 128；单 Run 账本上限 40 MiB、事件行上限 1 MiB，读写两侧均拒绝越界，避免意外内存耗尽；该上限覆盖当前压缩证据格式下的 10,000 步模拟 Run（v25 多尺度上下文与探测痕迹使每步压缩证据约增 10%，v26 的 8 条 recentHistory 与窗口 h2 模型再增至 ~3.9 KiB/步，上限由 32 MiB 两次依据实测重校准）。
 - 路径操作会拒绝已存在的符号链接/目录联接并在关键写入前复核；但 Node.js 在 Windows 上没有可移植的目录句柄相对操作来彻底封闭“检查后被同权限进程替换”的竞态。因此 v0.1 的威胁边界要求实验目录 ACL 仅授予当前用户，不能抵御同一用户下主动并发篡改；这类场景只会报告为超出安全保证，不宣称已解决。
-- v0.1 无 PII、鉴别数据、网络和进程内动态代码加载；显式 external adapter 仅通过固定 executable/args、`shell:false`、有限时限/输出的 JSONL 子进程协议接入。外部输入必须同时满足整步摘要绑定和 manifest 公钥验签；这能抵御证据被改写后重算本地无密钥哈希链，但不等同于 OS 沙箱或真实副作用保证。
+- v0.1 无 PII、鉴别数据、出站网络和进程内动态代码加载；F-119 的只读检查外壳是唯一监听面：固定绑定 127.0.0.1、仅 GET、复用 inspect 只读读路径、无鉴权（服务对象是本机持有 lab 的用户）、不发 CORS 头（浏览器默认同源策略阻止跨源读取）；显式 external adapter 仅通过固定 executable/args、`shell:false`、有限时限/输出的 JSONL 子进程协议接入。外部输入必须同时满足整步摘要绑定和 manifest 公钥验签；这能抵御证据被改写后重算本地无密钥哈希链，但不等同于 OS 沙箱或真实副作用保证。
 - 虚拟桌面只记录合成文件名/类别/位置，不读取文件内容；错误和日志不得输出主机环境变量、真实目录枚举或内部 tokenMap 语义映射。
 - v0.1 的纯模拟 transition 解决了“副作用发生而证据未落盘”窗口；外部桌面/设备 adapter 只能在显式声明并实现持久 execution nonce 幂等后获得自动续跑资格，否则进入 `EXTERNAL_TRANSITION_UNKNOWN` 阻断，必须人工对账，不能复用纯模拟结论。
 - loop 的自动恢复是显式 opt-in：`--resume --auto-recover` 仅在 current 为 `RUNNING` 且 `LabStore.recover` 的系统 liveness probe 证明旧 writer owner 已死亡时接管；若检查与正常完成之间出现短暂无锁窗口，仍用初始 writer owner 身份复探测，活跃 owner、无法确认死亡或非运行态均不自动接管。它复用原有恢复意图、陈旧锁证据、canonical recovery lock 和 completion，不另造一套恢复状态机。
