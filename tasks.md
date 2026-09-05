@@ -973,3 +973,13 @@
 - 证据缺口：FR-5 要求内置挑战给出机器可判定的演示性结论，但 F-114~F-120 各轮只通过 test/** 间接覆盖，从未实际运行 `yi-agent challenge` 全量套件作为系统级验收证据。
 - 执行：`yi-agent challenge --lab <新初始化空间> --json`（temperature 主空间仅作证据归属；每个 case 使用隔离子实验空间）。结果：10/10 PASS——unknown-action-exploration、regime-shift、execution-rejected、external-during-step、all-unsafe、snapshot-write-failure、replay-tamper、inspect-readonly、world-diversity、paired-candidates；套件判定 PASS（exit 0），无 FALSIFIED、无 INCONCLUSIVE。
 - 边界：按宪法不变量 9，内置 suite 全 PASS 只是演示证据与「本套件上未被证伪」，不构成自主/智能证明；晚绑定生成世界与外部判别器的反证仍属独立 Tester 流程。
+
+## F-122 挑战套件证伪力的突变检验
+
+- 证据缺口：F-121 记录了套件 10/10 PASS，但「永远 PASS 的挑战证伪力为零」——各挑战的判别器从未被证明真的能抓到对应缺陷类。
+- 方法：对每个挑战向**被测实现**注入其判别器所针对的最小缺陷（突变），在隔离子实验空间运行该挑战，记录三态结论，随后立即 `git checkout` 还原；全程不修改任何判别器（改判别器的「证伪」无证明力）。
+- 结果（10/10 FALSIFIED）：探索禁用→EXPLORATION_NOT_OBSERVED；温度世界不标记 regime→REGIME_SHIFT_NOT_RECORDED；世界放行执行拒绝→REJECTION_NOT_HALTED；场景安全投影放行→UNSAFE_ACTION_EXECUTED；failpoint 注入被忽略→SNAPSHOT_FAILURE_NOT_INJECTED；重放跳过 choice 比较→REPLAY_TAMPER_NOT_LOCATED；inspect 写文件→INSPECT_WROTE_STATE；重放忽略起点场景→WORLD_DIVERSITY_INVENTORY_REPLAY；配对比较派生跳过→PAIRED_CANDIDATE_COMPARISON_NOT_OBSERVED。
+- 意外发现一：世界类突变被 `worldImplementationDigest` 摘要绑定拦截（CONFLICT 65，主空间 manifest 拒绝漂移实现）——F-116 的世界身份机制在突变检验中首次被实战触发，需重建主空间使摘要重新绑定。
+- 意外发现二：external-during-step 的混杂防线纵深为**四层**（世界回执标记→宿主强制 AMBIGUOUS→内核 verify→账本 STEP 校验）。前三层单独突变均被余层拦截（表现为 PASS 或 INCONCLUSIVE，绝不放行可学习事实）；四层同时关闭才得 FALSIFIED（EXTERNAL_EVENT_WAS_LEARNED）。这是宪法不变量 5「双层校验、不能单点信任」的实证。
+- 收敛：全部突变还原后 `git status` 干净，全量套件复验 PASS（11 个 verdict 全 PASS），全量回归绿。突变零残留。
+- 边界：突变只覆盖每个挑战的主判别器，不穷尽全部缺陷类；突变检验证明的是「这些挑战能抓到这些缺陷」，不证明「能抓到一切缺陷」。
