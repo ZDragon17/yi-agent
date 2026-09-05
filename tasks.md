@@ -996,3 +996,14 @@
 - 实现：runLab 与 replay 的 proposal 附加统一收敛为同一规则——proposal 只进入声明了 adapter 的 WorldPort 写入边界（runLab 按 manifest.adapter；replay 按 replayStep 的独立 adapter 参数——replayRun 传入的 manifest 是剥离 adapter 的 worldManifest，初版修复误用 manifest.adapter 被四项 repo proposal 回归当场拦截后改用 adapter 参数）。
 - 验证：新增 E2E「模型返回 proposal 时内置世界不得拒收」复现红→修复绿；agent-cli、repo-world-cli（含 F-73/74/76/77 全部 proposal 写入流）、agent-service 回归 72/72；全量回归绿。
 - 边界：proposal 的授权仍完全在 repo adapter 的补丁策略与 nonce 日志边界内；本修复只规范「proposal 不泄漏进不支持它的 WorldPort 请求」，不扩大任何写入权限。
+
+## F-125 能源行业场景包：工商储能 / 光储充 / VPP
+
+- 目标：把通用闭环投影到真实能源行业——领域语义（设备动力学、保护约束、经济结算）全部在 WorldPort 边界，Kernel 保持领域盲。`examples/energy/` 新增共享设备模型库（`shared/energy-sim.mjs`：分时电价表与中位归一化通道、BMS 边界内 SOC 动力学、钟形光伏出力、工商业负荷曲线、充电桩接入序列、VPP 指令曲线、功率平衡计量）与三个外部 WorldPort adapter（yi-world-cli JSONL 协议、无状态、宿主持有 worldState）：
+  - `ci-ess` 工商储能：观测 [并网点功率， 放电余量， 电价偏离中位]；行动充电/放电/待机；BMS 边界与防逆流双投影 + transition 二道防线；分时异向目标（谷充峰放）由电价通道进入关系签名表达；
+  - `pv-station` 光储充场站：观测 [并网点， SOC， 光伏出力， 充电负荷]；充电桩接入是行动中外部事件（在桩即 AMBIGUOUS 不可学习）；防逆流与 250kVA 变压器容量双保护；charger.stop 停充语义；
+  - `vpp` 虚拟电厂：双站点 ±30kW 步进聚合跟踪调度指令；指令通道不可控仅作上下文，跟踪偏差是价值几何。
+- E2E（`test/e2e/energy-scenarios.test.mjs`，三场景全绿）：ci-ess 72 步 COMPLETED + SOC 全程 BMS 边界内 + 24h 窗口 SOC 波动 ≥ 30%（充放循环）+ 总电费不劣于待机基线 + 重放一致；pv-station 全程并网点 ≤ 250kVA 且充电小时归因保守化 + 重放一致；vpp 96 步收尾窗口平均跟踪偏差 < 38kW + 重放一致。
+- 建模过程中的行业真实性修正（全部由 E2E 驱动）：电价表补齐 24 小时（缺位产生 NaN→null 观测被协议层拦截）；BMS 边界改为动作后终点 SOC 判定（起点检查会让放电越下限）；保护约束投影到 safe 能力面（transition 拒绝会使 run 终止——能力投影才是第一道防线，与「拒绝即停机」契约一致）；能力投影必须计入动作自身对充电负荷的修改（stop 停充后光伏盈余即倒送）。
+- 真实模型行业闭环：经 F-123 协议桥，glm-5.3-flash 在 ci-ess 场景 4 步全部提议被采纳（低信息提示下保守选择待机，符合安全语义）、零拒绝、重放一致。
+- 边界：分时套利的跨期价值（谷充峰放的全局最优）超出单步距离几何，套利策略收敛与 VPP 跟踪样本效率是开放方向；三个场景是确定性仿真（scenario 驱动扰动），接入真实设备数据需要额外的遥测通道 WorldPort 与人工数据契约。
