@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { inspectLab, initLab, replayLab, recoverLab, runContinuous, runLab } from './application/agent-service.mjs';
+import { createUiServer } from './application/ui-service.mjs';
 import { challenge } from './application/challenge-service.mjs';
 import { loadExternalWorldRegistry } from './application/external-world-registry.mjs';
 import { restoreEffectBroker } from './effects/effect-broker.mjs';
@@ -22,6 +23,7 @@ export async function main(argv, io = defaultIo()) {
       return 0;
     }
     const { command, options } = parseArguments(argv);
+    if (command === 'ui') return await dispatchUi(options, io, json);
     const data = await dispatch(command, options);
     const exitCode = data?.status === 'HALTED' || data?.verdict === 'FALSIFIED' ? 2 :
       data?.verdict === 'INCONSISTENT' ? 3 : 0;
@@ -32,6 +34,33 @@ export async function main(argv, io = defaultIo()) {
     writeFailure(io, failure, json);
     return failure.exitCode;
   }
+}
+
+async function dispatchUi(options, io, json) {
+  const port = options.port === undefined
+    ? 0
+    : parseBoundedInt(required(options, 'port'), 0, 65535, 'port');
+  const labPath = requiredAbsolute(options, 'lab');
+  const registry = loadRegistry(options, false);
+  const server = createUiServer({ labPath, port, registry });
+  // 启动自检：lab 不可读在监听前失败，错误走统一信封与退出码。
+  await inspectLab({ labPath: labPath, registry: loadRegistry(options, false) });
+  const listening = await server.listen();
+  io.stdout(json
+    ? `${JSON.stringify({ schemaVersion: 1, ok: true, data: { event: 'listening', host: '127.0.0.1', port: listening.port } })}
+`
+    : `yi-agent ui listening on http://127.0.0.1:${listening.port} (read-only; Ctrl+C to stop)
+`);
+  const interrupt = () => { void server.close(); };
+  process.once('SIGINT', interrupt);
+  process.once('SIGTERM', interrupt);
+  try {
+    await server.serve();
+  } finally {
+    process.removeListener('SIGINT', interrupt);
+    process.removeListener('SIGTERM', interrupt);
+  }
+  return 0;
 }
 
 async function dispatch(command, options) {
@@ -345,6 +374,7 @@ function parseArguments(argv) {
     challenge: ['lab', 'case'],
     effect: ['effectOperation', 'journal', 'sandbox-root', 'intent', 'nonce'],
     experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'steps', 'scenario', 'resume'],
+    ui: ['lab', 'port', 'adapter'],
   }[command] ?? [];
   for (const name of Object.keys(options)) {
     if (!allowed.includes(name)) throw cliError('INVALID_INPUT', `Unknown option: --${name}`, { field: name }, 64);
@@ -573,6 +603,7 @@ function helpText() {
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',
+    '  yi-agent ui --lab PATH [--port N] [--adapter CONFIG] [--json]   只读检查外壳（127.0.0.1）',
     '  yi-agent experiment pair --lab PATH --output PATH --left-token TOK --right-token TOK [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment trajectory --lab PATH --output PATH --left-trajectory PATH --right-trajectory PATH [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment policy --lab PATH --output PATH --steps N --left-policy PATH --right-policy PATH [--scenario ID] [--resume] [--json]',
