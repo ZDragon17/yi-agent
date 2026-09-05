@@ -960,3 +960,10 @@
 - 实现：`yi-agent ui --lab PATH [--port N] [--adapter CONFIG]`——`src/application/ui-service.mjs` 以 node:http 提供仅回环（127.0.0.1）、仅 GET 的服务：`/` 返回内联单页（每 2s 轮询、状态摘要 + 全量 inspect 信封），`/api/state` 复用 `inspectLab` 只读读路径（不创建 writer lock、不消耗随机源），非 GET 405，未知路径 404；stdout 打印一次 listening 信封后长驻，SIGINT/SIGTERM 优雅关闭；启动自检在监听前以 `inspectLab` 校验 lab 可读，缺失/损坏 lab fail-closed（66/70/3）。
 - 验证：E2E 覆盖 listening 信封（--port 0 随机端口）、页面 200、/api/state 双读一致（kernelStep=5）、POST 405、404、以及「UI 会话前后实验目录哈希不变」的只读不变量；缺失 lab 在监听前以信封 fail-closed。
 - 边界：无鉴权（服务对象是本机持有 lab 的用户）、无 CORS 头、不支持远程访问；页面只是渲染面，不是操作面——任何写操作仍必须走 CLI 与 EffectBroker 的确认/对账边界；Electron/Tauri 打包仍需人工 Future-Gate。
+
+## F-120 多目标阶段切换的重收敛
+
+- 反例方向：F-118 记录的最后一个未测交互——goal-plan 多阶段推进 × 已收敛上下文策略。两阶段温度计划（stage-1 升温到 26、stage-2 反向降温到 14，方向完全反转）检验监督器计划推进后内核能否用既有经验模型重收敛到新目标几何。
+- 实现：新增 E2E `test/e2e/goal-stage-reconvergence.test.mjs`（无内核变更）：预注册判据为 stage-1 完成后计划推进（前半预算内出现 activeStageId=cool-down 且 warm-up=COMPLETED）、单 run 语义下以 OBJECTIVE_REACHED 提前终止、终步观测落在 stage-2 目标带（|v-14| ≤ 2×tolerance）、Run 重放一致。
+- 验证：E2E 通过——计划在前半预算内推进，方向反转后靠既有关系/上下文模型重新收敛，42 步即到达 stage-2 目标并以 OBJECTIVE_REACHED 终止，重放一致。
+- 边界：这是单计划两阶段的受控重收敛，不是开放世界目标发现；方向反转依赖已有 increase/decrease 模型，未覆盖「新阶段需要新动作组合」的场景。至此 F-118 记录的可低成本区分方向已实测闭合；内核侧剩余候选实验与既有 drift/stage 覆盖重叠，反证循环进入当前实验手段的区分力边界，CLI 侧剩余推进（打包、真实供应商连通）均属外部/人工卡点。
