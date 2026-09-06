@@ -171,6 +171,53 @@ test(`R2-R4: settlement feedback delayed by ${delay} steps settles via pending c
 });
 }
 
+// ---- R6：日结算稀疏奖励（延迟阶梯的极限形态） ----
+// 每日一次日终混杂归因反馈（日总量不可分配到动作）；其余步的 pending 按窗口
+// 耗尽为 UNRESOLVED。判据：闭环不中断、日结算 AMBIGUOUS 存在、UNRESOLVED
+// 数量与理论一致（诚实记录：稀疏日结算下动作级信用不可归因）。
+test('R6: daily sparse settlement confirms continuity without per-action credit', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-r6-daily-'));
+  const lab = path.join(root, 'lab');
+  const adapter = path.join(root, 'adapter.json');
+  await writeFile(adapter, JSON.stringify({
+    executable: process.execPath,
+    args: [path.join(CURRICULUM, 'ess-arbitrage', 'adapter.mjs'), '--daily-settlement'],
+    adapterId: 'ess-arbitrage-adapter-v1',
+    worldId: 'ess-arbitrage',
+    timeoutMs: 20000,
+  }));
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'ess-arbitrage', '--seed', 'r6-daily', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke(['agent', 'run', '--lab', lab, '--run-id', 'r', '--steps', '96', '--kernel-only', '--adapter', adapter, '--json']);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+
+    const events = (await (await LabStore.open({ labPath: lab })).readRun('r')).events
+      .filter((event) => event.kind === 'STEP');
+    assert.equal(events.length, 96);
+
+    let ambiguous = 0;
+    let unresolved = 0;
+    for (const event of events) {
+      for (const item of event.payload.update?.settled ?? []) {
+        if (item.attribution === 'AMBIGUOUS') ambiguous += 1;
+        if (item.attribution === 'UNRESOLVED') unresolved += 1;
+      }
+    }
+    // 96 步 = 4 天：每日 1 次日终混杂结算（最后一次在 step 96 当步或次日前）
+    assert.ok(ambiguous >= 3, `expected ≥3 daily AMBIGUOUS settlements, got ${ambiguous}`);
+    // 其余动作的信用不可归因（诚实记录：日总量无法分配到具体动作）
+    assert.ok(unresolved >= 60, `expected bulk UNRESOLVED credits, got ${unresolved}`);
+
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'r', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function invoke(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });

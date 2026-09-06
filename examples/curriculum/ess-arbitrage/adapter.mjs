@@ -76,7 +76,7 @@ function dispatch(op, payload) {
     return { ...descriptor, descriptorDigest: canonicalDigest(descriptor) };
   }
   if (op === 'initialState') {
-    return { state: { schemaVersion: VERSION, stateVersion: 'arbitrage:0', revision: 0, hour: 0, soc: 50, pendingSettlements: [], usedExecutionNonces: [] } };
+    return { state: { schemaVersion: VERSION, stateVersion: 'arbitrage:0', revision: 0, hour: 0, soc: 50, lastNonce: null, pendingSettlements: [], usedExecutionNonces: [] } };
   }
   if (op === 'actions') {
     const entries = payload.manifest?.tokenMap?.entries;
@@ -136,17 +136,24 @@ function transition(state, request, manifest) {
 
   // R2：结算反馈延迟 2 步——本步动作的结算（电网功率/电价/SOC 快照）在其后
   // 第二步的 feedback[] 中按 executionNonce 送达，Kernel 以 pending credit 结算。
-  const pendingSettlements = (state.pendingSettlements ?? [])
-    .filter((item) => item.dueRevision > state.revision + 1);
-  const due = (state.pendingSettlements ?? []).filter((item) => item.dueRevision === state.revision + 1);
-  pendingSettlements.push({
-    executionNonce: request.executionNonce,
-    dueRevision: state.revision + SETTLEMENT_DELAY,
-    hour: state.hour,
-    gridPowerKw: grid,
-    price: tariffForHour(state.hour).price,
-    soc: nextSoc,
-  });
+  const DAILY = process.argv.includes('--daily-settlement');
+  const pendingSettlements = DAILY
+    ? []
+    : (state.pendingSettlements ?? [])
+        .filter((item) => item.dueRevision > state.revision + 1);
+  const due = DAILY
+    ? []
+    : (state.pendingSettlements ?? []).filter((item) => item.dueRevision === state.revision + 1);
+  if (!DAILY) {
+    pendingSettlements.push({
+      executionNonce: request.executionNonce,
+      dueRevision: state.revision + SETTLEMENT_DELAY,
+      hour: state.hour,
+      gridPowerKw: grid,
+      price: tariffForHour(state.hour).price,
+      soc: nextSoc,
+    });
+  }
 
   const next = {
     schemaVersion: VERSION,
@@ -154,22 +161,38 @@ function transition(state, request, manifest) {
     revision: state.revision + 1,
     hour: state.hour + 1,
     soc: nextSoc,
+    lastNonce: request.executionNonce,
     pendingSettlements,
     usedExecutionNonces: [...state.usedExecutionNonces.slice(-7), request.executionNonce],
   };
 
-  const feedback = due.map((item) => ({
-    schemaVersion: VERSION,
-    executionNonce: item.executionNonce,
-    vector: [
-      Math.round(gridPowerKw({ load: loadKw(next.hour), pv: 0, essPower: 0 }) / OBS_SCALE * 1000) / 1000,
-      Math.round(priceChannel(next.hour) * 1000) / 1000,
-      Math.round(item.soc / 100 * 1000) / 1000,
-    ],
-    stateVersion: next.stateVersion,
-    intervalId: next.stateVersion,
-    confounderCount: 0,
-  }));
+  const feedback = DAILY
+    ? (next.hour % 24 === 0
+        ? [{
+            schemaVersion: VERSION,
+            executionNonce: state.lastNonce,
+            vector: [
+              Math.round(gridPowerKw({ load: loadKw(next.hour), pv: 0, essPower: 0 }) / OBS_SCALE * 1000) / 1000,
+              Math.round(priceChannel(next.hour) * 1000) / 1000,
+              Math.round(nextSoc / 100 * 1000) / 1000,
+            ],
+            stateVersion: next.stateVersion,
+            intervalId: next.stateVersion,
+            confounderCount: 1, // 日总量混合归因：不可学习
+          }]
+        : [])
+    : due.map((item) => ({
+        schemaVersion: VERSION,
+        executionNonce: item.executionNonce,
+        vector: [
+          Math.round(gridPowerKw({ load: loadKw(next.hour), pv: 0, essPower: 0 }) / OBS_SCALE * 1000) / 1000,
+          Math.round(priceChannel(next.hour) * 1000) / 1000,
+          Math.round(item.soc / 100 * 1000) / 1000,
+        ],
+        stateVersion: next.stateVersion,
+        intervalId: next.stateVersion,
+        confounderCount: 0,
+      }));
 
   return {
     nextWorldState: next,
