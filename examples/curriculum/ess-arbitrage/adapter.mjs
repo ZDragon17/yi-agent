@@ -30,6 +30,8 @@ const WORLD_ID = 'ess-arbitrage';
 const CAPABILITY_IDS = ['ess.charge', 'ess.discharge', 'ess.idle'];
 const ESS_POWER = { 'ess.charge': BATTERY.ratedPowerKw, 'ess.discharge': -BATTERY.ratedPowerKw, 'ess.idle': 0 };
 const OBS_SCALE = 50;
+const stateFileIndex = process.argv.indexOf('--settlement-delay');
+const SETTLEMENT_DELAY = stateFileIndex === -1 ? 2 : Math.max(1, Number(process.argv[stateFileIndex + 1]) || 2);
 const EVIDENCE_PUBLIC_KEY = 'MCowBQYDK2VwAyEA2R0znN74/jSx8OPrwSEnDH8UKEKU4l0es4XeSwfuOEY=';
 
 const input = readFileSync(0, 'utf8').split(/\r?\n/u).find((line) => line.length > 0);
@@ -59,7 +61,7 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: 'ess-arbitrage-1',
+      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}`,
       capabilityIds: CAPABILITY_IDS,
       scenarioIds: ['steady'],
       valueSpec: {
@@ -74,7 +76,7 @@ function dispatch(op, payload) {
     return { ...descriptor, descriptorDigest: canonicalDigest(descriptor) };
   }
   if (op === 'initialState') {
-    return { state: { schemaVersion: VERSION, stateVersion: 'arbitrage:0', revision: 0, hour: 0, soc: 50, usedExecutionNonces: [] } };
+    return { state: { schemaVersion: VERSION, stateVersion: 'arbitrage:0', revision: 0, hour: 0, soc: 50, pendingSettlements: [], usedExecutionNonces: [] } };
   }
   if (op === 'actions') {
     const entries = payload.manifest?.tokenMap?.entries;
@@ -132,14 +134,43 @@ function transition(state, request, manifest) {
     return rejected(state, request, 'GRID_EXPORT_NOT_ALLOWED');
   }
 
+  // R2：结算反馈延迟 2 步——本步动作的结算（电网功率/电价/SOC 快照）在其后
+  // 第二步的 feedback[] 中按 executionNonce 送达，Kernel 以 pending credit 结算。
+  const pendingSettlements = (state.pendingSettlements ?? [])
+    .filter((item) => item.dueRevision > state.revision + 1);
+  const due = (state.pendingSettlements ?? []).filter((item) => item.dueRevision === state.revision + 1);
+  pendingSettlements.push({
+    executionNonce: request.executionNonce,
+    dueRevision: state.revision + SETTLEMENT_DELAY,
+    hour: state.hour,
+    gridPowerKw: grid,
+    price: tariffForHour(state.hour).price,
+    soc: nextSoc,
+  });
+
   const next = {
     schemaVersion: VERSION,
     stateVersion: `arbitrage:${state.hour + 1}`,
     revision: state.revision + 1,
     hour: state.hour + 1,
     soc: nextSoc,
+    pendingSettlements,
     usedExecutionNonces: [...state.usedExecutionNonces.slice(-7), request.executionNonce],
   };
+
+  const feedback = due.map((item) => ({
+    schemaVersion: VERSION,
+    executionNonce: item.executionNonce,
+    vector: [
+      Math.round(gridPowerKw({ load: loadKw(next.hour), pv: 0, essPower: 0 }) / OBS_SCALE * 1000) / 1000,
+      Math.round(priceChannel(next.hour) * 1000) / 1000,
+      Math.round(item.soc / 100 * 1000) / 1000,
+    ],
+    stateVersion: next.stateVersion,
+    intervalId: next.stateVersion,
+    confounderCount: 0,
+  }));
+
   return {
     nextWorldState: next,
     receipt: {
@@ -152,7 +183,8 @@ function transition(state, request, manifest) {
       status: 'ACCEPTED',
       rejectionReason: null,
       effectDigest: canonicalDigest(next),
-      attributionWindowComplete: true,
+      // 结算反馈延迟 2 步送达：本步归因窗口未完成，进入 pending credit
+      attributionWindowComplete: false,
       confounderCount: 0,
     },
     postObservation: {
@@ -164,6 +196,7 @@ function transition(state, request, manifest) {
       ],
       stateVersion: next.stateVersion,
       intervalId: next.stateVersion,
+      ...(feedback.length === 0 ? {} : { feedback }),
       evidence: [{
         schemaVersion: VERSION,
         kind: 'settlement',

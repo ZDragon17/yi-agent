@@ -122,6 +122,55 @@ test('L4-B adversarial: kernel stays net-positive against a world that punishes 
   }
 });
 
+// ---- R2：结算反馈延迟 2 步（课程表指数阶梯第一级） ----
+// 世界把每步动作的结算快照在其后第二步的 feedback[] 中按 executionNonce
+// 送达；kernel 以 pending credit 结算。判据：延迟结算发生且闭环/重放正确。
+for (const delay of [2, 4, 8]) {
+test(`R2-R4: settlement feedback delayed by ${delay} steps settles via pending credits`, async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-r2-delay2-'));
+  const lab = path.join(root, 'lab');
+  const adapter = path.join(root, 'adapter.json');
+  await writeFile(adapter, JSON.stringify({
+    executable: process.execPath,
+    args: [path.join(CURRICULUM, 'ess-arbitrage', 'adapter.mjs'), '--settlement-delay', String(delay)],
+    adapterId: 'ess-arbitrage-adapter-v1',
+    worldId: 'ess-arbitrage',
+    timeoutMs: 20000,
+  }));
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'ess-arbitrage', '--seed', `r2-delay${delay}`, '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke(['agent', 'run', '--lab', lab, '--run-id', 'r', '--steps', '24', '--kernel-only', '--adapter', adapter, '--json']);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+
+    const events = (await (await LabStore.open({ labPath: lab })).readRun('r')).events
+      .filter((event) => event.kind === 'STEP');
+    assert.equal(events.length, 24);
+
+    // 延迟结算发生：除最后两步（其反馈超出 run 窗口）外，每步都应结算
+    // 上一步之前的 pending（前两步建立 pending，其后每步结算一个）。
+    const settledSteps = events.filter((event) => (event.payload.update?.settled ?? []).length > 0);
+    assert.ok(settledSteps.length >= 24 - delay, `delayed settlements occurred in ${settledSteps.length} steps`);
+    for (const event of settledSteps) {
+      for (const item of event.payload.update.settled) {
+        assert.equal(item.attribution, 'ACTION');
+        assert.equal(item.learnable, true);
+      }
+    }
+    // 末尾的 pending 未决（反馈在 run 窗口外或尚未到期）——跨 run 保留
+    const lastPending = events.at(-1).payload.update.nextMemory.pendingCredits.length;
+    assert.ok(lastPending >= 1, `expected unsettled pending at run end, got ${lastPending}`);
+
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'r', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+}
+
 function invoke(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });
