@@ -25,7 +25,7 @@ const MAX_PLANNING_ROLLOUTS = 128;
 const MAX_PENDING_CREDITS = 64;
 const MAX_FEEDBACK_ITEMS = 64;
 const MAX_SETTLED_FEEDBACK = 64;
-const MAX_PENDING_CREDIT_AGE = 8;
+const MAX_PENDING_CREDIT_AGE = 16;
 const MAX_BELIEF_MODELS = 8192;
 const MAX_BELIEF_SAMPLES = 8;
 // v26 起 recentHistory 保留最近 8 条已验证变化：h1 键取最近 2 条，h2 窗口键取
@@ -39,7 +39,7 @@ const LONG_CONTEXT_KEY_WINDOW = 8;
 const MAX_LONG_CONTEXTS = 8;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
-const CURRENT_LEARNING_VERSION = 27;
+const CURRENT_LEARNING_VERSION = 28;
 export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   settledFeedback: 3,
   pendingCreditExpiry: 4,
@@ -62,6 +62,7 @@ export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   multiScaleContext: 25,
   longContextWindow: 26,
   revalidationBeliefGate: 27,
+  pendingWindowExtension: 28,
   current: CURRENT_LEARNING_VERSION,
 });
 const MODEL_RECENCY_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.modelRecency;

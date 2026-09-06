@@ -125,7 +125,7 @@ test('L4-B adversarial: kernel stays net-positive against a world that punishes 
 // ---- R2：结算反馈延迟 2 步（课程表指数阶梯第一级） ----
 // 世界把每步动作的结算快照在其后第二步的 feedback[] 中按 executionNonce
 // 送达；kernel 以 pending credit 结算。判据：延迟结算发生且闭环/重放正确。
-for (const delay of [2, 4, 8]) {
+for (const delay of [2, 4, 8, 16]) {
 test(`R2-R4: settlement feedback delayed by ${delay} steps settles via pending credits`, async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-r2-delay2-'));
   const lab = path.join(root, 'lab');

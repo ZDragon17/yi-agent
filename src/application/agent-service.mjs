@@ -244,7 +244,9 @@ export async function runLab(input) {
           relationModels: {},
           pendingCredits: [],
           settledFeedback: [],
-          pendingCreditPolicy: { schemaVersion: SCHEMA_VERSION, maxAge: 8 },
+          // v28（pendingWindowExtension）起新 Lab 的 pending 观察窗口扩展到 16 步；
+          // 旧 Lab 的 policy 已持久化为 8，Replay 自然保留历史语义。
+          pendingCreditPolicy: { schemaVersion: SCHEMA_VERSION, maxAge: 16 },
           beliefModels: {},
           contextModels: {},
           recentHistory: [],
