@@ -22,6 +22,7 @@ import {
   loadKw,
   priceChannel,
   tariffForHour,
+  TOU_TARIFF,
 } from '../../energy/shared/energy-sim.mjs';
 
 const PROTOCOL = 'yi-world-cli';
@@ -36,6 +37,17 @@ const SETTLEMENT_DELAY = stateFileIndex === -1 ? 2 : Math.max(1, Number(process.
 const NOISY = process.argv.includes('--noisy-feedback');
 const NOISE_LIMIT = 0.2;
 const ADVERSARIAL = process.argv.includes('--adversarial');
+const REGIME_SHIFT_AT = (() => { const i = process.argv.indexOf('--regime-shift-at'); return i === -1 ? -1 : Number(process.argv[i + 1]); })();
+// R9：mid-run 电价表翻转（谷峰对调）——非平稳叠加
+function effectiveTariffLevel(hour) {
+  const level = PRICE_LEVELS_BY_HOUR[hour % 24];
+  if (REGIME_SHIFT_AT >= 0 && hour >= REGIME_SHIFT_AT) return level === 0 ? 2 : level === 2 ? 0 : 1;
+  return level;
+}
+function effectiveTariffPrice(hour) {
+  return [TOU_TARIFF.valley, TOU_TARIFF.flat, TOU_TARIFF.peak][effectiveTariffLevel(hour)];
+}
+
 const EVIDENCE_PUBLIC_KEY = 'MCowBQYDK2VwAyEA2R0znN74/jSx8OPrwSEnDH8UKEKU4l0es4XeSwfuOEY=';
 
 const input = readFileSync(0, 'utf8').split(/\r?\n/u).find((line) => line.length > 0);
@@ -109,7 +121,7 @@ function capabilitySafe(capabilityId, state) {
 }
 
 function effectivePrice(hour, state) {
-  const base = tariffForHour(hour).price;
+  const base = effectiveTariffPrice(hour);
   if (!ADVERSARIAL) return base;
   // 市场响应：连续放电（削峰）推高峰价、连续充电（填谷）推高谷价 ×1.3
   const recent = state.recentActions ?? [];
@@ -133,7 +145,7 @@ function observation(state) {
     schemaVersion: VERSION,
     vector: [
       grid / OBS_SCALE,
-      Math.round(priceChannel(state.hour) * 1000) / 1000,
+      Math.round((effectiveTariffPrice(state.hour) - 0.7) * 1000) / 1000,
       Math.round(state.soc / 100 * 1000) / 1000,
     ],
     stateVersion: `arbitrage:${state.hour}`,
@@ -185,7 +197,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
       dueRevision: state.revision + SETTLEMENT_DELAY,
       hour: state.hour,
       gridPowerKw: grid,
-      price: tariffForHour(state.hour).price,
+      price: effectiveTariffPrice(state.hour),
       soc: nextSoc,
     });
   }
@@ -210,7 +222,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
             executionNonce: state.lastNonce,
             vector: [
               Math.round(gridPowerKw({ load: loadKw(next.hour), pv: 0, essPower: 0 }) / OBS_SCALE * 1000) / 1000,
-              Math.round(priceChannel(next.hour) * 1000) / 1000,
+              Math.round((effectiveTariffPrice(next.hour) - 0.7) * 1000) / 1000,
               Math.round(nextSoc / 100 * 1000) / 1000,
             ],
             stateVersion: next.stateVersion,
@@ -223,7 +235,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
         executionNonce: item.executionNonce,
         vector: [
           Math.round(gridPowerKw({ load: loadKw(next.hour), pv: 0, essPower: 0 }) / OBS_SCALE * 1000) / 1000,
-          Math.round(priceChannel(next.hour) * 1000) / 1000,
+          Math.round((effectiveTariffPrice(next.hour) - 0.7) * 1000) / 1000,
           Math.round(item.soc / 100 * 1000) / 1000,
         ],
         stateVersion: next.stateVersion,
@@ -251,7 +263,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
       schemaVersion: VERSION,
       vector: [
         grid / OBS_SCALE,
-        Math.round(priceChannel(next.hour) * 1000) / 1000,
+        Math.round((effectiveTariffPrice(next.hour) - 0.7) * 1000) / 1000,
         Math.round(nextSoc / 100 * 1000) / 1000,
       ],
       stateVersion: next.stateVersion,
