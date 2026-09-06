@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="500" viewBox="0 0 920 500" font-family="Helvetica,Arial,sans-serif">
+<rect width="920" height="500" fill="white"/>
+<text x="460" y="26" text-anchor="middle" font-size="17" font-weight="bold">Fig. 1  Layered architecture and trust boundaries</text>
+<rect x="40" y="50" width="840" height="52" rx="6" fill="#dbeafe" stroke="#1f6feb"/>
+<text x="460" y="73" text-anchor="middle" font-size="13" font-weight="bold">CLI (thin adapter: JSON envelope, exit codes, ui shell)</text>
+<text x="460" y="92" text-anchor="middle" font-size="11">init | run | inspect | replay | challenge | recover | agent | experiment | effect | ui</text>
+<rect x="40" y="122" width="840" height="60" rx="6" fill="#f3e8ff" stroke="#8250df"/>
+<text x="460" y="147" text-anchor="middle" font-size="13" font-weight="bold">Application Services (use cases; proposal capture; evidence binding)</text>
+<text x="460" y="166" text-anchor="middle" font-size="11">runLab | inspectLab | replayLab | runContinuous | challenge | paired-* | ui-service</text>
+<rect x="40" y="202" width="400" height="120" rx="6" fill="#fff7e6" stroke="#bf8700" stroke-width="1.6"/>
+<text x="240" y="226" text-anchor="middle" font-size="13" font-weight="bold">Kernel (domain-blind, pure)</text>
+<text x="240" y="246" text-anchor="middle" font-size="11">numeric observations · ValueSpec · opaque tokens</text>
+<text x="240" y="264" text-anchor="middle" font-size="11">expectation → choice → verify → learn</text>
+<text x="240" y="282" text-anchor="middle" font-size="11">bounded planning · multi-scale context · belief gates</text>
+<text x="240" y="306" text-anchor="middle" font-size="11">no I/O · no clock · no world names (invariant 8)</text>
+<rect x="480" y="202" width="400" height="120" rx="6" fill="#ffebe9" stroke="#d1242f"/>
+<text x="680" y="226" text-anchor="middle" font-size="13" font-weight="bold">WorldPort boundary (domain semantics live here)</text>
+<text x="680" y="246" text-anchor="middle" font-size="11">built-in: temperature · virtual-desktop · inventory · grid · queue</text>
+<text x="680" y="264" text-anchor="middle" font-size="11">external JSONL: counter · repo · ci-ess · pv-station · ems · vpp</text>
+<text x="680" y="282" text-anchor="middle" font-size="11">battery · inverter · meter · PV · charger · DR (device models)</text>
+<text x="680" y="306" text-anchor="middle" font-size="11">digest-bound implementations · fail-closed state contract</text>
+<rect x="40" y="342" width="400" height="66" rx="6" fill="#f6f8fa" stroke="#555"/>
+<text x="240" y="366" text-anchor="middle" font-size="12.5" font-weight="bold">ModelAdvisor / ModelPlanner (untrusted proposals)</text>
+<text x="240" y="386" text-anchor="middle" font-size="11">OpenAI-compatible · real GLM verified · replay never calls model</text>
+<rect x="480" y="342" width="400" height="66" rx="6" fill="#f6f8fa" stroke="#555"/>
+<text x="680" y="366" text-anchor="middle" font-size="12.5" font-weight="bold">LabStore (JSONL ledger + hash chain + snapshots + lock)</text>
+<text x="680" y="386" text-anchor="middle" font-size="11">deterministic replay · crash recovery · ≤40 MiB · fail-closed</text>
+<rect x="40" y="428" width="840" height="52" rx="6" fill="#dafbe1" stroke="#1a7f37"/>
+<text x="460" y="450" text-anchor="middle" font-size="12.5" font-weight="bold">Evidence invariants: expectation before action · verify before learn · replay without side effects · fail-closed on unknown versions</text>
+<text x="460" y="470" text-anchor="middle" font-size="11">four-layer confounder defence: world receipt → host forcing → kernel verify → ledger validation</text>
+</svg>
