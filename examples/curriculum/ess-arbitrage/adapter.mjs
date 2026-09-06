@@ -14,6 +14,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
+  PRICE_LEVELS_BY_HOUR,
   BATTERY,
   batteryAllows,
   batteryStep,
@@ -32,6 +33,9 @@ const ESS_POWER = { 'ess.charge': BATTERY.ratedPowerKw, 'ess.discharge': -BATTER
 const OBS_SCALE = 50;
 const stateFileIndex = process.argv.indexOf('--settlement-delay');
 const SETTLEMENT_DELAY = stateFileIndex === -1 ? 2 : Math.max(1, Number(process.argv[stateFileIndex + 1]) || 2);
+const NOISY = process.argv.includes('--noisy-feedback');
+const NOISE_LIMIT = 0.2;
+const ADVERSARIAL = process.argv.includes('--adversarial');
 const EVIDENCE_PUBLIC_KEY = 'MCowBQYDK2VwAyEA2R0znN74/jSx8OPrwSEnDH8UKEKU4l0es4XeSwfuOEY=';
 
 const input = readFileSync(0, 'utf8').split(/\r?\n/u).find((line) => line.length > 0);
@@ -104,6 +108,25 @@ function capabilitySafe(capabilityId, state) {
   return gridPowerKw({ load: loadKw(state.hour), pv: 0, essPower: power }) >= 0;
 }
 
+function effectivePrice(hour, state) {
+  const base = tariffForHour(hour).price;
+  if (!ADVERSARIAL) return base;
+  // 市场响应：连续放电（削峰）推高峰价、连续充电（填谷）推高谷价 ×1.3
+  const recent = state.recentActions ?? [];
+  const allDischarge = recent.length === 3 && recent.every((c) => c === 'ess.discharge');
+  const allCharge = recent.length === 3 && recent.every((c) => c === 'ess.charge');
+  if (allDischarge && PRICE_LEVELS_BY_HOUR[hour % 24] === 2) return base * 1.3;
+  if (allCharge && PRICE_LEVELS_BY_HOUR[hour % 24] === 0) return base * 1.3;
+  return base;
+}
+
+function noisySnapshot(vector, step) {
+  if (!NOISY) return vector;
+  const wave = Math.sin(step * 12.9898) * 43758.5453;
+  const noise = (wave - Math.floor(wave)) * 2 - 1;
+  return vector.map((v) => Math.round(v * (1 + NOISE_LIMIT * noise) * 1000) / 1000);
+}
+
 function observation(state) {
   const grid = gridPowerKw({ load: loadKw(state.hour), pv: 0, essPower: 0 });
   return {
@@ -137,6 +160,18 @@ function transition(state, request, manifest) {
   // R2：结算反馈延迟 2 步——本步动作的结算（电网功率/电价/SOC 快照）在其后
   // 第二步的 feedback[] 中按 executionNonce 送达，Kernel 以 pending credit 结算。
   const DAILY = process.argv.includes('--daily-settlement');
+// R7：反馈噪声——确定性扰动（sin 驱动，±20%），保持重放确定性
+const NOISY = process.argv.includes('--noisy-feedback');
+const NOISE_LIMIT = 0.2;
+function noisy(value, step) {
+  if (!NOISY) return value;
+  const wave = Math.sin(step * 12.9898) * 43758.5453;
+  const noise = (wave - Math.floor(wave)) * 2 - 1; // [-1, 1] 确定性伪随机
+  return value * (1 + NOISE_LIMIT * noise);
+}
+// R8：对抗叠加——世界对「套利行为」反学：连续 3 步放电 → 峰价加成 ×1.3
+//（市场对削峰需求的响应），连续 3 步充电 → 谷价加成 ×1.3。确定性、状态内。
+const ADVERSARIAL = process.argv.includes('--adversarial');
   const pendingSettlements = DAILY
     ? []
     : (state.pendingSettlements ?? [])
@@ -163,9 +198,11 @@ function transition(state, request, manifest) {
     soc: nextSoc,
     lastNonce: request.executionNonce,
     pendingSettlements,
+    recentActions: [...(state.recentActions ?? []).slice(-2), entry.capabilityId],
     usedExecutionNonces: [...state.usedExecutionNonces.slice(-7), request.executionNonce],
   };
 
+  const noisyStep = next.hour;
   const feedback = DAILY
     ? (next.hour % 24 === 0
         ? [{
@@ -226,7 +263,7 @@ function transition(state, request, manifest) {
         hour: state.hour,
         gridPowerKw: grid,
         price: tariffForHour(state.hour).price,
-        costYuan: Math.round(grid * tariffForHour(state.hour).price * 1000) / 1000,
+        costYuan: Math.round(grid * effectivePrice(state.hour, state) * 1000) / 1000,
         soc: nextSoc,
       }],
     },

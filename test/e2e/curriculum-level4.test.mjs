@@ -218,6 +218,56 @@ test('R6: daily sparse settlement confirms continuity without per-action credit'
   }
 });
 
+// ---- R7：反馈噪声 ±20%（确定性扰动，重放仍一致） ----
+test('R7: noisy daily settlement keeps the loop consistent and bounded', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-r7-noisy-'));
+  const lab = path.join(root, 'lab');
+  const adapter = path.join(root, 'adapter.json');
+  await writeFile(adapter, JSON.stringify({
+    executable: process.execPath,
+    args: [path.join(CURRICULUM, 'ess-arbitrage', 'adapter.mjs'), '--daily-settlement', '--noisy-feedback'],
+    adapterId: 'ess-arbitrage-adapter-v1',
+    worldId: 'ess-arbitrage',
+    timeoutMs: 20000,
+  }));
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'ess-arbitrage', '--seed', 'r7-noisy', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke(['agent', 'run', '--lab', lab, '--run-id', 'r', '--steps', '96', '--kernel-only', '--adapter', adapter, '--json']);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'r', '--adapter', adapter, '--json']);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ---- R8：对抗叠加（市场对削峰/填谷模式的电价响应） ----
+test('R8: adversarial tariff response keeps protections and arbitrage honesty', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-r8-adv-'));
+  const lab = path.join(root, 'lab');
+  const adapter = path.join(root, 'adapter.json');
+  await writeFile(adapter, JSON.stringify({
+    executable: process.execPath,
+    args: [path.join(CURRICULUM, 'ess-arbitrage', 'adapter.mjs'), '--adversarial'],
+    adapterId: 'ess-arbitrage-adapter-v1',
+    worldId: 'ess-arbitrage',
+    timeoutMs: 20000,
+  }));
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'ess-arbitrage', '--seed', 'r8-adv', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke(['agent', 'run', '--lab', lab, '--run-id', 'r', '--steps', '96', '--kernel-only', '--adapter', adapter, '--json']);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'r', '--adapter', adapter, '--json']);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function invoke(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });
