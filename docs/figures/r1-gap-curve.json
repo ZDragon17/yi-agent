@@ -1,0 +1,35 @@
+{
+  "baseline": 13642,
+  "results": [
+    {
+      "horizon": 1,
+      "cost": 13542,
+      "gapPct": -0.73
+    },
+    {
+      "horizon": 2,
+      "cost": 13557,
+      "gapPct": -0.62
+    },
+    {
+      "horizon": 3,
+      "cost": 13557,
+      "gapPct": -0.62
+    },
+    {
+      "horizon": 4,
+      "cost": 13237,
+      "gapPct": -2.97
+    },
+    {
+      "horizon": 6,
+      "cost": 13237,
+      "gapPct": -2.97
+    },
+    {
+      "horizon": 8,
+      "cost": 13237,
+      "gapPct": -2.97
+    }
+  ]
+}
