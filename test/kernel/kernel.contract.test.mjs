@@ -88,9 +88,10 @@ test('kernel public entry exposes step and verify as the kernel contract seams',
   assert.equal(typeof kernel.verify, 'function');
   assert.equal(typeof kernel.learn, 'function');
   assert.equal(Object.isFrozen(kernel.KERNEL_LEARNING_VERSIONS), true);
-  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.current, 29);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.current, 30);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.pendingWindowExtension, 28);
-  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.creditChain, kernel.KERNEL_LEARNING_VERSIONS.current);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.creditChain, 29);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.causalCreditEvidence, kernel.KERNEL_LEARNING_VERSIONS.current);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.revalidationBeliefGate, 27);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.longContextWindow, 26);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.multiScaleContext, 25);
@@ -1179,6 +1180,92 @@ test('explicit credit chain distributes one delayed effect across an ordered act
     }),
     'credit chain cannot reference an action outside pending memory',
   );
+});
+
+test('counterfactual additive credit only learns when member effects close the observed delta', async () => {
+  const { verify, learn } = await loadKernel();
+  const firstRequest = actionRequest({ token: TOKEN_A, executionNonce: 'nonce:00000011' });
+  const firstIntent = intentForRequest(firstRequest);
+  const firstReceipt = receiptForRequest(firstRequest, { attributionWindowComplete: false });
+  const firstPostObservation = observation([1, 1], 'state-11');
+  const firstDeferred = learn({
+    memory: { schemaVersion: 1, actionModels: {}, settledFeedback: [] },
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPostObservation,
+    verification: verify({ intent: firstIntent, receipt: firstReceipt, postObservation: firstPostObservation }),
+  });
+
+  const secondRequest = actionRequest({ token: TOKEN_B, basedOnVersion: 'state-11', executionNonce: 'nonce:00000012' });
+  const secondIntent = intentForRequest(secondRequest);
+  const secondReceipt = receiptForRequest(secondRequest, { attributionWindowComplete: false });
+  const secondPostObservation = observation([1, 1], 'state-12');
+  const secondDeferred = learn({
+    memory: firstDeferred.nextMemory,
+    intent: secondIntent,
+    receipt: secondReceipt,
+    postObservation: secondPostObservation,
+    verification: verify({ intent: secondIntent, receipt: secondReceipt, postObservation: secondPostObservation }),
+  });
+
+  const settlementRequest = actionRequest({ token: TOKEN_A, basedOnVersion: 'state-12', executionNonce: 'nonce:00000013' });
+  const settlementIntent = intentForRequest(settlementRequest);
+  const settlementReceipt = receiptForRequest(settlementRequest);
+  const settlementPostObservation = {
+    ...observation([3, 1], 'state-13'),
+    feedback: [{
+      schemaVersion: 1,
+      executionNonce: firstRequest.executionNonce,
+      stateVersion: 'state-13',
+      intervalId: 'interval:state-13',
+      vector: [3, 1],
+      confounderCount: 0,
+      creditChain: {
+        schemaVersion: 1,
+        basis: 'counterfactual-additive-v1',
+        members: [
+          { executionNonce: firstRequest.executionNonce, delta: [1.5, 0] },
+          { executionNonce: secondRequest.executionNonce, delta: [0.5, 0] },
+        ],
+      },
+    }],
+  };
+  const settled = learn({
+    memory: secondDeferred.nextMemory,
+    intent: settlementIntent,
+    receipt: settlementReceipt,
+    postObservation: settlementPostObservation,
+    verification: verify({ intent: settlementIntent, receipt: settlementReceipt, postObservation: settlementPostObservation }),
+    learningVersion: 30,
+  });
+
+  assert.deepEqual(settled.settled.map((item) => item.attribution), ['ACTION_CHAIN', 'ACTION_CHAIN']);
+  assert.deepEqual(settled.nextMemory.actionModels[TOKEN_A].meanDelta, [1.5, 0]);
+  assert.deepEqual(settled.nextMemory.actionModels[TOKEN_B].meanDelta, [0.5, 0]);
+
+  const malformed = {
+    ...settlementPostObservation,
+    feedback: [{
+      ...settlementPostObservation.feedback[0],
+      creditChain: {
+        ...settlementPostObservation.feedback[0].creditChain,
+        members: [
+          { executionNonce: firstRequest.executionNonce, delta: [1, 0] },
+          { executionNonce: secondRequest.executionNonce, delta: [0, 0] },
+        ],
+      },
+    }],
+  };
+  const rejected = learn({
+    memory: secondDeferred.nextMemory,
+    intent: settlementIntent,
+    receipt: settlementReceipt,
+    postObservation: malformed,
+    verification: verify({ intent: settlementIntent, receipt: settlementReceipt, postObservation: malformed }),
+    learningVersion: 30,
+  });
+  assert.deepEqual(rejected.settled.map((item) => item.attribution), ['AMBIGUOUS', 'AMBIGUOUS']);
+  assert.deepEqual(rejected.nextMemory.actionModels, {});
 });
 
 test('missing feedback expires at a bounded window without learning and rejects late evidence', async () => {

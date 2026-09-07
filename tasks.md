@@ -1063,3 +1063,10 @@
 - 反证：在 F-132 的同一延迟效用 WorldPort 中保持可见轨迹和共同效果不变，只把动作链份额改为结构合法但错误的 `0.99/0.01`。
 - 结果：CLI 仍产生两个 `ACTION_CHAIN` 动作模型，两个模型均吸收错误分配后的变化，跨进程 Replay 仍为 `CONSISTENT`；因此仅凭一次共同结果、动作 nonce 和闭合份额，Kernel 无法识别 WorldPort 自报的错误因果。
 - 结论：这不是应由 Kernel 猜测的领域规则，而是观察等价性边界——没有独立干预、反事实执行或其它可验证证据时，正确因果与错误声明对底座不可区分。下一步应设计可拒绝的受控因果证据通道；若 WorldPort 无法提供该证据，默认必须保持保守不学习。
+
+## F-134 受控加性因果证据
+
+- 判据：在 v30 的 `counterfactual-additive-v1` 链中，成员 `{executionNonce,delta}` 的逐维和等于反馈锚点从动作前到反馈快照的实际变化时，才为成员写入动作模型；若和不闭合，必须消费 pending、输出全量 `AMBIGUOUS` 且不学习。
+- 实现：Kernel 增加 v30 学习版本和加性链分支；严格校验 basis、成员顺序、维度、有限数值和逐维闭合。外部 WorldPort 与 Application 保留/投影该 basis 和 delta；v29 share 链不变。
+- 验证：Kernel 合同覆盖有效 delta 闭合和不闭合；真实 JSONL adapter 跨 CLI Run 将 `0.75/0.25` 两个孤立 delta 写入不同动作模型，Replay `CONSISTENT`。语法检查与动作链兼容回归通过。
+- 边界：闭合只证明协议代数自洽，不证明 adapter 确实执行了孤立干预；交互项、无法反事实试验或证据不完整时仍必须保守不学习。下一步要测试 WorldPort 是否能提供可重放的干预证据，以及错误但代数闭合的 witness 是否仍不可辨识。

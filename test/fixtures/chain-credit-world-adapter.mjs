@@ -7,7 +7,8 @@ const VERSION = 1;
 const WORLD_ID = 'chain-credit';
 const CREDIT_CHAIN = process.argv.includes('--credit-chain');
 const WRONG_SHARE = process.argv.includes('--wrong-share');
-const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (WRONG_SHARE ? 'wrong-share' : 'chain') : 'ambiguous'}-v1`;
+const CAUSAL_EVIDENCE = process.argv.includes('--causal-evidence');
+const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (CAUSAL_EVIDENCE ? 'causal' : (WRONG_SHARE ? 'wrong-share' : 'chain')) : 'ambiguous'}-v1`;
 import readline from 'node:readline';
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -33,7 +34,7 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: `chain-credit-1-${CREDIT_CHAIN ? 'chain' : 'ambiguous'}`,
+      worldVersion: `chain-credit-1-${CREDIT_CHAIN ? (CAUSAL_EVIDENCE ? 'causal' : 'chain') : 'ambiguous'}`,
       capabilityIds: ['chain.prepare', 'chain.commit'],
       scenarioIds: ['chain'],
       valueSpec: { schemaVersion: VERSION, observationDimensions: 1, weights: [1], target: [1] },
@@ -81,13 +82,22 @@ function transition(prior, request, manifest) {
         intervalId: next.stateVersion,
         vector: [next.value],
         confounderCount: 0,
-        creditChain: {
-          schemaVersion: VERSION,
-          members: releases.map((executionNonce, index) => ({
-            executionNonce,
-            share: index === 0 ? (WRONG_SHARE ? 0.99 : 0.75) : (WRONG_SHARE ? 0.01 : 0.25),
-          })),
-        },
+        creditChain: CAUSAL_EVIDENCE
+          ? {
+              schemaVersion: VERSION,
+              basis: 'counterfactual-additive-v1',
+              members: releases.map((executionNonce, index) => ({
+                executionNonce,
+                delta: [index === 0 ? 0.75 : 0.25],
+              })),
+            }
+          : {
+              schemaVersion: VERSION,
+              members: releases.map((executionNonce, index) => ({
+                executionNonce,
+                share: index === 0 ? (WRONG_SHARE ? 0.99 : 0.75) : (WRONG_SHARE ? 0.01 : 0.25),
+              })),
+            },
       }]
     : releases.map((executionNonce) => ({
         schemaVersion: VERSION,

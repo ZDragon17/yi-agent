@@ -28,6 +28,7 @@ const MAX_SETTLED_FEEDBACK = 64;
 const MAX_PENDING_CREDIT_AGE = 16;
 const MAX_CREDIT_CHAIN_MEMBERS = MAX_PENDING_CREDITS;
 const CREDIT_CHAIN_SHARE_TOLERANCE = 1e-9;
+const CAUSAL_CREDIT_BASIS = 'counterfactual-additive-v1';
 const MAX_BELIEF_MODELS = 8192;
 const MAX_BELIEF_SAMPLES = 8;
 // v26 起 recentHistory 保留最近 8 条已验证变化：h1 键取最近 2 条，h2 窗口键取
@@ -41,7 +42,7 @@ const LONG_CONTEXT_KEY_WINDOW = 8;
 const MAX_LONG_CONTEXTS = 8;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
-const CURRENT_LEARNING_VERSION = 29;
+const CURRENT_LEARNING_VERSION = 30;
 export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   settledFeedback: 3,
   pendingCreditExpiry: 4,
@@ -66,6 +67,7 @@ export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   revalidationBeliefGate: 27,
   pendingWindowExtension: 28,
   creditChain: 29,
+  causalCreditEvidence: 30,
   current: CURRENT_LEARNING_VERSION,
 });
 const MODEL_RECENCY_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.modelRecency;
@@ -75,6 +77,7 @@ const MULTI_SCALE_CONTEXT_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.multiScale
 const LONG_CONTEXT_WINDOW_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.longContextWindow;
 const REVALIDATION_BELIEF_GATE_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.revalidationBeliefGate;
 const CREDIT_CHAIN_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.creditChain;
+const CAUSAL_CREDIT_EVIDENCE_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.causalCreditEvidence;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const HISTORY_ACCUMULATOR_HEX_LENGTH = 64;
 const HISTORY_ACCUMULATOR_PATTERN = /^[0-9a-f]{64}$/u;
@@ -204,8 +207,8 @@ const FEEDBACK_KEYS = [
   'confounderCount',
   'creditChain',
 ];
-const CREDIT_CHAIN_KEYS = ['schemaVersion', 'members'];
-const CREDIT_CHAIN_MEMBER_KEYS = ['executionNonce', 'share'];
+const CREDIT_CHAIN_KEYS = ['schemaVersion', 'basis', 'members'];
+const CREDIT_CHAIN_MEMBER_KEYS = ['executionNonce', 'share', 'delta'];
 const PENDING_CREDIT_KEYS = [
   'schemaVersion',
   'executionNonce',
@@ -264,6 +267,11 @@ export function validateObservationFeedback(memoryValue, observationValue) {
     observation,
     observation.vector.length,
     'observation.feedback',
+    'pending-v2',
+    'boundary-v2',
+    false,
+    true,
+    true,
   );
 }
 
@@ -484,6 +492,7 @@ export function learn(input) {
     feedbackCausality,
     refreshModelAge,
     learningVersion >= CREDIT_CHAIN_LEARNING_VERSION,
+    learningVersion >= CAUSAL_CREDIT_EVIDENCE_LEARNING_VERSION,
   );
   const settled = settlement.entries;
 
@@ -647,6 +656,7 @@ function settlePendingCredits(
   feedbackCausality = 'boundary-v2',
   refreshModelAge = false,
   allowCreditChain = true,
+  allowCausalCredit = false,
 ) {
   const feedback = postObservation.feedback ?? [];
   const pendingCredits = memory.pendingCredits ?? [];
@@ -689,6 +699,11 @@ function settlePendingCredits(
         field: `${field}.${item.executionNonce}.creditChain`,
       });
     }
+    if (item.creditChain.basis !== undefined && !allowCausalCredit) {
+      contractViolation('kernel causal credit evidence requires its learning version', {
+        field: `${field}.${item.executionNonce}.creditChain.basis`,
+      });
+    }
     const members = item.creditChain.members;
     let shareTotal = 0;
     let previousOrder = -1;
@@ -726,13 +741,15 @@ function settlePendingCredits(
         });
       }
       previousOrder = order;
-      shareTotal = assertComputedFiniteNumber(
-        shareTotal + member.share,
-        `${field}.${item.executionNonce}.creditChain.shareTotal`,
-      );
+      if (item.creditChain.basis === undefined) {
+        shareTotal = assertComputedFiniteNumber(
+          shareTotal + member.share,
+          `${field}.${item.executionNonce}.creditChain.shareTotal`,
+        );
+      }
       consumedCreditChainNonces.add(member.executionNonce);
     }
-    if (Math.abs(shareTotal - 1) > CREDIT_CHAIN_SHARE_TOLERANCE) {
+    if (item.creditChain.basis === undefined && Math.abs(shareTotal - 1) > CREDIT_CHAIN_SHARE_TOLERANCE) {
       contractViolation('kernel credit chain shares must sum to one', {
         field: `${field}.${item.executionNonce}.creditChain.members`,
         actual: shareTotal,
@@ -822,7 +839,7 @@ function settlePendingCredits(
       );
       hasFeedbackSettlement = true;
       rememberSettledFeedback(memory, item);
-      cleanDeltas.push(chainSettlement.actualDelta);
+      if (chainSettlement.learnable) cleanDeltas.push(chainSettlement.actualDelta);
       settled.push(...chainSettlement.entries);
       continue;
     }
@@ -875,6 +892,79 @@ function settleCreditChain(memory, feedback, members, pendingByNonce, dimensions
     anchor.beforeVector,
     `${field}.${feedback.executionNonce}.creditChain.actualDelta`,
   );
+  if (feedback.creditChain.basis === CAUSAL_CREDIT_BASIS) {
+    const observed = Array.from({ length: dimensions }, () => 0);
+    for (const member of members) {
+      for (let index = 0; index < dimensions; index += 1) {
+        observed[index] = assertComputedFiniteNumber(
+          observed[index] + member.delta[index],
+          `${field}.${feedback.executionNonce}.creditChain.observedDelta[${index}]`,
+        );
+      }
+    }
+    const mismatch = actualDelta.some((value, index) =>
+      Math.abs(value - observed[index]) > CREDIT_CHAIN_SHARE_TOLERANCE);
+    if (mismatch) {
+      const error = subtractVectors(
+        actualDelta,
+        anchor.expectedDelta,
+        `${field}.${feedback.executionNonce}.creditChain.error`,
+      );
+      return {
+        actualDelta,
+        learnable: false,
+        entries: members.map((member) => ({
+          schemaVersion: SCHEMA_VERSION,
+          executionNonce: member.executionNonce,
+          token: pendingByNonce.get(member.executionNonce).token,
+          attribution: 'AMBIGUOUS',
+          confidence: 0,
+          learnable: false,
+          error: cloneVector(error),
+          reason: 'CAUSAL_EVIDENCE_MISMATCH',
+        })),
+      };
+    }
+    const entries = [];
+    for (const member of members) {
+      const pending = pendingByNonce.get(member.executionNonce);
+      const error = subtractVectors(
+        member.delta,
+        pending.expectedDelta,
+        `${field}.${feedback.executionNonce}.creditChain.${member.executionNonce}.error`,
+      );
+      let totalError = 0;
+      for (const value of error) {
+        totalError = assertComputedFiniteNumber(
+          totalError + Math.abs(value),
+          `${field}.${feedback.executionNonce}.creditChain.${member.executionNonce}.errorMagnitude`,
+        );
+      }
+      recordActionEvidence(memory, {
+        token: pending.token,
+        relationKey: pending.relationKey,
+        contextKeys: pending.contextKeys ?? (pending.contextKey === undefined ? undefined : [pending.contextKey]),
+        historyOrder: pending.historyOrder,
+        actualDelta: member.delta,
+        errorMagnitude: totalError / dimensions,
+        dimensions,
+        field: `learnOutput.nextMemory.settled.${member.executionNonce}`,
+        refreshModelAge,
+      });
+      entries.push({
+        schemaVersion: SCHEMA_VERSION,
+        executionNonce: member.executionNonce,
+        token: pending.token,
+        attribution: 'ACTION_CHAIN',
+        confidence: confidenceFromError(error),
+        learnable: true,
+        error,
+        creditSourceNonce: feedback.executionNonce,
+        creditEvidence: CAUSAL_CREDIT_BASIS,
+      });
+    }
+    return { actualDelta, learnable: true, entries };
+  }
   const entries = [];
   for (const member of members) {
     const pending = pendingByNonce.get(member.executionNonce);
@@ -918,7 +1008,7 @@ function settleCreditChain(memory, feedback, members, pendingByNonce, dimensions
       creditShare: member.share,
     });
   }
-  return { actualDelta, entries };
+  return { actualDelta, learnable: true, entries };
 }
 
 function feedbackBoundaryKey(feedback) {
@@ -1155,7 +1245,7 @@ function normalizeFeedback(value, field, dimensions) {
     seen.add(executionNonce);
     const creditChain = source.creditChain === undefined
       ? undefined
-      : normalizeCreditChain(source.creditChain, `${field}[${index}].creditChain`);
+      : normalizeCreditChain(source.creditChain, `${field}[${index}].creditChain`, dimensions);
     return {
       schemaVersion: requireSchemaVersion(source, `${field}[${index}]`),
       executionNonce,
@@ -1176,8 +1266,15 @@ function normalizeFeedback(value, field, dimensions) {
   });
 }
 
-function normalizeCreditChain(value, field) {
-  const source = assertPlainRecord(value, field, CREDIT_CHAIN_KEYS, CREDIT_CHAIN_KEYS);
+function normalizeCreditChain(value, field, dimensions) {
+  const source = assertPlainRecord(value, field, CREDIT_CHAIN_KEYS, ['schemaVersion', 'members']);
+  const basis = source.basis === undefined ? undefined : source.basis;
+  if (basis !== undefined && basis !== CAUSAL_CREDIT_BASIS) {
+    contractViolation('kernel credit chain basis is unsupported', {
+      field: `${field}.basis`,
+      actual: basis,
+    });
+  }
   const members = assertArray(source.members, `${field}.members`);
   if (members.length === 0 || members.length > MAX_CREDIT_CHAIN_MEMBERS) {
     contractViolation('kernel credit chain has an invalid member count', {
@@ -1190,7 +1287,9 @@ function normalizeCreditChain(value, field) {
   let shareTotal = 0;
   const normalizedMembers = members.map((item, index) => {
     const itemField = `${field}.members[${index}]`;
-    const member = assertPlainRecord(item, itemField, CREDIT_CHAIN_MEMBER_KEYS, CREDIT_CHAIN_MEMBER_KEYS);
+    const member = assertPlainRecord(item, itemField, CREDIT_CHAIN_MEMBER_KEYS, basis === undefined
+      ? ['executionNonce', 'share']
+      : ['executionNonce', 'delta']);
     const executionNonce = assertBoundedString(
       member.executionNonce,
       `${itemField}.executionNonce`,
@@ -1202,6 +1301,12 @@ function normalizeCreditChain(value, field) {
       });
     }
     seen.add(executionNonce);
+    if (basis !== undefined) {
+      return {
+        executionNonce,
+        delta: assertFiniteVector(member.delta, `${itemField}.delta`, dimensions),
+      };
+    }
     const share = assertNonNegativeFiniteNumber(member.share, `${itemField}.share`);
     if (share <= 0 || share > 1) {
       contractViolation('kernel credit chain share must be greater than zero and no greater than one', {
@@ -1212,7 +1317,7 @@ function normalizeCreditChain(value, field) {
     shareTotal += share;
     return { executionNonce, share };
   });
-  if (Math.abs(shareTotal - 1) > CREDIT_CHAIN_SHARE_TOLERANCE) {
+  if (basis === undefined && Math.abs(shareTotal - 1) > CREDIT_CHAIN_SHARE_TOLERANCE) {
     contractViolation('kernel credit chain shares must sum to one', {
       field: `${field}.members`,
       actual: shareTotal,
@@ -1220,6 +1325,7 @@ function normalizeCreditChain(value, field) {
   }
   return {
     schemaVersion: requireSchemaVersion(source, field),
+    ...(basis === undefined ? {} : { basis }),
     members: normalizedMembers,
   };
 }
@@ -1238,10 +1344,14 @@ function feedbackEqual(left, right) {
 function creditChainEqual(left, right) {
   if (left === undefined || right === undefined) return left === right;
   return left.schemaVersion === right.schemaVersion &&
+    left.basis === right.basis &&
     left.members.length === right.members.length &&
     left.members.every((member, index) =>
       member.executionNonce === right.members[index].executionNonce &&
-      Object.is(member.share, right.members[index].share));
+      (left.basis === undefined
+        ? Object.is(member.share, right.members[index].share)
+        : member.delta.length === right.members[index].delta.length &&
+          member.delta.every((value, deltaIndex) => Object.is(value, right.members[index].delta[deltaIndex]))));
 }
 
 function cloneFeedback(value) {
@@ -1255,9 +1365,12 @@ function cloneFeedback(value) {
     ...(value.creditChain === undefined ? {} : {
       creditChain: {
         schemaVersion: SCHEMA_VERSION,
+        ...(value.creditChain.basis === undefined ? {} : { basis: value.creditChain.basis }),
         members: value.creditChain.members.map((member) => ({
           executionNonce: member.executionNonce,
-          share: member.share,
+          ...(value.creditChain.basis === undefined
+            ? { share: member.share }
+            : { delta: cloneVector(member.delta) }),
         })),
       },
     }),

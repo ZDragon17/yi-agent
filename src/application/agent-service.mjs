@@ -1384,9 +1384,12 @@ function projectObservation(observation) {
       ...(item.creditChain === undefined ? {} : {
         creditChain: {
           schemaVersion: item.creditChain.schemaVersion,
+          ...(item.creditChain.basis === undefined ? {} : { basis: item.creditChain.basis }),
           members: item.creditChain.members.map((member) => ({
             executionNonce: member.executionNonce,
-            share: member.share,
+            ...(item.creditChain.basis === undefined
+              ? { share: member.share }
+              : { delta: [...member.delta] }),
           })),
         },
       }),

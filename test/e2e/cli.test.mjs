@@ -477,6 +477,28 @@ test('CLI cannot detect a wrong action-chain share without independent causal ev
   });
 });
 
+test('CLI learns additive counterfactual member effects only when they close the observed result', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'causal-evidence-lab');
+    const adapter = await writeChainCreditAdapterConfig(root, true, { causalEvidence: true });
+    const init = await invoke('init', '--lab', lab, '--world', 'chain-credit', '--seed', 'causal-evidence-seed', '--lab-id', 'causal-evidence-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '3', '--scenario', 'chain', '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0, JSON.stringify(run));
+    const tokens = init.stdout[0].data.tokenMap.entries;
+    const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+    assert.equal(current.memory.actionModels[tokens[0].token].meanDelta[0], 0.75);
+    assert.equal(current.memory.actionModels[tokens[1].token].meanDelta[0], 0.25);
+    const step = (await readFile(path.join(lab, 'runs', 'run-1', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map(JSON.parse).filter((event) => event.kind === 'STEP')
+      .map(decodeStoredEvent).find((event) => (event.payload.update?.settled?.length ?? 0) > 0);
+    assert.deepEqual(step.payload.update.settled.map((item) => item.creditEvidence), ['counterfactual-additive-v1', 'counterfactual-additive-v1']);
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
 test('CLI closes a missing-feedback window without learning and survives repeated restarts', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'missing-feedback-lab');
@@ -1259,12 +1281,12 @@ async function writeOverlapFeedbackAdapterConfig(root, reverseFeedback, creditCh
   return config;
 }
 
-async function writeChainCreditAdapterConfig(root, creditChain, { wrongShare = false } = {}) {
-  const suffix = creditChain ? (wrongShare ? 'wrong-share' : 'chain') : 'ambiguous';
+async function writeChainCreditAdapterConfig(root, creditChain, { wrongShare = false, causalEvidence = false } = {}) {
+  const suffix = creditChain ? (causalEvidence ? 'causal' : (wrongShare ? 'wrong-share' : 'chain')) : 'ambiguous';
   const config = path.join(root, `chain-credit-${suffix}.json`);
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
-    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : []), ...(wrongShare ? ['--wrong-share'] : [])],
+    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : []), ...(wrongShare ? ['--wrong-share'] : []), ...(causalEvidence ? ['--causal-evidence'] : [])],
     adapterId: `chain-credit-adapter-${suffix}-v1`,
     worldId: 'chain-credit',
     timeoutMs: 2000,

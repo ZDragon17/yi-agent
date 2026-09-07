@@ -39,6 +39,7 @@ const MAX_EVIDENCE_ITEMS = 128;
 const MAX_SCENARIO_ID_LENGTH = 4096;
 const MAX_CREDIT_CHAIN_MEMBERS = 64;
 const CREDIT_CHAIN_SHARE_TOLERANCE = 1e-9;
+const CAUSAL_CREDIT_BASIS = 'counterfactual-additive-v1';
 
 export class ExternalWorldProtocolError extends Error {
   constructor(message, context = {}) {
@@ -461,29 +462,36 @@ function validateExternalFeedback(value, field, expectedDimensions) {
         (expectedDimensions !== undefined && source.vector.length !== expectedDimensions) ||
         source.vector.some((number) => !Number.isFinite(number)) ||
         !Number.isSafeInteger(source.confounderCount) || source.confounderCount < 0 ||
-        (source.creditChain !== undefined && !isValidCreditChain(source.creditChain))) {
+        (source.creditChain !== undefined && !isValidCreditChain(source.creditChain, expectedDimensions))) {
       throw new ExternalWorldProtocolError('External WorldPort observation feedback is invalid.', { field: itemField });
     }
     seen.add(source.executionNonce);
   });
 }
 
-function isValidCreditChain(value) {
+function isValidCreditChain(value, dimensions) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
-      value.schemaVersion !== SCHEMA_VERSION || !Array.isArray(value.members) ||
+      value.schemaVersion !== SCHEMA_VERSION ||
+      Object.keys(value).some((key) => !['schemaVersion', 'basis', 'members'].includes(key)) ||
+      !Array.isArray(value.members) ||
       value.members.length === 0 || value.members.length > MAX_CREDIT_CHAIN_MEMBERS) return false;
+  if (value.basis !== undefined && value.basis !== CAUSAL_CREDIT_BASIS) return false;
   const seen = new Set();
   let shareTotal = 0;
   for (const member of value.members) {
     if (member === null || typeof member !== 'object' || Array.isArray(member) ||
-        Object.keys(member).length !== 2 ||
         typeof member.executionNonce !== 'string' || !isBoundedExecutionNonce(member.executionNonce) ||
-        seen.has(member.executionNonce) || typeof member.share !== 'number' ||
-        !Number.isFinite(member.share) || member.share <= 0 || member.share > 1) return false;
+        seen.has(member.executionNonce)) return false;
+    if (value.basis === CAUSAL_CREDIT_BASIS) {
+      if (Object.keys(member).some((key) => !['executionNonce', 'delta'].includes(key)) ||
+          !Array.isArray(member.delta) || member.delta.length !== dimensions ||
+          member.delta.some((number) => !Number.isFinite(number))) return false;
+    } else if (Object.keys(member).length !== 2 || typeof member.share !== 'number' ||
+               !Number.isFinite(member.share) || member.share <= 0 || member.share > 1) return false;
     seen.add(member.executionNonce);
-    shareTotal += member.share;
+    if (value.basis === undefined) shareTotal += member.share;
   }
-  return Math.abs(shareTotal - 1) <= CREDIT_CHAIN_SHARE_TOLERANCE;
+  return value.basis === CAUSAL_CREDIT_BASIS || Math.abs(shareTotal - 1) <= CREDIT_CHAIN_SHARE_TOLERANCE;
 }
 
 function isBoundedIdentifier(value) {
