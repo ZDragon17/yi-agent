@@ -13,6 +13,8 @@ const releaseFileIndex = process.argv.indexOf('--release-file');
 const releaseFile = releaseFileIndex === -1 ? null : process.argv[releaseFileIndex + 1] ?? null;
 const supportsIdempotentTransitions = !process.argv.includes('--non-idempotent');
 const supportsReconciliation = process.argv.includes('--reconcilable');
+const executionObserver = process.argv.includes('--execution-observer');
+const observerMismatch = process.argv.includes('--observer-mismatch');
 const twoActions = process.argv.includes('--two-actions');
 const bothSafe = process.argv.includes('--both-safe');
 const effectFileIndex = process.argv.indexOf('--effect-file');
@@ -41,7 +43,7 @@ rl.on('line', (line) => {
 function dispatch(op, payload) {
   if (op === 'hello') {
     const descriptor = {
-      adapterId: 'idempotent-transition-adapter-v1',
+      adapterId: executionObserver ? 'idempotent-execution-observer-v1' : 'idempotent-transition-adapter-v1',
       worldId: WORLD_ID,
       worldVersion: 'idempotent-transition-1',
       capabilityIds: twoActions ? [CAPABILITY_ID, SECOND_CAPABILITY_ID] : [CAPABILITY_ID],
@@ -55,6 +57,10 @@ function dispatch(op, payload) {
     return { ...descriptor, descriptorDigest: canonicalDigest(descriptor) };
   }
   if (op === 'initialState') return { state: state(0) };
+  if (executionObserver) {
+    if (op !== 'observeExecution') throw new Error(`unsupported execution observer operation: ${op}`);
+    return observeExecution(payload);
+  }
   if (op === 'actions') {
     if (payload.state === undefined) throw new Error('state-dependent actions require state');
     const hasCommittedEffect = readEffect() !== null;
@@ -115,6 +121,24 @@ function transition(prior, request) {
   if (dropResponse && stored === null) process.exit(17);
   if (holdResponse && stored === null) holdResponseUntilReleased();
   return result;
+}
+
+function observeExecution(payload) {
+  const stored = readEffect();
+  if (stored === null || stored.result?.receipt?.executionNonce !== payload.executionNonce) {
+    throw new Error('execution effect was not observed');
+  }
+  return {
+    schemaVersion: 1,
+    status: 'OBSERVED',
+    executionNonce: payload.executionNonce,
+    token: stored.result.receipt.token,
+    basedOnVersion: payload.basedOnVersion,
+    beforeStateDigest: payload.beforeStateDigest,
+    afterStateDigest: observerMismatch
+      ? canonicalDigest({ wrong: true })
+      : canonicalDigest(stored.result.nextWorldState),
+  };
 }
 
 function holdResponseUntilReleased() {

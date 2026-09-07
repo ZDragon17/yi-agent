@@ -776,6 +776,82 @@ test('CLI preserves state-dependent external capabilities across restarts, repla
   });
 });
 
+test('CLI binds an independent execution observation to an external transition and replay', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'execution-observed-lab');
+    const effectFile = path.join(root, 'execution-observed-effect.json');
+    const adapter = await writeTransitionAdapterConfig(root, effectFile, [], false, { executionObserver: true });
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'execution-observed-seed', '--lab-id', 'execution-observed-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0, JSON.stringify(run));
+    const events = (await readFile(path.join(lab, 'runs', 'run-1', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map(JSON.parse);
+    const start = JSON.parse(await readFile(path.join(lab, 'runs', 'run-1', 'start.json'), 'utf8'));
+    const step = decodeStoredEvent(events.find((event) => event.kind === 'STEP'));
+    const observation = step.payload.boundary.executionObservation;
+    assert.equal(observation.status, 'OBSERVED');
+    assert.equal(observation.executionNonce, step.payload.receipt.executionNonce);
+    assert.equal(observation.token, step.payload.receipt.token);
+    assert.equal(observation.beforeStateDigest, canonicalDigest(start.initialState.worldState));
+    assert.equal(observation.afterStateDigest, canonicalDigest(step.payload.afterState.worldState));
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('CLI rejects an execution observer that disagrees with the external transition', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'execution-observer-mismatch-lab');
+    const effectFile = path.join(root, 'execution-observer-mismatch-effect.json');
+    const adapter = await writeTransitionAdapterConfig(root, effectFile, [], false, {
+      executionObserver: true,
+      observerMismatch: true,
+    });
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'execution-observer-mismatch-seed', '--lab-id', 'execution-observer-mismatch-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].error.code, 'WORLD_ADAPTER_PROTOCOL');
+    assert.equal(await countLedgerSteps(lab, 'run-1'), 0);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+  });
+});
+
+test('CLI re-observes an idempotent transition after a host crash before STEP', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'execution-observer-recovery-lab');
+    const effectFile = path.join(root, 'execution-observer-recovery-effect.json');
+    const adapter = await writeTransitionAdapterConfig(root, effectFile, [], false, { executionObserver: true });
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'execution-observer-recovery-seed', '--lab-id', 'execution-observer-recovery-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const crashed = await crashAfterExternalTransitionReturn(lab, adapter);
+    assert.equal(crashed, 17);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const recovered = await invoke('recover', '--lab', lab, '--confirm-lock-owner-dead', '--json');
+    assert.equal(recovered.code, 0, JSON.stringify(recovered));
+    assert.equal(recovered.stdout[0].data.reason, 'EXTERNAL_TRANSITION_UNKNOWN');
+
+    const resumed = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    const events = (await readFile(path.join(lab, 'runs', 'run-2', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map(JSON.parse);
+    const step = decodeStoredEvent(events.find((event) => event.kind === 'STEP'));
+    assert.equal(step.payload.boundary.executionObservation.status, 'OBSERVED');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
 test('CLI resumes a response-lost external transition through the same execution nonce', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'idempotent-lab');
@@ -1528,11 +1604,20 @@ async function writeNonIdempotentAdapterConfig(root, effectFile) {
   return writeTransitionAdapterConfig(root, effectFile, ['--non-idempotent']);
 }
 
-async function writeTransitionAdapterConfig(root, effectFile, modeArgs, dropResponse = true) {
+async function writeTransitionAdapterConfig(root, effectFile, modeArgs, dropResponse = true, { executionObserver = false, observerMismatch = false } = {}) {
   const config = path.join(root, 'idempotent-adapter.json');
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
     args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, ...(dropResponse ? ['--drop-response'] : []), ...modeArgs],
+    ...(executionObserver ? {
+      executionObserver: {
+        executable: process.execPath,
+        args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, '--execution-observer', ...(observerMismatch ? ['--observer-mismatch'] : [])],
+        adapterId: 'idempotent-execution-observer-v1',
+        worldId: 'idempotent-transition',
+        timeoutMs: 2000,
+      },
+    } : {}),
     adapterId: 'idempotent-transition-adapter-v1',
     worldId: 'idempotent-transition',
     timeoutMs: 2000,

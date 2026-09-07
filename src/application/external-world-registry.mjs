@@ -69,6 +69,9 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
   const witness = normalizedConfig.witness === undefined
     ? null
     : loadWitnessDescriptor(normalizedConfig.witness, descriptor);
+  const executionObserver = normalizedConfig.executionObserver === undefined
+    ? null
+    : loadExecutionObserverDescriptor(normalizedConfig.executionObserver, descriptor);
   const adapterMetadata = {
     schemaVersion: SCHEMA_VERSION,
     protocol: PROTOCOL,
@@ -95,6 +98,15 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
         launchDigest: witness.config.launchDigest,
       },
     }),
+    ...(executionObserver === null ? {} : {
+      executionObserver: {
+        adapterId: executionObserver.descriptor.adapterId,
+        worldId: executionObserver.descriptor.worldId,
+        worldVersion: executionObserver.descriptor.worldVersion,
+        descriptorDigest: executionObserver.descriptor.descriptorDigest,
+        launchDigest: executionObserver.config.launchDigest,
+      },
+    }),
   };
 
   const definition = {
@@ -113,6 +125,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
         client,
         descriptor,
         witness,
+        executionObserver,
         manifest,
         scenario,
       });
@@ -164,6 +177,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
 function createIdentityOnlyRegistry(config) {
   let boundValueSpec = null;
   const witnessConfig = config.witness;
+  const executionObserverConfig = config.executionObserver;
   const unsupported = () => {
     throw new LabStoreError('CONFLICT', 'This adapter was loaded for a read-only evidence operation.', {});
   };
@@ -187,7 +201,14 @@ function createIdentityOnlyRegistry(config) {
               adapter?.witness?.launchDigest !== witnessConfig.launchDigest ||
               !isValidEvidencePublicKey(adapter?.witness?.evidencePublicKey) ||
               typeof adapter?.witness?.worldVersion !== 'string' ||
-              !/^sha256:[0-9a-f]{64}$/u.test(adapter?.witness?.descriptorDigest ?? ''))) {
+              !/^sha256:[0-9a-f]{64}$/u.test(adapter?.witness?.descriptorDigest ?? '')) ||
+          (executionObserverConfig === undefined
+            ? adapter?.executionObserver !== undefined
+            : adapter?.executionObserver?.adapterId !== executionObserverConfig.adapterId ||
+              adapter?.executionObserver?.worldId !== executionObserverConfig.worldId ||
+              adapter?.executionObserver?.launchDigest !== executionObserverConfig.launchDigest ||
+              typeof adapter?.executionObserver?.worldVersion !== 'string' ||
+              !/^sha256:[0-9a-f]{64}$/u.test(adapter?.executionObserver?.descriptorDigest ?? ''))) {
         throw new LabStoreError('CONFLICT', 'The supplied adapter does not match the lab adapter contract.', {
           field: 'adapter',
         });
@@ -324,7 +345,7 @@ function createAdapterClient(config) {
   };
 }
 
-function createExternalWorldPort({ client, descriptor, witness, manifest, scenario }) {
+function createExternalWorldPort({ client, descriptor, witness, executionObserver, manifest, scenario }) {
   const worldManifest = {
     schemaVersion: manifest.schemaVersion,
     tokenMap: manifest.tokenMap,
@@ -393,8 +414,18 @@ function createExternalWorldPort({ client, descriptor, witness, manifest, scenar
         descriptor.evidencePublicKey,
         witness?.descriptor.evidencePublicKey,
       );
+      const executionObservation = transition.receipt.status === 'ACCEPTED' && executionObserver !== null
+        ? observeExternalExecution(executionObserver, {
+            worldId: descriptor.worldId,
+            scenario,
+            state,
+            request,
+            transition,
+          })
+        : null;
       return {
         ...transition,
+        ...(executionObservation === null ? {} : { executionObservation }),
         postObservation: corroborateIndependentEvidence(transition.postObservation, {
           state,
           scenario,
@@ -424,10 +455,20 @@ function createExternalWorldPort({ client, descriptor, witness, manifest, scenar
         witness?.descriptor.evidencePublicKey,
       );
       if (transition.status !== 'APPLIED') return transition;
+      const executionObservation = executionObserver === null
+        ? null
+        : observeExternalExecution(executionObserver, {
+            worldId: descriptor.worldId,
+            scenario,
+            state,
+            request,
+            transition: transition.transition,
+          });
       return {
         ...transition,
         transition: {
           ...transition.transition,
+          ...(executionObservation === null ? {} : { executionObservation }),
           postObservation: corroborateIndependentEvidence(transition.transition.postObservation, {
             state,
             scenario,
@@ -765,6 +806,39 @@ function normalizeExternalTransition(value, state, request, worldId, expectedDim
   return { nextWorldState, receipt, postObservation };
 }
 
+function observeExternalExecution(observer, { worldId, scenario, state, request, transition }) {
+  const beforeStateDigest = canonicalDigest(state);
+  const result = observer.client.request('observeExecution', {
+    schemaVersion: SCHEMA_VERSION,
+    worldId,
+    scenario,
+    executionNonce: request.executionNonce,
+    token: request.token,
+    basedOnVersion: request.basedOnVersion,
+    beforeStateDigest,
+  });
+  const source = assertExactKeys(result, [
+    'schemaVersion', 'status', 'executionNonce', 'token', 'basedOnVersion',
+    'beforeStateDigest', 'afterStateDigest',
+  ], 'executionObservation');
+  const afterStateDigest = canonicalDigest(transition.nextWorldState);
+  if (
+    source.schemaVersion !== SCHEMA_VERSION ||
+    source.status !== 'OBSERVED' ||
+    source.executionNonce !== request.executionNonce ||
+    source.token !== request.token ||
+    source.basedOnVersion !== request.basedOnVersion ||
+    source.beforeStateDigest !== beforeStateDigest ||
+    source.afterStateDigest !== afterStateDigest
+  ) {
+    throw new ExternalWorldProtocolError('Independent execution observation does not match the transition.', {
+      op: 'observeExecution',
+      executionNonce: request.executionNonce,
+    });
+  }
+  return structuredClone(source);
+}
+
 function normalizeExternalReconciliation(value, state, request, worldId, expectedDimensions, evidencePublicKey, witnessPublicKey) {
   const source = assertExactKeys(value, ['status', 'transition'], 'reconcile', ['status']);
   if (!['APPLIED', 'ABSENT', 'UNKNOWN'].includes(source.status)) {
@@ -875,6 +949,22 @@ function loadWitnessDescriptor(config, primaryDescriptor) {
   return { config, client, descriptor };
 }
 
+function loadExecutionObserverDescriptor(config, primaryDescriptor) {
+  const client = createAdapterClient(config);
+  const descriptor = validateDescriptor(client.request('hello', {}), config);
+  if (descriptor.worldId !== primaryDescriptor.worldId ||
+      descriptor.worldVersion !== primaryDescriptor.worldVersion ||
+      canonicalJson(descriptor.capabilityIds) !== canonicalJson(primaryDescriptor.capabilityIds) ||
+      canonicalJson(descriptor.scenarioIds) !== canonicalJson(primaryDescriptor.scenarioIds) ||
+      canonicalJson(descriptor.valueSpec) !== canonicalJson(primaryDescriptor.valueSpec) ||
+      descriptor.adapterId === primaryDescriptor.adapterId) {
+    throw new ExternalWorldProtocolError('Execution observer descriptor does not match the primary WorldPort boundary.', {
+      op: 'hello',
+    });
+  }
+  return { config, client, descriptor };
+}
+
 function validateExternalInputs(value, descriptor, scenario, stateVersion) {
   if (!Array.isArray(value) || value.length > MAX_EXTERNAL_INPUTS) {
     throw new ExternalWorldProtocolError('External WorldPort externalInputs are invalid.', { op: 'externalInputs' });
@@ -921,7 +1011,7 @@ function normalizeConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config must be an object.', { field: 'adapter' });
   }
-  const allowed = new Set(['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'witness']);
+  const allowed = new Set(['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'witness', 'executionObserver']);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config contains an unsupported field.', { field: 'adapter' });
   }
@@ -950,7 +1040,19 @@ function normalizeConfig(value, configPath) {
   }
   const launchDigest = digestLaunch(configPath, value.executable, value.args);
   const witness = value.witness === undefined ? undefined : normalizeWitnessConfig(value.witness, configPath);
-  return { executable: value.executable, args: [...value.args], adapterId: value.adapterId, worldId: value.worldId, timeoutMs, launchDigest, ...(witness === undefined ? {} : { witness }) };
+  const executionObserver = value.executionObserver === undefined
+    ? undefined
+    : normalizeExecutionObserverConfig(value.executionObserver, configPath);
+  return {
+    executable: value.executable,
+    args: [...value.args],
+    adapterId: value.adapterId,
+    worldId: value.worldId,
+    timeoutMs,
+    launchDigest,
+    ...(witness === undefined ? {} : { witness }),
+    ...(executionObserver === undefined ? {} : { executionObserver }),
+  };
 }
 
 function normalizeWitnessConfig(value, configPath) {
@@ -980,6 +1082,44 @@ function normalizeWitnessConfig(value, configPath) {
   const timeoutMs = value.timeoutMs ?? 5000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
     throw new LabStoreError('INVALID_INPUT', 'Independent witness timeoutMs must be between 100 and 30000.', { field: 'adapter.witness.timeoutMs' });
+  }
+  return {
+    executable: value.executable,
+    args: [...value.args],
+    adapterId: value.adapterId,
+    worldId: value.worldId,
+    timeoutMs,
+    launchDigest: digestLaunch(configPath, value.executable, value.args),
+  };
+}
+
+function normalizeExecutionObserverConfig(value, configPath) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs'].includes(key))) {
+    throw new LabStoreError('INVALID_INPUT', 'Execution observer config is invalid.', { field: 'adapter.executionObserver' });
+  }
+  if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
+    throw new LabStoreError('INVALID_INPUT', 'Execution observer executable must be an absolute non-shell executable path.', { field: 'adapter.executionObserver.executable' });
+  }
+  let executableStatus;
+  try {
+    executableStatus = lstatSync(value.executable);
+  } catch (error) {
+    throw new LabStoreError('INVALID_INPUT', 'Execution observer executable does not exist.', { field: 'adapter.executionObserver.executable' }, { cause: error });
+  }
+  if (!executableStatus.isFile() || executableStatus.isSymbolicLink() || !statSync(value.executable).isFile()) {
+    throw new LabStoreError('INVALID_INPUT', 'Execution observer executable must be a regular non-symlink file.', { field: 'adapter.executionObserver.executable' });
+  }
+  if (!Array.isArray(value.args) || value.args.length === 0 || value.args.length > 64 || value.args.some((arg) => typeof arg !== 'string' || arg.length > 4096)) {
+    throw new LabStoreError('INVALID_INPUT', 'Execution observer args must be a bounded string array.', { field: 'adapter.executionObserver.args' });
+  }
+  if (typeof value.adapterId !== 'string' || value.adapterId.length === 0 || value.adapterId.length > 4096 ||
+      typeof value.worldId !== 'string' || value.worldId.length === 0 || value.worldId.length > 4096) {
+    throw new LabStoreError('INVALID_INPUT', 'Execution observer identity is invalid.', { field: 'adapter.executionObserver' });
+  }
+  const timeoutMs = value.timeoutMs ?? 5000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
+    throw new LabStoreError('INVALID_INPUT', 'Execution observer timeoutMs must be between 100 and 30000.', { field: 'adapter.executionObserver.timeoutMs' });
   }
   return {
     executable: value.executable,

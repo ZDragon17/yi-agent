@@ -540,6 +540,7 @@ export async function runLab(input) {
       });
     }
     const afterCapabilities = world.actions(actionManifest, transition.nextWorldState);
+    const executionObservation = transition.executionObservation ?? null;
     const receipt = externalInputs.length === 0
       ? transition.receipt
       : {
@@ -638,6 +639,7 @@ export async function runLab(input) {
           ...(goalActivation === null ? {} : { goalActivation }),
           ...(goalReplan === null ? {} : { goalReplan }),
           ...(randomization === null ? {} : { randomization }),
+          ...(executionObservation === null ? {} : { executionObservation }),
           externalInputsDigest: canonicalDigest(externalInputs),
         },
         beforeObservation,

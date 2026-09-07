@@ -138,6 +138,14 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
         payload.externalInputs.some((input) => !verifyExternalInputAttestation(input, adapter.evidencePublicKey)))) {
     corrupt('STEP external evidence attestation is invalid.', { sequence: event.sequence });
   }
+  if (payload.boundary.executionObservation !== undefined &&
+      !isValidExecutionObservationEvidence(payload.boundary.executionObservation)) {
+    corrupt('STEP execution observation evidence is invalid.', { sequence: event.sequence });
+  }
+  if (adapter?.executionObserver !== undefined &&
+      !isValidExecutionObservationEvidence(payload.boundary.executionObservation)) {
+    corrupt('STEP is missing execution observation evidence.', { sequence: event.sequence });
+  }
   const valueSpec = cloneJson(payload.boundary.valueSpec);
   if (payload.boundary.goalActivation !== undefined) {
     validateGoalActivation(payload.boundary.goalActivation, event.sequence);
@@ -247,6 +255,15 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
     });
   } catch (error) {
     corrupt('Replay world transition failed.', { sequence: event.sequence, cause: errorName(error) });
+  }
+  const executionObservation = payload.boundary.executionObservation;
+  if (executionObservation !== undefined &&
+      (executionObservation.executionNonce !== payload.receipt.executionNonce ||
+       executionObservation.token !== payload.receipt.token ||
+       executionObservation.basedOnVersion !== payload.receipt.basedOnVersion ||
+       executionObservation.beforeStateDigest !== canonicalDigest(state.worldState) ||
+       executionObservation.afterStateDigest !== canonicalDigest(transition.nextWorldState))) {
+    corrupt('STEP execution observation does not match the transition boundary.', { sequence: event.sequence });
   }
   const postObservation = mergeObservationFeedback(
     beforeObservation,
@@ -683,7 +700,26 @@ function isValidAdapterMetadata(value) {
     isValidValueSpec(value.valueSpec) &&
     isValidEvidencePublicKey(value.evidencePublicKey) &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
+    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
+    (value.executionObserver === undefined || isValidExecutionObserverMetadata(value.executionObserver));
+}
+
+function isValidExecutionObserverMetadata(value) {
+  return isRecord(value) &&
+    typeof value.adapterId === 'string' && value.adapterId.length > 0 && value.adapterId.length <= 4096 &&
+    typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&
+    typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
+    typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
     typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest);
+}
+
+function isValidExecutionObservationEvidence(value) {
+  return isRecord(value) && value.schemaVersion === SCHEMA_VERSION && value.status === 'OBSERVED' &&
+    typeof value.executionNonce === 'string' && value.executionNonce.length > 0 && value.executionNonce.length <= 4096 &&
+    typeof value.token === 'string' && TOKEN_PATTERN.test(value.token) &&
+    typeof value.basedOnVersion === 'string' && value.basedOnVersion.length > 0 && value.basedOnVersion.length <= 4096 &&
+    typeof value.beforeStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.beforeStateDigest) &&
+    typeof value.afterStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.afterStateDigest);
 }
 
 function isValidValueSpec(value) {

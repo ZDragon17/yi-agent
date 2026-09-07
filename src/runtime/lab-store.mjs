@@ -2120,6 +2120,14 @@ function validateStepPayload(
         value.boundary.externalInputsDigest !== canonicalDigest(value.externalInputs, { cache: serializationCache }))) {
     fail('External adapter STEP is missing its external input binding.');
   }
+  if (value.boundary.executionObservation !== undefined &&
+      !isValidExecutionObservationEvidence(value.boundary.executionObservation)) {
+    fail('STEP execution observation evidence is invalid.');
+  }
+  if (manifest?.adapter?.executionObserver !== undefined &&
+      !isValidExecutionObservationEvidence(value.boundary.executionObservation)) {
+    fail('External observer STEP is missing valid execution observation evidence.');
+  }
   if (typeof value.receipt.executionNonce !== 'string' || value.receipt.executionNonce.length === 0) {
     fail('STEP receipt executionNonce is invalid.');
   }
@@ -2137,6 +2145,16 @@ function validateStepPayload(
     fail('STEP candidate outcome evidence is invalid.');
   }
   return { serializationCache };
+}
+
+function isValidExecutionObservationEvidence(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    value.schemaVersion === SCHEMA_VERSION && value.status === 'OBSERVED' &&
+    typeof value.executionNonce === 'string' && value.executionNonce.length > 0 && value.executionNonce.length <= 4096 &&
+    typeof value.token === 'string' && TOKEN_PATTERN.test(value.token) &&
+    typeof value.basedOnVersion === 'string' && value.basedOnVersion.length > 0 && value.basedOnVersion.length <= 4096 &&
+    typeof value.beforeStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.beforeStateDigest) &&
+    typeof value.afterStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.afterStateDigest);
 }
 
 function validatePolicyEvidence(value, field, corruptOnFailure) {
@@ -2280,6 +2298,9 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
   if (value.witness !== undefined && !isValidWitnessMetadata(value.witness)) {
     fail('Adapter witness metadata is invalid.');
   }
+  if (value.executionObserver !== undefined && !isValidExecutionObserverMetadata(value.executionObserver)) {
+    fail('Adapter execution observer metadata is invalid.');
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
     protocol: 'yi-world-cli',
@@ -2297,6 +2318,7 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
       ? {}
       : { supportsReconciliation: value.supportsReconciliation }),
     ...(value.witness === undefined ? {} : { witness: cloneJson(value.witness) }),
+    ...(value.executionObserver === undefined ? {} : { executionObserver: cloneJson(value.executionObserver) }),
   };
 }
 
@@ -2306,6 +2328,15 @@ function isValidWitnessMetadata(value) {
     typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&
     typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
     isValidEvidencePublicKey(value.evidencePublicKey) &&
+    typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
+    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest);
+}
+
+function isValidExecutionObserverMetadata(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    typeof value.adapterId === 'string' && value.adapterId.length > 0 && value.adapterId.length <= 4096 &&
+    typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&
+    typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
     typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest);
 }

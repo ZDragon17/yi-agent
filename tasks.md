@@ -1125,3 +1125,10 @@
 - 实现：不增加新的 Kernel 或领域分支；新增外部能源 WorldPort E2E，使用 `ess-arbitrage` 的 2 步延迟结算 adapter 与现有 `--randomized-trial` CLI/API。验证动作分配穿过宿主→外部 adapter→回执→账本→Replay 的完整路径，而不是只在内置 WorldPort 上检查 boundary。
 - 验证：3 个外部 STEP 全部带 `host-csprng-v1`，每个随机选择与实际 choice 相等且属于两个显式候选臂，运行中存在延迟结算，外部跨进程 Replay `CONSISTENT`；定向 E2E `1/1` 通过。较长窗口和显式 `signed-v1` 的尝试因安全投影可能中途只剩一个动作臂而返回 `CONFLICT`，证明随机化的多臂前置条件会被保守执行，不能把单臂运行伪装成对照实验。
 - 边界：这证明的是随机分配确实到达外部 WorldPort 并被账本绑定，不证明 adapter 自报的动作等于现实执行，也不证明延迟效用的长期策略收益；下一步仍需独立执行观测/可信执行器，并把观测与 `executionNonce`、前后状态摘要绑定后再比较长期收益。
+
+## F-143 独立执行观测边界
+
+- 反证/缺口：F-142 已证明宿主随机动作分配能穿过真实外部 WorldPort，但主 adapter 的回执仍可能只是对自身声明的重复确认；需要把“主进程声明已执行”和“另一进程观察到同一执行”拆成两个边界。
+- 实现：增加可选 `adapter.executionObserver` 配置。观测者必须声明同一 `worldId/worldVersion/capabilityIds/scenarioIds/valueSpec` 且使用不同 `adapterId`；宿主只发送执行 nonce、token、基准版本和前状态摘要，不发送主 `transition` 结果。匹配的 `OBSERVED` 响应必须同时绑定 nonce、token、前摘要和后状态摘要，才注入 STEP 的 `boundary.executionObservation`；幂等恢复的 `reconcile` 也重新经过该边界。旧 adapter 没有该配置时保持兼容，Replay 只验证账本证据，不启动观测者。
+- 验证：独立观测正向、观测不一致拒绝、主机在 STEP 前崩溃后的重新观测恢复与 Replay 共 `3/3`；不一致用例返回 `WORLD_ADAPTER_PROTOCOL`、不追加 STEP，但外部效果计数为 1；LabStore/Replay `76/76`，响应丢失外部 transition 回归 `1/1`。
+- 边界：两个进程只建立了可部署的第二来源，不等于可信硬件、物理事实或抗共谋证明；观测者与主 adapter 共享同一代码、文件或错误来源时仍可共同撒谎。下一步应接入 OS/硬件/人工可审计的外部观测，并在长期随机化效用实验中比较收益，而不是继续让 Kernel 猜测真实因果。
