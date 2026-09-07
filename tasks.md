@@ -1118,3 +1118,10 @@
 - 实现：新增可选 `randomizedTrial: { schemaVersion: 1, mode: 'host-csprng-v1' }`，宿主从 manifest 声明且当前 `allowed && safe` 的至少两个动作臂中使用 CSPRNG 抽样；每个 STEP 的 `boundary.randomization` 固化候选 token、抽样位置和 `selectedToken`，Kernel 以 required preference 执行该选择，外部转换恢复边界同步保留该分配。CLI 通过 `--randomized-trial PATH` 暴露同一能力；连续 loop 恢复时禁止静默更换配置。
 - 验证：应用层 `49/49`、LabStore/Replay `76/76` 通过；随机化 CLI happy path 与跨 CLI Replay `2/2` 通过；在重算 digest 链后篡改 `draw`，Replay 仍 fail-closed 拒绝；连续 loop 跨 Run/重启仍保留随机化配置。正常非随机化运行保持兼容。
 - 边界：宿主随机分配只是可识别因果实验的必要条件，不证明 WorldPort 真实执行了所选动作，也不证明反馈真实；下一步仍需可信执行器或宿主/物理观测，并在同一延迟效用 WorldPort 中比较不同随机臂的长期收益。
+
+## F-142 外部 WorldPort 的随机化动作边界
+
+- 判据：把 `host-csprng-v1` 从内置温度世界推进到真实 JSONL 外部 WorldPort；在延迟经济场景中连续执行 3 步（窗口内仍能收到第 1 步的 2 步延迟 feedback），至少两个当前安全动作臂保持可用，所有 STEP 的 `selectedToken` 与实际选择一致，并可跨进程 Replay 为 `CONSISTENT`。
+- 实现：不增加新的 Kernel 或领域分支；新增外部能源 WorldPort E2E，使用 `ess-arbitrage` 的 2 步延迟结算 adapter 与现有 `--randomized-trial` CLI/API。验证动作分配穿过宿主→外部 adapter→回执→账本→Replay 的完整路径，而不是只在内置 WorldPort 上检查 boundary。
+- 验证：3 个外部 STEP 全部带 `host-csprng-v1`，每个随机选择与实际 choice 相等且属于两个显式候选臂，运行中存在延迟结算，外部跨进程 Replay `CONSISTENT`；定向 E2E `1/1` 通过。较长窗口和显式 `signed-v1` 的尝试因安全投影可能中途只剩一个动作臂而返回 `CONFLICT`，证明随机化的多臂前置条件会被保守执行，不能把单臂运行伪装成对照实验。
+- 边界：这证明的是随机分配确实到达外部 WorldPort 并被账本绑定，不证明 adapter 自报的动作等于现实执行，也不证明延迟效用的长期策略收益；下一步仍需独立执行观测/可信执行器，并把观测与 `executionNonce`、前后状态摘要绑定后再比较长期收益。

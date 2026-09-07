@@ -124,6 +124,47 @@ test('L5 negative result: utility channel alone does not make bounded planning c
   }
 });
 
+test('F-142 randomized action assignment crosses an external delayed economic WorldPort boundary', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-f142-randomized-'));
+  const lab = path.join(root, 'lab');
+  const adapter = path.join(root, 'adapter.json');
+  const trial = path.join(root, 'trial.json');
+  await writeFile(adapter, JSON.stringify({
+    executable: process.execPath,
+    args: [path.join(CURRICULUM, 'ess-arbitrage', 'adapter.mjs'), '--settlement-delay', '2'],
+    adapterId: 'ess-arbitrage-adapter-v1',
+    worldId: 'ess-arbitrage',
+    timeoutMs: 20000,
+  }));
+  await writeFile(trial, JSON.stringify({
+    schemaVersion: 1,
+    mode: 'host-csprng-v1',
+    candidateCapabilityIds: ['ess.charge', 'ess.idle'],
+  }));
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'ess-arbitrage', '--seed', 'f142-randomized', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke([
+      'agent', 'run', '--lab', lab, '--run-id', 'r', '--steps', '3', '--kernel-only',
+      '--adapter', adapter, '--randomized-trial', trial, '--json',
+    ]);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    const events = (await (await LabStore.open({ labPath: lab })).readRun('r')).events
+      .filter((event) => event.kind === 'STEP');
+    assert.equal(events.length, 3);
+    assert.ok(events.every((event) => event.payload.boundary.randomization?.source === 'host-csprng-v1'));
+    assert.ok(events.every((event) => event.payload.boundary.randomization.selectedToken === event.payload.choice.token));
+    assert.ok(events.every((event) => event.payload.boundary.randomization.candidateTokens.length === 2));
+    assert.ok(events.every((event) => event.payload.boundary.randomization.candidateTokens.includes(event.payload.choice.token)));
+    assert.ok(events.some((event) => (event.payload.update?.settled ?? []).length > 0), 'delayed feedback should settle during the run');
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'r', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 // ---- L4-B：对抗性世界（难度：世界主动反学习） ----
 // 预注册判据：96 步后累计收益为正（固定策略必然被世界的翻转规则打入负收益），
 // 世界翻转机制被触发（score 出现平台期/回撤），重放一致。
