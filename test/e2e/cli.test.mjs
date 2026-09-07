@@ -18,6 +18,7 @@ const STATEFUL_ADAPTER_FIXTURE = path.resolve('test/fixtures/stateful-capabiliti
 const IDEMPOTENT_ADAPTER_FIXTURE = path.resolve('test/fixtures/idempotent-transition-world-adapter.mjs');
 const DELAYED_FEEDBACK_ADAPTER_FIXTURE = path.resolve('test/fixtures/delayed-feedback-world-adapter.mjs');
 const OVERLAP_FEEDBACK_ADAPTER_FIXTURE = path.resolve('test/fixtures/overlap-feedback-world-adapter.mjs');
+const CHAIN_CREDIT_ADAPTER_FIXTURE = path.resolve('test/fixtures/chain-credit-world-adapter.mjs');
 
 test('generated adapter exposes a fixed Ed25519 key for its hello descriptor', async () => {
   const response = await invokeAdapter([], { protocol: 'yi-world-cli', version: 1, id: '1', op: 'hello', payload: {} });
@@ -419,6 +420,43 @@ test('CLI applies an explicit action-chain credit across adapter restarts and re
     const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
     assert.equal(replay.code, 0);
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('CLI distinguishes explicit action-chain learning from an unresolvable shared boundary', async () => {
+  await withTemp(async (root) => {
+    const results = [];
+    for (const creditChain of [false, true]) {
+      const suffix = creditChain ? 'chain' : 'ambiguous';
+      const lab = path.join(root, `${suffix}-credit-lab`);
+      const adapter = await writeChainCreditAdapterConfig(root, creditChain);
+      const init = await invoke('init', '--lab', lab, '--world', 'chain-credit', '--seed', `${suffix}-seed`, '--lab-id', `${suffix}-credit-lab`, '--adapter', adapter, '--json');
+      assert.equal(init.code, 0, `${suffix}: ${JSON.stringify(init)}`);
+      const run = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '3', '--scenario', 'chain', '--kernel-only', '--adapter', adapter, '--json');
+      assert.equal(run.code, 0, `${suffix}: ${JSON.stringify(run)}`);
+      const step = (await readFile(path.join(lab, 'runs', 'run-1', 'events.jsonl'), 'utf8'))
+        .trim().split(/\r?\n/u).map(JSON.parse).filter((event) => event.kind === 'STEP')
+        .map(decodeStoredEvent).find((event) => (event.payload.update?.settled?.length ?? 0) > 0);
+      assert.ok(step, `${suffix}: expected settlement STEP`);
+      const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+      assert.equal(current.worldState.value, 1, `${suffix}: delayed effect`);
+      assert.equal(current.memory.pendingCredits.length, 1, `${suffix}: current action remains pending`);
+      if (creditChain) {
+        assert.deepEqual(step.payload.update.settled.map((item) => item.attribution), ['ACTION_CHAIN', 'ACTION_CHAIN']);
+        assert.equal(Object.keys(current.memory.actionModels).length, 2);
+      } else {
+        assert.deepEqual(step.payload.update.settled.map((item) => item.attribution), ['AMBIGUOUS', 'AMBIGUOUS']);
+        assert.equal(Object.keys(current.memory.actionModels).length, 0);
+      }
+      const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+      assert.equal(replay.code, 0, `${suffix}: ${JSON.stringify(replay)}`);
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT', `${suffix}: replay`);
+      results.push({ creditChain, actionModelCount: Object.keys(current.memory.actionModels).length });
+    }
+    assert.deepEqual(results, [
+      { creditChain: false, actionModelCount: 0 },
+      { creditChain: true, actionModelCount: 2 },
+    ]);
   });
 });
 
@@ -1199,6 +1237,19 @@ async function writeOverlapFeedbackAdapterConfig(root, reverseFeedback, creditCh
     args: [OVERLAP_FEEDBACK_ADAPTER_FIXTURE, ...(reverseFeedback ? ['--reverse-feedback'] : []), ...(creditChain ? ['--credit-chain'] : [])],
     adapterId: creditChain ? 'overlap-feedback-adapter-v2' : 'overlap-feedback-adapter-v1',
     worldId: 'overlap-feedback',
+    timeoutMs: 2000,
+  }));
+  return config;
+}
+
+async function writeChainCreditAdapterConfig(root, creditChain) {
+  const suffix = creditChain ? 'chain' : 'ambiguous';
+  const config = path.join(root, `chain-credit-${suffix}.json`);
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : [])],
+    adapterId: `chain-credit-adapter-${suffix}-v1`,
+    worldId: 'chain-credit',
     timeoutMs: 2000,
   }));
   return config;

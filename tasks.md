@@ -1050,3 +1050,10 @@
 - 实现：新增 v29 `creditChain` feedback 协议。WorldPort 在单条 clean feedback 中声明按 pending 持久顺序排列的 `{executionNonce, share}` 成员；Kernel 要求链首等于反馈 nonce、成员仍在 pending、份额闭合为 1、链之间不重叠，并把锚点动作前观测到反馈快照的净变化按份额写入各 action model，输出 `ACTION_CHAIN`。外部协议、Application 投影、账本和 Replay 全链路保留该声明；旧 feedback 与 v28 及更早账本语义不变。
 - 验证：Kernel 动作链合同（含缺失成员 fail-closed）通过；真实外部 JSONL adapter 跨两个独立 CLI Run 结算两个链成员，`ACTION_CHAIN` 份额为 0.75/0.25，Replay `CONSISTENT`；旧延迟反馈合同 9 项与新链合同合计 10 项通过；语法检查通过。
 - 边界：这是领域无关的“归因声明传输与审计”能力，不是 Kernel 对因果真值的自证，也不等于 `ess-arbitrage` 已经收敛。下一步必须在独立延迟效用 WorldPort 中比较无链、正确链、错误链和拒绝链的可观察学习结果，防止把 adapter 自报的份额当成现实事实。
+
+## F-132 独立延迟效用 WorldPort 的学习区分
+
+- 判据：同一外部世界先后执行两个不同能力，第二个动作提交时释放一个只发生一次的延迟效果；无 `creditChain` 分支必须因共享 `stateVersion + intervalId` 结算为两个 `AMBIGUOUS` 且不生成动作模型，正确 `creditChain` 分支必须结算为两条 `ACTION_CHAIN` 并生成两个动作模型。
+- 实现：新增 `test/fixtures/chain-credit-world-adapter.mjs`，通过 `supportsStateDependentActions` 让第一步只能选择 `chain.prepare`、第二步只能选择 `chain.commit`；第三步释放前两步的共同效果。测试同时运行无链/有链两个独立 CLI lab，并逐 lab Replay。
+- 验证：无链结果 `actionModelCount=0`、归因 `[AMBIGUOUS, AMBIGUOUS]`；正确链结果 `actionModelCount=2`、归因 `[ACTION_CHAIN, ACTION_CHAIN]`；两侧延迟效果均为 1、当前第三步仍保留 pending、Replay 均为 `CONSISTENT`。
+- 边界：这第一次证明了动作链字段不只是被存储，而会改变可观察学习结果；它仍只证明“按 WorldPort 声明分配”这一协议行为，不证明声明份额正确，更不等于跨期套利已经收敛。下一步要加入错误份额、缺成员和真实 utility 策略收益对照。
