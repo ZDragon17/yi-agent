@@ -1119,7 +1119,7 @@ function materializePlannerPlan(candidate, rootGoal, valueSpec) {
     throw new Error('Planner proposal must contain a bounded stage list.');
   }
   const base = kernelValueSpec(valueSpec);
-  delete base.valueMode;
+  if (valueSpec.valueMode === undefined) delete base.valueMode;
   const plan = {
     schemaVersion: SCHEMA_VERSION,
     rootGoal: candidate.rootGoal ?? rootGoal,
@@ -1397,7 +1397,7 @@ function kernelValueSpec(valueSpec) {
     weights: [...valueSpec.weights],
     target: [...valueSpec.target],
     tolerance: valueSpec.tolerance ?? 0,
-    valueMode: 'distance-v2',
+    valueMode: valueSpec.valueMode ?? 'distance-v2',
   };
 }
 

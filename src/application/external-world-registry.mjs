@@ -757,7 +757,8 @@ function isValueSpec(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
       value.schemaVersion !== SCHEMA_VERSION || !Number.isSafeInteger(value.observationDimensions) || value.observationDimensions < 1 || value.observationDimensions > 1024 ||
       !Array.isArray(value.weights) || !Array.isArray(value.target) || value.weights.length !== value.observationDimensions || value.target.length !== value.observationDimensions) return false;
-  return value.weights.every((item) => Number.isFinite(item)) && value.target.every((item) => Number.isFinite(item));
+  return (value.valueMode === undefined || value.valueMode === 'signed-v1' || value.valueMode === 'distance-v2') &&
+    value.weights.every((item) => Number.isFinite(item)) && value.target.every((item) => Number.isFinite(item));
 }
 
 function errorName(error) {

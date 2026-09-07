@@ -1030,3 +1030,10 @@
 - R10 终局全合成：延迟 16 + 噪声 ±20% + 对抗电价 + regime flip 同场叠加，96 步 COMPLETED、归因分级（ACTION/AMBIGUOUS/UNRESOLVED）语义正确、AMBIGUOUS 步 learnable=false、重放一致。
 - 课程表 R1-R10 完成状态：R1 缺口曲线（台阶结构）、R2-R4 延迟 2/4/8、R5 v28 窗口扩展、R6 日结算稀疏、R7 噪声、R8 对抗、R9 非平稳、R10 终局。课程表定向回归通过；全量长负载回归仍记录 2 个 durability-matrix 超时抖动，不能表述为无条件全量回归绿。
 - 边界：R10 是 96 步受限验收，不等于长期非平稳策略最优；跨步信用分配（L4-A 负结果）仍是核心开放方向。
+
+## F-129 ValueSpec 的公共效用方向边界
+
+- 反例：R1 跨期套利暴露出，WorldPort 虽然可以提供数值观测和延迟反馈，但 Application 曾把所有显式 `valueMode` 都强制降成 `distance-v2`；需要累计效用方向的世界因此无法把公共价值投影带入 Kernel，`evidence.costYuan` 也不能越过证据隔离边界充当事实。
+- 实现：保留 Kernel 已有的 `signed-v1`/`distance-v2` 两种领域无关价值投影；WorldPort 显式声明的模式经过 ChangeSupervisor、Application、LabStore、Replay 和 STEP boundary 原样固化，默认新运行仍使用 `distance-v2`，非法模式在外部 descriptor 边界 fail-closed。
+- 验证：新增第三方 WorldPort Application→持久化→Replay 回归和 Kernel signed utility 方向回归；Kernel、ChangeSupervisor、Application 三个边界原有 114/114 通过，新增 utility case 1/1，代码语法检查通过，既有 durability matrix 隔离复验 3/3 通过。
+- 边界：这只是让效用方向能够进入共同价值投影，不等于已经完成跨步信用分配；`ess-arbitrage` 尚未因本节点自动宣称套利收敛，下一步必须用独立 WorldPort 反证累计效用与延迟反馈的真实行为。

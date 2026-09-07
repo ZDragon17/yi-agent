@@ -38,7 +38,7 @@ HTML 原型证明了“预期—行动—验证—修正”能够运行，但状
 
 ### FR-2 运行自主闭环
 
-- 输入：已绑定世界的实验空间、步数、可选兼容场景和可选模型提议器；步数为 1～10000 的整数。CLI 的 `--kernel-only` 模式不要求 API 配置，直接使用共同 Kernel 闭环；新运行的 ValueSpec 使用领域无关的 `distance-v2` 带权绝对距离和 `tolerance` 目标可接受带。
+- 输入：已绑定世界的实验空间、步数、可选兼容场景和可选模型提议器；步数为 1～10000 的整数。CLI 的 `--kernel-only` 模式不要求 API 配置，直接使用共同 Kernel 闭环；新运行默认使用领域无关的 `distance-v2` 带权绝对距离和 `tolerance` 目标可接受带，WorldPort 也可显式声明公共的 `signed-v1` 价值模式来表达可累积的效用方向，二者都必须随 STEP 固化并可 Replay。
 - 输出：每步完整记录界、感、存、预、择、动、验、化，以及最终状态和退出原因。
 - 可选推演：`planning.horizon` 为 1～8 的有界模型推演步数，默认 1；仅使用 Kernel 已持久化的经验模型，不把推演状态送入 WorldPort，且必须随 STEP boundary 固化以供 Replay 重建。`kernelLearningVersion: 14` 启用 belief 分支规划：若候选有已验证 belief samples，仅对第一步按最多 8 个样本分支，并且只有分支后的下一步价值相关预期变化真正不同，才以已观测后续决策的不确定性下降计入信息价值；没有样本时严格退化为均值推演。v13 历史 STEP 保留未投影的决策分化规则，v12 保留旧的仅看不确定度规则，12 之前使用 legacy 均值规划。候选与未来模拟能力受固定窗口限制，避免能力面扩大导致平方级展开。
 - 延迟反馈：WorldPort 可在后续 observation 的 `feedback[]` 中，按 `executionNonce` 返回此前动作的结果快照；Kernel 对已接受但 `attributionWindowComplete=false` 且无已知混杂的动作暂存有界 pending credit，基线从动作前观测推导；同一步先结算旧 feedback 时，当前新动作的 pending 基线只叠加已明确归属于旧 nonce 的变化，不把当前动作的部分即时变化算进旧 credit。收到匹配反馈后才学习，混杂反馈只结算为 `AMBIGUOUS` 而不学习；若当前动作与旧反馈同一步产生证据，当前动作保守跳过学习。新 Lab 对未匹配反馈按有界观察机会推进 pending credit age，窗口耗尽时标记 `UNRESOLVED/FEEDBACK_TIMEOUT`、移出 pending 且不学习；晚到反馈不再有可归因 credit。`stateVersion` 与 `intervalId` 只是不透明的 WorldPort 边界标识，宿主不得要求固定字符串格式；反馈仍必须经过版本、区间、向量维度、nonce 唯一性和数量上限校验，并随 STEP/Replay 重建；多个合法反馈按 pending credit 的持久顺序规范化结算，不能让 adapter 的传输顺序改变 `settled`、已结算收据或信念样本；若同一批新反馈共享完全相同的 `stateVersion + intervalId`，v7 将其视为同一观测边界，全部按 `AMBIGUOUS` 结算，即使 adapter 声称 `confounderCount=0`，避免把一份快照复制给多个动作学习。

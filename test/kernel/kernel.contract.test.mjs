@@ -148,6 +148,23 @@ test('step ranks absolute distance to the target and does not reward overshoot',
   assert.equal(result.choice.expectedValue, -0.5);
 });
 
+test('step preserves signed utility direction when a WorldPort selects signed-v1', async () => {
+  const { step } = await loadKernel();
+  const input = {
+    observation: observation([0], 'state-1'),
+    memory: memoryWithModels([
+      [TOKEN_A, { sampleCount: 4, meanDelta: [2], uncertainty: 0 }],
+      [TOKEN_B, { sampleCount: 4, meanDelta: [-1], uncertainty: 0 }],
+    ]),
+    valueSpec: { ...valueSpec([1]), valueMode: 'signed-v1' },
+    capabilities: [capability(TOKEN_A), capability(TOKEN_B)],
+    rngState: rngState(0x1234abcd),
+  };
+
+  assert.equal(step(input).choice.token, TOKEN_A);
+  assert.equal(step({ ...input, valueSpec: valueSpec([1]) }).choice.token, TOKEN_B);
+});
+
 test('step treats the valueSpec tolerance as an acceptable target band', async () => {
   const { step } = await loadKernel();
   const result = step(makeStepInput({

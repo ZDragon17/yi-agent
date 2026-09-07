@@ -2262,6 +2262,7 @@ function isValidValueSpec(value) {
     value.observationDimensions >= 1 && value.observationDimensions <= 1024 &&
     Array.isArray(value.weights) && value.weights.length === value.observationDimensions &&
     Array.isArray(value.target) && value.target.length === value.observationDimensions &&
+    (value.valueMode === undefined || value.valueMode === 'signed-v1' || value.valueMode === 'distance-v2') &&
     value.weights.every((item) => Number.isFinite(item)) && value.target.every((item) => Number.isFinite(item));
 }
 

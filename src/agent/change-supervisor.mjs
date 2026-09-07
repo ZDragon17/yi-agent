@@ -10,7 +10,9 @@ const OBJECTIVE_KEYS = [
   'weights',
   'target',
   'tolerance',
+  'valueMode',
 ];
+const VALUE_MODES = ['signed-v1', 'distance-v2'];
 const OBSERVATION_KEYS = ['schemaVersion', 'stateVersion', 'intervalId', 'vector', 'feedback'];
 const VERIFICATION_KEYS = [
   'schemaVersion',
@@ -558,6 +560,7 @@ function sameObjective(left, right) {
   return left.schemaVersion === right.schemaVersion &&
     left.observationDimensions === right.observationDimensions &&
     left.tolerance === right.tolerance &&
+    left.valueMode === right.valueMode &&
     left.weights.every((value, index) => value === right.weights[index]) &&
     left.target.every((value, index) => value === right.target[index]);
 }
@@ -617,7 +620,8 @@ function normalizeObjective(value, tolerance) {
   if (source.schemaVersion !== SCHEMA_VERSION ||
       !Number.isSafeInteger(source.observationDimensions) ||
       source.observationDimensions < 1 ||
-      source.observationDimensions > MAX_DIMENSIONS) {
+      source.observationDimensions > MAX_DIMENSIONS ||
+      (source.valueMode !== undefined && !VALUE_MODES.includes(source.valueMode))) {
     throw new Error('ChangeSupervisor valueSpec is invalid.');
   }
   const weights = normalizeVector(source.weights, 'valueSpec.weights', source.observationDimensions);
@@ -632,6 +636,7 @@ function normalizeObjective(value, tolerance) {
     weights,
     target,
     tolerance: normalizedTolerance,
+    ...(source.valueMode === undefined ? {} : { valueMode: source.valueMode }),
   };
 }
 

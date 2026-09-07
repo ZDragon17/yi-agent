@@ -141,6 +141,26 @@ test('application service runs and replays two steps through a third-party gener
   });
 });
 
+test('application preserves an explicit utility value mode from a WorldPort', async () => {
+  await withLab(async (lab) => {
+    const registry = createGeneratedRegistry({ valueMode: 'signed-v1' });
+    await initLab({
+      labPath: lab,
+      labId: 'utility-lab',
+      worldId: 'generated',
+      seed: 'utility-seed',
+      registry,
+    });
+
+    const result = await runLab({ labPath: lab, runId: 'run-1', steps: 2, scenario: 'generated', registry });
+    assert.equal(result.status, 'COMPLETED');
+    const storedRun = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const firstStep = storedRun.events.find((event) => event.kind === 'STEP');
+    assert.equal(firstStep.payload.boundary.valueSpec.valueMode, 'signed-v1');
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+  });
+});
+
 test('application service runs diverse built-in worlds through one runtime and replay contract', async () => {
   await withLab(async (root) => {
     const cases = [
@@ -1271,13 +1291,18 @@ function project(current) {
   };
 }
 
-function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelta = 1, target = 2, capabilityCount = 1, worldVersion, worldImplementationDigest } = {}) {
+function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelta = 1, target = 2, capabilityCount = 1, valueMode, worldVersion, worldImplementationDigest } = {}) {
   const worldId = 'generated';
   const scenarioIds = adaptive ? ['baseline', 'shifted'] : ['generated'];
   const capabilityIds = capabilityCount === 1
     ? ['generated.advance']
     : Array.from({ length: capabilityCount }, (_, index) => `generated.advance${index}`);
-  const valueSpec = { observationDimensions: 1, weights: [1], target: [target] };
+  const valueSpec = {
+    observationDimensions: 1,
+    weights: [1],
+    target: [target],
+    ...(valueMode === undefined ? {} : { valueMode }),
+  };
 
   function createWorld(manifest, scenario = scenarioIds[0]) {
     const options = normalizeWorldFactoryOptions({ manifest, scenario }, worldId, scenarioIds);
