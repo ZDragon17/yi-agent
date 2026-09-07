@@ -908,7 +908,7 @@ export async function runContinuous(input) {
       planningHorizon: continuation.planningHorizon,
       planningBranchingMode: continuation.planningBranchingMode,
       candidateHistory,
-      randomizedTrial,
+      ...(randomizedTrial === null ? {} : { randomizedTrial }),
       stepsPerRun: undefined,
       runs: undefined,
       durability,
