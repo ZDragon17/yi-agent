@@ -14,9 +14,10 @@ const ATTESTED_EVIDENCE = process.argv.includes('--attested-evidence');
 const TAMPER_ATTESTATION = process.argv.includes('--tamper-attestation');
 const FABRICATED_ATTESTATION = process.argv.includes('--fabricated-attestation');
 const INDEPENDENT_EVIDENCE = process.argv.includes('--independent-evidence');
+const COLLUDING_CLAIM = process.argv.includes('--colluding-claim');
 const TRUTH_FILE_INDEX = process.argv.indexOf('--truth-file');
 const TRUTH_FILE = TRUTH_FILE_INDEX === -1 ? null : process.argv[TRUTH_FILE_INDEX + 1];
-const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (INDEPENDENT_EVIDENCE ? 'independent' : (ATTESTED_EVIDENCE ? 'attested' : (CAUSAL_EVIDENCE ? 'causal' : (WRONG_SHARE ? 'wrong-share' : 'chain')))) : 'ambiguous'}-v1`;
+const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (INDEPENDENT_EVIDENCE ? (COLLUDING_CLAIM ? 'independent-colluding' : 'independent') : (ATTESTED_EVIDENCE ? 'attested' : (CAUSAL_EVIDENCE ? 'causal' : (WRONG_SHARE ? 'wrong-share' : 'chain')))) : 'ambiguous'}-v1`;
 import readline from 'node:readline';
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -140,7 +141,7 @@ function causalCreditChain(releases, next) {
     basis: INDEPENDENT_EVIDENCE ? 'counterfactual-independent-v1' : (ATTESTED_EVIDENCE ? 'counterfactual-attested-v1' : 'counterfactual-additive-v1'),
     members: releases.map((executionNonce, index) => ({
       executionNonce,
-      delta: [CAUSAL_MISMATCH ? (index === 0 ? 0.5 : 0.25) : (index === 0 ? 0.75 : 0.25)],
+      delta: [COLLUDING_CLAIM ? (index === 0 ? 0.9 : 0.1) : (CAUSAL_MISMATCH ? (index === 0 ? 0.5 : 0.25) : (index === 0 ? 0.75 : 0.25))],
     })),
   };
   if (!ATTESTED_EVIDENCE) return base;

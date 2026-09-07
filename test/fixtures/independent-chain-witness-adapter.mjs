@@ -6,6 +6,8 @@ const VERSION = 1;
 const WORLD_ID = 'chain-credit';
 const BASIS = 'counterfactual-independent-v1';
 const WRONG_WITNESS = process.argv.includes('--wrong-witness');
+const MISSING_MEMBER = process.argv.includes('--missing-member');
+const COLLUDING_CLAIM = process.argv.includes('--colluding-claim');
 const PRIVATE_SEED_HEX = '7701a3964d6e8f70aeb5c4a1b18dd74dfdf7e3594c8bb0c8c27c70dab3fc222b';
 const PUBLIC_KEY_HEX = '906a69053d1348a3c58259b8f9315fcc87f3caeb4487bb546c10ca9fe7d448a6';
 const PRIVATE_KEY_PREFIX_HEX = '302e020100300506032b657004220420';
@@ -51,13 +53,14 @@ function dispatch(op, payload) {
   }
   if (op !== 'evidence') throw new Error(`unsupported operation: ${op}`);
   const feedback = payload.feedback;
+  const members = [
+    { executionNonce: feedback.executionNonce, delta: [COLLUDING_CLAIM ? 0.9 : (WRONG_WITNESS ? 0.5 : 0.75)] },
+    { executionNonce: payload.memberExecutionNonces[1], delta: [COLLUDING_CLAIM ? 0.1 : 0.25] },
+  ];
   const evidence = {
     schemaVersion: VERSION,
     basis: BASIS,
-    members: [
-      { executionNonce: feedback.executionNonce, delta: [WRONG_WITNESS ? 0.5 : 0.75] },
-      { executionNonce: payload.memberExecutionNonces[1], delta: [0.25] },
-    ],
+    members: MISSING_MEMBER ? members.slice(0, 1) : members,
   };
   const signingValue = {
     schemaVersion: VERSION,
