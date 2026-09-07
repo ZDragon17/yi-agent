@@ -320,6 +320,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-141 增加了可选的 `host-csprng-v1` 随机化动作边界：CLI/API 从当前安全动作臂中随机分配并把候选臂、抽样位置和实际选择写入 STEP 与外部转换边界，Replay 只复用已记录分配；随机化提供独立干预所需的宿主分配边界，但不等于因果证明，WorldPort 仍可能虚报结果。应用层 49/49、账本/Replay 76/76、随机化 CLI 2/2 定向回归通过，并验证连续 loop 重启后仍保留该配置；
 - F-142 将该随机化边界推进到真实 JSONL 外部 WorldPort：延迟经济场景的 3 步安全窗口中，宿主在每一步从显式的两个候选动作臂抽样，实际选择、延迟反馈结算和跨进程 Replay 均保持一致（定向回归 1/1）。若安全投影在某一步只剩一个动作臂，随机化实验会明确拒绝，不静默退化成单臂结果；这仍只证明动作分配的传输与回放，不证明 WorldPort 或现实设备真的执行了所选动作。
 - F-143 增加可选的独立 `executionObserver` 边界：主 WorldPort 完成 `transition` 或恢复 `reconcile` 后，宿主向另一个进程只发送 `executionNonce`、`token`、`basedOnVersion` 和前状态摘要；只有观测者返回匹配的前后状态摘要，`OBSERVED` 证据才会写入 STEP，Replay 只校验已持久化证据而不会重新启动观测者。观测不一致在 STEP 前以 `WORLD_ADAPTER_PROTOCOL` fail-closed；主效果可能已经发生，因此仍须按外部未决效果恢复。该边界证明的是可部署的第二进程观测，不是可信硬件、物理事实或抗共谋证明；同一代码、共享数据或共同错误来源仍可一起撒谎。
+- F-144 将独立观测推进到真实临时目录的 OS 可见状态：主 adapter 写入独立 marker，observer 不读取主效果记录，只检查 marker 是否存在并据此绑定后状态摘要；marker 缺失时，即使主 transition 返回 `ACCEPTED`，也会在 STEP 前返回 `WORLD_ADAPTER_PROTOCOL`，主效果记录保留为未决。正向与缺失 marker 的 CLI E2E 定向回归 `2/2`，Replay 仍不启动 observer。OS 文件状态仍由同一用户权限和本机进程控制，不等于 OS 远程证明、硬件观测或物理真相。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

@@ -1132,3 +1132,10 @@
 - 实现：增加可选 `adapter.executionObserver` 配置。观测者必须声明同一 `worldId/worldVersion/capabilityIds/scenarioIds/valueSpec` 且使用不同 `adapterId`；宿主只发送执行 nonce、token、基准版本和前状态摘要，不发送主 `transition` 结果。匹配的 `OBSERVED` 响应必须同时绑定 nonce、token、前摘要和后状态摘要，才注入 STEP 的 `boundary.executionObservation`；幂等恢复的 `reconcile` 也重新经过该边界。旧 adapter 没有该配置时保持兼容，Replay 只验证账本证据，不启动观测者。
 - 验证：独立观测正向、观测不一致拒绝、主机在 STEP 前崩溃后的重新观测恢复与 Replay 共 `3/3`；不一致用例返回 `WORLD_ADAPTER_PROTOCOL`、不追加 STEP，但外部效果计数为 1；LabStore/Replay `76/76`，响应丢失外部 transition 回归 `1/1`。
 - 边界：两个进程只建立了可部署的第二来源，不等于可信硬件、物理事实或抗共谋证明；观测者与主 adapter 共享同一代码、文件或错误来源时仍可共同撒谎。下一步应接入 OS/硬件/人工可审计的外部观测，并在长期随机化效用实验中比较收益，而不是继续让 Kernel 猜测真实因果。
+
+## F-144 OS 可见执行观测
+
+- 反证/缺口：F-143 的 observer 仍可读取主 adapter 写入的效果文件；这只能证明两个进程读取了同一声明源，尚未证明观测边界穿过了宿主 OS 的实际状态。
+- 实现：不增加 Kernel 或学习版本；扩展真实 JSONL 外部 WorldPort 夹具，让主 adapter 在隔离临时目录写入与执行 nonce 绑定的 OS marker，observer 不读取主效果记录，只检查该 marker 并计算确定的后状态摘要。增加 `marker` 存在与 marker 缺失两条 CLI 路径，后者保留主效果记录但禁止 STEP 落账；Replay 只验证已持久化边界，不再次访问 observer。
+- 验证：OS marker 正向路径和“主 transition 接受但 marker 缺失”的 fail-closed 路径 `2/2`；正向 Replay `CONSISTENT`，负向账本 STEP 数为 0 且主效果计数为 1；F-143 的独立观测/恢复回归保持通过。
+- 边界：本实验只证明观测请求穿过了本机临时文件系统这一 OS 可见边界；marker 仍由同一用户权限和本机进程控制，可被有权限的进程伪造或篡改，不是远程 OS attestation、可信硬件或物理事实。下一步应把 observer 放入低权限隔离环境，并接入不由主 adapter 单独控制的审计来源，再测长期随机化收益。

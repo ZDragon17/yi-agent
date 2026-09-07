@@ -852,6 +852,50 @@ test('CLI re-observes an idempotent transition after a host crash before STEP', 
   });
 });
 
+test('CLI binds execution observation to an OS-visible effect instead of the primary effect record', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'execution-observer-os-lab');
+    const effectFile = path.join(root, 'execution-observer-os-effect.json');
+    const osEffectRoot = path.join(root, 'execution-observer-os-root');
+    const adapter = await writeTransitionAdapterConfig(root, effectFile, [], false, {
+      executionObserver: true,
+      osEffectRoot,
+    });
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'execution-observer-os-seed', '--lab-id', 'execution-observer-os-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(await readFile(osExecutionMarkerPath(osEffectRoot), 'utf8'), 'execution:step:1');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('CLI rejects an accepted transition when the independent OS observer cannot find its effect', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'execution-observer-os-missing-lab');
+    const effectFile = path.join(root, 'execution-observer-os-missing-effect.json');
+    const osEffectRoot = path.join(root, 'execution-observer-os-missing-root');
+    const adapter = await writeTransitionAdapterConfig(root, effectFile, [], false, {
+      executionObserver: true,
+      osEffectRoot,
+      skipOsEffect: true,
+    });
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'execution-observer-os-missing-seed', '--lab-id', 'execution-observer-os-missing-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].error.code, 'WORLD_ADAPTER_PROTOCOL');
+    assert.equal(await countLedgerSteps(lab, 'run-1'), 0);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+  });
+});
+
 test('CLI resumes a response-lost external transition through the same execution nonce', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'idempotent-lab');
@@ -1604,15 +1648,21 @@ async function writeNonIdempotentAdapterConfig(root, effectFile) {
   return writeTransitionAdapterConfig(root, effectFile, ['--non-idempotent']);
 }
 
-async function writeTransitionAdapterConfig(root, effectFile, modeArgs, dropResponse = true, { executionObserver = false, observerMismatch = false } = {}) {
+async function writeTransitionAdapterConfig(root, effectFile, modeArgs, dropResponse = true, { executionObserver = false, observerMismatch = false, osEffectRoot = null, skipOsEffect = false } = {}) {
   const config = path.join(root, 'idempotent-adapter.json');
+  const osEffectArgs = osEffectRoot === null
+    ? []
+    : ['--os-effect-root', osEffectRoot, ...(skipOsEffect ? ['--skip-os-effect'] : [])];
+  const observerOsEffectArgs = osEffectRoot === null
+    ? []
+    : ['--os-effect-root', osEffectRoot];
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
-    args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, ...(dropResponse ? ['--drop-response'] : []), ...modeArgs],
+    args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, ...(osEffectRoot === null ? [] : ['--os-effect']), ...(dropResponse ? ['--drop-response'] : []), ...osEffectArgs, ...modeArgs],
     ...(executionObserver ? {
       executionObserver: {
         executable: process.execPath,
-        args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, '--execution-observer', ...(observerMismatch ? ['--observer-mismatch'] : [])],
+        args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, '--execution-observer', ...(osEffectRoot === null ? [] : ['--os-effect']), ...observerOsEffectArgs, ...(observerMismatch ? ['--observer-mismatch'] : [])],
         adapterId: 'idempotent-execution-observer-v1',
         worldId: 'idempotent-transition',
         timeoutMs: 2000,
@@ -1623,6 +1673,10 @@ async function writeTransitionAdapterConfig(root, effectFile, modeArgs, dropResp
     timeoutMs: 2000,
   }));
   return config;
+}
+
+function osExecutionMarkerPath(root, executionNonce = 'execution:step:1') {
+  return path.join(root, 'applied', `${canonicalDigest(executionNonce).slice('sha256:'.length)}.marker`);
 }
 
 async function invokeAdapter(args, request) {

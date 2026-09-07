@@ -1,5 +1,6 @@
 import readline from 'node:readline';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { canonicalDigest } from '../../src/runtime/schema.mjs';
 import { ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
 
@@ -15,12 +16,17 @@ const supportsIdempotentTransitions = !process.argv.includes('--non-idempotent')
 const supportsReconciliation = process.argv.includes('--reconcilable');
 const executionObserver = process.argv.includes('--execution-observer');
 const observerMismatch = process.argv.includes('--observer-mismatch');
+const osEffect = process.argv.includes('--os-effect');
+const skipOsEffect = process.argv.includes('--skip-os-effect');
 const twoActions = process.argv.includes('--two-actions');
 const bothSafe = process.argv.includes('--both-safe');
 const effectFileIndex = process.argv.indexOf('--effect-file');
 const effectFile = effectFileIndex === -1 ? null : process.argv[effectFileIndex + 1] ?? null;
+const osEffectRootIndex = process.argv.indexOf('--os-effect-root');
+const osEffectRoot = osEffectRootIndex === -1 ? null : process.argv[osEffectRootIndex + 1] ?? null;
 
 if (effectFile === null) throw new Error('--effect-file is required');
+if (osEffect && osEffectRoot === null) throw new Error('--os-effect-root is required with --os-effect');
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (line) => {
@@ -118,12 +124,27 @@ function transition(prior, request) {
     effectCount: (stored?.effectCount ?? 0) + 1,
     result,
   }));
+  if (osEffect && !skipOsEffect) writeOsMarker(request.executionNonce);
   if (dropResponse && stored === null) process.exit(17);
   if (holdResponse && stored === null) holdResponseUntilReleased();
   return result;
 }
 
 function observeExecution(payload) {
+  if (osEffect) {
+    const observed = readOsMarker(payload.executionNonce) === payload.executionNonce;
+    return {
+      schemaVersion: 1,
+      status: 'OBSERVED',
+      executionNonce: payload.executionNonce,
+      token: payload.token,
+      basedOnVersion: payload.basedOnVersion,
+      beforeStateDigest: payload.beforeStateDigest,
+      afterStateDigest: observed && !observerMismatch
+        ? canonicalDigest(state(1, payload.executionNonce))
+        : canonicalDigest({ wrong: true }),
+    };
+  }
   const stored = readEffect();
   if (stored === null || stored.result?.receipt?.executionNonce !== payload.executionNonce) {
     throw new Error('execution effect was not observed');
@@ -139,6 +160,25 @@ function observeExecution(payload) {
       ? canonicalDigest({ wrong: true })
       : canonicalDigest(stored.result.nextWorldState),
   };
+}
+
+function writeOsMarker(executionNonce) {
+  const marker = osMarkerPath(executionNonce);
+  mkdirSync(path.dirname(marker), { recursive: true });
+  writeFileSync(marker, executionNonce, 'utf8');
+}
+
+function readOsMarker(executionNonce) {
+  try {
+    return readFileSync(osMarkerPath(executionNonce), 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function osMarkerPath(executionNonce) {
+  return path.join(osEffectRoot, 'applied', `${canonicalDigest(executionNonce).slice('sha256:'.length)}.marker`);
 }
 
 function holdResponseUntilReleased() {
