@@ -161,6 +161,9 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   } catch (error) {
     corrupt('Replay could not observe the world before a STEP.', { sequence: event.sequence, cause: errorName(error) });
   }
+  const randomization = payload.boundary.randomization === undefined
+    ? null
+    : validateRandomization(payload.boundary.randomization, capabilities, event.sequence);
   let difference = compareValue(payload.beforeDigest, canonicalDigest(state), 'payload.beforeDigest', event.sequence)
     ?? compareValue(payload.rngBefore, state.rngState, 'payload.rngBefore', event.sequence);
   if (!difference && payload.boundary.capabilities !== undefined) {
@@ -210,13 +213,15 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       ...(state.changeSupervisor?.strategy === undefined ? {} : { strategy: state.changeSupervisor.strategy }),
       ...(planning === undefined ? {} : { planning }),
     };
-    intent = decision === undefined
+    intent = decision === undefined && randomization === null
       ? kernel.step(stepInput)
       : kernel.stepWithPreference(
           stepInput,
-          decision.applied
+          decision?.applied
             ? { schemaVersion: SCHEMA_VERSION, token: decision.token, required: true }
-            : null,
+            : randomization === null
+              ? null
+              : { schemaVersion: SCHEMA_VERSION, token: randomization.selectedToken, required: true },
         );
   } catch (error) {
     corrupt('Replay kernel.step failed.', { sequence: event.sequence, cause: errorName(error) });
@@ -688,6 +693,22 @@ function isValidValueSpec(value) {
     Array.isArray(value.target) && value.target.length === value.observationDimensions &&
     (value.valueMode === undefined || value.valueMode === 'signed-v1' || value.valueMode === 'distance-v2') &&
     value.weights.every((item) => Number.isFinite(item)) && value.target.every((item) => Number.isFinite(item));
+}
+
+function validateRandomization(value, capabilities, sequence) {
+  if (!isRecord(value) || value.schemaVersion !== SCHEMA_VERSION || value.source !== 'host-csprng-v1' ||
+      !Array.isArray(value.candidateTokens) || value.candidateTokens.length < 2 ||
+      value.candidateTokens.length > 256 || value.candidateTokens.some((token) => !TOKEN_PATTERN.test(token)) ||
+      new Set(value.candidateTokens).size !== value.candidateTokens.length ||
+      !Number.isSafeInteger(value.draw) || value.draw < 0 || value.draw >= value.candidateTokens.length ||
+      value.selectedToken !== value.candidateTokens[value.draw]) {
+    corrupt('STEP randomized assignment is invalid.', { sequence });
+  }
+  const safeTokens = new Set(capabilities.filter((capability) => capability.allowed && capability.safe).map((capability) => capability.token));
+  if (value.candidateTokens.some((token) => !safeTokens.has(token))) {
+    corrupt('STEP randomized assignment contains an unsafe action arm.', { sequence });
+  }
+  return cloneJson(value);
 }
 
 function validateEndEnvelope(end, start, events) {

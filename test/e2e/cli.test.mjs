@@ -62,6 +62,56 @@ test('CLI executes init, run, inspect, and replay as one JSON-envelope chain', a
   });
 });
 
+test('CLI records and replays a host-randomized action boundary', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'randomized-lab');
+    const trial = path.join(root, 'randomized-trial.json');
+    const init = await invoke('init', '--lab', lab, '--world', 'temperature', '--seed', 'cli-randomized-seed', '--json');
+    assert.equal(init.code, 0);
+    await writeFile(trial, JSON.stringify({ schemaVersion: 1, mode: 'host-csprng-v1' }));
+
+    const run = await invoke(
+      'agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '24', '--kernel-only',
+      '--randomized-trial', trial, '--json',
+    );
+    assert.equal(run.code, 0);
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+
+    const store = await LabStore.open({ labPath: lab });
+    const record = await store.readRun('run-1');
+    const steps = record.events.filter((event) => event.kind === 'STEP');
+    const assignments = steps.map((event) => event.payload.boundary.randomization);
+    assert.equal(assignments.length, 24);
+    assert.ok(assignments.every((assignment) => assignment?.source === 'host-csprng-v1'));
+    assert.ok(assignments.every((assignment, index) => assignment.selectedToken === steps[index].payload.choice.token));
+    assert.ok(new Set(assignments.map((assignment) => assignment.selectedToken)).size >= 2);
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--json');
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('CLI rejects a semantically invalid randomized assignment during replay', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'tampered-randomized-lab');
+    const trial = path.join(root, 'randomized-trial.json');
+    assert.equal((await invoke('init', '--lab', lab, '--world', 'temperature', '--seed', 'cli-tampered-randomized-seed', '--json')).code, 0);
+    await writeFile(trial, JSON.stringify({ schemaVersion: 1, mode: 'host-csprng-v1' }));
+    assert.equal((await invoke(
+      'agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--kernel-only',
+      '--randomized-trial', trial, '--json',
+    )).code, 0);
+
+    await rewriteRandomizedAssignment(lab);
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--json');
+    assert.notEqual(replay.code, 0);
+    assert.equal(replay.stdout.length, 1);
+    assert.equal(replay.stdout[0].ok, false);
+    assert.match(replay.stdout[0].error.message, /randomized assignment is invalid/u);
+  });
+});
+
 test('CLI executes and resumes a bounded paired trajectory experiment across processes', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'trajectory-lab');
@@ -1525,6 +1575,39 @@ async function rewriteExternalInputEvidence(lab) {
   events[2] = terminal;
   await writeFile(eventsPath, `${events.map((event) => canonicalJson(event)).join('\n')}\n`);
 
+  const endPath = path.join(lab, 'runs', 'run-1', 'end.json');
+  const end = JSON.parse(await readFile(endPath, 'utf8'));
+  delete end.selfDigest;
+  end.finalEventDigest = terminal.digest;
+  await writeFile(endPath, `${canonicalJson(withSelfDigest(end))}\n`);
+
+  const currentPath = path.join(lab, 'state', 'current.json');
+  const current = JSON.parse(await readFile(currentPath, 'utf8'));
+  delete current.selfDigest;
+  current.eventsDigest = terminal.digest;
+  await writeFile(currentPath, `${canonicalJson(withSelfDigest(current))}\n`);
+}
+
+async function rewriteRandomizedAssignment(lab) {
+  const eventsPath = path.join(lab, 'runs', 'run-1', 'events.jsonl');
+  const storedEvents = (await readFile(eventsPath, 'utf8')).trim().split(/\r?\n/u).map(JSON.parse);
+  const stepIndex = storedEvents.findIndex((event) => event.kind === 'STEP');
+  const step = decodeStoredEvent(storedEvents[stepIndex]);
+  step.payload.boundary.randomization.draw = step.payload.boundary.randomization.candidateTokens.length;
+  storedEvents[stepIndex] = encodeStoredEvent(step);
+  for (let index = stepIndex; index < storedEvents.length; index += 1) {
+    if (index > stepIndex) storedEvents[index].prevDigest = storedEvents[index - 1].digest;
+    if (storedEvents[index].kind === 'STEP') {
+      const decoded = decodeStoredEvent(storedEvents[index]);
+      decoded.digest = digestEvent(decoded);
+      storedEvents[index] = encodeStoredEvent(decoded);
+    } else {
+      storedEvents[index].digest = digestEvent(storedEvents[index]);
+    }
+  }
+  await writeFile(eventsPath, `${storedEvents.map((event) => canonicalJson(event)).join('\n')}\n`);
+
+  const terminal = storedEvents[storedEvents.length - 1];
   const endPath = path.join(lab, 'runs', 'run-1', 'end.json');
   const end = JSON.parse(await readFile(endPath, 'utf8'));
   delete end.selfDigest;

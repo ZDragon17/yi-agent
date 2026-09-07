@@ -1111,3 +1111,10 @@
 - 实现：`canonicalJson`/`canonicalDigest` 支持由调用方提供的单次 `WeakMap` 子树缓存；ActiveRun 只在一次 STEP append 生命周期内复用已完成的规范化字符串，并在内部闭环缺失 `afterDigest` 时由账本边界生成一次。公开 `run.append()` 仍要求完整的 `afterDigest`，摘要算法、事件格式、Replay 与外部输入校验不变。
 - 验证：F-140 NFR 2/2 通过；应用层 47/47、LabStore/Replay 76/76 通过；新增内部补摘要与公开缺字段拒绝回归。当前未宣称 474 项全量一次性全绿。
 - 边界：这是可证明等价的局部序列化优化，不增加事实来源、不提升因果可辨识性，也不改变《易经》底层闭环；下一步仍应在独立 WorldPort、模型在环和更大 Memory 规模下继续测量。
+
+## F-141 可回放的宿主随机化动作边界
+
+- 反证：F-139 已确认两个独立见证者仍可能共同确认同一错误因果声明；而现有 paired policy 只比较预先固定的策略，不能为外部 WorldPort 提供由宿主控制的随机动作分配，因此无法进入真正的随机化对照边界。
+- 实现：新增可选 `randomizedTrial: { schemaVersion: 1, mode: 'host-csprng-v1' }`，宿主从 manifest 声明且当前 `allowed && safe` 的至少两个动作臂中使用 CSPRNG 抽样；每个 STEP 的 `boundary.randomization` 固化候选 token、抽样位置和 `selectedToken`，Kernel 以 required preference 执行该选择，外部转换恢复边界同步保留该分配。CLI 通过 `--randomized-trial PATH` 暴露同一能力；连续 loop 恢复时禁止静默更换配置。
+- 验证：应用层 `49/49`、LabStore/Replay `76/76` 通过；随机化 CLI happy path 与跨 CLI Replay `2/2` 通过；在重算 digest 链后篡改 `draw`，Replay 仍 fail-closed 拒绝；连续 loop 跨 Run/重启仍保留随机化配置。正常非随机化运行保持兼容。
+- 边界：宿主随机分配只是可识别因果实验的必要条件，不证明 WorldPort 真实执行了所选动作，也不证明反馈真实；下一步仍需可信执行器或宿主/物理观测，并在同一延迟效用 WorldPort 中比较不同随机臂的长期收益。

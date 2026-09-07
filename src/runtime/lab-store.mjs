@@ -1814,6 +1814,7 @@ function validateLoopContinuation(value, field, corruptOnFailure = false) {
       !Number.isSafeInteger(value.stepsPerRun) || value.stepsPerRun < 1 || value.stepsPerRun > 10_000 ||
       (value.planningHorizon !== undefined && (!Number.isSafeInteger(value.planningHorizon) || value.planningHorizon < 1 || value.planningHorizon > MAX_PLANNING_HORIZON)) ||
       (value.planningBranchingMode !== undefined && !PLANNING_BRANCHING_MODES.includes(value.planningBranchingMode)) ||
+      (value.randomizedTrial !== undefined && !isValidRandomizedTrialContinuation(value.randomizedTrial)) ||
       (value.mode !== 'finite' && value.mode !== 'forever') ||
       (value.mode === 'finite' && (!Number.isSafeInteger(value.maxRuns) || value.maxRuns < 1 || value.maxRuns > 10_000 || value.runIndex >= value.maxRuns)) ||
       (value.mode === 'forever' && value.maxRuns !== undefined)) {
@@ -1827,9 +1828,20 @@ function validateLoopContinuation(value, field, corruptOnFailure = false) {
     stepsPerRun: value.stepsPerRun,
     ...(value.planningHorizon === undefined ? {} : { planningHorizon: value.planningHorizon }),
     ...(value.planningBranchingMode === undefined ? {} : { planningBranchingMode: value.planningBranchingMode }),
+    ...(value.randomizedTrial === undefined ? {} : { randomizedTrial: cloneJson(value.randomizedTrial) }),
     mode: value.mode,
     ...(value.maxRuns === undefined ? {} : { maxRuns: value.maxRuns }),
   };
+}
+
+function isValidRandomizedTrialContinuation(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    value.schemaVersion === SCHEMA_VERSION && value.mode === 'host-csprng-v1' &&
+    Array.isArray(value.candidateCapabilityIds) && value.candidateCapabilityIds.length >= 2 &&
+    value.candidateCapabilityIds.length <= 256 &&
+    value.candidateCapabilityIds.every((capabilityId) => (
+      typeof capabilityId === 'string' && capabilityId.length > 0 && capabilityId.length <= 4096
+    )) && new Set(value.candidateCapabilityIds).size === value.candidateCapabilityIds.length;
 }
 
 function inferLoopPlanningBranchingMode(group) {
@@ -1881,6 +1893,7 @@ function loopContract(continuation, fallbackPlanningBranchingMode = 'legacy-v1')
     stepsPerRun: continuation.stepsPerRun,
     ...(continuation.planningHorizon === undefined ? {} : { planningHorizon: continuation.planningHorizon }),
     planningBranchingMode: continuation.planningBranchingMode ?? fallbackPlanningBranchingMode,
+    ...(continuation.randomizedTrial === undefined ? {} : { randomizedTrial: cloneJson(continuation.randomizedTrial) }),
     mode: continuation.mode,
     ...(continuation.maxRuns === undefined ? {} : { maxRuns: continuation.maxRuns }),
   };

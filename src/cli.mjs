@@ -200,12 +200,16 @@ async function dispatchAgent(options) {
   const goalPlan = options['goal-plan'] === undefined
     ? undefined
     : await readGoalPlanFile(options['goal-plan']);
+  const randomizedTrial = options['randomized-trial'] === undefined
+    ? undefined
+    : await readRandomizedTrialFile(requiredAbsolute(options, 'randomized-trial'));
   if (options.agentOperation === 'loop') {
     if (options.resume === true && (
       options.steps !== undefined || options.runs !== undefined || options.forever === true ||
       options.scenario !== undefined || options.goal !== undefined || options['goal-plan'] !== undefined ||
       options['auto-plan'] === true || options['run-id'] !== undefined ||
       options['max-cycles'] !== undefined || options['stagnation-limit'] !== undefined ||
+      options['randomized-trial'] !== undefined ||
       options['planning-horizon'] !== undefined
     )) {
       throw cliError('INVALID_INPUT', '--resume cannot be combined with loop configuration options.', {
@@ -234,6 +238,7 @@ async function dispatchAgent(options) {
         autoRecover: options['auto-recover'] === true,
         goal: options.goal,
         goalPlan,
+        randomizedTrial,
         durability: 'checkpoint',
         maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
         stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
@@ -266,6 +271,7 @@ async function dispatchAgent(options) {
     autoPlan: options['auto-plan'] === true,
     goal: options.goal,
     goalPlan,
+    randomizedTrial,
     maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
     stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
   });
@@ -363,7 +369,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'goal', 'goal-plan', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'goal', 'goal-plan', 'randomized-trial', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     api: ['apiOperation'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
@@ -438,6 +444,20 @@ async function readGoalPlanFile(filePath) {
     return JSON.parse(raw);
   } catch {
     throw cliError('INVALID_INPUT', 'Goal plan file is not valid JSON.', { filePath: resolvedPath }, 64);
+  }
+}
+
+async function readRandomizedTrialFile(filePath) {
+  let raw;
+  try {
+    raw = await readFile(filePath, 'utf8');
+  } catch (error) {
+    throw Object.assign(new Error('Randomized trial file could not be read.'), { code: error?.code ?? 'EIO', context: { filePath } });
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw cliError('INVALID_INPUT', 'Randomized trial file is not valid JSON.', { filePath }, 64);
   }
 }
 
@@ -598,7 +618,7 @@ function helpText() {
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
-    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--planning-horizon N] [--kernel-only] [--model-adapter CONFIG] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
+    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--planning-horizon N] [--kernel-only] [--model-adapter CONFIG] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--randomized-trial PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
     '  yi-agent agent loop --lab PATH --resume [--auto-recover] [--kernel-only] [--adapter CONFIG] [--json]',
     '',
     '实验室:',

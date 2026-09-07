@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { INTERNAL_RUN_APPEND, LabStore, LabStoreError } from '../runtime/lab-store.mjs';
 import { candidateDigest, canonicalDigest, canonicalJson, cloneJson, MAX_CANDIDATE_HISTORY, MAX_MODEL_PROPOSAL_BYTES, SCHEMA_VERSION } from '../runtime/schema.mjs';
 import { buildCandidateOutcome } from '../runtime/candidate-evidence.mjs';
@@ -128,6 +128,7 @@ export async function runLab(input) {
   const store = await LabStore.open({ labPath });
   const manifest = store.manifest;
   registry.assertManifest(manifest);
+  const randomizedTrial = normalizeRandomizedTrial(source.randomizedTrial, manifest);
   const spec = registry.valueSpec(manifest.worldId);
   const world = registry.createWorld(manifest, scenario);
   const actionManifest = worldManifest(manifest);
@@ -344,6 +345,9 @@ export async function runLab(input) {
       ? projectModelObservation(observedBefore)
       : null;
     const capabilities = persistedRecoveryCapabilities ?? world.actions(actionManifest, state.worldState);
+    const randomization = recoveredDecisionBoundary?.randomization === undefined
+      ? (randomizedTrial === null ? null : createRandomization(randomizedTrial, capabilities))
+      : validateRandomization(recoveredDecisionBoundary.randomization, capabilities);
     // The state has already crossed the store/kernel validation boundary on
     // entry and every prior supervisor transition returns a normalized value.
     // Avoid re-normalizing this immutable internal value on every long-run
@@ -438,7 +442,9 @@ export async function runLab(input) {
       learningVersion: KERNEL_LEARNING_VERSION,
       ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
       planning: planningEvidence(planningHorizon, planningContextMode, planningBranchingMode),
-    }, preferenceFor(retryPreference ?? modelDecision, retryPreference !== null));
+    }, randomization === null
+      ? preferenceFor(retryPreference ?? modelDecision, retryPreference !== null)
+      : { schemaVersion: SCHEMA_VERSION, token: randomization.selectedToken, required: true });
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
       terminalRequested = true;
@@ -503,6 +509,7 @@ export async function runLab(input) {
           valueSpec: stepValueSpec,
           supervisor,
           goalActivation,
+          ...(randomization === null ? {} : { randomization }),
         },
         ...(committedPolicyEvidence === null ? {} : { policyEvidence: committedPolicyEvidence }),
       });
@@ -630,6 +637,7 @@ export async function runLab(input) {
           ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
           ...(goalActivation === null ? {} : { goalActivation }),
           ...(goalReplan === null ? {} : { goalReplan }),
+          ...(randomization === null ? {} : { randomization }),
           externalInputsDigest: canonicalDigest(externalInputs),
         },
         beforeObservation,
@@ -784,7 +792,8 @@ export async function runContinuous(input) {
     source.runs !== undefined || source.forever !== undefined || source.stepsPerRun !== undefined || source.steps !== undefined ||
     source.runId !== undefined || source.scenario !== undefined || source.goal !== undefined || source.goalPlan !== undefined ||
     source.autoPlan === true || source.maxCycles !== undefined || source.stagnationLimit !== undefined ||
-    source.planningHorizon !== undefined || source.planningBranchingMode !== undefined
+    source.planningHorizon !== undefined || source.planningBranchingMode !== undefined ||
+    source.randomizedTrial !== undefined
   )) {
     throw new LabStoreError('INVALID_INPUT', 'resume cannot be combined with loop configuration.', {
       fields: ['resume', 'loop configuration'],
@@ -798,6 +807,7 @@ export async function runContinuous(input) {
   }
   const requestedRuns = requireBoundedOptional(source.runs, 1, 10_000, 'runs') ?? 1;
   let continuation;
+  let randomizedTrial = null;
   if (source.resume === true) {
     const labPath = requireText(source.labPath, 'labPath');
     const store = await LabStore.open({ labPath });
@@ -821,9 +831,18 @@ export async function runContinuous(input) {
         results: [],
       };
     }
+    randomizedTrial = continuation.randomizedTrial ?? null;
   } else {
     const stepsPerRun = requireSteps(source.stepsPerRun ?? source.steps);
     const store = await LabStore.open({ labPath: requireText(source.labPath, 'labPath') });
+    randomizedTrial = normalizeRandomizedTrial(source.randomizedTrial, store.manifest);
+    const persistedRandomizedTrial = randomizedTrial === null
+      ? null
+      : {
+          schemaVersion: randomizedTrial.schemaVersion,
+          mode: randomizedTrial.mode,
+          candidateCapabilityIds: [...randomizedTrial.candidateCapabilityIds],
+        };
     try {
       const existing = await store.readLoopContinuation();
       if (existing.status === 'ACTIVE') {
@@ -843,6 +862,7 @@ export async function runContinuous(input) {
       mode: forever ? 'forever' : 'finite',
       planningHorizon: requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon') ?? 1,
       planningBranchingMode: source.planningBranchingMode ?? 'tree-v1',
+      ...(persistedRandomizedTrial === null ? {} : { randomizedTrial: persistedRandomizedTrial }),
       ...(forever ? {} : { maxRuns: requestedRuns }),
     };
   }
@@ -888,6 +908,7 @@ export async function runContinuous(input) {
       planningHorizon: continuation.planningHorizon,
       planningBranchingMode: continuation.planningBranchingMode,
       candidateHistory,
+      randomizedTrial,
       stepsPerRun: undefined,
       runs: undefined,
       durability,
@@ -1470,6 +1491,72 @@ function runSummary(runId, status, stopReason, steps, metrics) {
       ...(metrics.evidence ?? {}),
     },
   };
+}
+
+function normalizeRandomizedTrial(value, manifest) {
+  if (value === undefined) return null;
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== SCHEMA_VERSION || value.mode !== 'host-csprng-v1') {
+    throw new LabStoreError('INVALID_INPUT', 'randomizedTrial must use host-csprng-v1.', { field: 'randomizedTrial' });
+  }
+  const entries = manifest.tokenMap?.entries;
+  if (!Array.isArray(entries) || entries.length < 2) {
+    throw new LabStoreError('CONFLICT', 'The WorldPort exposes fewer than two action arms.', { field: 'randomizedTrial' });
+  }
+  const available = new Map(entries.map((entry) => [entry.capabilityId, entry.token]));
+  const requested = value.candidateCapabilityIds === undefined
+    ? [...available.keys()]
+    : value.candidateCapabilityIds;
+  if (!Array.isArray(requested) || requested.length < 2 || requested.length > 256 ||
+      requested.some((item) => typeof item !== 'string' || item.length === 0 || !available.has(item)) ||
+      new Set(requested).size !== requested.length) {
+    throw new LabStoreError('INVALID_INPUT', 'randomizedTrial.candidateCapabilityIds must name at least two unique manifest capabilities.', {
+      field: 'randomizedTrial.candidateCapabilityIds',
+    });
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    mode: value.mode,
+    candidateCapabilityIds: [...requested],
+    candidateTokens: requested.map((capabilityId) => available.get(capabilityId)),
+  };
+}
+
+function createRandomization(trial, capabilities) {
+  const candidates = capabilities
+    .filter((capability) => capability.allowed && capability.safe && trial.candidateTokens.includes(capability.token))
+    .map((capability) => capability.token);
+  if (candidates.length < 2) {
+    throw new LabStoreError('CONFLICT', 'A randomized trial requires at least two currently safe action arms.', {
+      field: 'randomizedTrial',
+    });
+  }
+  const draw = randomInt(candidates.length);
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    source: 'host-csprng-v1',
+    candidateTokens: candidates,
+    draw,
+    selectedToken: candidates[draw],
+  };
+}
+
+function validateRandomization(value, capabilities) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== SCHEMA_VERSION || value.source !== 'host-csprng-v1' ||
+      !Array.isArray(value.candidateTokens) || value.candidateTokens.length < 2 ||
+      value.candidateTokens.length > 256 ||
+      value.candidateTokens.some((token) => !TOKEN_PATTERN.test(token)) ||
+      new Set(value.candidateTokens).size !== value.candidateTokens.length ||
+      !Number.isSafeInteger(value.draw) || value.draw < 0 || value.draw >= value.candidateTokens.length ||
+      value.selectedToken !== value.candidateTokens[value.draw]) {
+    throw new LabStoreError('CONFLICT', 'Persisted randomized assignment is invalid.', { field: 'randomizedTrial' });
+  }
+  const safeTokens = new Set(capabilities.filter((capability) => capability.allowed && capability.safe).map((capability) => capability.token));
+  if (value.candidateTokens.some((token) => !safeTokens.has(token))) {
+    throw new LabStoreError('CONFLICT', 'Persisted randomized assignment is no longer safe.', { field: 'randomizedTrial' });
+  }
+  return cloneJson(value);
 }
 
 function requireRecord(value, field) {

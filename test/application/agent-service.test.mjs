@@ -43,6 +43,27 @@ test('application service runs a real closed loop and replays it without changin
   });
 });
 
+test('application records host-randomized action arms and Replay reuses the recorded assignment', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'randomized-trial-lab', worldId: 'temperature', seed: 'randomized-trial-seed' });
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 24,
+      randomizedTrial: { schemaVersion: 1, mode: 'host-csprng-v1' },
+    });
+    assert.equal(result.status, 'COMPLETED');
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const steps = run.events.filter((event) => event.kind === 'STEP');
+    const assignments = steps.map((event) => event.payload.boundary.randomization);
+    assert.equal(assignments.length, 24);
+    assert.ok(assignments.every((assignment) => assignment?.source === 'host-csprng-v1'));
+    assert.ok(assignments.every((assignment, index) => assignment.selectedToken === steps[index].payload.choice.token));
+    assert.ok(new Set(assignments.map((assignment) => assignment.selectedToken)).size >= 2);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
 test('application service continues the verified state across run boundaries', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'continuity-lab', worldId: 'temperature', seed: 'continuity-seed' });
@@ -433,6 +454,32 @@ test('continuous runner preserves one state across multiple committed run bounda
     assert.equal(current.kernelStep, 10);
     for (const run of result.results) {
       assert.equal((await replayLab({ labPath: lab, runId: run.runId })).verdict, 'CONSISTENT');
+    }
+  });
+});
+
+test('continuous resume preserves randomized action arms across Run boundaries', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'randomized-loop-lab', worldId: 'temperature', seed: 'randomized-loop-seed' });
+    let checks = 0;
+    const randomizedTrial = { schemaVersion: 1, mode: 'host-csprng-v1' };
+    const first = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      forever: true,
+      randomizedTrial,
+      shouldStop: () => checks++ > 0,
+      runId: 'loop',
+    });
+    checks = 0;
+    const resumed = await runContinuous({ labPath: lab, resume: true, shouldStop: () => checks++ > 0 });
+    const store = await LabStore.open({ labPath: lab });
+    for (const runId of [first.results[0].runId, resumed.results[0].runId]) {
+      const run = await store.readRun(runId);
+      const step = run.events.find((event) => event.kind === 'STEP');
+      assert.equal(step.payload.boundary.randomization.source, 'host-csprng-v1');
+      assert.equal(step.payload.boundary.randomization.selectedToken, step.payload.choice.token);
+      assert.equal((await replayLab({ labPath: lab, runId })).verdict, 'CONSISTENT');
     }
   });
 });
