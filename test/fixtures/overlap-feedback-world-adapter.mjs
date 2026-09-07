@@ -5,6 +5,7 @@ import { ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
 const WORLD_ID = 'overlap-feedback';
 const CAPABILITY_ID = 'overlap.advance';
 const REVERSE_FEEDBACK = process.argv.includes('--reverse-feedback');
+const CREDIT_CHAIN = process.argv.includes('--credit-chain');
 const capabilityToken = (payload) => payload.manifest.tokenMap.entries[0].token;
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -28,9 +29,9 @@ rl.on('line', (line) => {
 function dispatch(op, payload) {
   if (op === 'hello') {
     const descriptor = {
-      adapterId: 'overlap-feedback-adapter-v1',
+      adapterId: CREDIT_CHAIN ? 'overlap-feedback-adapter-v2' : 'overlap-feedback-adapter-v1',
       worldId: WORLD_ID,
-      worldVersion: 'overlap-feedback-1',
+      worldVersion: `overlap-feedback-1${CREDIT_CHAIN ? '-credit-chain-v1' : ''}`,
       capabilityIds: [CAPABILITY_ID],
       scenarioIds: ['overlap'],
       valueSpec: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [2] },
@@ -66,16 +67,32 @@ function transition(prior, request) {
     ...(Array.isArray(prior.usedExecutionNonces) ? prior.usedExecutionNonces.slice(-7) : []),
     request.executionNonce,
   ]);
-  const feedback = releases.map((executionNonce) => ({
-    schemaVersion: 1,
-    executionNonce,
-    stateVersion: next.stateVersion,
-    intervalId: `${WORLD_ID}:interval:${next.revision}`,
-    vector: [next.value],
-    // Deliberately claims clean attribution. The Kernel must reject the
-    // shared observation boundary without trusting this declaration alone.
-    confounderCount: 0,
-  }));
+  const feedback = CREDIT_CHAIN
+    ? (releases.length === 0 ? [] : [{
+        schemaVersion: 1,
+        executionNonce: releases[0],
+        stateVersion: next.stateVersion,
+        intervalId: `${WORLD_ID}:interval:${next.revision}`,
+        vector: [next.value],
+        confounderCount: 0,
+        creditChain: {
+          schemaVersion: 1,
+          members: releases.map((executionNonce, index) => ({
+            executionNonce,
+            share: index === 0 ? 0.75 : 0.25,
+          })),
+        },
+      }])
+    : releases.map((executionNonce) => ({
+        schemaVersion: 1,
+        executionNonce,
+        stateVersion: next.stateVersion,
+        intervalId: `${WORLD_ID}:interval:${next.revision}`,
+        vector: [next.value],
+        // Deliberately claims clean attribution. The Kernel must reject the
+        // shared observation boundary without trusting this declaration alone.
+        confounderCount: 0,
+      }));
   if (REVERSE_FEEDBACK) feedback.reverse();
   return {
     nextWorldState: next,

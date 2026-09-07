@@ -121,6 +121,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 证据闭环：行动前预期、行动回执、复观、验证、学习；
 - 延迟反馈归因：对已接受但尚未完成归因窗口的动作，按 executionNonce 持久保存有界 pending credit；后续 WorldPort 可返回匹配反馈，Kernel 只在证据闭合后学习，混杂反馈不会污染动作模型；该机制已用跨独立 CLI 进程、跨 Run 和 Replay 的外部 WorldPort 回归验证；
 - 反馈投递幂等：在有界已结算收据窗口内，完全相同的重复 feedback 可跨 Run/进程安全忽略；同 nonce 的不同内容仍会 fail-closed，避免把消息重放或篡改变成新的学习样本；
+- 显式动作链信用（`kernelLearningVersion: 29`）：WorldPort 可在单条 clean feedback 上声明 `creditChain:{schemaVersion:1,members:[{executionNonce,share}]}`，Kernel 要求链以反馈 nonce 为锚、成员按 pending 顺序排列、全部仍在 pending、份额闭合为 1 且不与同批反馈重叠；它把锚点动作前到反馈快照的净变化按份额分配给整条动作链，输出 `ACTION_CHAIN` 并随 Replay 重建。缺成员、重复/乱序、份额不闭合、混杂或共享观测边界均 fail-closed/不学习；这只是 WorldPort 的结构化因果声明，不是 Kernel 对真实因果的自证，旧 feedback 仍按 v28 及更早语义运行；
 - 反馈顺序规范化：同一批合法的 nonce-bound feedback 无论由不同 WorldPort 按何种传输顺序返回，Kernel 都按 pending credit 的持久顺序结算，保持 `settled`、已结算收据和信念样本跨进程/Replay 一致；这不等于允许多个动作同时生效，无法归属的重叠变化仍必须由 WorldPort 标记为混杂；
 - 隐藏状态系统反例：`test/fixtures/hidden-state-world-adapter.mjs` 只向 Kernel 暴露一维 `value`，把 `hiddenMode` 和阶段机留在 WorldPort 内部；同一可见目标关系下，`advance` 实际产生 `-1/+1` 两种结果。跨两个独立 CLI Run 后，`beliefModels` 保留两种后验、外部效果不重复，两个 Run 均可 Replay 为 `CONSISTENT`。这证明的是当前信念记忆在该变化轴上没有把未知分支压成单一事实，不是隐藏状态识别或通用智能证明；
 - 隐藏状态可辨识性边界：当两个隐藏动力学的公开输入完全相同时，Kernel 必须先做同一选择；只有收到不同的可验证结果后，经验模型和后续策略才允许分化。该不变量由 `test/kernel/belief-memory.test.mjs` 固化，防止把隐藏字段、模型猜测或领域标签冒充为事实；
@@ -305,6 +306,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - 独立的测试世界和判别器；
 - 更严格的归因、信用分配和长期记忆机制；
 - F-129/F-130 已证明：`signed-v1` 效用方向可以安全穿过 WorldPort→Kernel→账本→Replay，但仅开放价值模式并不能让跨期套利的 horizon 8 优于 horizon 1；真正未解决的是动作链信用分配；
+- F-131 已把动作链信用收窄为一个可审计协议边界并完成跨进程 Replay 验收，但尚未证明它能让 `ess-arbitrage` 收敛；下一步要检验 WorldPort 的链声明在真实延迟效用场景中是否提供可区分的学习增益；
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

@@ -336,7 +336,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
         postObservation,
         verification,
         hasFreshFeedbackSettlement: learningVersion >= KERNEL_LEARNING_VERSIONS.supervisorFeedbackAlignment &&
-          update.settled?.some((item) => item.attribution === 'ACTION' || item.attribution === 'AMBIGUOUS') === true,
+          update.settled?.some((item) => item.attribution === 'ACTION' || item.attribution === 'ACTION_CHAIN' || item.attribution === 'AMBIGUOUS') === true,
       });
       if (nextSupervisor.status === 'REPLAN_REQUIRED') {
         if (payload.boundary.goalReplan !== undefined) {

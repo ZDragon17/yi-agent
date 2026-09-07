@@ -393,6 +393,35 @@ test('CLI refuses shared-boundary multi-action credit across adapter restarts an
   });
 });
 
+test('CLI applies an explicit action-chain credit across adapter restarts and replays it', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'credit-chain-lab');
+    const adapter = await writeOverlapFeedbackAdapterConfig(root, false, true);
+    const init = await invoke('init', '--lab', lab, '--world', 'overlap-feedback', '--seed', 'credit-chain-seed', '--lab-id', 'credit-chain-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+    const firstRun = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--scenario', 'overlap', '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(firstRun.code, 0);
+    const secondRun = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'overlap', '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(secondRun.code, 0);
+
+    const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+    assert.equal(current.worldState.value, 1);
+    assert.equal(current.memory.pendingCredits.length, 1);
+    assert.equal(current.memory.settledFeedback.length, 1);
+    assert.equal(Object.keys(current.memory.actionModels).length, 1);
+
+    const step = decodeStoredEvent(
+      (await readFile(path.join(lab, 'runs', 'run-2', 'events.jsonl'), 'utf8'))
+        .trim().split(/\r?\n/u).map(JSON.parse).find((event) => event.kind === 'STEP'),
+    );
+    assert.deepEqual(step.payload.update.settled.map((item) => item.attribution), ['ACTION_CHAIN', 'ACTION_CHAIN']);
+    assert.deepEqual(step.payload.update.settled.map((item) => item.creditShare), [0.75, 0.25]);
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
 test('CLI closes a missing-feedback window without learning and survives repeated restarts', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'missing-feedback-lab');
@@ -400,7 +429,7 @@ test('CLI closes a missing-feedback window without learning and survives repeate
     const init = await invoke('init', '--lab', lab, '--world', 'delayed-feedback', '--seed', 'missing-feedback-seed', '--lab-id', 'missing-feedback-lab', '--adapter', adapter, '--json');
     assert.equal(init.code, 0);
 
-    for (let index = 1; index <= 10; index += 1) {
+    for (let index = 1; index <= 18; index += 1) {
       const run = await invoke('run', '--lab', lab, '--run-id', `run-${index}`, '--steps', '1', '--scenario', 'delayed', '--adapter', adapter, '--json');
       assert.equal(run.code, 0, `run-${index}`);
       assert.equal(run.stdout[0].data.status, 'COMPLETED', `run-${index} status`);
@@ -410,19 +439,19 @@ test('CLI closes a missing-feedback window without learning and survives repeate
     }
 
     const timeoutStep = decodeStoredEvent(
-      (await readFile(path.join(lab, 'runs', 'run-9', 'events.jsonl'), 'utf8'))
+      (await readFile(path.join(lab, 'runs', 'run-17', 'events.jsonl'), 'utf8'))
         .trim().split(/\r?\n/u).map(JSON.parse).find((event) => event.kind === 'STEP'),
     );
     assert.equal(timeoutStep.payload.update.settled[0].attribution, 'UNRESOLVED');
     assert.equal(timeoutStep.payload.update.settled[0].reason, 'FEEDBACK_TIMEOUT');
     assert.equal(timeoutStep.payload.update.settled[0].learnable, false);
     assert.equal(timeoutStep.payload.update.nextMemory.actionModels && Object.keys(timeoutStep.payload.update.nextMemory.actionModels).length, 0);
-    assert.equal(timeoutStep.payload.update.nextMemory.pendingCredits.length, 8);
+    assert.equal(timeoutStep.payload.update.nextMemory.pendingCredits.length, 16);
 
     const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
-    assert.equal(current.memory.pendingCreditPolicy.maxAge, 8);
-    assert.equal(current.memory.pendingCredits.length, 8);
-    assert.equal(current.worldState.revision, 10);
+    assert.equal(current.memory.pendingCreditPolicy.maxAge, 16);
+    assert.equal(current.memory.pendingCredits.length, 16);
+    assert.equal(current.worldState.revision, 18);
   });
 });
 
@@ -1161,13 +1190,14 @@ async function writeDelayedFeedbackAdapterConfig(root, repeatFeedback = false, d
   return config;
 }
 
-async function writeOverlapFeedbackAdapterConfig(root, reverseFeedback) {
+async function writeOverlapFeedbackAdapterConfig(root, reverseFeedback, creditChain = false) {
   const suffix = reverseFeedback ? 'reverse' : 'identity';
-  const config = path.join(root, `overlap-feedback-${suffix}.json`);
+  const mode = creditChain ? `${suffix}-credit-chain` : suffix;
+  const config = path.join(root, `overlap-feedback-${mode}.json`);
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
-    args: [OVERLAP_FEEDBACK_ADAPTER_FIXTURE, ...(reverseFeedback ? ['--reverse-feedback'] : [])],
-    adapterId: 'overlap-feedback-adapter-v1',
+    args: [OVERLAP_FEEDBACK_ADAPTER_FIXTURE, ...(reverseFeedback ? ['--reverse-feedback'] : []), ...(creditChain ? ['--credit-chain'] : [])],
+    adapterId: creditChain ? 'overlap-feedback-adapter-v2' : 'overlap-feedback-adapter-v1',
     worldId: 'overlap-feedback',
     timeoutMs: 2000,
   }));

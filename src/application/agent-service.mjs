@@ -565,7 +565,7 @@ export async function runLab(input) {
       beforeObservation,
       postObservation,
       verification,
-      hasFreshFeedbackSettlement: update.settled?.some((item) => item.attribution === 'ACTION' || item.attribution === 'AMBIGUOUS') === true,
+      hasFreshFeedbackSettlement: update.settled?.some((item) => item.attribution === 'ACTION' || item.attribution === 'ACTION_CHAIN' || item.attribution === 'AMBIGUOUS') === true,
       trusted: true,
     });
     let goalReplan = null;
@@ -1381,6 +1381,15 @@ function projectObservation(observation) {
       intervalId: item.intervalId,
       vector: [...item.vector],
       confounderCount: item.confounderCount,
+      ...(item.creditChain === undefined ? {} : {
+        creditChain: {
+          schemaVersion: item.creditChain.schemaVersion,
+          members: item.creditChain.members.map((member) => ({
+            executionNonce: member.executionNonce,
+            share: member.share,
+          })),
+        },
+      }),
     }));
   }
   return projected;

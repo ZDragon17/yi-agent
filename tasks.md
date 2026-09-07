@@ -1043,3 +1043,10 @@
 - 实验：`ess-arbitrage --utility-mode` 在观测向量中增加累计效用通道，并以 `signed-v1` 绑定 WorldPort 的效用方向；同一隔离实验分别运行 horizon 1 与 horizon 8，完整经过 CLI、账本和 Replay。
 - 结果：24 步预注册短窗口中，utility-only 的 horizon 8 没有优于 horizon 1（本机复验分别为 3580.5 与 3445.5 的电费），因此“只开放 signed-v1 就能解决跨期套利”的假设被否定；utility 通道本身和 Replay 仍为 2/2 通过。
 - 边界：负结果把缺口进一步收窄到动作链信用分配/多步效用预测，而不是价值模式丢失；下一步必须让延迟收益在有界历史动作链中获得可审计、可重放的信用，不得只调权重或扩大规划深度。
+
+## F-131 显式动作链信用的公共边界
+
+- 反证：F-130 证明单独开放 `signed-v1` 和累计效用并不能让跨期套利的 horizon 8 优于 horizon 1；缺口不是 ValueSpec 丢失，而是多个历史动作如何共同承担一个延迟结果。
+- 实现：新增 v29 `creditChain` feedback 协议。WorldPort 在单条 clean feedback 中声明按 pending 持久顺序排列的 `{executionNonce, share}` 成员；Kernel 要求链首等于反馈 nonce、成员仍在 pending、份额闭合为 1、链之间不重叠，并把锚点动作前观测到反馈快照的净变化按份额写入各 action model，输出 `ACTION_CHAIN`。外部协议、Application 投影、账本和 Replay 全链路保留该声明；旧 feedback 与 v28 及更早账本语义不变。
+- 验证：Kernel 动作链合同（含缺失成员 fail-closed）通过；真实外部 JSONL adapter 跨两个独立 CLI Run 结算两个链成员，`ACTION_CHAIN` 份额为 0.75/0.25，Replay `CONSISTENT`；旧延迟反馈合同 9 项与新链合同合计 10 项通过；语法检查通过。
+- 边界：这是领域无关的“归因声明传输与审计”能力，不是 Kernel 对因果真值的自证，也不等于 `ess-arbitrage` 已经收敛。下一步必须在独立延迟效用 WorldPort 中比较无链、正确链、错误链和拒绝链的可观察学习结果，防止把 adapter 自报的份额当成现实事实。

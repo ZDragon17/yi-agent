@@ -37,6 +37,8 @@ const MAX_STDERR_BYTES = 256 * 1024;
 const MAX_EXTERNAL_INPUTS = 64;
 const MAX_EVIDENCE_ITEMS = 128;
 const MAX_SCENARIO_ID_LENGTH = 4096;
+const MAX_CREDIT_CHAIN_MEMBERS = 64;
+const CREDIT_CHAIN_SHARE_TOLERANCE = 1e-9;
 
 export class ExternalWorldProtocolError extends Error {
   constructor(message, context = {}) {
@@ -446,8 +448,10 @@ function validateExternalFeedback(value, field, expectedDimensions) {
   value.forEach((item, index) => {
     const itemField = `${field}.feedback[${index}]`;
     const source = assertExactKeys(item, [
+      'schemaVersion', 'executionNonce', 'stateVersion', 'intervalId', 'vector', 'confounderCount', 'creditChain',
+    ], itemField, [
       'schemaVersion', 'executionNonce', 'stateVersion', 'intervalId', 'vector', 'confounderCount',
-    ], itemField);
+    ]);
     if (source.schemaVersion !== SCHEMA_VERSION ||
         !isBoundedExecutionNonce(source.executionNonce) ||
         seen.has(source.executionNonce) ||
@@ -456,11 +460,30 @@ function validateExternalFeedback(value, field, expectedDimensions) {
         !Array.isArray(source.vector) || source.vector.length === 0 ||
         (expectedDimensions !== undefined && source.vector.length !== expectedDimensions) ||
         source.vector.some((number) => !Number.isFinite(number)) ||
-        !Number.isSafeInteger(source.confounderCount) || source.confounderCount < 0) {
+        !Number.isSafeInteger(source.confounderCount) || source.confounderCount < 0 ||
+        (source.creditChain !== undefined && !isValidCreditChain(source.creditChain))) {
       throw new ExternalWorldProtocolError('External WorldPort observation feedback is invalid.', { field: itemField });
     }
     seen.add(source.executionNonce);
   });
+}
+
+function isValidCreditChain(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== SCHEMA_VERSION || !Array.isArray(value.members) ||
+      value.members.length === 0 || value.members.length > MAX_CREDIT_CHAIN_MEMBERS) return false;
+  const seen = new Set();
+  let shareTotal = 0;
+  for (const member of value.members) {
+    if (member === null || typeof member !== 'object' || Array.isArray(member) ||
+        Object.keys(member).length !== 2 ||
+        typeof member.executionNonce !== 'string' || !isBoundedExecutionNonce(member.executionNonce) ||
+        seen.has(member.executionNonce) || typeof member.share !== 'number' ||
+        !Number.isFinite(member.share) || member.share <= 0 || member.share > 1) return false;
+    seen.add(member.executionNonce);
+    shareTotal += member.share;
+  }
+  return Math.abs(shareTotal - 1) <= CREDIT_CHAIN_SHARE_TOLERANCE;
 }
 
 function isBoundedIdentifier(value) {
