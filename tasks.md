@@ -1089,3 +1089,10 @@
 - 反证：在 v31 `counterfactual-attested-v1` 中，保持签名、快照和 delta 代数全部合法，但用测试夹具的独立 ground-truth 记录真实归因为 `[0,1]`，adapter 声明 `[0.75,0.25]`。
 - 结果：CLI 接受有效签名，两个动作模型分别学习 `0.75` 与 `0.25`，Replay 仍为 `CONSISTENT`；因此来源认证和加性闭合都不能从同一条被签名轨迹中推出现实因果真值。
 - 结论：该负结果不支持继续增加 Kernel 内部启发式，也不升级学习版本；下一步的最小必要变化是引入不由同一 adapter 单独控制的对照/干预结果或可信执行器观测，并保留当前保守边界。
+
+## F-138 独立 WorldPort 见证通道
+
+- 反证：F-137 证明单一 adapter 的签名和加性闭合仍可把错误因果声明写入模型；继续在同一证据生产者内部增加校验无法改变可辨识性。
+- 实现：新增 v32 `counterfactual-independent-v1`。外部 adapter 配置可声明独立 `witness` 子进程；主 adapter 签名绑定反馈元数据与成员 delta，宿主向 witness 只发送反馈元数据和成员 nonce，不发送主 delta；witness 使用不同描述符公钥签名自己的成员 delta，宿主比较两组成员后注入 `independentAttestation`。LabStore 保留 witness metadata，Application、账本和 Replay 无损传递，旧 v31/v30/v29 路径保持兼容。
+- 验证：真实 JSONL CLI E2E 证明正确独立 witness 跨 init→run→Replay 学习 `0.75/0.25`；独立签名但成员 delta 不一致时在第三步前返回 `WORLD_ADAPTER_PROTOCOL`，前两步保留、动作模型为空；Kernel 54/54 契约通过，F-138 定向 E2E 2/2 通过，应用层旧断言同步至 v32 后单测复验通过。
+- 边界：第二进程和不同密钥只建立可部署的来源独立性/声明一致性边界，不证明真实干预确实发生，也不能抵御两个 adapter 共谋、共享同一物理传感器或错误的共同输入；下一步必须引入真正外部的随机化对照、可信执行器或可审计物理观测，并比较长期策略收益。

@@ -30,6 +30,7 @@ const MAX_CREDIT_CHAIN_MEMBERS = MAX_PENDING_CREDITS;
 const CREDIT_CHAIN_SHARE_TOLERANCE = 1e-9;
 const CAUSAL_CREDIT_BASIS = 'counterfactual-additive-v1';
 const ATTESTED_CAUSAL_CREDIT_BASIS = 'counterfactual-attested-v1';
+const INDEPENDENT_CAUSAL_CREDIT_BASIS = 'counterfactual-independent-v1';
 const MAX_CREDIT_ATTESTATION_LENGTH = 8192;
 const MAX_BELIEF_MODELS = 8192;
 const MAX_BELIEF_SAMPLES = 8;
@@ -44,7 +45,7 @@ const LONG_CONTEXT_KEY_WINDOW = 8;
 const MAX_LONG_CONTEXTS = 8;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
-const CURRENT_LEARNING_VERSION = 31;
+const CURRENT_LEARNING_VERSION = 32;
 export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   settledFeedback: 3,
   pendingCreditExpiry: 4,
@@ -71,6 +72,7 @@ export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   creditChain: 29,
   causalCreditEvidence: 30,
   attestedCausalCreditEvidence: 31,
+  independentCausalCreditEvidence: 32,
   current: CURRENT_LEARNING_VERSION,
 });
 const MODEL_RECENCY_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.modelRecency;
@@ -82,6 +84,7 @@ const REVALIDATION_BELIEF_GATE_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.reval
 const CREDIT_CHAIN_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.creditChain;
 const CAUSAL_CREDIT_EVIDENCE_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.causalCreditEvidence;
 const ATTESTED_CAUSAL_CREDIT_EVIDENCE_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.attestedCausalCreditEvidence;
+const INDEPENDENT_CAUSAL_CREDIT_EVIDENCE_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.independentCausalCreditEvidence;
 const OVERALL_BELIEF_CONTEXT = 'overall';
 const HISTORY_ACCUMULATOR_HEX_LENGTH = 64;
 const HISTORY_ACCUMULATOR_PATTERN = /^[0-9a-f]{64}$/u;
@@ -211,7 +214,7 @@ const FEEDBACK_KEYS = [
   'confounderCount',
   'creditChain',
 ];
-const CREDIT_CHAIN_KEYS = ['schemaVersion', 'basis', 'members', 'attestation'];
+const CREDIT_CHAIN_KEYS = ['schemaVersion', 'basis', 'members', 'attestation', 'independentAttestation'];
 const CREDIT_CHAIN_MEMBER_KEYS = ['executionNonce', 'share', 'delta'];
 const PENDING_CREDIT_KEYS = [
   'schemaVersion',
@@ -274,6 +277,7 @@ export function validateObservationFeedback(memoryValue, observationValue) {
     'pending-v2',
     'boundary-v2',
     false,
+    true,
     true,
     true,
     true,
@@ -499,6 +503,7 @@ export function learn(input) {
     learningVersion >= CREDIT_CHAIN_LEARNING_VERSION,
     learningVersion >= CAUSAL_CREDIT_EVIDENCE_LEARNING_VERSION,
     learningVersion >= ATTESTED_CAUSAL_CREDIT_EVIDENCE_LEARNING_VERSION,
+    learningVersion >= INDEPENDENT_CAUSAL_CREDIT_EVIDENCE_LEARNING_VERSION,
   );
   const settled = settlement.entries;
 
@@ -664,6 +669,7 @@ function settlePendingCredits(
   allowCreditChain = true,
   allowCausalCredit = false,
   allowAttestedCredit = false,
+  allowIndependentCredit = false,
 ) {
   const feedback = postObservation.feedback ?? [];
   const pendingCredits = memory.pendingCredits ?? [];
@@ -713,6 +719,11 @@ function settlePendingCredits(
     }
     if (item.creditChain.basis === ATTESTED_CAUSAL_CREDIT_BASIS && !allowAttestedCredit) {
       contractViolation('kernel attested causal credit evidence requires its learning version', {
+        field: `${field}.${item.executionNonce}.creditChain.basis`,
+      });
+    }
+    if (item.creditChain.basis === INDEPENDENT_CAUSAL_CREDIT_BASIS && !allowIndependentCredit) {
+      contractViolation('kernel independent causal credit evidence requires its learning version', {
         field: `${field}.${item.executionNonce}.creditChain.basis`,
       });
     }
@@ -904,7 +915,7 @@ function settleCreditChain(memory, feedback, members, pendingByNonce, dimensions
     anchor.beforeVector,
     `${field}.${feedback.executionNonce}.creditChain.actualDelta`,
   );
-  if (feedback.creditChain.basis === CAUSAL_CREDIT_BASIS || feedback.creditChain.basis === ATTESTED_CAUSAL_CREDIT_BASIS) {
+  if (feedback.creditChain.basis === CAUSAL_CREDIT_BASIS || feedback.creditChain.basis === ATTESTED_CAUSAL_CREDIT_BASIS || feedback.creditChain.basis === INDEPENDENT_CAUSAL_CREDIT_BASIS) {
     const observed = Array.from({ length: dimensions }, () => 0);
     for (const member of members) {
       for (let index = 0; index < dimensions; index += 1) {
@@ -1281,18 +1292,25 @@ function normalizeFeedback(value, field, dimensions) {
 function normalizeCreditChain(value, field, dimensions) {
   const source = assertPlainRecord(value, field, CREDIT_CHAIN_KEYS, ['schemaVersion', 'members']);
   const basis = source.basis === undefined ? undefined : source.basis;
-  if (basis !== undefined && basis !== CAUSAL_CREDIT_BASIS && basis !== ATTESTED_CAUSAL_CREDIT_BASIS) {
+  if (basis !== undefined && basis !== CAUSAL_CREDIT_BASIS && basis !== ATTESTED_CAUSAL_CREDIT_BASIS && basis !== INDEPENDENT_CAUSAL_CREDIT_BASIS) {
     contractViolation('kernel credit chain basis is unsupported', {
       field: `${field}.basis`,
       actual: basis,
     });
   }
-  const attestation = basis === ATTESTED_CAUSAL_CREDIT_BASIS
+  const attestation = basis === ATTESTED_CAUSAL_CREDIT_BASIS || basis === INDEPENDENT_CAUSAL_CREDIT_BASIS
     ? normalizeCreditAttestation(source.attestation, `${field}.attestation`)
     : source.attestation === undefined
       ? undefined
       : contractViolation('kernel non-attested credit chain cannot contain attestation', {
-          field: `${field}.attestation`,
+        field: `${field}.attestation`,
+        });
+  const independentAttestation = basis === INDEPENDENT_CAUSAL_CREDIT_BASIS
+    ? normalizeCreditAttestation(source.independentAttestation, `${field}.independentAttestation`)
+    : source.independentAttestation === undefined
+      ? undefined
+      : contractViolation('kernel non-independent credit chain cannot contain independent attestation', {
+          field: `${field}.independentAttestation`,
         });
   const members = assertArray(source.members, `${field}.members`);
   if (members.length === 0 || members.length > MAX_CREDIT_CHAIN_MEMBERS) {
@@ -1346,6 +1364,7 @@ function normalizeCreditChain(value, field, dimensions) {
     schemaVersion: requireSchemaVersion(source, field),
     ...(basis === undefined ? {} : { basis }),
     ...(attestation === undefined ? {} : { attestation }),
+    ...(independentAttestation === undefined ? {} : { independentAttestation }),
     members: normalizedMembers,
   };
 }
@@ -1383,6 +1402,11 @@ function creditChainEqual(left, right) {
       : left.attestation.schemaVersion === right.attestation.schemaVersion &&
         left.attestation.digest === right.attestation.digest &&
         left.attestation.attestation === right.attestation.attestation) &&
+    (left.independentAttestation === undefined || right.independentAttestation === undefined
+      ? left.independentAttestation === right.independentAttestation
+      : left.independentAttestation.schemaVersion === right.independentAttestation.schemaVersion &&
+        left.independentAttestation.digest === right.independentAttestation.digest &&
+        left.independentAttestation.attestation === right.independentAttestation.attestation) &&
     left.members.length === right.members.length &&
     left.members.every((member, index) =>
       member.executionNonce === right.members[index].executionNonce &&
@@ -1409,6 +1433,13 @@ function cloneFeedback(value) {
             schemaVersion: value.creditChain.attestation.schemaVersion,
             digest: value.creditChain.attestation.digest,
             attestation: value.creditChain.attestation.attestation,
+          },
+        }),
+        ...(value.creditChain.independentAttestation === undefined ? {} : {
+          independentAttestation: {
+            schemaVersion: value.creditChain.independentAttestation.schemaVersion,
+            digest: value.creditChain.independentAttestation.digest,
+            attestation: value.creditChain.independentAttestation.attestation,
           },
         }),
         members: value.creditChain.members.map((member) => ({

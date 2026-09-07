@@ -42,6 +42,7 @@ const MAX_CREDIT_CHAIN_MEMBERS = 64;
 const CREDIT_CHAIN_SHARE_TOLERANCE = 1e-9;
 const CAUSAL_CREDIT_BASIS = 'counterfactual-additive-v1';
 const ATTESTED_CAUSAL_CREDIT_BASIS = 'counterfactual-attested-v1';
+const INDEPENDENT_CAUSAL_CREDIT_BASIS = 'counterfactual-independent-v1';
 
 export class ExternalWorldProtocolError extends Error {
   constructor(message, context = {}) {
@@ -65,6 +66,9 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
   if (!probe) return createIdentityOnlyRegistry(normalizedConfig);
   const client = createAdapterClient(normalizedConfig);
   const descriptor = validateDescriptor(client.request('hello', {}), normalizedConfig);
+  const witness = normalizedConfig.witness === undefined
+    ? null
+    : loadWitnessDescriptor(normalizedConfig.witness, descriptor);
   const adapterMetadata = {
     schemaVersion: SCHEMA_VERSION,
     protocol: PROTOCOL,
@@ -81,6 +85,16 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
     ...(descriptor.supportsReconciliation === undefined
       ? {}
       : { supportsReconciliation: descriptor.supportsReconciliation }),
+    ...(witness === null ? {} : {
+      witness: {
+        adapterId: witness.descriptor.adapterId,
+        worldId: witness.descriptor.worldId,
+        worldVersion: witness.descriptor.worldVersion,
+        evidencePublicKey: witness.descriptor.evidencePublicKey,
+        descriptorDigest: witness.descriptor.descriptorDigest,
+        launchDigest: witness.config.launchDigest,
+      },
+    }),
   };
 
   const definition = {
@@ -98,6 +112,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
       return createExternalWorldPort({
         client,
         descriptor,
+        witness,
         manifest,
         scenario,
       });
@@ -148,6 +163,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
 
 function createIdentityOnlyRegistry(config) {
   let boundValueSpec = null;
+  const witnessConfig = config.witness;
   const unsupported = () => {
     throw new LabStoreError('CONFLICT', 'This adapter was loaded for a read-only evidence operation.', {});
   };
@@ -163,7 +179,15 @@ function createIdentityOnlyRegistry(config) {
           (manifest.worldImplementationDigest !== undefined && manifest.worldImplementationDigest !== adapter?.descriptorDigest) ||
           adapter?.launchDigest !== config.launchDigest ||
           !isValidEvidencePublicKey(adapter?.evidencePublicKey) ||
-          !isValueSpec(adapter?.valueSpec)) {
+          !isValueSpec(adapter?.valueSpec) ||
+          (witnessConfig === undefined
+            ? adapter?.witness !== undefined
+            : adapter?.witness?.adapterId !== witnessConfig.adapterId ||
+              adapter?.witness?.worldId !== witnessConfig.worldId ||
+              adapter?.witness?.launchDigest !== witnessConfig.launchDigest ||
+              !isValidEvidencePublicKey(adapter?.witness?.evidencePublicKey) ||
+              typeof adapter?.witness?.worldVersion !== 'string' ||
+              !/^sha256:[0-9a-f]{64}$/u.test(adapter?.witness?.descriptorDigest ?? ''))) {
         throw new LabStoreError('CONFLICT', 'The supplied adapter does not match the lab adapter contract.', {
           field: 'adapter',
         });
@@ -300,7 +324,7 @@ function createAdapterClient(config) {
   };
 }
 
-function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
+function createExternalWorldPort({ client, descriptor, witness, manifest, scenario }) {
   const worldManifest = {
     schemaVersion: manifest.schemaVersion,
     tokenMap: manifest.tokenMap,
@@ -322,14 +346,21 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
     },
     observe(state) {
       const response = client.request('observe', { worldId: descriptor.worldId, scenario, state });
-      return normalizeExternalObservation(
+      const observation = normalizeExternalObservation(
         response.observation,
         descriptor.worldId,
         'observe',
         state.stateVersion,
         descriptor.valueSpec.observationDimensions,
         descriptor.evidencePublicKey,
+        witness?.descriptor.evidencePublicKey,
       );
+      return corroborateIndependentEvidence(observation, {
+        state,
+        scenario,
+        descriptor,
+        witness,
+      });
     },
     actions(suppliedManifest, state = undefined) {
       if (canonicalJson(suppliedManifest) !== capturedManifest) {
@@ -353,14 +384,25 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
         state,
         request,
       });
-      return normalizeExternalTransition(
+      const transition = normalizeExternalTransition(
         response,
         state,
         request,
         descriptor.worldId,
         descriptor.valueSpec.observationDimensions,
         descriptor.evidencePublicKey,
+        witness?.descriptor.evidencePublicKey,
       );
+      return {
+        ...transition,
+        postObservation: corroborateIndependentEvidence(transition.postObservation, {
+          state,
+          scenario,
+          request,
+          descriptor,
+          witness,
+        }),
+      };
     },
     reconcile(state, request) {
       if (descriptor.supportsReconciliation !== true) {
@@ -372,14 +414,29 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
         state,
         request,
       });
-      return normalizeExternalReconciliation(
+      const transition = normalizeExternalReconciliation(
         response,
         state,
         request,
         descriptor.worldId,
         descriptor.valueSpec.observationDimensions,
         descriptor.evidencePublicKey,
+        witness?.descriptor.evidencePublicKey,
       );
+      if (transition.status !== 'APPLIED') return transition;
+      return {
+        ...transition,
+        transition: {
+          ...transition.transition,
+          postObservation: corroborateIndependentEvidence(transition.transition.postObservation, {
+            state,
+            scenario,
+            request,
+            descriptor,
+            witness,
+          }),
+        },
+      };
     },
   };
 }
@@ -422,7 +479,7 @@ function normalizeExternalState(value, worldId, field) {
   return structuredClone(value);
 }
 
-function normalizeExternalObservation(value, worldId, field, expectedStateVersion, expectedDimensions, evidencePublicKey) {
+function normalizeExternalObservation(value, worldId, field, expectedStateVersion, expectedDimensions, evidencePublicKey, witnessPublicKey) {
   const source = assertExactKeys(
     value,
     ['schemaVersion', 'vector', 'stateVersion', 'intervalId', 'evidence', 'feedback'],
@@ -442,11 +499,11 @@ function normalizeExternalObservation(value, worldId, field, expectedStateVersio
   if (!Array.isArray(source.evidence) || source.evidence.length > MAX_EVIDENCE_ITEMS) {
     throw new ExternalWorldProtocolError('External WorldPort observation evidence is invalid.', { field });
   }
-  if (source.feedback !== undefined) validateExternalFeedback(source.feedback, field, expectedDimensions, evidencePublicKey);
+  if (source.feedback !== undefined) validateExternalFeedback(source.feedback, field, expectedDimensions, evidencePublicKey, witnessPublicKey);
   return structuredClone(source);
 }
 
-function validateExternalFeedback(value, field, expectedDimensions, evidencePublicKey) {
+function validateExternalFeedback(value, field, expectedDimensions, evidencePublicKey, witnessPublicKey) {
   if (!Array.isArray(value) || value.length > MAX_EVIDENCE_ITEMS) {
     throw new ExternalWorldProtocolError('External WorldPort observation feedback is invalid.', { field });
   }
@@ -467,26 +524,22 @@ function validateExternalFeedback(value, field, expectedDimensions, evidencePubl
         (expectedDimensions !== undefined && source.vector.length !== expectedDimensions) ||
         source.vector.some((number) => !Number.isFinite(number)) ||
         !Number.isSafeInteger(source.confounderCount) || source.confounderCount < 0 ||
-        (source.creditChain !== undefined && !isValidCreditChain(source.creditChain, expectedDimensions, source, evidencePublicKey))) {
+        (source.creditChain !== undefined && !isValidCreditChain(source.creditChain, expectedDimensions, source, evidencePublicKey, witnessPublicKey))) {
       throw new ExternalWorldProtocolError('External WorldPort observation feedback is invalid.', { field: itemField });
     }
     seen.add(source.executionNonce);
   });
 }
 
-function isValidCreditChain(value, dimensions, feedback, evidencePublicKey) {
+function isValidCreditChain(value, dimensions, feedback, evidencePublicKey, witnessPublicKey) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
       value.schemaVersion !== SCHEMA_VERSION ||
-      Object.keys(value).some((key) => !['schemaVersion', 'basis', 'members', 'attestation'].includes(key)) ||
+      Object.keys(value).some((key) => !['schemaVersion', 'basis', 'members', 'attestation', 'independentAttestation'].includes(key)) ||
       !Array.isArray(value.members) ||
       value.members.length === 0 || value.members.length > MAX_CREDIT_CHAIN_MEMBERS) return false;
-  if (value.basis !== undefined && value.basis !== CAUSAL_CREDIT_BASIS && value.basis !== ATTESTED_CAUSAL_CREDIT_BASIS) return false;
+  if (value.basis !== undefined && value.basis !== CAUSAL_CREDIT_BASIS && value.basis !== ATTESTED_CAUSAL_CREDIT_BASIS && value.basis !== INDEPENDENT_CAUSAL_CREDIT_BASIS) return false;
   if (value.basis === ATTESTED_CAUSAL_CREDIT_BASIS) {
-    if (value.attestation === null || typeof value.attestation !== 'object' || Array.isArray(value.attestation) ||
-        Object.keys(value.attestation).some((key) => !['schemaVersion', 'digest', 'attestation'].includes(key)) ||
-        value.attestation.schemaVersion !== SCHEMA_VERSION ||
-        !/^sha256:[0-9a-f]{64}$/u.test(value.attestation.digest) ||
-        typeof value.attestation.attestation !== 'string' || value.attestation.attestation.length === 0) return false;
+    if (!isValidAttestation(value.attestation)) return false;
     const { attestation: _attestation, ...unsignedChain } = value;
     const signedFeedback = { ...feedback, creditChain: unsignedChain };
     if (!verifySignedEvidence({
@@ -494,14 +547,21 @@ function isValidCreditChain(value, dimensions, feedback, evidencePublicKey) {
       digest: value.attestation.digest,
       attestation: value.attestation.attestation,
     }, evidencePublicKey)) return false;
-  } else if (value.attestation !== undefined) return false;
+  } else if (value.basis === INDEPENDENT_CAUSAL_CREDIT_BASIS) {
+    if (!isValidAttestation(value.attestation)) return false;
+    const unsignedEvidence = causalEvidenceSigningValue(feedback, value);
+    if (!verifyEvidenceAttestation(unsignedEvidence, value.attestation, evidencePublicKey)) return false;
+    if (value.independentAttestation !== undefined &&
+        (!isValidAttestation(value.independentAttestation) ||
+          !verifyEvidenceAttestation(unsignedEvidence, value.independentAttestation, witnessPublicKey))) return false;
+  } else if (value.attestation !== undefined || value.independentAttestation !== undefined) return false;
   const seen = new Set();
   let shareTotal = 0;
   for (const member of value.members) {
     if (member === null || typeof member !== 'object' || Array.isArray(member) ||
         typeof member.executionNonce !== 'string' || !isBoundedExecutionNonce(member.executionNonce) ||
         seen.has(member.executionNonce)) return false;
-    if (value.basis === CAUSAL_CREDIT_BASIS || value.basis === ATTESTED_CAUSAL_CREDIT_BASIS) {
+    if (value.basis === CAUSAL_CREDIT_BASIS || value.basis === ATTESTED_CAUSAL_CREDIT_BASIS || value.basis === INDEPENDENT_CAUSAL_CREDIT_BASIS) {
       if (Object.keys(member).some((key) => !['executionNonce', 'delta'].includes(key)) ||
           !Array.isArray(member.delta) || member.delta.length !== dimensions ||
           member.delta.some((number) => !Number.isFinite(number))) return false;
@@ -510,7 +570,128 @@ function isValidCreditChain(value, dimensions, feedback, evidencePublicKey) {
     seen.add(member.executionNonce);
     if (value.basis === undefined) shareTotal += member.share;
   }
-  return value.basis === CAUSAL_CREDIT_BASIS || value.basis === ATTESTED_CAUSAL_CREDIT_BASIS || Math.abs(shareTotal - 1) <= CREDIT_CHAIN_SHARE_TOLERANCE;
+  return value.basis === CAUSAL_CREDIT_BASIS || value.basis === ATTESTED_CAUSAL_CREDIT_BASIS || value.basis === INDEPENDENT_CAUSAL_CREDIT_BASIS || Math.abs(shareTotal - 1) <= CREDIT_CHAIN_SHARE_TOLERANCE;
+}
+
+function isValidAttestation(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).every((key) => ['schemaVersion', 'digest', 'attestation'].includes(key)) &&
+    value.schemaVersion === SCHEMA_VERSION && /^sha256:[0-9a-f]{64}$/u.test(value.digest) &&
+    typeof value.attestation === 'string' && value.attestation.length > 0;
+}
+
+function causalEvidenceSigningValue(feedback, creditChain) {
+  return {
+    schemaVersion: feedback.schemaVersion,
+    executionNonce: feedback.executionNonce,
+    stateVersion: feedback.stateVersion,
+    intervalId: feedback.intervalId,
+    vector: feedback.vector,
+    confounderCount: feedback.confounderCount,
+    basis: creditChain.basis,
+    members: creditChain.members,
+  };
+}
+
+function verifyEvidenceAttestation(value, attestation, publicKey) {
+  return verifySignedEvidence({
+    ...value,
+    digest: attestation.digest,
+    attestation: attestation.attestation,
+  }, publicKey);
+}
+
+function corroborateIndependentEvidence(observation, { state, scenario, descriptor, witness, request = null }) {
+  if (observation.feedback === undefined) return observation;
+  let changed = false;
+  const feedback = observation.feedback.map((item) => {
+    const chain = item.creditChain;
+    if (chain?.basis !== INDEPENDENT_CAUSAL_CREDIT_BASIS) return item;
+    if (witness === null) {
+      throw new ExternalWorldProtocolError('Independent causal evidence requires a separate witness adapter.', {
+        op: 'evidence',
+      });
+    }
+    if (chain.independentAttestation !== undefined) {
+      if (!isValidCreditChain(chain, descriptor.valueSpec.observationDimensions, item, descriptor.evidencePublicKey, witness.descriptor.evidencePublicKey)) {
+        throw new ExternalWorldProtocolError('Independent causal evidence is not valid.', { op: 'evidence' });
+      }
+      return item;
+    }
+    const witnessResult = witness.client.request('evidence', {
+      schemaVersion: SCHEMA_VERSION,
+      worldId: descriptor.worldId,
+      scenario,
+      executionNonce: item.executionNonce,
+      token: request?.token ?? null,
+      beforeStateVersion: state.stateVersion,
+      feedback: {
+        schemaVersion: item.schemaVersion,
+        executionNonce: item.executionNonce,
+        stateVersion: item.stateVersion,
+        intervalId: item.intervalId,
+        vector: [...item.vector],
+        confounderCount: item.confounderCount,
+      },
+      memberExecutionNonces: chain.members.map((member) => member.executionNonce),
+    });
+    const normalizedWitness = normalizeIndependentWitness(
+      witnessResult,
+      descriptor.valueSpec.observationDimensions,
+      item,
+      witness.descriptor.evidencePublicKey,
+    );
+    if (canonicalJson(normalizedWitness.members) !== canonicalJson(chain.members)) {
+      throw new ExternalWorldProtocolError('Independent causal witness disagrees with the WorldPort claim.', {
+        op: 'evidence',
+        executionNonce: item.executionNonce,
+      });
+    }
+    changed = true;
+    return {
+      ...item,
+      creditChain: {
+        ...chain,
+        independentAttestation: normalizedWitness.attestation,
+      },
+    };
+  });
+  return changed ? { ...observation, feedback } : observation;
+}
+
+function normalizeIndependentWitness(value, dimensions, feedback, witnessPublicKey) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).some((key) => !['schemaVersion', 'basis', 'members', 'attestation'].includes(key)) ||
+      value.schemaVersion !== SCHEMA_VERSION || value.basis !== INDEPENDENT_CAUSAL_CREDIT_BASIS ||
+      !Array.isArray(value.members) || value.members.length === 0 || !isValidAttestation(value.attestation)) {
+    throw new ExternalWorldProtocolError('Independent witness response is invalid.', { op: 'evidence' });
+  }
+  const seen = new Set();
+  const members = value.members.map((member) => {
+    if (member === null || typeof member !== 'object' || Array.isArray(member) ||
+        Object.keys(member).some((key) => !['executionNonce', 'delta'].includes(key)) ||
+        !isBoundedExecutionNonce(member.executionNonce) || seen.has(member.executionNonce) ||
+        !Array.isArray(member.delta) || member.delta.length !== dimensions ||
+        member.delta.some((number) => !Number.isFinite(number))) {
+      throw new ExternalWorldProtocolError('Independent witness members are invalid.', { op: 'evidence' });
+    }
+    seen.add(member.executionNonce);
+    return { executionNonce: member.executionNonce, delta: [...member.delta] };
+  });
+  const evidence = {
+    schemaVersion: feedback.schemaVersion,
+    executionNonce: feedback.executionNonce,
+    stateVersion: feedback.stateVersion,
+    intervalId: feedback.intervalId,
+    vector: feedback.vector,
+    confounderCount: feedback.confounderCount,
+    basis: value.basis,
+    members,
+  };
+  if (!verifyEvidenceAttestation(evidence, value.attestation, witnessPublicKey)) {
+    throw new ExternalWorldProtocolError('Independent witness attestation is invalid.', { op: 'evidence' });
+  }
+  return { schemaVersion: SCHEMA_VERSION, basis: value.basis, members, attestation: value.attestation };
 }
 
 function isBoundedIdentifier(value) {
@@ -553,7 +734,7 @@ function normalizeExternalActions(value, manifest, descriptor) {
   });
 }
 
-function normalizeExternalTransition(value, state, request, worldId, expectedDimensions, evidencePublicKey) {
+function normalizeExternalTransition(value, state, request, worldId, expectedDimensions, evidencePublicKey, witnessPublicKey) {
   const source = assertExactKeys(value, ['nextWorldState', 'receipt', 'postObservation'], 'transition');
   const nextWorldState = normalizeExternalState(source.nextWorldState, worldId, 'transition.nextWorldState');
   const receipt = normalizeExternalReceipt(source.receipt, request, 'transition.receipt');
@@ -564,6 +745,7 @@ function normalizeExternalTransition(value, state, request, worldId, expectedDim
     nextWorldState.stateVersion,
     expectedDimensions,
     evidencePublicKey,
+    witnessPublicKey,
   );
   if (receipt.status === 'ACCEPTED') {
     if (nextWorldState.revision !== state.revision + 1 ||
@@ -583,7 +765,7 @@ function normalizeExternalTransition(value, state, request, worldId, expectedDim
   return { nextWorldState, receipt, postObservation };
 }
 
-function normalizeExternalReconciliation(value, state, request, worldId, expectedDimensions, evidencePublicKey) {
+function normalizeExternalReconciliation(value, state, request, worldId, expectedDimensions, evidencePublicKey, witnessPublicKey) {
   const source = assertExactKeys(value, ['status', 'transition'], 'reconcile', ['status']);
   if (!['APPLIED', 'ABSENT', 'UNKNOWN'].includes(source.status)) {
     throw new ExternalWorldProtocolError('External WorldPort reconciliation status is invalid.', { op: 'reconcile' });
@@ -604,6 +786,7 @@ function normalizeExternalReconciliation(value, state, request, worldId, expecte
     worldId,
     expectedDimensions,
     evidencePublicKey,
+    witnessPublicKey,
   );
   if (transition.receipt.status !== 'ACCEPTED') {
     throw new ExternalWorldProtocolError('Applied reconciliation must contain an accepted transition.', { op: 'reconcile' });
@@ -675,6 +858,23 @@ function validateDescriptor(value, config) {
   return source;
 }
 
+function loadWitnessDescriptor(config, primaryDescriptor) {
+  const client = createAdapterClient(config);
+  const descriptor = validateDescriptor(client.request('hello', {}), config);
+  if (descriptor.worldId !== primaryDescriptor.worldId ||
+      descriptor.worldVersion !== primaryDescriptor.worldVersion ||
+      canonicalJson(descriptor.capabilityIds) !== canonicalJson(primaryDescriptor.capabilityIds) ||
+      canonicalJson(descriptor.scenarioIds) !== canonicalJson(primaryDescriptor.scenarioIds) ||
+      canonicalJson(descriptor.valueSpec) !== canonicalJson(primaryDescriptor.valueSpec) ||
+      descriptor.adapterId === primaryDescriptor.adapterId ||
+      descriptor.evidencePublicKey === primaryDescriptor.evidencePublicKey) {
+    throw new ExternalWorldProtocolError('Independent witness descriptor does not match the primary WorldPort boundary.', {
+      op: 'hello',
+    });
+  }
+  return { config, client, descriptor };
+}
+
 function validateExternalInputs(value, descriptor, scenario, stateVersion) {
   if (!Array.isArray(value) || value.length > MAX_EXTERNAL_INPUTS) {
     throw new ExternalWorldProtocolError('External WorldPort externalInputs are invalid.', { op: 'externalInputs' });
@@ -721,7 +921,7 @@ function normalizeConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config must be an object.', { field: 'adapter' });
   }
-  const allowed = new Set(['executable', 'args', 'adapterId', 'worldId', 'timeoutMs']);
+  const allowed = new Set(['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'witness']);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config contains an unsupported field.', { field: 'adapter' });
   }
@@ -749,7 +949,46 @@ function normalizeConfig(value, configPath) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter timeoutMs must be between 100 and 30000.', { field: 'adapter.timeoutMs' });
   }
   const launchDigest = digestLaunch(configPath, value.executable, value.args);
-  return { executable: value.executable, args: [...value.args], adapterId: value.adapterId, worldId: value.worldId, timeoutMs, launchDigest };
+  const witness = value.witness === undefined ? undefined : normalizeWitnessConfig(value.witness, configPath);
+  return { executable: value.executable, args: [...value.args], adapterId: value.adapterId, worldId: value.worldId, timeoutMs, launchDigest, ...(witness === undefined ? {} : { witness }) };
+}
+
+function normalizeWitnessConfig(value, configPath) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs'].includes(key))) {
+    throw new LabStoreError('INVALID_INPUT', 'Independent witness config is invalid.', { field: 'adapter.witness' });
+  }
+  if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
+    throw new LabStoreError('INVALID_INPUT', 'Independent witness executable must be an absolute non-shell executable path.', { field: 'adapter.witness.executable' });
+  }
+  let executableStatus;
+  try {
+    executableStatus = lstatSync(value.executable);
+  } catch (error) {
+    throw new LabStoreError('INVALID_INPUT', 'Independent witness executable does not exist.', { field: 'adapter.witness.executable' }, { cause: error });
+  }
+  if (!executableStatus.isFile() || executableStatus.isSymbolicLink() || !statSync(value.executable).isFile()) {
+    throw new LabStoreError('INVALID_INPUT', 'Independent witness executable must be a regular non-symlink file.', { field: 'adapter.witness.executable' });
+  }
+  if (!Array.isArray(value.args) || value.args.length === 0 || value.args.length > 64 || value.args.some((arg) => typeof arg !== 'string' || arg.length > 4096)) {
+    throw new LabStoreError('INVALID_INPUT', 'Independent witness args must be a bounded string array.', { field: 'adapter.witness.args' });
+  }
+  if (typeof value.adapterId !== 'string' || value.adapterId.length === 0 || value.adapterId.length > 4096 ||
+      typeof value.worldId !== 'string' || value.worldId.length === 0 || value.worldId.length > 4096) {
+    throw new LabStoreError('INVALID_INPUT', 'Independent witness identity is invalid.', { field: 'adapter.witness' });
+  }
+  const timeoutMs = value.timeoutMs ?? 5000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
+    throw new LabStoreError('INVALID_INPUT', 'Independent witness timeoutMs must be between 100 and 30000.', { field: 'adapter.witness.timeoutMs' });
+  }
+  return {
+    executable: value.executable,
+    args: [...value.args],
+    adapterId: value.adapterId,
+    worldId: value.worldId,
+    timeoutMs,
+    launchDigest: digestLaunch(configPath, value.executable, value.args),
+  };
 }
 
 function digestLaunch(configPath, executable, args) {

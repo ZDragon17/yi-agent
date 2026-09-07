@@ -1392,6 +1392,13 @@ function projectObservation(observation) {
               attestation: item.creditChain.attestation.attestation,
             },
           }),
+          ...(item.creditChain.independentAttestation === undefined ? {} : {
+            independentAttestation: {
+              schemaVersion: item.creditChain.independentAttestation.schemaVersion,
+              digest: item.creditChain.independentAttestation.digest,
+              attestation: item.creditChain.independentAttestation.attestation,
+            },
+          }),
           members: item.creditChain.members.map((member) => ({
             executionNonce: member.executionNonce,
             ...(item.creditChain.basis === undefined

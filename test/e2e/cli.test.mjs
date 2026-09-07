@@ -19,6 +19,7 @@ const IDEMPOTENT_ADAPTER_FIXTURE = path.resolve('test/fixtures/idempotent-transi
 const DELAYED_FEEDBACK_ADAPTER_FIXTURE = path.resolve('test/fixtures/delayed-feedback-world-adapter.mjs');
 const OVERLAP_FEEDBACK_ADAPTER_FIXTURE = path.resolve('test/fixtures/overlap-feedback-world-adapter.mjs');
 const CHAIN_CREDIT_ADAPTER_FIXTURE = path.resolve('test/fixtures/chain-credit-world-adapter.mjs');
+const INDEPENDENT_WITNESS_ADAPTER_FIXTURE = path.resolve('test/fixtures/independent-chain-witness-adapter.mjs');
 
 test('generated adapter exposes a fixed Ed25519 key for its hello descriptor', async () => {
   const response = await invokeAdapter([], { protocol: 'yi-world-cli', version: 1, id: '1', op: 'hello', payload: {} });
@@ -576,6 +577,39 @@ test('F-137 demonstrates that a valid attestation still accepts a fabricated add
     const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
     assert.equal(replay.code, 0, JSON.stringify(replay));
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('F-138 corroborates a causal chain with a separately launched witness adapter', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'independent-witness-lab');
+    const adapter = await writeChainCreditAdapterConfig(root, true, { independentEvidence: true });
+    const init = await invoke('init', '--lab', lab, '--world', 'chain-credit', '--seed', 'independent-witness-seed', '--lab-id', 'independent-witness-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '3', '--scenario', 'chain', '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0, JSON.stringify(run));
+    const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+    const tokens = init.stdout[0].data.tokenMap.entries;
+    assert.equal(current.memory.actionModels[tokens[0].token].meanDelta[0], 0.75);
+    assert.equal(current.memory.actionModels[tokens[1].token].meanDelta[0], 0.25);
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('F-138 rejects an independently signed witness that disagrees with the WorldPort claim', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'independent-witness-mismatch-lab');
+    const adapter = await writeChainCreditAdapterConfig(root, true, { independentEvidence: true, witnessMismatch: true });
+    const init = await invoke('init', '--lab', lab, '--world', 'chain-credit', '--seed', 'independent-witness-mismatch-seed', '--lab-id', 'independent-witness-mismatch-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '3', '--scenario', 'chain', '--kernel-only', '--adapter', adapter, '--json');
+    assert.notEqual(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].error.code, 'WORLD_ADAPTER_PROTOCOL');
+    assert.equal(await countLedgerSteps(lab, 'run-1'), 2);
+    const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+    assert.deepEqual(current.memory.actionModels, {});
   });
 });
 
@@ -1361,13 +1395,22 @@ async function writeOverlapFeedbackAdapterConfig(root, reverseFeedback, creditCh
   return config;
 }
 
-async function writeChainCreditAdapterConfig(root, creditChain, { wrongShare = false, causalEvidence = false, causalMismatch = false, attestedEvidence = false, tamperAttestation = false, fabricatedAttestation = false, truthFile = null } = {}) {
-  const suffix = creditChain ? (fabricatedAttestation ? 'fabricated' : (attestedEvidence ? 'attested' : (causalEvidence ? 'causal' : (wrongShare ? 'wrong-share' : 'chain')))) : 'ambiguous';
+async function writeChainCreditAdapterConfig(root, creditChain, { wrongShare = false, causalEvidence = false, causalMismatch = false, attestedEvidence = false, tamperAttestation = false, fabricatedAttestation = false, independentEvidence = false, witnessMismatch = false, truthFile = null } = {}) {
+  const suffix = creditChain ? (independentEvidence ? 'independent' : (fabricatedAttestation ? 'fabricated' : (attestedEvidence ? 'attested' : (causalEvidence ? 'causal' : (wrongShare ? 'wrong-share' : 'chain'))))) : 'ambiguous';
   const config = path.join(root, `chain-credit-${suffix}.json`);
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
-    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : []), ...(wrongShare ? ['--wrong-share'] : []), ...(causalEvidence ? ['--causal-evidence'] : []), ...(causalMismatch ? ['--causal-mismatch'] : []), ...(attestedEvidence ? ['--attested-evidence'] : []), ...(tamperAttestation ? ['--tamper-attestation'] : []), ...(fabricatedAttestation ? ['--fabricated-attestation'] : []), ...(truthFile === null ? [] : ['--truth-file', truthFile])],
-    adapterId: `chain-credit-adapter-${attestedEvidence ? 'attested' : (causalEvidence ? 'causal' : (wrongShare ? 'wrong-share' : (creditChain ? 'chain' : 'ambiguous')))}-v1`,
+    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : []), ...(wrongShare ? ['--wrong-share'] : []), ...(causalEvidence ? ['--causal-evidence'] : []), ...(causalMismatch ? ['--causal-mismatch'] : []), ...(attestedEvidence || independentEvidence ? ['--attested-evidence'] : []), ...(tamperAttestation ? ['--tamper-attestation'] : []), ...(fabricatedAttestation ? ['--fabricated-attestation'] : []), ...(independentEvidence ? ['--independent-evidence'] : []), ...(truthFile === null ? [] : ['--truth-file', truthFile])],
+    ...(independentEvidence ? {
+      witness: {
+        executable: process.execPath,
+        args: [INDEPENDENT_WITNESS_ADAPTER_FIXTURE, ...(witnessMismatch ? ['--wrong-witness'] : [])],
+        adapterId: 'chain-credit-witness-v1',
+        worldId: 'chain-credit',
+        timeoutMs: 2000,
+      },
+    } : {}),
+    adapterId: `chain-credit-adapter-${independentEvidence ? 'independent' : (attestedEvidence ? 'attested' : (causalEvidence ? 'causal' : (wrongShare ? 'wrong-share' : (creditChain ? 'chain' : 'ambiguous'))))}-v1`,
     worldId: 'chain-credit',
     timeoutMs: 2000,
   }));

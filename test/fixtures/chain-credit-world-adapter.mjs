@@ -13,9 +13,10 @@ const CAUSAL_MISMATCH = process.argv.includes('--causal-mismatch');
 const ATTESTED_EVIDENCE = process.argv.includes('--attested-evidence');
 const TAMPER_ATTESTATION = process.argv.includes('--tamper-attestation');
 const FABRICATED_ATTESTATION = process.argv.includes('--fabricated-attestation');
+const INDEPENDENT_EVIDENCE = process.argv.includes('--independent-evidence');
 const TRUTH_FILE_INDEX = process.argv.indexOf('--truth-file');
 const TRUTH_FILE = TRUTH_FILE_INDEX === -1 ? null : process.argv[TRUTH_FILE_INDEX + 1];
-const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (ATTESTED_EVIDENCE ? 'attested' : (CAUSAL_EVIDENCE ? 'causal' : (WRONG_SHARE ? 'wrong-share' : 'chain'))) : 'ambiguous'}-v1`;
+const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (INDEPENDENT_EVIDENCE ? 'independent' : (ATTESTED_EVIDENCE ? 'attested' : (CAUSAL_EVIDENCE ? 'causal' : (WRONG_SHARE ? 'wrong-share' : 'chain')))) : 'ambiguous'}-v1`;
 import readline from 'node:readline';
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -41,7 +42,7 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: `chain-credit-1-${CREDIT_CHAIN ? (ATTESTED_EVIDENCE ? 'attested' : (CAUSAL_EVIDENCE ? 'causal' : 'chain')) : 'ambiguous'}`,
+      worldVersion: `chain-credit-1-${CREDIT_CHAIN ? (INDEPENDENT_EVIDENCE ? 'independent' : (ATTESTED_EVIDENCE ? 'attested' : (CAUSAL_EVIDENCE ? 'causal' : 'chain'))) : 'ambiguous'}`,
       capabilityIds: ['chain.prepare', 'chain.commit'],
       scenarioIds: ['chain'],
       valueSpec: { schemaVersion: VERSION, observationDimensions: 1, weights: [1], target: [1] },
@@ -136,7 +137,7 @@ function transition(prior, request, manifest) {
 function causalCreditChain(releases, next) {
   const base = {
     schemaVersion: VERSION,
-    basis: ATTESTED_EVIDENCE ? 'counterfactual-attested-v1' : 'counterfactual-additive-v1',
+    basis: INDEPENDENT_EVIDENCE ? 'counterfactual-independent-v1' : (ATTESTED_EVIDENCE ? 'counterfactual-attested-v1' : 'counterfactual-additive-v1'),
     members: releases.map((executionNonce, index) => ({
       executionNonce,
       delta: [CAUSAL_MISMATCH ? (index === 0 ? 0.5 : 0.25) : (index === 0 ? 0.75 : 0.25)],
@@ -152,12 +153,24 @@ function causalCreditChain(releases, next) {
     confounderCount: 0,
     creditChain: base,
   };
+  const signingValue = INDEPENDENT_EVIDENCE
+    ? {
+        schemaVersion: VERSION,
+        executionNonce: signedFeedback.executionNonce,
+        stateVersion: signedFeedback.stateVersion,
+        intervalId: signedFeedback.intervalId,
+        vector: signedFeedback.vector,
+        confounderCount: signedFeedback.confounderCount,
+        basis: base.basis,
+        members: base.members,
+      }
+    : signedFeedback;
   return {
     ...base,
     attestation: {
       schemaVersion: VERSION,
-      digest: canonicalDigest(signedFeedback),
-      attestation: tamperAttestation(attestationFor(signedFeedback)),
+      digest: canonicalDigest(signingValue),
+      attestation: tamperAttestation(attestationFor(signingValue)),
     },
   };
 }
