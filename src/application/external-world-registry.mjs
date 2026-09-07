@@ -14,6 +14,7 @@ import {
 import {
   externalInputUnsigned,
   isValidEvidencePublicKey,
+  verifySignedEvidence,
   verifyExternalInputAttestation,
 } from '../runtime/external-evidence.mjs';
 import { LabStoreError } from '../runtime/lab-store.mjs';
@@ -40,6 +41,7 @@ const MAX_SCENARIO_ID_LENGTH = 4096;
 const MAX_CREDIT_CHAIN_MEMBERS = 64;
 const CREDIT_CHAIN_SHARE_TOLERANCE = 1e-9;
 const CAUSAL_CREDIT_BASIS = 'counterfactual-additive-v1';
+const ATTESTED_CAUSAL_CREDIT_BASIS = 'counterfactual-attested-v1';
 
 export class ExternalWorldProtocolError extends Error {
   constructor(message, context = {}) {
@@ -326,6 +328,7 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
         'observe',
         state.stateVersion,
         descriptor.valueSpec.observationDimensions,
+        descriptor.evidencePublicKey,
       );
     },
     actions(suppliedManifest, state = undefined) {
@@ -356,6 +359,7 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
         request,
         descriptor.worldId,
         descriptor.valueSpec.observationDimensions,
+        descriptor.evidencePublicKey,
       );
     },
     reconcile(state, request) {
@@ -374,6 +378,7 @@ function createExternalWorldPort({ client, descriptor, manifest, scenario }) {
         request,
         descriptor.worldId,
         descriptor.valueSpec.observationDimensions,
+        descriptor.evidencePublicKey,
       );
     },
   };
@@ -417,7 +422,7 @@ function normalizeExternalState(value, worldId, field) {
   return structuredClone(value);
 }
 
-function normalizeExternalObservation(value, worldId, field, expectedStateVersion, expectedDimensions) {
+function normalizeExternalObservation(value, worldId, field, expectedStateVersion, expectedDimensions, evidencePublicKey) {
   const source = assertExactKeys(
     value,
     ['schemaVersion', 'vector', 'stateVersion', 'intervalId', 'evidence', 'feedback'],
@@ -437,11 +442,11 @@ function normalizeExternalObservation(value, worldId, field, expectedStateVersio
   if (!Array.isArray(source.evidence) || source.evidence.length > MAX_EVIDENCE_ITEMS) {
     throw new ExternalWorldProtocolError('External WorldPort observation evidence is invalid.', { field });
   }
-  if (source.feedback !== undefined) validateExternalFeedback(source.feedback, field, expectedDimensions);
+  if (source.feedback !== undefined) validateExternalFeedback(source.feedback, field, expectedDimensions, evidencePublicKey);
   return structuredClone(source);
 }
 
-function validateExternalFeedback(value, field, expectedDimensions) {
+function validateExternalFeedback(value, field, expectedDimensions, evidencePublicKey) {
   if (!Array.isArray(value) || value.length > MAX_EVIDENCE_ITEMS) {
     throw new ExternalWorldProtocolError('External WorldPort observation feedback is invalid.', { field });
   }
@@ -462,27 +467,41 @@ function validateExternalFeedback(value, field, expectedDimensions) {
         (expectedDimensions !== undefined && source.vector.length !== expectedDimensions) ||
         source.vector.some((number) => !Number.isFinite(number)) ||
         !Number.isSafeInteger(source.confounderCount) || source.confounderCount < 0 ||
-        (source.creditChain !== undefined && !isValidCreditChain(source.creditChain, expectedDimensions))) {
+        (source.creditChain !== undefined && !isValidCreditChain(source.creditChain, expectedDimensions, source, evidencePublicKey))) {
       throw new ExternalWorldProtocolError('External WorldPort observation feedback is invalid.', { field: itemField });
     }
     seen.add(source.executionNonce);
   });
 }
 
-function isValidCreditChain(value, dimensions) {
+function isValidCreditChain(value, dimensions, feedback, evidencePublicKey) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
       value.schemaVersion !== SCHEMA_VERSION ||
-      Object.keys(value).some((key) => !['schemaVersion', 'basis', 'members'].includes(key)) ||
+      Object.keys(value).some((key) => !['schemaVersion', 'basis', 'members', 'attestation'].includes(key)) ||
       !Array.isArray(value.members) ||
       value.members.length === 0 || value.members.length > MAX_CREDIT_CHAIN_MEMBERS) return false;
-  if (value.basis !== undefined && value.basis !== CAUSAL_CREDIT_BASIS) return false;
+  if (value.basis !== undefined && value.basis !== CAUSAL_CREDIT_BASIS && value.basis !== ATTESTED_CAUSAL_CREDIT_BASIS) return false;
+  if (value.basis === ATTESTED_CAUSAL_CREDIT_BASIS) {
+    if (value.attestation === null || typeof value.attestation !== 'object' || Array.isArray(value.attestation) ||
+        Object.keys(value.attestation).some((key) => !['schemaVersion', 'digest', 'attestation'].includes(key)) ||
+        value.attestation.schemaVersion !== SCHEMA_VERSION ||
+        !/^sha256:[0-9a-f]{64}$/u.test(value.attestation.digest) ||
+        typeof value.attestation.attestation !== 'string' || value.attestation.attestation.length === 0) return false;
+    const { attestation: _attestation, ...unsignedChain } = value;
+    const signedFeedback = { ...feedback, creditChain: unsignedChain };
+    if (!verifySignedEvidence({
+      ...signedFeedback,
+      digest: value.attestation.digest,
+      attestation: value.attestation.attestation,
+    }, evidencePublicKey)) return false;
+  } else if (value.attestation !== undefined) return false;
   const seen = new Set();
   let shareTotal = 0;
   for (const member of value.members) {
     if (member === null || typeof member !== 'object' || Array.isArray(member) ||
         typeof member.executionNonce !== 'string' || !isBoundedExecutionNonce(member.executionNonce) ||
         seen.has(member.executionNonce)) return false;
-    if (value.basis === CAUSAL_CREDIT_BASIS) {
+    if (value.basis === CAUSAL_CREDIT_BASIS || value.basis === ATTESTED_CAUSAL_CREDIT_BASIS) {
       if (Object.keys(member).some((key) => !['executionNonce', 'delta'].includes(key)) ||
           !Array.isArray(member.delta) || member.delta.length !== dimensions ||
           member.delta.some((number) => !Number.isFinite(number))) return false;
@@ -491,7 +510,7 @@ function isValidCreditChain(value, dimensions) {
     seen.add(member.executionNonce);
     if (value.basis === undefined) shareTotal += member.share;
   }
-  return value.basis === CAUSAL_CREDIT_BASIS || Math.abs(shareTotal - 1) <= CREDIT_CHAIN_SHARE_TOLERANCE;
+  return value.basis === CAUSAL_CREDIT_BASIS || value.basis === ATTESTED_CAUSAL_CREDIT_BASIS || Math.abs(shareTotal - 1) <= CREDIT_CHAIN_SHARE_TOLERANCE;
 }
 
 function isBoundedIdentifier(value) {
@@ -534,7 +553,7 @@ function normalizeExternalActions(value, manifest, descriptor) {
   });
 }
 
-function normalizeExternalTransition(value, state, request, worldId, expectedDimensions) {
+function normalizeExternalTransition(value, state, request, worldId, expectedDimensions, evidencePublicKey) {
   const source = assertExactKeys(value, ['nextWorldState', 'receipt', 'postObservation'], 'transition');
   const nextWorldState = normalizeExternalState(source.nextWorldState, worldId, 'transition.nextWorldState');
   const receipt = normalizeExternalReceipt(source.receipt, request, 'transition.receipt');
@@ -544,6 +563,7 @@ function normalizeExternalTransition(value, state, request, worldId, expectedDim
     'transition.postObservation',
     nextWorldState.stateVersion,
     expectedDimensions,
+    evidencePublicKey,
   );
   if (receipt.status === 'ACCEPTED') {
     if (nextWorldState.revision !== state.revision + 1 ||
@@ -563,7 +583,7 @@ function normalizeExternalTransition(value, state, request, worldId, expectedDim
   return { nextWorldState, receipt, postObservation };
 }
 
-function normalizeExternalReconciliation(value, state, request, worldId, expectedDimensions) {
+function normalizeExternalReconciliation(value, state, request, worldId, expectedDimensions, evidencePublicKey) {
   const source = assertExactKeys(value, ['status', 'transition'], 'reconcile', ['status']);
   if (!['APPLIED', 'ABSENT', 'UNKNOWN'].includes(source.status)) {
     throw new ExternalWorldProtocolError('External WorldPort reconciliation status is invalid.', { op: 'reconcile' });
@@ -583,6 +603,7 @@ function normalizeExternalReconciliation(value, state, request, worldId, expecte
     request,
     worldId,
     expectedDimensions,
+    evidencePublicKey,
   );
   if (transition.receipt.status !== 'ACCEPTED') {
     throw new ExternalWorldProtocolError('Applied reconciliation must contain an accepted transition.', { op: 'reconcile' });

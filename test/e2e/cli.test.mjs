@@ -520,6 +520,39 @@ test('CLI rejects a structurally valid but non-closing counterfactual witness', 
   });
 });
 
+test('CLI accepts only a descriptor-attested counterfactual witness', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'attested-causal-lab');
+    const adapter = await writeChainCreditAdapterConfig(root, true, { attestedEvidence: true });
+    const init = await invoke('init', '--lab', lab, '--world', 'chain-credit', '--seed', 'attested-causal-seed', '--lab-id', 'attested-causal-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '3', '--scenario', 'chain', '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0, JSON.stringify(run));
+    const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+    const tokens = init.stdout[0].data.tokenMap.entries;
+    assert.equal(current.memory.actionModels[tokens[0].token].meanDelta[0], 0.75);
+    assert.equal(current.memory.actionModels[tokens[1].token].meanDelta[0], 0.25);
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('CLI rejects a tampered descriptor-attested counterfactual witness before learning', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'tampered-attestation-lab');
+    const adapter = await writeChainCreditAdapterConfig(root, true, { attestedEvidence: true, tamperAttestation: true });
+    const init = await invoke('init', '--lab', lab, '--world', 'chain-credit', '--seed', 'tampered-attestation-seed', '--lab-id', 'tampered-attestation-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '3', '--scenario', 'chain', '--kernel-only', '--adapter', adapter, '--json');
+    assert.notEqual(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].error.code, 'WORLD_ADAPTER_PROTOCOL');
+    assert.equal(await countLedgerSteps(lab, 'run-1'), 2);
+    const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+    assert.deepEqual(current.memory.actionModels, {});
+  });
+});
+
 test('CLI closes a missing-feedback window without learning and survives repeated restarts', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'missing-feedback-lab');
@@ -1302,12 +1335,12 @@ async function writeOverlapFeedbackAdapterConfig(root, reverseFeedback, creditCh
   return config;
 }
 
-async function writeChainCreditAdapterConfig(root, creditChain, { wrongShare = false, causalEvidence = false, causalMismatch = false } = {}) {
-  const suffix = creditChain ? (causalEvidence ? 'causal' : (wrongShare ? 'wrong-share' : 'chain')) : 'ambiguous';
+async function writeChainCreditAdapterConfig(root, creditChain, { wrongShare = false, causalEvidence = false, causalMismatch = false, attestedEvidence = false, tamperAttestation = false } = {}) {
+  const suffix = creditChain ? (attestedEvidence ? 'attested' : (causalEvidence ? 'causal' : (wrongShare ? 'wrong-share' : 'chain'))) : 'ambiguous';
   const config = path.join(root, `chain-credit-${suffix}.json`);
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
-    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : []), ...(wrongShare ? ['--wrong-share'] : []), ...(causalEvidence ? ['--causal-evidence'] : []), ...(causalMismatch ? ['--causal-mismatch'] : [])],
+    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : []), ...(wrongShare ? ['--wrong-share'] : []), ...(causalEvidence ? ['--causal-evidence'] : []), ...(causalMismatch ? ['--causal-mismatch'] : []), ...(attestedEvidence ? ['--attested-evidence'] : []), ...(tamperAttestation ? ['--tamper-attestation'] : [])],
     adapterId: `chain-credit-adapter-${suffix}-v1`,
     worldId: 'chain-credit',
     timeoutMs: 2000,

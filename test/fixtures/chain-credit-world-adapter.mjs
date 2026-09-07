@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson } from '../../src/runtime/schema.mjs';
-import { ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
+import { ED25519_PUBLIC_KEY, attestationFor } from './ed25519-proof.mjs';
 
 const PROTOCOL = 'yi-world-cli';
 const VERSION = 1;
@@ -9,7 +9,9 @@ const CREDIT_CHAIN = process.argv.includes('--credit-chain');
 const WRONG_SHARE = process.argv.includes('--wrong-share');
 const CAUSAL_EVIDENCE = process.argv.includes('--causal-evidence');
 const CAUSAL_MISMATCH = process.argv.includes('--causal-mismatch');
-const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (CAUSAL_EVIDENCE ? 'causal' : (WRONG_SHARE ? 'wrong-share' : 'chain')) : 'ambiguous'}-v1`;
+const ATTESTED_EVIDENCE = process.argv.includes('--attested-evidence');
+const TAMPER_ATTESTATION = process.argv.includes('--tamper-attestation');
+const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (ATTESTED_EVIDENCE ? 'attested' : (CAUSAL_EVIDENCE ? 'causal' : (WRONG_SHARE ? 'wrong-share' : 'chain'))) : 'ambiguous'}-v1`;
 import readline from 'node:readline';
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -35,7 +37,7 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: `chain-credit-1-${CREDIT_CHAIN ? (CAUSAL_EVIDENCE ? 'causal' : 'chain') : 'ambiguous'}`,
+      worldVersion: `chain-credit-1-${CREDIT_CHAIN ? (ATTESTED_EVIDENCE ? 'attested' : (CAUSAL_EVIDENCE ? 'causal' : 'chain')) : 'ambiguous'}`,
       capabilityIds: ['chain.prepare', 'chain.commit'],
       scenarioIds: ['chain'],
       valueSpec: { schemaVersion: VERSION, observationDimensions: 1, weights: [1], target: [1] },
@@ -83,15 +85,8 @@ function transition(prior, request, manifest) {
         intervalId: next.stateVersion,
         vector: [next.value],
         confounderCount: 0,
-        creditChain: CAUSAL_EVIDENCE
-          ? {
-              schemaVersion: VERSION,
-              basis: 'counterfactual-additive-v1',
-              members: releases.map((executionNonce, index) => ({
-                executionNonce,
-                delta: [CAUSAL_MISMATCH ? (index === 0 ? 0.5 : 0.25) : (index === 0 ? 0.75 : 0.25)],
-              })),
-            }
+        creditChain: CAUSAL_EVIDENCE || ATTESTED_EVIDENCE
+          ? causalCreditChain(releases, next)
           : {
               schemaVersion: VERSION,
               members: releases.map((executionNonce, index) => ({
@@ -125,6 +120,40 @@ function transition(prior, request, manifest) {
     },
     postObservation: observation(next, feedback),
   };
+}
+
+function causalCreditChain(releases, next) {
+  const base = {
+    schemaVersion: VERSION,
+    basis: ATTESTED_EVIDENCE ? 'counterfactual-attested-v1' : 'counterfactual-additive-v1',
+    members: releases.map((executionNonce, index) => ({
+      executionNonce,
+      delta: [CAUSAL_MISMATCH ? (index === 0 ? 0.5 : 0.25) : (index === 0 ? 0.75 : 0.25)],
+    })),
+  };
+  if (!ATTESTED_EVIDENCE) return base;
+  const signedFeedback = {
+    schemaVersion: VERSION,
+    executionNonce: releases[0],
+    stateVersion: next.stateVersion,
+    intervalId: next.stateVersion,
+    vector: [next.value],
+    confounderCount: 0,
+    creditChain: base,
+  };
+  return {
+    ...base,
+    attestation: {
+      schemaVersion: VERSION,
+      digest: canonicalDigest(signedFeedback),
+      attestation: tamperAttestation(attestationFor(signedFeedback)),
+    },
+  };
+}
+
+function tamperAttestation(value) {
+  if (!TAMPER_ATTESTATION) return value;
+  return `${value.slice(0, -1)}${value.endsWith('A') ? 'B' : 'A'}`;
 }
 
 function state(value, revision, pendingExecutionNonces, usedExecutionNonces = []) {

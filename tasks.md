@@ -1076,3 +1076,10 @@
 - 判据：真实 JSONL adapter 返回结构合法、维度正确但成员 delta 总和不等于反馈实际变化的 `counterfactual-additive-v1` witness 时，CLI 必须结算全部成员为 `AMBIGUOUS`、不产生动作模型，并可 Replay 为 `CONSISTENT`。
 - 验证：`chain-credit-world-adapter.mjs --causal-evidence --causal-mismatch` 跨完整 init→run→账本→Replay 链路通过；错误 witness 没有进入 Kernel 学习。
 - 边界：该节点只证明协议闭合失败会被拒绝学习，仍不能识别代数闭合但现实中虚假的干预报告；下一步要为 witness 增加可重放的干预来源/身份绑定，或证明在当前权限边界内只能保守不学。
+
+## F-136 描述符绑定的受控因果证据
+
+- 反证：v30 的加性闭合仍接受任何能构造合法 delta 的 WorldPort 声明；若证据可被跨 adapter 或跨反馈快照搬运，底座无法知道“谁在什么边界上声明了什么”。
+- 实现：Kernel 增加 v31 `counterfactual-attested-v1` 门控；外部 WorldPort 使用当前 descriptor 的 Ed25519 公钥验证覆盖完整 feedback 快照、加性成员和摘要的签名，Application、账本和 Replay 保留 attestation；v30/v29 历史路径不变。
+- 验证：有效签名通过真实 JSONL init→run→Replay 并学习 `0.75/0.25`；篡改签名在第三步 observation 边界被转换为 `WORLD_ADAPTER_PROTOCOL`，仅前两步落账、不生成模型。
+- 边界：签名只能证明 adapter 对声明内容的来源绑定、摘要完整性和快照关联，不能证明现实中孤立干预确实发生，也不能把不诚实 adapter 变成可信世界；下一步必须引入独立干预/对照或可信执行器证据，否则仍应保持保守学习。

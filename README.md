@@ -123,6 +123,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 反馈投递幂等：在有界已结算收据窗口内，完全相同的重复 feedback 可跨 Run/进程安全忽略；同 nonce 的不同内容仍会 fail-closed，避免把消息重放或篡改变成新的学习样本；
 - 显式动作链信用（`kernelLearningVersion: 29`）：WorldPort 可在单条 clean feedback 上声明 `creditChain:{schemaVersion:1,members:[{executionNonce,share}]}`，Kernel 要求链以反馈 nonce 为锚、成员按 pending 顺序排列、全部仍在 pending、份额闭合为 1 且不与同批反馈重叠；它把锚点动作前到反馈快照的净变化按份额分配给整条动作链，输出 `ACTION_CHAIN` 并随 Replay 重建。缺成员、重复/乱序、份额不闭合、混杂或共享观测边界均 fail-closed/不学习；这只是 WorldPort 的结构化因果声明，不是 Kernel 对真实因果的自证，旧 feedback 仍按 v28 及更早语义运行；
 - 受控加性因果证据（`kernelLearningVersion: 30`）：`creditChain` 可选择 `basis:"counterfactual-additive-v1"`，每个成员提供孤立干预的 `delta` 向量；Kernel 只在所有成员 delta 之和与锚点到反馈的实际变化严格闭合时学习，缺失/维度错误/不闭合时消费反馈但全部标记 `AMBIGUOUS`，不把无法解释的交互项分摊给动作。它校验的是可审计的加性证据边界，不是对外部 WorldPort 真实性的自证；v29 的 share 链和更早账本保持原语义；
+- 描述符绑定的因果证据（`kernelLearningVersion: 31`）：`creditChain` 可选择 `basis:"counterfactual-attested-v1"`，由当前 WorldPort 描述符中的 Ed25519 公钥验签完整反馈快照、成员 delta 和摘要；篡改、跨描述符搬运或快照错配均在外部边界 fail-closed，合法签名才进入 v30 的加性闭合结算。签名证明的是 adapter 对“声明了什么”的来源绑定，不是现实干预或因果真值；v30/v29 历史语义保持兼容；
 - 反馈顺序规范化：同一批合法的 nonce-bound feedback 无论由不同 WorldPort 按何种传输顺序返回，Kernel 都按 pending credit 的持久顺序结算，保持 `settled`、已结算收据和信念样本跨进程/Replay 一致；这不等于允许多个动作同时生效，无法归属的重叠变化仍必须由 WorldPort 标记为混杂；
 - 隐藏状态系统反例：`test/fixtures/hidden-state-world-adapter.mjs` 只向 Kernel 暴露一维 `value`，把 `hiddenMode` 和阶段机留在 WorldPort 内部；同一可见目标关系下，`advance` 实际产生 `-1/+1` 两种结果。跨两个独立 CLI Run 后，`beliefModels` 保留两种后验、外部效果不重复，两个 Run 均可 Replay 为 `CONSISTENT`。这证明的是当前信念记忆在该变化轴上没有把未知分支压成单一事实，不是隐藏状态识别或通用智能证明；
 - 隐藏状态可辨识性边界：当两个隐藏动力学的公开输入完全相同时，Kernel 必须先做同一选择；只有收到不同的可验证结果后，经验模型和后续策略才允许分化。该不变量由 `test/kernel/belief-memory.test.mjs` 固化，防止把隐藏字段、模型猜测或领域标签冒充为事实；
@@ -311,6 +312,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-133 的反证进一步确认：即使 WorldPort 声明结构合法但给出错误的 `0.99/0.01` 份额，当前 Kernel 仍会照常学习并 Replay 一致；没有独立干预或反事实证据时，底座无法从同一次共同结果中识别错误因果；
 - F-134 增加了受控加性证据：只有成员干预 delta 的总和闭合到实际结果才学习，闭合失败则保守为 `AMBIGUOUS`；这挡住了“算术上无法解释结果”的错误证据，但仍不证明 WorldPort 报告的干预确实在现实中发生；
 - F-135 已用真实 JSONL adapter 验证闭合失败路径：格式合法但总和不等于实际变化的 witness 被结算为 `AMBIGUOUS`、不生成动作模型，Replay 保持一致；
+- F-136 已用真实 JSONL adapter 验证描述符绑定：有效的 `counterfactual-attested-v1` witness 可跨 init→run→Replay 进入 v30 加性结算；篡改签名在外部边界被拒绝，前两步账本保留、第三步不写入，且不产生动作模型。签名只建立来源/快照完整性，不把 adapter 声明升级成现实因果事实；
 - 下一步要比较正确链、错误链、缺成员和共享边界在同一延迟效用任务中的长期策略结果，防止把结构化声明误当成现实事实；
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 

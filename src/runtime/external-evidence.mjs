@@ -36,17 +36,32 @@ export function verifyExternalInputAttestation(value, evidencePublicKey) {
       !verifyExternalInputDigest(value)) {
     return false;
   }
+  return verifySignedEvidence(value, evidencePublicKey);
+}
+
+export function verifySignedEvidence(value, evidencePublicKey) {
+  if (!isValidEvidencePublicKey(evidencePublicKey) ||
+      typeof value?.attestation !== 'string' || value.attestation.length === 0 ||
+      value.attestation.length > MAX_SIGNATURE_BYTES || !isBase64(value.attestation) ||
+      typeof value?.digest !== 'string' || value.digest !== canonicalDigest(unsignedEvidence(value))) {
+    return false;
+  }
   try {
     const key = createPublicKey({ key: Buffer.from(evidencePublicKey, 'base64'), format: 'der', type: 'spki' });
     return verifySignature(
       null,
-      Buffer.from(canonicalJson(externalInputSigningValue(value)), 'utf8'),
+      Buffer.from(canonicalJson({ ...unsignedEvidence(value), digest: value.digest }), 'utf8'),
       key,
       Buffer.from(value.attestation, 'base64'),
     );
   } catch {
     return false;
   }
+}
+
+function unsignedEvidence(value) {
+  const { digest: _digest, attestation: _attestation, ...unsigned } = value;
+  return unsigned;
 }
 
 function isBase64(value) {
