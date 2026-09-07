@@ -1070,3 +1070,9 @@
 - 实现：Kernel 增加 v30 学习版本和加性链分支；严格校验 basis、成员顺序、维度、有限数值和逐维闭合。外部 WorldPort 与 Application 保留/投影该 basis 和 delta；v29 share 链不变。
 - 验证：Kernel 合同覆盖有效 delta 闭合和不闭合；真实 JSONL adapter 跨 CLI Run 将 `0.75/0.25` 两个孤立 delta 写入不同动作模型，Replay `CONSISTENT`。语法检查与动作链兼容回归通过。
 - 边界：闭合只证明协议代数自洽，不证明 adapter 确实执行了孤立干预；交互项、无法反事实试验或证据不完整时仍必须保守不学习。下一步要测试 WorldPort 是否能提供可重放的干预证据，以及错误但代数闭合的 witness 是否仍不可辨识。
+
+## F-135 外部 WorldPort 的闭合失败路径
+
+- 判据：真实 JSONL adapter 返回结构合法、维度正确但成员 delta 总和不等于反馈实际变化的 `counterfactual-additive-v1` witness 时，CLI 必须结算全部成员为 `AMBIGUOUS`、不产生动作模型，并可 Replay 为 `CONSISTENT`。
+- 验证：`chain-credit-world-adapter.mjs --causal-evidence --causal-mismatch` 跨完整 init→run→账本→Replay 链路通过；错误 witness 没有进入 Kernel 学习。
+- 边界：该节点只证明协议闭合失败会被拒绝学习，仍不能识别代数闭合但现实中虚假的干预报告；下一步要为 witness 增加可重放的干预来源/身份绑定，或证明在当前权限边界内只能保守不学。

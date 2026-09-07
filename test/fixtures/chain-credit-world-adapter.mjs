@@ -8,6 +8,7 @@ const WORLD_ID = 'chain-credit';
 const CREDIT_CHAIN = process.argv.includes('--credit-chain');
 const WRONG_SHARE = process.argv.includes('--wrong-share');
 const CAUSAL_EVIDENCE = process.argv.includes('--causal-evidence');
+const CAUSAL_MISMATCH = process.argv.includes('--causal-mismatch');
 const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (CAUSAL_EVIDENCE ? 'causal' : (WRONG_SHARE ? 'wrong-share' : 'chain')) : 'ambiguous'}-v1`;
 import readline from 'node:readline';
 
@@ -88,7 +89,7 @@ function transition(prior, request, manifest) {
               basis: 'counterfactual-additive-v1',
               members: releases.map((executionNonce, index) => ({
                 executionNonce,
-                delta: [index === 0 ? 0.75 : 0.25],
+                delta: [CAUSAL_MISMATCH ? (index === 0 ? 0.5 : 0.25) : (index === 0 ? 0.75 : 0.25)],
               })),
             }
           : {
