@@ -460,6 +460,23 @@ test('CLI distinguishes explicit action-chain learning from an unresolvable shar
   });
 });
 
+test('CLI cannot detect a wrong action-chain share without independent causal evidence', async () => {
+  await withTemp(async (root) => {
+    const adapter = await writeChainCreditAdapterConfig(root, true, { wrongShare: true });
+    const lab = path.join(root, 'wrong-share-lab');
+    const init = await invoke('init', '--lab', lab, '--world', 'chain-credit', '--seed', 'wrong-share-seed', '--lab-id', 'wrong-share-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0);
+    const run = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '3', '--scenario', 'chain', '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0, JSON.stringify(run));
+    const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+    assert.equal(current.memory.actionModels[init.stdout[0].data.tokenMap.entries[0].token].meanDelta[0], 0.99);
+    assert.equal(current.memory.actionModels[init.stdout[0].data.tokenMap.entries[1].token].meanDelta[0], 0.01);
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0);
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
 test('CLI closes a missing-feedback window without learning and survives repeated restarts', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'missing-feedback-lab');
@@ -1242,12 +1259,12 @@ async function writeOverlapFeedbackAdapterConfig(root, reverseFeedback, creditCh
   return config;
 }
 
-async function writeChainCreditAdapterConfig(root, creditChain) {
-  const suffix = creditChain ? 'chain' : 'ambiguous';
+async function writeChainCreditAdapterConfig(root, creditChain, { wrongShare = false } = {}) {
+  const suffix = creditChain ? (wrongShare ? 'wrong-share' : 'chain') : 'ambiguous';
   const config = path.join(root, `chain-credit-${suffix}.json`);
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
-    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : [])],
+    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : []), ...(wrongShare ? ['--wrong-share'] : [])],
     adapterId: `chain-credit-adapter-${suffix}-v1`,
     worldId: 'chain-credit',
     timeoutMs: 2000,

@@ -6,7 +6,8 @@ const PROTOCOL = 'yi-world-cli';
 const VERSION = 1;
 const WORLD_ID = 'chain-credit';
 const CREDIT_CHAIN = process.argv.includes('--credit-chain');
-const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? 'chain' : 'ambiguous'}-v1`;
+const WRONG_SHARE = process.argv.includes('--wrong-share');
+const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (WRONG_SHARE ? 'wrong-share' : 'chain') : 'ambiguous'}-v1`;
 import readline from 'node:readline';
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -84,7 +85,7 @@ function transition(prior, request, manifest) {
           schemaVersion: VERSION,
           members: releases.map((executionNonce, index) => ({
             executionNonce,
-            share: index === 0 ? 0.75 : 0.25,
+            share: index === 0 ? (WRONG_SHARE ? 0.99 : 0.75) : (WRONG_SHARE ? 0.01 : 0.25),
           })),
         },
       }]

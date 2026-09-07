@@ -1057,3 +1057,9 @@
 - 实现：新增 `test/fixtures/chain-credit-world-adapter.mjs`，通过 `supportsStateDependentActions` 让第一步只能选择 `chain.prepare`、第二步只能选择 `chain.commit`；第三步释放前两步的共同效果。测试同时运行无链/有链两个独立 CLI lab，并逐 lab Replay。
 - 验证：无链结果 `actionModelCount=0`、归因 `[AMBIGUOUS, AMBIGUOUS]`；正确链结果 `actionModelCount=2`、归因 `[ACTION_CHAIN, ACTION_CHAIN]`；两侧延迟效果均为 1、当前第三步仍保留 pending、Replay 均为 `CONSISTENT`。
 - 边界：这第一次证明了动作链字段不只是被存储，而会改变可观察学习结果；它仍只证明“按 WorldPort 声明分配”这一协议行为，不证明声明份额正确，更不等于跨期套利已经收敛。下一步要加入错误份额、缺成员和真实 utility 策略收益对照。
+
+## F-133 错误动作链份额的不可辨识边界
+
+- 反证：在 F-132 的同一延迟效用 WorldPort 中保持可见轨迹和共同效果不变，只把动作链份额改为结构合法但错误的 `0.99/0.01`。
+- 结果：CLI 仍产生两个 `ACTION_CHAIN` 动作模型，两个模型均吸收错误分配后的变化，跨进程 Replay 仍为 `CONSISTENT`；因此仅凭一次共同结果、动作 nonce 和闭合份额，Kernel 无法识别 WorldPort 自报的错误因果。
+- 结论：这不是应由 Kernel 猜测的领域规则，而是观察等价性边界——没有独立干预、反事实执行或其它可验证证据时，正确因果与错误声明对底座不可区分。下一步应设计可拒绝的受控因果证据通道；若 WorldPort 无法提供该证据，默认必须保持保守不学习。
