@@ -14,6 +14,7 @@ const releaseFileIndex = process.argv.indexOf('--release-file');
 const releaseFile = releaseFileIndex === -1 ? null : process.argv[releaseFileIndex + 1] ?? null;
 const supportsIdempotentTransitions = !process.argv.includes('--non-idempotent');
 const supportsReconciliation = process.argv.includes('--reconcilable');
+const executionAuthority = process.argv.includes('--execution-authority');
 const executionObserver = process.argv.includes('--execution-observer');
 const observerMismatch = process.argv.includes('--observer-mismatch');
 const osEffect = process.argv.includes('--os-effect');
@@ -49,7 +50,11 @@ rl.on('line', (line) => {
 function dispatch(op, payload) {
   if (op === 'hello') {
     const descriptor = {
-      adapterId: executionObserver ? 'idempotent-execution-observer-v1' : 'idempotent-transition-adapter-v1',
+      adapterId: executionAuthority
+        ? 'idempotent-execution-authority-v1'
+        : executionObserver
+          ? 'idempotent-execution-observer-v1'
+          : 'idempotent-transition-adapter-v1',
       worldId: WORLD_ID,
       worldVersion: 'idempotent-transition-1',
       capabilityIds: twoActions ? [CAPABILITY_ID, SECOND_CAPABILITY_ID] : [CAPABILITY_ID],
@@ -63,6 +68,10 @@ function dispatch(op, payload) {
     return { ...descriptor, descriptorDigest: canonicalDigest(descriptor) };
   }
   if (op === 'initialState') return { state: state(0) };
+  if (executionAuthority) {
+    if (op !== 'executeExecution') throw new Error(`unsupported execution authority operation: ${op}`);
+    return executeExecution(payload);
+  }
   if (executionObserver) {
     if (op !== 'observeExecution') throw new Error(`unsupported execution observer operation: ${op}`);
     return observeExecution(payload);
@@ -94,6 +103,19 @@ function dispatch(op, payload) {
   if (op === 'transition') return transition(payload.state, payload.request);
   if (op === 'reconcile') return reconcile(payload.state, payload.request);
   throw new Error(`unsupported operation: ${op}`);
+}
+
+function executeExecution(payload) {
+  if (osEffect && !skipOsEffect) writeOsMarker(payload.executionNonce);
+  return {
+    schemaVersion: 1,
+    status: 'EXECUTED',
+    executionNonce: payload.executionNonce,
+    token: payload.token,
+    basedOnVersion: payload.basedOnVersion,
+    beforeStateDigest: payload.beforeStateDigest,
+    afterStateDigest: canonicalDigest(state(1, payload.executionNonce)),
+  };
 }
 
 function transition(prior, request) {

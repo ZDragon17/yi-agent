@@ -2301,6 +2301,9 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
   if (value.executionObserver !== undefined && !isValidExecutionObserverMetadata(value.executionObserver)) {
     fail('Adapter execution observer metadata is invalid.');
   }
+  if (value.executionAuthority !== undefined && !isValidExecutionAuthorityMetadata(value.executionAuthority)) {
+    fail('Adapter execution authority metadata is invalid.');
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
     protocol: 'yi-world-cli',
@@ -2318,6 +2321,7 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
       ? {}
       : { supportsReconciliation: value.supportsReconciliation }),
     ...(value.witness === undefined ? {} : { witness: cloneJson(value.witness) }),
+    ...(value.executionAuthority === undefined ? {} : { executionAuthority: cloneJson(value.executionAuthority) }),
     ...(value.executionObserver === undefined ? {} : { executionObserver: cloneJson(value.executionObserver) }),
   };
 }
@@ -2333,6 +2337,15 @@ function isValidWitnessMetadata(value) {
 }
 
 function isValidExecutionObserverMetadata(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    typeof value.adapterId === 'string' && value.adapterId.length > 0 && value.adapterId.length <= 4096 &&
+    typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&
+    typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
+    typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
+    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest);
+}
+
+function isValidExecutionAuthorityMetadata(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value) &&
     typeof value.adapterId === 'string' && value.adapterId.length > 0 && value.adapterId.length <= 4096 &&
     typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&

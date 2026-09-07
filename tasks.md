@@ -1139,3 +1139,10 @@
 - 实现：不增加 Kernel 或学习版本；扩展真实 JSONL 外部 WorldPort 夹具，让主 adapter 在隔离临时目录写入与执行 nonce 绑定的 OS marker，observer 不读取主效果记录，只检查该 marker 并计算确定的后状态摘要。增加 `marker` 存在与 marker 缺失两条 CLI 路径，后者保留主效果记录但禁止 STEP 落账；Replay 只验证已持久化边界，不再次访问 observer。
 - 验证：OS marker 正向路径和“主 transition 接受但 marker 缺失”的 fail-closed 路径 `2/2`；正向 Replay `CONSISTENT`，负向账本 STEP 数为 0 且主效果计数为 1；F-143 的独立观测/恢复回归保持通过。
 - 边界：本实验只证明观测请求穿过了本机临时文件系统这一 OS 可见边界；marker 仍由同一用户权限和本机进程控制，可被有权限的进程伪造或篡改，不是远程 OS attestation、可信硬件或物理事实。下一步应把 observer 放入低权限隔离环境，并接入不由主 adapter 单独控制的审计来源，再测长期随机化收益。
+
+## F-145 执行声明、authority 与 observer 三方分离
+
+- 反证/缺口：F-144 的主 adapter 仍能自己写入 observer 检查的 OS marker；即使 observer 不读取主 effect 文件，声明方仍可能同时制造“效果”和状态声明，不能把执行事实与声明来源真正拆开。
+- 实现：增加可选 `adapter.executionAuthority` 配置。主 adapter 的 `transition` 只负责声明状态变化；宿主在接受的 transition 返回后，向独立 authority 只发送 world/scenario、execution nonce、token、基准版本和前状态摘要。authority 必须返回绑定相同请求且状态摘要匹配的 `EXECUTED` 回执，之后 observer 才检查 OS effect 并返回 `OBSERVED`；两道边界任一失败均在 STEP 前 `WORLD_ADAPTER_PROTOCOL` fail-closed。authority 的 descriptor、launch digest、manifest 校验、恢复和 Replay 传递保持与 observer 对称，Replay 不启动任何外部进程。
+- 验证：真实 JSONL 夹具中主 adapter 禁止写 marker、authority 写入独立临时目录后完成闭环；authority 返回成功但跳过 marker 时 observer 拒绝且不追加 STEP；主机在 authority/observer 完成后、STEP 前崩溃，恢复仍复用同一 execution nonce、效果计数保持 1，三条 CLI E2E `3/3`；F-143/F-144 观测回归 `3/3`，LabStore/Replay `76/76`，非幂等对账 `7/7`。
+- 边界：authority、observer 和宿主仍运行在同一用户权限与本机 OS 上，authority 自己的 marker 仍可能是伪造的；本节点证明的是“主声明方不再单独拥有测试效果写入权”的进程协议边界，不是低权限隔离、远程 attestation、可信硬件或物理真相。下一步应把 authority 接到已有 `EffectBroker` 的人工确认/沙箱执行器或真实设备驱动，并在不同权限/不同机器上验证不可伪造性。
