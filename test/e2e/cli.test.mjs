@@ -553,6 +553,32 @@ test('CLI rejects a tampered descriptor-attested counterfactual witness before l
   });
 });
 
+test('F-137 demonstrates that a valid attestation still accepts a fabricated additive cause', async () => {
+  await withTemp(async (root) => {
+    const truthFile = path.join(root, 'causal-truth.jsonl');
+    const lab = path.join(root, 'fabricated-attestation-lab');
+    const adapter = await writeChainCreditAdapterConfig(root, true, {
+      attestedEvidence: true,
+      fabricatedAttestation: true,
+      truthFile,
+    });
+    const init = await invoke('init', '--lab', lab, '--world', 'chain-credit', '--seed', 'fabricated-attestation-seed', '--lab-id', 'fabricated-attestation-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '3', '--scenario', 'chain', '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0, JSON.stringify(run));
+    const truth = JSON.parse((await readFile(truthFile, 'utf8')).trim());
+    assert.deepEqual(truth.trueMemberDeltas, [[0], [1]]);
+    assert.notDeepEqual(truth.claimedMemberDeltas, truth.trueMemberDeltas);
+    const current = JSON.parse(await readFile(path.join(lab, 'state', 'current.json'), 'utf8'));
+    const tokens = init.stdout[0].data.tokenMap.entries;
+    assert.equal(current.memory.actionModels[tokens[0].token].meanDelta[0], 0.75);
+    assert.equal(current.memory.actionModels[tokens[1].token].meanDelta[0], 0.25);
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
 test('CLI closes a missing-feedback window without learning and survives repeated restarts', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'missing-feedback-lab');
@@ -1335,13 +1361,13 @@ async function writeOverlapFeedbackAdapterConfig(root, reverseFeedback, creditCh
   return config;
 }
 
-async function writeChainCreditAdapterConfig(root, creditChain, { wrongShare = false, causalEvidence = false, causalMismatch = false, attestedEvidence = false, tamperAttestation = false } = {}) {
-  const suffix = creditChain ? (attestedEvidence ? 'attested' : (causalEvidence ? 'causal' : (wrongShare ? 'wrong-share' : 'chain'))) : 'ambiguous';
+async function writeChainCreditAdapterConfig(root, creditChain, { wrongShare = false, causalEvidence = false, causalMismatch = false, attestedEvidence = false, tamperAttestation = false, fabricatedAttestation = false, truthFile = null } = {}) {
+  const suffix = creditChain ? (fabricatedAttestation ? 'fabricated' : (attestedEvidence ? 'attested' : (causalEvidence ? 'causal' : (wrongShare ? 'wrong-share' : 'chain')))) : 'ambiguous';
   const config = path.join(root, `chain-credit-${suffix}.json`);
   await writeFile(config, JSON.stringify({
     executable: process.execPath,
-    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : []), ...(wrongShare ? ['--wrong-share'] : []), ...(causalEvidence ? ['--causal-evidence'] : []), ...(causalMismatch ? ['--causal-mismatch'] : []), ...(attestedEvidence ? ['--attested-evidence'] : []), ...(tamperAttestation ? ['--tamper-attestation'] : [])],
-    adapterId: `chain-credit-adapter-${suffix}-v1`,
+    args: [CHAIN_CREDIT_ADAPTER_FIXTURE, ...(creditChain ? ['--credit-chain'] : []), ...(wrongShare ? ['--wrong-share'] : []), ...(causalEvidence ? ['--causal-evidence'] : []), ...(causalMismatch ? ['--causal-mismatch'] : []), ...(attestedEvidence ? ['--attested-evidence'] : []), ...(tamperAttestation ? ['--tamper-attestation'] : []), ...(fabricatedAttestation ? ['--fabricated-attestation'] : []), ...(truthFile === null ? [] : ['--truth-file', truthFile])],
+    adapterId: `chain-credit-adapter-${attestedEvidence ? 'attested' : (causalEvidence ? 'causal' : (wrongShare ? 'wrong-share' : (creditChain ? 'chain' : 'ambiguous')))}-v1`,
     worldId: 'chain-credit',
     timeoutMs: 2000,
   }));

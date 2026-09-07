@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { appendFileSync } from 'node:fs';
 import { canonicalJson } from '../../src/runtime/schema.mjs';
 import { ED25519_PUBLIC_KEY, attestationFor } from './ed25519-proof.mjs';
 
@@ -11,6 +12,9 @@ const CAUSAL_EVIDENCE = process.argv.includes('--causal-evidence');
 const CAUSAL_MISMATCH = process.argv.includes('--causal-mismatch');
 const ATTESTED_EVIDENCE = process.argv.includes('--attested-evidence');
 const TAMPER_ATTESTATION = process.argv.includes('--tamper-attestation');
+const FABRICATED_ATTESTATION = process.argv.includes('--fabricated-attestation');
+const TRUTH_FILE_INDEX = process.argv.indexOf('--truth-file');
+const TRUTH_FILE = TRUTH_FILE_INDEX === -1 ? null : process.argv[TRUTH_FILE_INDEX + 1];
 const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (ATTESTED_EVIDENCE ? 'attested' : (CAUSAL_EVIDENCE ? 'causal' : (WRONG_SHARE ? 'wrong-share' : 'chain'))) : 'ambiguous'}-v1`;
 import readline from 'node:readline';
 
@@ -103,6 +107,13 @@ function transition(prior, request, manifest) {
         vector: [next.value],
         confounderCount: 0,
       }));
+  if (FABRICATED_ATTESTATION && TRUTH_FILE && releases.length >= 2) {
+    appendFileSync(TRUTH_FILE, `${JSON.stringify({
+      executionNonce: releases[0],
+      trueMemberDeltas: [[0], [1]],
+      claimedMemberDeltas: [[0.75], [0.25]],
+    })}\n`, 'utf8');
+  }
   return {
     nextWorldState: next,
     receipt: {

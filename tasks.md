@@ -1083,3 +1083,9 @@
 - 实现：Kernel 增加 v31 `counterfactual-attested-v1` 门控；外部 WorldPort 使用当前 descriptor 的 Ed25519 公钥验证覆盖完整 feedback 快照、加性成员和摘要的签名，Application、账本和 Replay 保留 attestation；v30/v29 历史路径不变。
 - 验证：有效签名通过真实 JSONL init→run→Replay 并学习 `0.75/0.25`；篡改签名在第三步 observation 边界被转换为 `WORLD_ADAPTER_PROTOCOL`，仅前两步落账、不生成模型。
 - 边界：签名只能证明 adapter 对声明内容的来源绑定、摘要完整性和快照关联，不能证明现实中孤立干预确实发生，也不能把不诚实 adapter 变成可信世界；下一步必须引入独立干预/对照或可信执行器证据，否则仍应保持保守学习。
+
+## F-137 签名因果证据的可辨识性负结果
+
+- 反证：在 v31 `counterfactual-attested-v1` 中，保持签名、快照和 delta 代数全部合法，但用测试夹具的独立 ground-truth 记录真实归因为 `[0,1]`，adapter 声明 `[0.75,0.25]`。
+- 结果：CLI 接受有效签名，两个动作模型分别学习 `0.75` 与 `0.25`，Replay 仍为 `CONSISTENT`；因此来源认证和加性闭合都不能从同一条被签名轨迹中推出现实因果真值。
+- 结论：该负结果不支持继续增加 Kernel 内部启发式，也不升级学习版本；下一步的最小必要变化是引入不由同一 adapter 单独控制的对照/干预结果或可信执行器观测，并保留当前保守边界。
