@@ -24,12 +24,12 @@ export const MAX_BOUNDARY_IDENTIFIER_LENGTH = 4096;
 export const MAX_EXECUTION_NONCE_LENGTH = 256;
 const MAX_JSON_DEPTH = 128;
 
-export function canonicalJson(value) {
-  return serialize(value, new Set(), 0);
+export function canonicalJson(value, options = {}) {
+  return serialize(value, new Set(), 0, options.cache);
 }
 
-export function canonicalDigest(value) {
-  return `sha256:${createHash('sha256').update(canonicalJson(value)).digest('hex')}`;
+export function canonicalDigest(value, options = {}) {
+  return `sha256:${createHash('sha256').update(canonicalJson(value, options)).digest('hex')}`;
 }
 
 export function candidateDigest({ token, proposal = null } = {}) {
@@ -52,7 +52,7 @@ export function cloneJson(value) {
   return JSON.parse(canonicalJson(value));
 }
 
-function serialize(value, ancestors, depth) {
+function serialize(value, ancestors, depth, cache = null) {
   if (depth > MAX_JSON_DEPTH) throw new TypeError(`Canonical JSON exceeds maximum depth ${MAX_JSON_DEPTH}.`);
   if (value === null) return 'null';
 
@@ -70,21 +70,25 @@ function serialize(value, ancestors, depth) {
   }
 
   if (ancestors.has(value)) throw new TypeError('Canonical JSON does not support cycles.');
+  if (cache?.has(value)) return cache.get(value);
   ancestors.add(value);
 
   try {
+    let result;
     if (Array.isArray(value)) {
-      return `[${value.map((item) => item === undefined ? 'null' : serialize(item, ancestors, depth + 1)).join(',')}]`;
+      result = `[${value.map((item) => item === undefined ? 'null' : serialize(item, ancestors, depth + 1, cache)).join(',')}]`;
+    } else {
+      if (!isPlainObject(value)) throw new TypeError('Canonical JSON requires plain objects.');
+      const properties = [];
+      for (const key of Object.keys(value).sort()) {
+        const item = value[key];
+        if (item === undefined) continue;
+        properties.push(`${JSON.stringify(key)}:${serialize(item, ancestors, depth + 1, cache)}`);
+      }
+      result = `{${properties.join(',')}}`;
     }
-
-    if (!isPlainObject(value)) throw new TypeError('Canonical JSON requires plain objects.');
-    const properties = [];
-    for (const key of Object.keys(value).sort()) {
-      const item = value[key];
-      if (item === undefined) continue;
-      properties.push(`${JSON.stringify(key)}:${serialize(item, ancestors, depth + 1)}`);
-    }
-    return `{${properties.join(',')}}`;
+    cache?.set(value, result);
+    return result;
   } finally {
     ancestors.delete(value);
   }

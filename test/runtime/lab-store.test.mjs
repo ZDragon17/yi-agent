@@ -741,6 +741,23 @@ test('STEP evidence rejects malformed verification, external inputs, and after-s
   await run.finish({ terminalStatus: 'HALTED', finalState: runInput().initialState });
 }));
 
+test('internal STEP append derives afterDigest once while public append still requires it', async () => withLab(async ({ lab }) => {
+  const { INTERNAL_RUN_APPEND, LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  const payload = stepEvent();
+  delete payload.payload.afterDigest;
+
+  await assert.rejects(
+    run.append(payload),
+    (error) => assertCode(error, 'INVALID_INPUT'),
+  );
+
+  const event = await run.append(payload, { returnReference: true, [INTERNAL_RUN_APPEND]: true });
+  assert.equal(event.payload.afterDigest, canonicalDigest(event.payload.afterState));
+  await run.finish({ terminalStatus: 'COMPLETED', finalState: event.payload.afterState });
+}));
+
 test('open validates token-map semantics, not only the manifest outer digest', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   await LabStore.init(initOptions(lab));

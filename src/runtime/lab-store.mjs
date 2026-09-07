@@ -741,17 +741,32 @@ class ActiveRun {
     if (kind === 'RUN_STARTED' || TERMINAL_KINDS.has(kind)) {
       conflict('Reserved event kind.', { kind });
     }
-    const payload = options[INTERNAL_RUN_APPEND] === true
+    const internalAppend = options[INTERNAL_RUN_APPEND] === true;
+    let payload = internalAppend
       ? source.payload
       : cloneInputJson(source.payload ?? {}, 'event.payload');
     if (kind !== 'STEP') conflict('Unsupported event kind.', { kind });
+    const serializationCache = new WeakMap();
+    let precomputedAfterStateDigest = null;
+    if (
+      internalAppend &&
+      payload !== null &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      payload.afterDigest === undefined
+    ) {
+      precomputedAfterStateDigest = canonicalDigest(payload.afterState, { cache: serializationCache });
+      payload = { ...payload, afterDigest: precomputedAfterStateDigest };
+    }
     validateStepPayload(
       payload,
       'event.payload',
       false,
       this.start,
       this.store.manifest,
-      options[INTERNAL_RUN_APPEND] === true,
+      internalAppend,
+      precomputedAfterStateDigest,
+      serializationCache,
     );
     if (this.needsLedgerReconcile) await this.reconcileLedger();
     const executionNonce = payload.receipt.executionNonce;
@@ -783,6 +798,7 @@ class ActiveRun {
         this.reuseLedgerHandle,
         this.durability === 'strict',
         this.reuseLedgerHandle ? this : null,
+        serializationCache,
       );
     } catch (error) {
       this.needsLedgerReconcile = true;
@@ -1269,6 +1285,7 @@ async function appendLedgerEvent(
   compactStorage = false,
   syncLedger = true,
   ledgerOwner = null,
+  serializationCache = null,
 ) {
   const unsigned = {
     schemaVersion: SCHEMA_VERSION,
@@ -1278,7 +1295,7 @@ async function appendLedgerEvent(
     payload: input.payload,
     prevDigest,
   };
-  const payloadJson = compactStorage ? canonicalJson(input.payload) : null;
+  const payloadJson = compactStorage ? canonicalJson(input.payload, { cache: serializationCache }) : null;
   const event = {
     ...unsigned,
     digest: compactStorage ? digestLedgerEvent(unsigned, payloadJson) : canonicalDigest(unsigned),
@@ -2034,7 +2051,16 @@ function validateContinuityState(value, field, corruptOnFailure = false, trusted
   }
 }
 
-function validateStepPayload(value, field, corruptOnFailure = false, runStart, manifest, trustedSupervisor = false) {
+function validateStepPayload(
+  value,
+  field,
+  corruptOnFailure = false,
+  runStart,
+  manifest,
+  trustedSupervisor = false,
+  precomputedAfterStateDigest = null,
+  serializationCache = new WeakMap(),
+) {
   const fail = (message) => {
     if (corruptOnFailure) corrupt(message, { field });
     throw new LabStoreError('INVALID_INPUT', message, { field });
@@ -2073,12 +2099,12 @@ function validateStepPayload(value, field, corruptOnFailure = false, runStart, m
     fail('STEP with external inputs must be conservatively marked ambiguous and non-learnable.');
   }
   if (value.boundary.externalInputsDigest !== undefined &&
-      value.boundary.externalInputsDigest !== canonicalDigest(value.externalInputs)) {
+      value.boundary.externalInputsDigest !== canonicalDigest(value.externalInputs, { cache: serializationCache })) {
     fail('STEP boundary does not bind external inputs.');
   }
   if (manifest?.adapter !== undefined &&
       (typeof value.boundary.externalInputsDigest !== 'string' ||
-        value.boundary.externalInputsDigest !== canonicalDigest(value.externalInputs))) {
+        value.boundary.externalInputsDigest !== canonicalDigest(value.externalInputs, { cache: serializationCache }))) {
     fail('External adapter STEP is missing its external input binding.');
   }
   if (typeof value.receipt.executionNonce !== 'string' || value.receipt.executionNonce.length === 0) {
@@ -2086,8 +2112,8 @@ function validateStepPayload(value, field, corruptOnFailure = false, runStart, m
   }
   validateContinuityState(value.afterState, `${field}.afterState`, corruptOnFailure, trustedSupervisor);
   if (
-    value.afterDigest !== canonicalDigest(value.afterState) ||
-    canonicalJson(value.rngAfter) !== canonicalJson(value.afterState.rngState)
+    value.afterDigest !== (precomputedAfterStateDigest ?? canonicalDigest(value.afterState, { cache: serializationCache })) ||
+    canonicalJson(value.rngAfter, { cache: serializationCache }) !== canonicalJson(value.afterState.rngState, { cache: serializationCache })
   ) fail('STEP after-state evidence is inconsistent.');
   for (const external of value.externalInputs) {
     validateExternalInput(external, field, corruptOnFailure, runStart, manifest?.adapter);
@@ -2097,6 +2123,7 @@ function validateStepPayload(value, field, corruptOnFailure = false, runStart, m
       (value.policyEvidence === undefined || !isValidCandidateOutcome(value.candidateOutcome, value.policyEvidence))) {
     fail('STEP candidate outcome evidence is invalid.');
   }
+  return { serializationCache };
 }
 
 function validatePolicyEvidence(value, field, corruptOnFailure) {
