@@ -37,6 +37,7 @@ const SETTLEMENT_DELAY = stateFileIndex === -1 ? 2 : Math.max(1, Number(process.
 const NOISY = process.argv.includes('--noisy-feedback');
 const NOISE_LIMIT = 0.2;
 const ADVERSARIAL = process.argv.includes('--adversarial');
+const UTILITY_MODE = process.argv.includes('--utility-mode');
 const REGIME_SHIFT_AT = (() => { const i = process.argv.indexOf('--regime-shift-at'); return i === -1 ? -1 : Number(process.argv[i + 1]); })();
 // R9：mid-run 电价表翻转（谷峰对调）——非平稳叠加
 function effectiveTariffLevel(hour) {
@@ -77,22 +78,42 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}`,
+      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}`,
       capabilityIds: CAPABILITY_IDS,
       scenarioIds: ['steady'],
-      valueSpec: {
-        schemaVersion: VERSION,
-        observationDimensions: 3,
-        weights: [1.5, 0.3, 0],
-        target: [0, 0, 0],
-      },
+      valueSpec: UTILITY_MODE
+        ? {
+            schemaVersion: VERSION,
+            observationDimensions: 4,
+            weights: [0, 0, 0, 1],
+            target: [0, 0, 0, 0],
+            valueMode: 'signed-v1',
+          }
+        : {
+            schemaVersion: VERSION,
+            observationDimensions: 3,
+            weights: [1.5, 0.3, 0],
+            target: [0, 0, 0],
+          },
       evidencePublicKey: EVIDENCE_PUBLIC_KEY,
       supportsStateDependentActions: true,
     };
     return { ...descriptor, descriptorDigest: canonicalDigest(descriptor) };
   }
   if (op === 'initialState') {
-    return { state: { schemaVersion: VERSION, stateVersion: 'arbitrage:0', revision: 0, hour: 0, soc: 50, lastNonce: null, pendingSettlements: [], usedExecutionNonces: [] } };
+    return {
+      state: {
+        schemaVersion: VERSION,
+        stateVersion: 'arbitrage:0',
+        revision: 0,
+        hour: 0,
+        soc: 50,
+        lastNonce: null,
+        pendingSettlements: [],
+        usedExecutionNonces: [],
+        ...(UTILITY_MODE ? { utilityYuan: 0 } : {}),
+      },
+    };
   }
   if (op === 'actions') {
     const entries = payload.manifest?.tokenMap?.entries;
@@ -140,18 +161,23 @@ function noisySnapshot(vector, step) {
 }
 
 function observation(state) {
-  const grid = gridPowerKw({ load: loadKw(state.hour), pv: 0, essPower: 0 });
   return {
     schemaVersion: VERSION,
-    vector: [
-      grid / OBS_SCALE,
-      Math.round((effectiveTariffPrice(state.hour) - 0.7) * 1000) / 1000,
-      Math.round(state.soc / 100 * 1000) / 1000,
-    ],
+    vector: observationVector(state),
     stateVersion: `arbitrage:${state.hour}`,
     intervalId: `arbitrage:${state.hour}`,
     evidence: [],
   };
+}
+
+function observationVector(state) {
+  const grid = gridPowerKw({ load: loadKw(state.hour), pv: 0, essPower: 0 });
+  return [
+    grid / OBS_SCALE,
+    Math.round((effectiveTariffPrice(state.hour) - 0.7) * 1000) / 1000,
+    Math.round(state.soc / 100 * 1000) / 1000,
+    ...(UTILITY_MODE ? [Math.round(-(state.utilityYuan ?? 0) / 1000 * 1000) / 1000] : []),
+  ];
 }
 
 function transition(state, request, manifest) {
@@ -168,6 +194,8 @@ function transition(state, request, manifest) {
   if (grid < 0) {
     return rejected(state, request, 'GRID_EXPORT_NOT_ALLOWED');
   }
+  const stepCostYuan = Math.max(0, grid) * effectivePrice(state.hour, state);
+  const nextUtilityYuan = (state.utilityYuan ?? 0) + stepCostYuan;
 
   // R2：结算反馈延迟 2 步——本步动作的结算（电网功率/电价/SOC 快照）在其后
   // 第二步的 feedback[] 中按 executionNonce 送达，Kernel 以 pending credit 结算。
@@ -199,6 +227,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
       gridPowerKw: grid,
       price: effectiveTariffPrice(state.hour),
       soc: nextSoc,
+      ...(UTILITY_MODE ? { utilityYuan: nextUtilityYuan } : {}),
     });
   }
 
@@ -212,6 +241,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
     pendingSettlements,
     recentActions: [...(state.recentActions ?? []).slice(-2), entry.capabilityId],
     usedExecutionNonces: [...state.usedExecutionNonces.slice(-7), request.executionNonce],
+    ...(UTILITY_MODE ? { utilityYuan: nextUtilityYuan } : {}),
   };
 
   const noisyStep = next.hour;
@@ -220,11 +250,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
         ? [{
             schemaVersion: VERSION,
             executionNonce: state.lastNonce,
-            vector: [
-              Math.round(gridPowerKw({ load: loadKw(next.hour), pv: 0, essPower: 0 }) / OBS_SCALE * 1000) / 1000,
-              Math.round((effectiveTariffPrice(next.hour) - 0.7) * 1000) / 1000,
-              Math.round(nextSoc / 100 * 1000) / 1000,
-            ],
+            vector: observationVector(next),
             stateVersion: next.stateVersion,
             intervalId: next.stateVersion,
             confounderCount: 1, // 日总量混合归因：不可学习
@@ -233,11 +259,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
     : due.map((item) => ({
         schemaVersion: VERSION,
         executionNonce: item.executionNonce,
-        vector: [
-          Math.round(gridPowerKw({ load: loadKw(next.hour), pv: 0, essPower: 0 }) / OBS_SCALE * 1000) / 1000,
-          Math.round((effectiveTariffPrice(next.hour) - 0.7) * 1000) / 1000,
-          Math.round(item.soc / 100 * 1000) / 1000,
-        ],
+        vector: observationVector({ ...next, soc: item.soc, utilityYuan: item.utilityYuan ?? next.utilityYuan }),
         stateVersion: next.stateVersion,
         intervalId: next.stateVersion,
         confounderCount: 0,
@@ -261,11 +283,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
     },
     postObservation: {
       schemaVersion: VERSION,
-      vector: [
-        grid / OBS_SCALE,
-        Math.round((effectiveTariffPrice(next.hour) - 0.7) * 1000) / 1000,
-        Math.round(nextSoc / 100 * 1000) / 1000,
-      ],
+      vector: observationVector(next),
       stateVersion: next.stateVersion,
       intervalId: next.stateVersion,
       ...(feedback.length === 0 ? {} : { feedback }),
@@ -275,7 +293,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
         hour: state.hour,
         gridPowerKw: grid,
         price: tariffForHour(state.hour).price,
-        costYuan: Math.round(grid * effectivePrice(state.hour, state) * 1000) / 1000,
+        costYuan: Math.round(stepCostYuan * 1000) / 1000,
         soc: nextSoc,
       }],
     },

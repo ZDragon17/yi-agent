@@ -1037,3 +1037,9 @@
 - 实现：保留 Kernel 已有的 `signed-v1`/`distance-v2` 两种领域无关价值投影；WorldPort 显式声明的模式经过 ChangeSupervisor、Application、LabStore、Replay 和 STEP boundary 原样固化，默认新运行仍使用 `distance-v2`，非法模式在外部 descriptor 边界 fail-closed。
 - 验证：新增第三方 WorldPort Application→持久化→Replay 回归和 Kernel signed utility 方向回归；Kernel、ChangeSupervisor、Application 三个边界原有 114/114 通过，新增 utility case 1/1，代码语法检查通过，既有 durability matrix 隔离复验 3/3 通过。
 - 边界：这只是让效用方向能够进入共同价值投影，不等于已经完成跨步信用分配；`ess-arbitrage` 尚未因本节点自动宣称套利收敛，下一步必须用独立 WorldPort 反证累计效用与延迟反馈的真实行为。
+
+## F-130 效用通道对跨期规划的负结果
+
+- 实验：`ess-arbitrage --utility-mode` 在观测向量中增加累计效用通道，并以 `signed-v1` 绑定 WorldPort 的效用方向；同一隔离实验分别运行 horizon 1 与 horizon 8，完整经过 CLI、账本和 Replay。
+- 结果：24 步预注册短窗口中，utility-only 的 horizon 8 没有优于 horizon 1（本机复验分别为 3580.5 与 3445.5 的电费），因此“只开放 signed-v1 就能解决跨期套利”的假设被否定；utility 通道本身和 Replay 仍为 2/2 通过。
+- 边界：负结果把缺口进一步收窄到动作链信用分配/多步效用预测，而不是价值模式丢失；下一步必须让延迟收益在有界历史动作链中获得可审计、可重放的信用，不得只调权重或扩大规划深度。

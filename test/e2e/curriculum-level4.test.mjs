@@ -19,19 +19,22 @@ function tariffPrice(hour) {
 // 且严格低于 horizon 1（规划深度价值证据）——单步几何在数学上无法表达
 // 「谷充的即期成本由数小时后的峰放回本」。
 
-async function arbitrageRun(root, label, horizon) {
+async function arbitrageRun(root, label, horizon, { utilityMode = false, steps = 96 } = {}) {
   const lab = path.join(root, `arb-${label}`);
   const adapter = path.join(root, 'arb-adapter.json');
   await writeFile(adapter, JSON.stringify({
     executable: process.execPath,
-    args: [path.join(CURRICULUM, 'ess-arbitrage', 'adapter.mjs')],
+    args: [
+      path.join(CURRICULUM, 'ess-arbitrage', 'adapter.mjs'),
+      ...(utilityMode ? ['--utility-mode'] : []),
+    ],
     adapterId: 'ess-arbitrage-adapter-v1',
     worldId: 'ess-arbitrage',
     timeoutMs: 20000,
   }));
   const init = await invoke(['init', '--lab', lab, '--world', 'ess-arbitrage', '--seed', `arb-${label}`, '--adapter', adapter, '--json']);
   assert.equal(init.code, 0, JSON.stringify(init));
-  const args = ['agent', 'run', '--lab', lab, '--run-id', 'r', '--steps', '96', '--kernel-only', '--adapter', adapter, '--json'];
+  const args = ['agent', 'run', '--lab', lab, '--run-id', 'r', '--steps', String(steps), '--kernel-only', '--adapter', adapter, '--json'];
   if (horizon > 1) args.push('--planning-horizon', String(horizon));
   const r = await invoke(args);
   assert.equal(r.code, 0, JSON.stringify(r));
@@ -47,7 +50,7 @@ async function arbitrageRun(root, label, horizon) {
   }
   const replay = await invoke(['replay', '--lab', lab, '--run', 'r', '--adapter', adapter, '--json']);
   assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
-  return { cost, lab, adapter, horizon };
+  return { cost, lab, adapter, horizon, steps, utilityMode };
 }
 
 function idleBaseline(steps) {
@@ -73,6 +76,49 @@ test('L4-A arbitrage (negative result): neither single-step geometry nor horizon
     assert.ok(rel(h4.cost) < 0.08, `horizon-4 rel deviation ${rel(h4.cost).toFixed(3)}`);
     assert.ok(rel(h8.cost) < 0.08, `horizon-8 rel deviation ${rel(h8.cost).toFixed(3)}`);
     assert.ok(Math.abs(h8.cost - h1.cost) / baseline < 0.08, `h8 vs h1 gap ${(Math.abs(h8.cost - h1.cost) / baseline).toFixed(3)} must be negligible (planning depth is not the bottleneck)`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('L5 utility WorldPort preserves a signed value channel across the durable loop and replay', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-l5-utility-'));
+  const lab = path.join(root, 'lab');
+  const adapter = path.join(root, 'adapter.json');
+  await writeFile(adapter, JSON.stringify({
+    executable: process.execPath,
+    args: [path.join(CURRICULUM, 'ess-arbitrage', 'adapter.mjs'), '--utility-mode'],
+    adapterId: 'ess-arbitrage-adapter-v1',
+    worldId: 'ess-arbitrage',
+    timeoutMs: 20000,
+  }));
+
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'ess-arbitrage', '--seed', 'utility-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke(['agent', 'run', '--lab', lab, '--run-id', 'r', '--steps', '4', '--kernel-only', '--adapter', adapter, '--json']);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    const events = (await (await LabStore.open({ labPath: lab })).readRun('r')).events;
+    const step = events.find((event) => event.kind === 'STEP');
+    assert.equal(step.payload.boundary.valueSpec.valueMode, 'signed-v1');
+    assert.equal(step.payload.boundary.valueSpec.observationDimensions, 4);
+    assert.equal(step.payload.beforeObservation.vector.length, 4);
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'r', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('L5 negative result: utility channel alone does not make bounded planning cheaper before the first peak', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-l5-utility-plan-'));
+  try {
+    const baseline = idleBaseline(24);
+    const h1 = await arbitrageRun(root, 'utility-h1', 1, { utilityMode: true, steps: 24 });
+    const h8 = await arbitrageRun(root, 'utility-h8', 8, { utilityMode: true, steps: 24 });
+    assert.ok(h8.cost >= h1.cost, `utility-only horizon-8 cost ${h8.cost} unexpectedly beats horizon-1 ${h1.cost}`);
+    assert.ok(Number.isFinite(baseline));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
