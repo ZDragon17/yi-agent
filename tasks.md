@@ -1265,3 +1265,10 @@
 - 实现：新增只读权限的 GitHub Actions workflow。Windows Node 22 执行完整 `npm test`；Ubuntu Node 22/24 执行 API、Agent、Application、Runtime 及打包 CLI 兼容门禁；三组任务都使用 `npm ci`，并设置有限执行时长。
 - 验证：workflow 推送后以 GitHub run 的真实结论为准；本地已完成的 128/128 定向回归和上一轮 515/515 全量基线不替代线上首轮结果。
 - 边界：Ubuntu 兼容门禁不是 Windows 全量门禁的替代，GitHub runner 也不提供真实供应商密钥、不同低权限身份、物理设备或人工确认；这些仍属于外部 Future-Gate。
+
+## F-163 测试门禁的进程级 watchdog
+
+- 反证/缺口：F-162 的首个 Windows 全量 run 长时间停留在 `node:test` 子进程，GitHub job 的超时和取消没有及时给出终态；没有父进程 watchdog 时，“仍在运行”不能作为可复现的测试证据。
+- 实现：`test-gate` 读取可选的 `YI_AGENT_TEST_GATE_TIMEOUT_MS`。达到期限后输出固定诊断，终止测试进程树并返回退出码 124；Windows 使用 `taskkill /T /F`，POSIX 使用独立进程组。CI 为 Windows 全量设置 80 分钟，为 Ubuntu 兼容门禁设置 40 分钟，均短于对应 job 上限。
+- 验证：新增悬挂 `node:test` 子进程的真实 `test-gate` 回归，配置 250ms 后能在有界时间内失败并包含 timeout 诊断；远端 workflow 需要在新提交上重新取得完整结论。
+- 边界：watchdog 只提供门禁的终止边界，不定位领域测试的根因，也不证明测试之外的真实供应商、低权限身份、设备回执或人工确认。

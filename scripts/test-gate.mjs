@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.(?:mjs|cjs|js)$/i;
+const TEST_GATE_TIMEOUT_ENV = 'YI_AGENT_TEST_GATE_TIMEOUT_MS';
 
 if (isMainModule()) {
   process.exit(await main());
@@ -66,12 +67,17 @@ async function main() {
     fail('No test files found.');
   }
 
+  const timeoutMs = configuredTimeoutMs();
   const tempDirectory = await mkdtemp(path.join(tmpdir(), 'yi-agent-test-gate-'));
   const summaryPath = path.join(tempDirectory, 'actual-cases.jsonl');
 
   try {
-    const result = await runNodeTest(testFiles, summaryPath);
+    const result = await runNodeTest(testFiles, summaryPath, timeoutMs);
     const summary = await readActualCaseSummary(summaryPath);
+
+    if (result.timedOut) {
+      return 124;
+    }
 
     if (result.signal) {
       console.error(`[test-gate] node:test terminated by signal ${result.signal}.`);
@@ -196,23 +202,36 @@ function compareText(left, right) {
   return 0;
 }
 
-function runNodeTest(files, summaryPath) {
+function runNodeTest(files, summaryPath, timeoutMs) {
   const reporterUrl = pathToFileURL(fileURLToPath(import.meta.url)).href;
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let timedOut = false;
+    let timer;
     const child = spawn(
       process.execPath,
       [
-      '--test',
-      '--test-concurrency=1',
-      '--test-reporter=tap',
+        '--test',
+        '--test-concurrency=1',
+        '--test-reporter=tap',
         `--test-reporter=${reporterUrl}`,
         '--test-reporter-destination=stdout',
         `--test-reporter-destination=${summaryPath}`,
         ...files,
       ],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
+      {
+        detached: process.platform !== 'win32',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
     );
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve(result);
+    };
 
     child.stdout.on('data', (chunk) => {
       process.stdout.write(chunk);
@@ -222,9 +241,76 @@ function runNodeTest(files, summaryPath) {
       process.stderr.write(chunk);
     });
 
-    child.on('error', reject);
-    child.on('close', (code, signal) => resolve({ code, signal }));
+    child.on('error', (error) => {
+      if (settled) return;
+      if (timedOut) {
+        finish({ code: 124, signal: 'TEST_GATE_TIMEOUT', timedOut: true });
+        return;
+      }
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (code, signal) => {
+      finish(timedOut
+        ? { code: 124, signal: 'TEST_GATE_TIMEOUT', timedOut: true }
+        : { code, signal });
+    });
+
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (settled) return;
+        timedOut = true;
+        console.error(
+          `[test-gate] Test gate timeout after ${timeoutMs}ms; terminating node:test process.`,
+        );
+        terminateProcessTree(child).finally(() => {
+          finish({ code: 124, signal: 'TEST_GATE_TIMEOUT', timedOut: true });
+        });
+      }, timeoutMs);
+    }
   });
+}
+
+function configuredTimeoutMs() {
+  const raw = process.env[TEST_GATE_TIMEOUT_ENV];
+
+  if (raw === undefined || raw.trim() === '') return 0;
+
+  const value = Number(raw);
+
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    fail(`${TEST_GATE_TIMEOUT_ENV} must be a positive integer in milliseconds.`);
+  }
+
+  return value;
+}
+
+function terminateProcessTree(child) {
+  if (child.pid === undefined) return Promise.resolve();
+
+  if (process.platform === 'win32') {
+    return new Promise((resolve) => {
+      const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      killer.once('error', resolve);
+      killer.once('close', resolve);
+    });
+  }
+
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // The test process may have exited between the timeout and termination.
+    }
+  }
+
+  return Promise.resolve();
 }
 
 async function readActualCaseSummary(summaryPath) {
