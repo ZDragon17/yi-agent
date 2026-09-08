@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { appendFileSync } from 'node:fs';
 import { canonicalJson } from '../../src/runtime/schema.mjs';
 
 const PROTOCOL = 'yi-world-cli';
@@ -8,6 +9,10 @@ const BASIS = 'counterfactual-independent-v1';
 const WRONG_WITNESS = process.argv.includes('--wrong-witness');
 const MISSING_MEMBER = process.argv.includes('--missing-member');
 const COLLUDING_CLAIM = process.argv.includes('--colluding-claim');
+const START_FILE_INDEX = process.argv.indexOf('--start-file');
+const START_FILE = START_FILE_INDEX === -1 ? null : process.argv[START_FILE_INDEX + 1] ?? null;
+const TRACE_FILE_INDEX = process.argv.indexOf('--trace-file');
+const TRACE_FILE = TRACE_FILE_INDEX === -1 ? null : process.argv[TRACE_FILE_INDEX + 1] ?? null;
 const PRIVATE_SEED_HEX = '7701a3964d6e8f70aeb5c4a1b18dd74dfdf7e3594c8bb0c8c27c70dab3fc222b';
 const PUBLIC_KEY_HEX = '906a69053d1348a3c58259b8f9315fcc87f3caeb4487bb546c10ca9fe7d448a6';
 const PRIVATE_KEY_PREFIX_HEX = '302e020100300506032b657004220420';
@@ -20,6 +25,8 @@ const privateKey = createPrivateKey({
 });
 const PUBLIC_KEY = Buffer.from(`${PUBLIC_KEY_PREFIX_HEX}${PUBLIC_KEY_HEX}`, 'hex').toString('base64');
 
+if (START_FILE !== null) appendFileSync(START_FILE, `${process.pid}\n`, 'utf8');
+
 const rl = (await import('node:readline')).createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (line) => {
   let request;
@@ -31,6 +38,7 @@ rl.on('line', (line) => {
   if (request.protocol !== PROTOCOL || request.version !== VERSION || typeof request.id !== 'string') {
     return respond(request.id ?? null, false, 'unsupported protocol');
   }
+  if (TRACE_FILE !== null) appendFileSync(TRACE_FILE, `${process.pid}:${request.op}\n`, 'utf8');
   try {
     return respond(request.id, true, dispatch(request.op, request.payload ?? {}));
   } catch (error) {

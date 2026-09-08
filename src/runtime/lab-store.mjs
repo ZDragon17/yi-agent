@@ -2355,7 +2355,8 @@ function isValidWitnessMetadata(value) {
     typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
     isValidEvidencePublicKey(value.evidencePublicKey) &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
-    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest);
+    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
+    (value.transport === undefined || value.transport === 'persistent-jsonl');
 }
 
 function isValidExecutionObserverMetadata(value) {
@@ -2364,7 +2365,8 @@ function isValidExecutionObserverMetadata(value) {
     typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&
     typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
-    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest);
+    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
+    (value.transport === undefined || value.transport === 'persistent-jsonl');
 }
 
 function isValidExecutionAuthorityMetadata(value) {
@@ -2373,7 +2375,8 @@ function isValidExecutionAuthorityMetadata(value) {
     typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&
     typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
-    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest);
+    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
+    (value.transport === undefined || value.transport === 'persistent-jsonl');
 }
 
 function isValidValueSpec(value) {

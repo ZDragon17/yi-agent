@@ -1166,4 +1166,11 @@
 - 反证/缺口：F-147 证明一次请求一次进程是长序列的共同性能瓶颈；但把请求简单改成共享进程会引入响应错配、超时后重复副作用、子进程泄漏和 Replay 重新接触实时世界的风险。必须把会话生命周期作为显式 transport 契约，而不是隐式全局连接。
 - 实现：adapter 配置可选 `transport: "persistent-jsonl"`；`hello` 仍用一次性 descriptor probe，运行期请求进入单会话、单飞串行 JSONL client。每个请求独立 timeout、stdout/stderr 受限；响应残帧、错误 envelope、协议污染、写入失败和子进程退出均 fail-closed 并终止当前 session，不自动重放 transition。CLI Run/agent 结束或失败时调用 registry close；下一次请求可建立新 session，恢复语义仍由原有 execution nonce、幂等和 reconciliation 负责。LabStore/Replay 保留 transport 元数据，但 Replay 只运行 `createReplayWorld`，不启动活 adapter。
 - 验证：新增 persistent WorldPort E2E `4/4`：多步请求只复用一个运行期子进程且 Replay 不启动它；子进程响应丢失后重建 session、同 nonce 恢复且效果不重复；单请求超时杀掉 session，后续同 nonce 恢复且效果不重复；同一进程内重建 session 时，旧进程的 close 事件不会误伤新请求。AgentService/Replay/新会话组合回归 `69/69`，现有 CLI/耐久外部回归 `65/65`。
-- 边界：当前 transport 仍是显式 opt-in，旧 adapter 不必改造；hello probe 和运行期 session 分属两个进程，启动成本尚未完全消除。持久 session 与 executionAuthority/observer 的嵌套 transport 尚未统一，跨机器身份、低权限隔离、远程 attestation 和物理效果真实性仍未解决；下一步应在真实长跑 WorldPort 上比较吞吐/恢复窗口，并决定是否推广默认 transport。
+- 边界：当前 transport 仍是显式 opt-in，旧 adapter 不必改造；hello probe 和运行期 session 分属两个进程，启动成本尚未完全消除。辅助角色的持久 transport 已在 F-149 接通，但跨机器身份、低权限隔离、远程 attestation 和物理效果真实性仍未解决；下一步应在真实长跑 WorldPort 上比较吞吐/恢复窗口，并决定是否推广默认 transport。
+
+## F-149 WorldPort 辅助角色的持久会话
+
+- 反证/缺口：F-148 只复用主 WorldPort 的运行期进程；witness、executionAuthority 和 executionObserver 仍可能为每次请求启动新进程，而且 witness 校验链原本是同步调用，无法直接消费持久 client 的 Promise。
+- 实现：三个辅助配置接受同一个 `transport: "persistent-jsonl"` 选项；各自的 transport 元数据进入 manifest，并在 identity-only registry、LabStore 和 Replay 中保持一致校验。witness evidence 改为异步等待，transition、reconcile 和 observe 在写入证据前都等待其结果；registry close 统一关闭所有角色会话。
+- 验证：独立 witness 长跑/Replay `1/1`，6 步中多次 evidence 请求只启动一个运行期 witness 进程；authority + observer 同 nonce 幂等重试 `1/1`，三类角色各只启动一个运行期进程，外部效果计数保持 1。
+- 边界：持久会话只减少进程启动和连接生命周期差异，不提高 witness、authority 或 observer 的可信等级；同一用户权限、共谋、错误共同输入、跨机器身份和物理效果真实性仍未解决。下一步应在真实长跑和多角色崩溃窗口中测量吞吐与恢复时间，再决定是否把持久 transport 作为默认值。

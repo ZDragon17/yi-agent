@@ -99,10 +99,10 @@ test('persistent request timeout kills the session and recovery does not duplica
     await mkdir(path.dirname(adapter), { recursive: true });
     await writeFile(adapter, JSON.stringify({
       executable: process.execPath,
-      args: [ADAPTER, '--state-file', stateFile, '--delay-once-ms', '1000', '--delay-marker', delayMarker],
+      args: [ADAPTER, '--state-file', stateFile, '--delay-once-ms', '4000', '--delay-marker', delayMarker],
       adapterId: 'durable-counter-adapter-v1',
       worldId: 'durable-counter',
-      timeoutMs: 500,
+      timeoutMs: 2000,
       transport: 'persistent-jsonl',
     }));
 

@@ -107,6 +107,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
         evidencePublicKey: witness.descriptor.evidencePublicKey,
         descriptorDigest: witness.descriptor.descriptorDigest,
         launchDigest: witness.config.launchDigest,
+        ...(witness.config.transport === undefined ? {} : { transport: witness.config.transport }),
       },
     }),
     ...(executionAuthority === null ? {} : {
@@ -116,6 +117,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
         worldVersion: executionAuthority.descriptor.worldVersion,
         descriptorDigest: executionAuthority.descriptor.descriptorDigest,
         launchDigest: executionAuthority.config.launchDigest,
+        ...(executionAuthority.config.transport === undefined ? {} : { transport: executionAuthority.config.transport }),
       },
     }),
     ...(executionObserver === null ? {} : {
@@ -125,6 +127,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
         worldVersion: executionObserver.descriptor.worldVersion,
         descriptorDigest: executionObserver.descriptor.descriptorDigest,
         launchDigest: executionObserver.config.launchDigest,
+        ...(executionObserver.config.transport === undefined ? {} : { transport: executionObserver.config.transport }),
       },
     }),
   };
@@ -235,6 +238,9 @@ function createIdentityOnlyRegistry(config) {
             : adapter?.witness?.adapterId !== witnessConfig.adapterId ||
               adapter?.witness?.worldId !== witnessConfig.worldId ||
               adapter?.witness?.launchDigest !== witnessConfig.launchDigest ||
+              (witnessConfig.transport === undefined
+                ? adapter?.witness?.transport !== undefined
+                : adapter?.witness?.transport !== witnessConfig.transport) ||
               !isValidEvidencePublicKey(adapter?.witness?.evidencePublicKey) ||
               typeof adapter?.witness?.worldVersion !== 'string' ||
               !/^sha256:[0-9a-f]{64}$/u.test(adapter?.witness?.descriptorDigest ?? '')) ||
@@ -243,6 +249,9 @@ function createIdentityOnlyRegistry(config) {
             : adapter?.executionAuthority?.adapterId !== executionAuthorityConfig.adapterId ||
               adapter?.executionAuthority?.worldId !== executionAuthorityConfig.worldId ||
               adapter?.executionAuthority?.launchDigest !== executionAuthorityConfig.launchDigest ||
+              (executionAuthorityConfig.transport === undefined
+                ? adapter?.executionAuthority?.transport !== undefined
+                : adapter?.executionAuthority?.transport !== executionAuthorityConfig.transport) ||
               typeof adapter?.executionAuthority?.worldVersion !== 'string' ||
               !/^sha256:[0-9a-f]{64}$/u.test(adapter?.executionAuthority?.descriptorDigest ?? '')) ||
           (executionObserverConfig === undefined
@@ -250,6 +259,9 @@ function createIdentityOnlyRegistry(config) {
             : adapter?.executionObserver?.adapterId !== executionObserverConfig.adapterId ||
               adapter?.executionObserver?.worldId !== executionObserverConfig.worldId ||
               adapter?.executionObserver?.launchDigest !== executionObserverConfig.launchDigest ||
+              (executionObserverConfig.transport === undefined
+                ? adapter?.executionObserver?.transport !== undefined
+                : adapter?.executionObserver?.transport !== executionObserverConfig.transport) ||
               typeof adapter?.executionObserver?.worldVersion !== 'string' ||
               !/^sha256:[0-9a-f]{64}$/u.test(adapter?.executionObserver?.descriptorDigest ?? ''))) {
         throw new LabStoreError('CONFLICT', 'The supplied adapter does not match the lab adapter contract.', {
@@ -665,7 +677,7 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         ...transition,
         ...(executionAuthorityEvidence === null ? {} : { executionAuthority: executionAuthorityEvidence }),
         ...(executionObservation === null ? {} : { executionObservation }),
-        postObservation: corroborateIndependentEvidence(transition.postObservation, {
+        postObservation: await corroborateIndependentEvidence(transition.postObservation, {
           state,
           scenario,
           request,
@@ -718,7 +730,7 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
           ...transition.transition,
           ...(executionAuthorityEvidence === null ? {} : { executionAuthority: executionAuthorityEvidence }),
           ...(executionObservation === null ? {} : { executionObservation }),
-          postObservation: corroborateIndependentEvidence(transition.transition.postObservation, {
+          postObservation: await corroborateIndependentEvidence(transition.transition.postObservation, {
             state,
             scenario,
             request,
@@ -891,10 +903,10 @@ function verifyEvidenceAttestation(value, attestation, publicKey) {
   }, publicKey);
 }
 
-function corroborateIndependentEvidence(observation, { state, scenario, descriptor, witness, request = null }) {
+async function corroborateIndependentEvidence(observation, { state, scenario, descriptor, witness, request = null }) {
   if (observation.feedback === undefined) return observation;
   let changed = false;
-  const feedback = observation.feedback.map((item) => {
+  const feedback = await Promise.all(observation.feedback.map(async (item) => {
     const chain = item.creditChain;
     if (chain?.basis !== INDEPENDENT_CAUSAL_CREDIT_BASIS) return item;
     if (witness === null) {
@@ -908,7 +920,7 @@ function corroborateIndependentEvidence(observation, { state, scenario, descript
       }
       return item;
     }
-    const witnessResult = witness.client.request('evidence', {
+    const witnessResult = await witness.client.request('evidence', {
       schemaVersion: SCHEMA_VERSION,
       worldId: descriptor.worldId,
       scenario,
@@ -945,7 +957,7 @@ function corroborateIndependentEvidence(observation, { state, scenario, descript
         independentAttestation: normalizedWitness.attestation,
       },
     };
-  });
+  }));
   return changed ? { ...observation, feedback } : observation;
 }
 
@@ -1405,7 +1417,7 @@ function normalizeTransport(value, field) {
 
 function normalizeWitnessConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs'].includes(key))) {
+      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport'].includes(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Independent witness config is invalid.', { field: 'adapter.witness' });
   }
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
@@ -1431,6 +1443,9 @@ function normalizeWitnessConfig(value, configPath) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
     throw new LabStoreError('INVALID_INPUT', 'Independent witness timeoutMs must be between 100 and 30000.', { field: 'adapter.witness.timeoutMs' });
   }
+  const transport = value.transport === undefined
+    ? undefined
+    : normalizeTransport(value.transport, 'adapter.witness.transport');
   return {
     executable: value.executable,
     args: [...value.args],
@@ -1438,12 +1453,13 @@ function normalizeWitnessConfig(value, configPath) {
     worldId: value.worldId,
     timeoutMs,
     launchDigest: digestLaunch(configPath, value.executable, value.args),
+    ...(transport === undefined ? {} : { transport }),
   };
 }
 
 function normalizeExecutionObserverConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs'].includes(key))) {
+      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport'].includes(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Execution observer config is invalid.', { field: 'adapter.executionObserver' });
   }
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
@@ -1469,6 +1485,9 @@ function normalizeExecutionObserverConfig(value, configPath) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
     throw new LabStoreError('INVALID_INPUT', 'Execution observer timeoutMs must be between 100 and 30000.', { field: 'adapter.executionObserver.timeoutMs' });
   }
+  const transport = value.transport === undefined
+    ? undefined
+    : normalizeTransport(value.transport, 'adapter.executionObserver.transport');
   return {
     executable: value.executable,
     args: [...value.args],
@@ -1476,12 +1495,13 @@ function normalizeExecutionObserverConfig(value, configPath) {
     worldId: value.worldId,
     timeoutMs,
     launchDigest: digestLaunch(configPath, value.executable, value.args),
+    ...(transport === undefined ? {} : { transport }),
   };
 }
 
 function normalizeExecutionAuthorityConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs'].includes(key))) {
+      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport'].includes(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Execution authority config is invalid.', { field: 'adapter.executionAuthority' });
   }
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
@@ -1507,6 +1527,9 @@ function normalizeExecutionAuthorityConfig(value, configPath) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
     throw new LabStoreError('INVALID_INPUT', 'Execution authority timeoutMs must be between 100 and 30000.', { field: 'adapter.executionAuthority.timeoutMs' });
   }
+  const transport = value.transport === undefined
+    ? undefined
+    : normalizeTransport(value.transport, 'adapter.executionAuthority.transport');
   return {
     executable: value.executable,
     args: [...value.args],
@@ -1514,6 +1537,7 @@ function normalizeExecutionAuthorityConfig(value, configPath) {
     worldId: value.worldId,
     timeoutMs,
     launchDigest: digestLaunch(configPath, value.executable, value.args),
+    ...(transport === undefined ? {} : { transport }),
   };
 }
 

@@ -719,8 +719,20 @@ function isValidAdapterMetadata(value) {
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
     typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
     (value.transport === undefined || value.transport === 'persistent-jsonl') &&
+    (value.witness === undefined || isValidWitnessMetadata(value.witness)) &&
     (value.executionAuthority === undefined || isValidExecutionAuthorityMetadata(value.executionAuthority)) &&
     (value.executionObserver === undefined || isValidExecutionObserverMetadata(value.executionObserver));
+}
+
+function isValidWitnessMetadata(value) {
+  return isRecord(value) &&
+    typeof value.adapterId === 'string' && value.adapterId.length > 0 && value.adapterId.length <= 4096 &&
+    typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&
+    typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
+    isValidEvidencePublicKey(value.evidencePublicKey) &&
+    typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
+    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
+    (value.transport === undefined || value.transport === 'persistent-jsonl');
 }
 
 function isValidExecutionAuthorityMetadata(value) {
@@ -729,7 +741,8 @@ function isValidExecutionAuthorityMetadata(value) {
     typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&
     typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
-    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest);
+    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
+    (value.transport === undefined || value.transport === 'persistent-jsonl');
 }
 
 function isValidExecutionObserverMetadata(value) {
@@ -738,7 +751,8 @@ function isValidExecutionObserverMetadata(value) {
     typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&
     typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
-    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest);
+    typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
+    (value.transport === undefined || value.transport === 'persistent-jsonl');
 }
 
 function isValidExecutionObservationEvidence(value) {

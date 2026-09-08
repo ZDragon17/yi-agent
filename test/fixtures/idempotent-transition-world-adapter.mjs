@@ -1,5 +1,5 @@
 import readline from 'node:readline';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { canonicalDigest } from '../../src/runtime/schema.mjs';
 import { ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
@@ -25,9 +25,12 @@ const effectFileIndex = process.argv.indexOf('--effect-file');
 const effectFile = effectFileIndex === -1 ? null : process.argv[effectFileIndex + 1] ?? null;
 const osEffectRootIndex = process.argv.indexOf('--os-effect-root');
 const osEffectRoot = osEffectRootIndex === -1 ? null : process.argv[osEffectRootIndex + 1] ?? null;
+const startFileIndex = process.argv.indexOf('--start-file');
+const startFile = startFileIndex === -1 ? null : process.argv[startFileIndex + 1] ?? null;
 
 if (effectFile === null) throw new Error('--effect-file is required');
 if (osEffect && osEffectRoot === null) throw new Error('--os-effect-root is required with --os-effect');
+if (startFile !== null) appendFileSync(startFile, `${process.pid}\n`, 'utf8');
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (line) => {

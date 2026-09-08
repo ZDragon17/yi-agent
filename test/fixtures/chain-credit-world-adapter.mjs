@@ -17,7 +17,11 @@ const INDEPENDENT_EVIDENCE = process.argv.includes('--independent-evidence');
 const COLLUDING_CLAIM = process.argv.includes('--colluding-claim');
 const TRUTH_FILE_INDEX = process.argv.indexOf('--truth-file');
 const TRUTH_FILE = TRUTH_FILE_INDEX === -1 ? null : process.argv[TRUTH_FILE_INDEX + 1];
+const START_FILE_INDEX = process.argv.indexOf('--start-file');
+const START_FILE = START_FILE_INDEX === -1 ? null : process.argv[START_FILE_INDEX + 1] ?? null;
 const ADAPTER_ID = `chain-credit-adapter-${CREDIT_CHAIN ? (INDEPENDENT_EVIDENCE ? (COLLUDING_CLAIM ? 'independent-colluding' : 'independent') : (ATTESTED_EVIDENCE ? 'attested' : (CAUSAL_EVIDENCE ? 'causal' : (WRONG_SHARE ? 'wrong-share' : 'chain')))) : 'ambiguous'}-v1`;
+
+if (START_FILE !== null) appendFileSync(START_FILE, `${process.pid}\n`, 'utf8');
 import readline from 'node:readline';
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
