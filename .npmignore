@@ -1,0 +1,16 @@
+# Repository-only material; keep the installed CLI focused on runtime files.
+.github/
+.specify/
+test/
+prototype/
+docs/
+scripts/
+CURRICULUM.md
+PAPER.md
+design.md
+plan.md
+spec.md
+tasks.md
+vision.md
+app-test.log
+*.log

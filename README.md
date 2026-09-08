@@ -347,6 +347,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-161 收紧 advisor 错误证据：policy evidence 只保留格式受限的错误码和固定安全摘要，不把任意 adapter/provider 异常文本、context 或异常对象写入账本；带凭据的异常消息回归确认不会进入 Replay 输入。错误码只用于分类，不证明外部错误来源真实。
 - F-162 增加 GitHub Actions 持续门禁：Windows Node 22 执行完整测试，Ubuntu Node 22/24 执行跨版本兼容子集；workflow 只有仓库只读权限。它把本地回归变成远端提交证据，但不替代真实供应商、低权限身份、设备回执或人工确认。
 - F-163 为 `test-gate` 增加可配置 watchdog：上一轮 Windows 全量任务曾长期停留在 `node:test`，GitHub job 超时也未及时收敛，不能把“仍在运行”当作测试证据。设置 `YI_AGENT_TEST_GATE_TIMEOUT_MS` 后，超时会输出明确诊断、以退出码 124 失败，并在 Windows 终止整个测试进程树，在 POSIX 终止独立进程组；CI 为 Windows 全量设置 80 分钟、Ubuntu 兼容门禁设置 40 分钟。新增悬挂测试回归验证超时行为；它只保证门禁有界退出，不判断哪个领域测试正确，也不替代真实供应商、低权限身份、设备回执或人工确认。
+- F-164 收紧 CLI 包边界：新增 `.npmignore`，打包保留 `bin/`、`src/`、`examples/`、README 和许可证，排除测试、研究材料、CI 配置及未跟踪的 `vision.md`。`npm pack --dry-run` 验证包从 175 个文件缩为 63 个文件，运行入口和示例 WorldPort 仍在；这只减少发布面，不改变本地仓库中的开发与测试文件。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

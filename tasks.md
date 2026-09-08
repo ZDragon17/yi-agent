@@ -1272,3 +1272,10 @@
 - 实现：`test-gate` 读取可选的 `YI_AGENT_TEST_GATE_TIMEOUT_MS`。达到期限后输出固定诊断，终止测试进程树并返回退出码 124；Windows 使用 `taskkill /T /F`，POSIX 使用独立进程组。CI 为 Windows 全量设置 80 分钟，为 Ubuntu 兼容门禁设置 40 分钟，均短于对应 job 上限。
 - 验证：新增悬挂 `node:test` 子进程的真实 `test-gate` 回归，配置 250ms 后能在有界时间内失败并包含 timeout 诊断；远端 workflow 需要在新提交上重新取得完整结论。
 - 边界：watchdog 只提供门禁的终止边界，不定位领域测试的根因，也不证明测试之外的真实供应商、低权限身份、设备回执或人工确认。
+
+## F-164 CLI 包边界
+
+- 反证/缺口：`npm pack --dry-run` 原先会把测试、内部研究材料和用户未跟踪的 `vision.md` 一起放进包；即使当前 `package.json` 仍是 `private`，未来发布或内部转存也可能扩大内容暴露面。
+- 实现：新增 `.npmignore`，保留 `bin/`、`src/`、`examples/`、README 和许可证，排除 `.github/`、测试、研究文档、原型和本地记录。
+- 验证：`npm pack --dry-run` 的包从 175 个文件、约 2.6MB 缩为 63 个文件、约 1.1MB；入口 `bin/yi-agent.mjs`、`src/cli.mjs` 和 `examples/counter-world/adapter.mjs` 仍在，`vision.md` 与 `test/` 不在。
+- 边界：这只是发布内容边界，不是 npm 发布授权、代码签名、依赖供应链证明或运行时权限隔离；`private` 状态保持不变。
