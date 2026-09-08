@@ -1258,3 +1258,10 @@
 - 实现：policy evidence 只保存格式受限的错误码和固定安全摘要；不保存原始 `error.message`、`error.context` 或异常对象。超时保留稳定的 `Model callback timed out.`，其它失败统一为 `Advisor callback failed.`。
 - 验证：advisor 失败/超时与 Replay 的有效、畸形错误上下文回归均通过，并断言带凭据的异常文本不会进入 policy evidence。
 - 边界：错误码仍由外部 adapter 提供，只做格式约束；它用于分类和 Replay 绑定，不证明异常来源真实，也不替代宿主日志系统的脱敏。
+
+## F-162 GitHub 跨平台持续门禁
+
+- 反证/缺口：本地 Windows 全量回归不能证明远端提交持续可复现，仓库此前没有 GitHub Actions，也没有 Node 22/24 的在线兼容证据。
+- 实现：新增只读权限的 GitHub Actions workflow。Windows Node 22 执行完整 `npm test`；Ubuntu Node 22/24 执行 API、Agent、Application、Runtime 及打包 CLI 兼容门禁；三组任务都使用 `npm ci`，并设置有限执行时长。
+- 验证：workflow 推送后以 GitHub run 的真实结论为准；本地已完成的 128/128 定向回归和上一轮 515/515 全量基线不替代线上首轮结果。
+- 边界：Ubuntu 兼容门禁不是 Windows 全量门禁的替代，GitHub runner 也不提供真实供应商密钥、不同低权限身份、物理设备或人工确认；这些仍属于外部 Future-Gate。

@@ -345,6 +345,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-159 把证书撤销放进恢复窗口：服务端加载 CRL，第一轮拒绝仍由同一 CA 签发但已撤销的 authority 客户端证书；此前已经产生的沙箱效果保持一次。随后只替换同一证书路径下的客户端证书内容，服务重启后用原 execution nonce 恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。真实 signer、authority、CRL 和 EffectBroker CLI 组合回归为 `9/9`。这证明的是 TLS peer 证书撤销与应用恢复可以衔接，不是私钥硬件保护、OS 权限隔离或真实设备回执。
 - F-160 收紧 provider 错误边界：当非 2xx 响应正文回显当前 API Key 时，HTTP client 在构造 `ApiClientError` 前将它替换为 `[REDACTED]`；正常错误状态、HTTP 状态码和取消/超时分类保持不变。API、CLI 相关回归为 `28/28`，上一轮全量门禁为 `515/515`。这只覆盖 client 已知的当前 key，不等于第三方服务、代理或宿主日志系统已经完成全面脱敏。
 - F-161 收紧 advisor 错误证据：policy evidence 只保留格式受限的错误码和固定安全摘要，不把任意 adapter/provider 异常文本、context 或异常对象写入账本；带凭据的异常消息回归确认不会进入 Replay 输入。错误码只用于分类，不证明外部错误来源真实。
+- F-162 增加 GitHub Actions 持续门禁：Windows Node 22 执行完整测试，Ubuntu Node 22/24 执行跨版本兼容子集；workflow 只有仓库只读权限。它把本地回归变成远端提交证据，但不替代真实供应商、低权限身份、设备回执或人工确认。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
