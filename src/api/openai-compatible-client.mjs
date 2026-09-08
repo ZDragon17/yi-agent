@@ -127,7 +127,9 @@ export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs
       }
       if (!response.ok) {
         const providerMessage = payload?.error?.message;
-        throw new ApiClientError('API_ERROR', typeof providerMessage === 'string' ? providerMessage.slice(0, 500) : `API returned HTTP ${response.status}.`, { status: response.status });
+        throw new ApiClientError('API_ERROR', typeof providerMessage === 'string'
+          ? redactSecret(providerMessage, apiKey)
+          : `API returned HTTP ${response.status}.`, { status: response.status });
       }
       return payload;
     } finally {
@@ -135,6 +137,12 @@ export function createOpenAICompatibleClient({ apiKey, baseUrl, model, timeoutMs
       externalSignal?.removeEventListener('abort', abortFromCaller);
     }
   }
+}
+
+function redactSecret(message, secret) {
+  const bounded = message.slice(0, 500);
+  if (secret.length === 0) return bounded;
+  return bounded.split(secret).join('[REDACTED]');
 }
 
 function abortError(callerAborted, timeoutMs, cause) {

@@ -189,13 +189,13 @@ test('API client exposes provider failures without exposing authorization data',
   const client = createOpenAICompatibleClient({
     apiKey: 'secret-key',
     model: 'model-1',
-    fetchImpl: async () => response(401, { error: { message: 'bad key' } }),
+    fetchImpl: async () => response(401, { error: { message: 'bad key secret-key' } }),
   });
 
   await assert.rejects(client.testConnection(), (error) => {
     assert.equal(error.code, 'API_ERROR');
     assert.equal(error.context.status, 401);
-    assert.equal(error.message, 'bad key');
+    assert.equal(error.message, 'bad key [REDACTED]');
     assert.equal(error.message.includes('secret-key'), false);
     return true;
   });
