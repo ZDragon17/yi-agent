@@ -209,6 +209,8 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 默认 adapter 配置仍是一次请求一进程；需要长序列复用进程时，在配置顶层增加 `"transport": "persistent-jsonl"`，并让 adapter 保持 stdin/stdout 打开的 JSONL 会话。`hello` 仍由一次性探针完成，后续请求才进入持久会话；每个请求仍有独立超时，adapter 必须逐行返回与请求 `id` 匹配的 envelope。该选项只解决进程启动成本，不替代幂等 nonce、对账、EffectBroker 或人工确认。
 
+若 `executionAuthority` 的 descriptor 发布了 `executionPublicKey`，配置中的 `executionAuthority.executionPublicKey` 必须与之相同；`bin/yi-agent-effect-authority.mjs` 可用 `--private-key-der` 指向 PKCS#8 DER 私钥文件。authority 只接受绝对路径、普通文件、64 KiB 以内的私钥文件，私钥不应提交到仓库或写入共享配置。公钥 pin 解决的是回执身份错配，不是私钥托管或 authority 诚实问题。
+
 在 Windows PowerShell 中运行：
 
 ```powershell

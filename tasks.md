@@ -1192,6 +1192,6 @@
 ## F-152 execution authority 回执的可验证持钥身份
 
 - 反证/缺口：F-151 证明了 Journal 和 nonce 可以恢复效果，但 authority 回执仍是裸 JSON；启动摘要能绑定“启动了什么”，不能绑定“这条回执由哪个持钥 authority 签出”。
-- 实现：新增 `execution-authority-attestation`，对完整 `EXECUTED/RECONCILED` 回执生成 Ed25519 `executionAttestation`。authority descriptor 增加可选 `executionPublicKey`，配置用同名字段显式 pin；宿主、LabStore、Replay 在公钥存在时都要求验签，旧无公钥 descriptor 继续兼容。
+- 实现：新增 `execution-authority-attestation`，对完整 `EXECUTED/RECONCILED` 回执生成 Ed25519 `executionAttestation`。authority descriptor 增加可选 `executionPublicKey`，配置用同名字段显式 pin；宿主、LabStore、Replay 在公钥存在时都要求验签，旧无公钥 descriptor 继续兼容。示例 authority 读取私钥时只接受绝对路径、非符号链接普通文件和 64 KiB 以内的 PKCS#8 DER，私钥内容不进入 descriptor、manifest 或日志。
 - 验证：签名/篡改单测 `1/1`；真实 EffectBroker 沙箱 authority 的签名 CLI 闭环 `1/1`，包含 STEP 持久化和 Replay；F-151 多角色恢复回归 `3/3`。
 - 边界：签名只证明持钥进程产生了这条内容，私钥仍可能被同用户权限读取，authority 仍可对真实世界撒谎；未覆盖低权限 OS 身份、远程密钥托管、跨机器传输、可信硬件或物理设备回执。下一步应把 key ownership 与 authority 执行权限拆开，再测跨机器回执。
