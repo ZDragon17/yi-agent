@@ -356,6 +356,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-170 完成一次本机 Windows 全量门禁：当前提交在 Node 26.7.0 上按同一 `npm test` 顺序通过 `517/517`，总耗时约 52 分钟；其中第 210、224、225、358 个长实验分别耗时约 7 分钟、6 分 40 秒、11 分 29 秒和 1 分 40 秒。对应的远端 Windows runner 在启动后约 8 小时仍无更新时间，取消后没有产生终态测试摘要；这两类证据分开记录，Node 26 本机结果也不外推为 Node 22 兼容性证据。
 - F-171 闭合 Windows Node 22 在线门禁：提交 `fe9d5fe` 的 GitHub Actions run `34278445810` 在 Windows Node 22 上按完整 `npm test` 顺序通过 `517/517`，`# fail 0`，测试进程耗时 `2355824.3899ms`，作业耗时约 39 分 56 秒；同一 run 的 Ubuntu Node 22/24 兼容门禁也成功。F-170 的本机 Node 26 结果仍单独保留，不能把这次结果外推到任意 runner、低权限身份、真实供应商或物理设备。
 - F-172 修正本机缓存进入安装包的问题：`.npmignore` 现在显式排除 `.yi-agent/`，`npm pack --dry-run` 的 63 个文件中不再出现 CI/cache 路径；packaged CLI 回归继续覆盖安装、连续运行、外部效果恢复和 Replay。这个节点只收紧包内容，不改变运行时权限或发布到 npm 的状态。
+- F-173 增加公开 GitHub 安装入口：Windows 用户可以直接从 `https://github.com/ZDragon17/yi-agent.git#main` 安装 CLI；当前仍未发布到 npm registry，Git 安装和 `yi-agent --help` 已在临时 npm 前缀中实测通过。
 - F-174 收紧 CI 触发范围：只有运行时代码、测试、示例、脚本、包元数据、`.npmignore` 或 workflow 变化时才触发推送/PR 门禁；README、tasks 等文档-only 提交不会再占用长时间 runner。`workflow_dispatch` 仍可手动运行完整门禁。
 - F-175 将内置 challenge suite 接入 packaged CLI 回归：公开安装后的 `yi-agent challenge --lab ... --json` 现在必须返回 10 个 case 全部 `PASS`；本机真实命令和安装包回归均通过。挑战只证明当前演示判据未被这些输入证伪，不等于通用智能或现实因果证明。
 - F-176 为 `test-gate` 增加有界 liveness 心跳：长测试期间每 60 秒输出一次 `node:test still running`，CI 可区分正常长跑、测试超时和 runner 失联；`YI_AGENT_TEST_GATE_HEARTBEAT_MS` 允许在 1～300000ms 内显式调整。心跳只改善运行证据，不改变测试结果或终止语义。
