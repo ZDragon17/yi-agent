@@ -3,13 +3,14 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:net';
 import { createServer as createTlsServer } from 'node:tls';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { loadBoundedFile, loadBoundedSecret, loadPkcs8DerPrivateKey } from '../src/runtime/private-key-loader.mjs';
 import { signExecutionAuthorityReceipt } from '../src/runtime/execution-authority-attestation.mjs';
 
 const options = parseArguments(process.argv.slice(2));
 const signingKey = loadPkcs8DerPrivateKey(required(options, 'private-key-der'));
 const authToken = loadBoundedSecret(required(options, 'auth-token-file'), 'auth-token-file');
+const dropResponseOnceMarker = options['drop-response-once-marker'] ?? null;
 const host = options.host ?? '127.0.0.1';
 const port = options.port === undefined ? 0 : Number(options.port);
 if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error('port must be between 0 and 65535');
@@ -43,6 +44,10 @@ const server = (serverOptions === null ? createServer : createTlsServer)(...(ser
     }
     try {
       const signed = signExecutionAuthorityReceipt(request.payload, signingKey);
+      if (dropResponseOnceMarker !== null && !existsSync(dropResponseOnceMarker)) {
+        writeFileSync(dropResponseOnceMarker, 'dropped\n', 'utf8');
+        process.exit(17);
+      }
       respond(socket, request.id, true, signed.executionAttestation);
     } catch (error) {
       respond(socket, request.id, false, error instanceof Error ? error.message : String(error));

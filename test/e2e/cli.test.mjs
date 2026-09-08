@@ -1207,6 +1207,7 @@ test('CLI routes an authority-owned OS effect through a remote signer', async ()
     const privateKeyPath = path.join(root, 'remote-signer-private-key.der');
     const authTokenPath = path.join(root, 'remote-signer-auth-token.txt');
     const readyPath = path.join(root, 'remote-signer-ready.txt');
+    const dropMarker = path.join(root, 'remote-signer-response-dropped.marker');
     const markerName = `${canonicalDigest('execution:step:1').slice('sha256:'.length)}.marker`;
     await mkdir(path.join(sandboxRoot, 'pending'), { recursive: true });
     await mkdir(path.join(sandboxRoot, 'applied'), { recursive: true });
@@ -1216,10 +1217,11 @@ test('CLI routes an authority-owned OS effect through a remote signer', async ()
     await writeFile(privateKeyPath, privateKey.export({ format: 'der', type: 'pkcs8' }));
     await writeFile(authTokenPath, 'remote-signer-test-token-2026');
     const executionPublicKey = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
-    const signer = spawn(process.execPath, [
+    let signer = spawn(process.execPath, [
       path.resolve('bin/yi-agent-execution-signer-server.mjs'),
       '--private-key-der', privateKeyPath,
       '--auth-token-file', authTokenPath,
+      '--drop-response-once-marker', dropMarker,
       '--host', '127.0.0.1',
       '--port', '0',
       '--ready-file', readyPath,
@@ -1291,11 +1293,24 @@ test('CLI routes an authority-owned OS effect through a remote signer', async ()
 
       const init = await invoke('init', '--lab', lab, '--world', descriptor.worldId, '--seed', 'remote-signer-seed', '--lab-id', 'remote-signer-lab', '--adapter', adapter, '--json');
       assert.equal(init.code, 0, JSON.stringify(init));
-      const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
-      assert.equal(run.code, 0, JSON.stringify(run));
+      const firstRun = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+      assert.notEqual(firstRun.code, 0, JSON.stringify(firstRun));
+      await waitForExit(signer);
       await assert.rejects(readFile(path.join(sandboxRoot, 'pending', markerName)), (error) => error.code === 'ENOENT');
       assert.equal(await readFile(path.join(sandboxRoot, 'applied', markerName), 'utf8'), 'execution:step:1');
-      const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+      await rm(readyPath, { force: true });
+      signer = spawn(process.execPath, [
+        path.resolve('bin/yi-agent-execution-signer-server.mjs'),
+        '--private-key-der', privateKeyPath,
+        '--auth-token-file', authTokenPath,
+        '--host', '127.0.0.1',
+        '--port', String(signerPort),
+        '--ready-file', readyPath,
+      ], { windowsHide: true });
+      await waitForFile(readyPath);
+      const run = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+      assert.equal(run.code, 0, JSON.stringify(run));
+      const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
       assert.equal(replay.code, 0, JSON.stringify(replay));
       assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
     } finally {
@@ -2221,6 +2236,14 @@ async function waitForFile(filePath) {
     }
   }
   throw new Error(`file did not appear: ${filePath}`);
+}
+
+async function waitForExit(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise((resolve, reject) => {
+    child.once('close', resolve);
+    child.once('error', reject);
+  });
 }
 
 async function rewriteExternalInputEvidence(lab) {

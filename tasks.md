@@ -1216,3 +1216,10 @@
 - 实现：signer client 接受受限的 client cert/key、CA 和 server name；signer server 接受 server cert/key 与 client CA，开启 `requestCert` 和 `rejectUnauthorized`。TLS 连接建立后继续使用应用层 token，回执仍由 authority 按 execution public key 验证。TLS 证书密钥与 execution signing key 分离，文件读取带绝对路径、普通文件和大小限制。
 - 验证：动态生成的双方证书完成真实 mTLS 握手并签署回执 `1/1`；普通 TCP、错误 token 和完整远程 signer EffectBroker CLI 回归保持通过。
 - 边界：mTLS 证明的是配置的证书持有者和传输通道，不证明 signer/authority 对现实世界诚实，也不提供硬件根或物理回执。未配置 TLS 时服务端强制回环；下一步应测试证书轮换、服务重启期间的 nonce 恢复，以及不同 OS 身份下私钥文件 ACL。
+
+## F-156 signer 响应丢失后的 EffectBroker 恢复
+
+- 反证/缺口：F-155 只验证了 TLS 能建立安全通道；尚未验证 signer 在已经完成签名、尚未返回响应时退出，authority 的已执行效果是否仍能通过 Journal 和同一 nonce 恢复。
+- 实现：signer server 增加显式测试故障注入，在签名结果产生后、JSONL 响应写出前退出。真实 CLI 先运行一次并留下已移动的沙箱文件，再重启同一端口的 signer，使用新的 Run 继续未完成 external transition；authority 继续通过 execution public key 验签。
+- 验证：signer 故障后的两次 CLI Run、EffectJournal 和 Replay 定向回归通过；第一次不追加 STEP，文件只移动一次，第二次成功并 Replay 为 `CONSISTENT`。
+- 边界：本节点验证的是本机 signer 进程响应丢失和服务重启，不是网络分区、证书轮换、跨机器人工对账或真实设备状态查询。下一步应把 mTLS 证书轮换和服务重启与多角色 authority/observer 连续故障合并测试。

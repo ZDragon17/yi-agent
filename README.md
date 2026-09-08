@@ -338,6 +338,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-153 把签名私钥从 EffectBroker authority 进程移到独立的 signer 子进程。authority 通过受限的单请求 JSONL 协议发送待签回执，只接受与 descriptor 公钥匹配的 attestation；超时、协议污染、进程失败和无效签名都会 fail-closed。真实 CLI E2E 已验证 authority 不携带 `--private-key-der` 仍能执行 EffectBroker、恢复并 Replay 为 `CONSISTENT`。这只证明了代码路径和进程持钥角色的分离；两个进程仍在同一用户权限和本机 OS 下，不能当作权限隔离、跨机器身份或物理执行证明。
 - F-154 把 signer 再移到受认证的 TCP 服务：authority 只持有受限 token 文件，不持有私钥；服务端用常量时间比较校验 token，签名结果仍由 authority 按 `executionPublicKey` 验证。真实 TCP signer 与完整 EffectBroker CLI 闭环均已通过。当前只绑定本机回环地址，TCP 未加密，认证 token 解决的是未授权请求，不等于 TLS、跨机器身份或可信硬件。
 - F-155 为 TCP signer 增加可选双向 TLS：服务端要求客户端证书，authority 校验服务端 CA 和 server name，完成 TLS 握手后仍用 execution 公钥验签。真实证书握手、错误 token、签名和回执链均有测试。未配置 TLS 时服务端仍只监听回环地址；TLS 也不证明 signer 对现实副作用诚实。
+- F-156 将 signer 故障放进 EffectBroker 恢复窗口：signer 在签名后、响应前退出，第一次 Run 留下已移动文件和未完成账；服务重启后第二次 CLI 使用新的 run 继续，Journal 只保留一次 `EFFECT_APPLIED`，Replay 为 `CONSISTENT`。这验证的是 signer 服务退出恢复，不是网络分区或远程设备对账。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
