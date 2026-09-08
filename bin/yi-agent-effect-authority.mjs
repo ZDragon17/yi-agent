@@ -8,7 +8,8 @@ import { restoreEffectBroker } from '../src/effects/effect-broker.mjs';
 import { createEffectBrokerAuthority } from '../src/effects/effect-broker-authority.mjs';
 import { assertSandboxRoot, createSandboxFileExecutor } from '../src/effects/sandbox-file-executor.mjs';
 import { createExecutionAuthoritySigner } from '../src/runtime/execution-authority-signer.mjs';
-import { loadPkcs8DerPrivateKey } from '../src/runtime/private-key-loader.mjs';
+import { loadBoundedSecret, loadPkcs8DerPrivateKey } from '../src/runtime/private-key-loader.mjs';
+import { createRemoteExecutionAuthoritySigner } from '../src/runtime/remote-execution-authority-signer.mjs';
 import { canonicalDigest } from '../src/runtime/schema.mjs';
 
 const options = parseArguments(process.argv.slice(2));
@@ -108,10 +109,25 @@ function required(optionsValue, name) {
 }
 
 function createSigner(optionsValue, signingKey) {
-  if (signingKey !== null && optionsValue['signer-executable'] !== undefined) {
-    throw new Error('private-key-der and signer-executable cannot be used together.');
+  const hasProcessSigner = optionsValue['signer-executable'] !== undefined;
+  const hasRemoteSigner = optionsValue['signer-host'] !== undefined || optionsValue['signer-port'] !== undefined;
+  if ((signingKey !== null && (hasProcessSigner || hasRemoteSigner)) || (hasProcessSigner && hasRemoteSigner)) {
+    throw new Error('private-key-der, signer-executable, and remote signer options are mutually exclusive.');
   }
-  if (optionsValue['signer-executable'] === undefined) return null;
+  if (hasRemoteSigner) {
+    if (optionsValue['signer-host'] === undefined || optionsValue['signer-port'] === undefined) {
+      throw new Error('signer-host and signer-port must be provided together.');
+    }
+    return createRemoteExecutionAuthoritySigner({
+      host: optionsValue['signer-host'],
+      port: Number(optionsValue['signer-port']),
+      authToken: loadBoundedSecret(required(optionsValue, 'signer-auth-token-file'), 'signer-auth-token-file'),
+      timeoutMs: optionsValue['signer-timeout-ms'] === undefined
+        ? 5000
+        : Number(optionsValue['signer-timeout-ms']),
+    });
+  }
+  if (!hasProcessSigner) return null;
   const args = parseJsonOption(optionsValue, 'signer-args-json');
   return createExecutionAuthoritySigner({
     executable: optionsValue['signer-executable'],

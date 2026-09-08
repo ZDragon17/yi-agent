@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -1198,6 +1198,112 @@ test('CLI routes an authority-owned OS effect through an independent signer proc
   });
 });
 
+test('CLI routes an authority-owned OS effect through a remote signer', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'effect-broker-remote-signer-lab');
+    const effectFile = path.join(root, 'effect-broker-remote-signer-effect.json');
+    const sandboxRoot = path.join(root, 'effect-broker-remote-signer-sandbox');
+    const journalPath = path.join(sandboxRoot, 'effects.jsonl');
+    const privateKeyPath = path.join(root, 'remote-signer-private-key.der');
+    const authTokenPath = path.join(root, 'remote-signer-auth-token.txt');
+    const readyPath = path.join(root, 'remote-signer-ready.txt');
+    const markerName = `${canonicalDigest('execution:step:1').slice('sha256:'.length)}.marker`;
+    await mkdir(path.join(sandboxRoot, 'pending'), { recursive: true });
+    await mkdir(path.join(sandboxRoot, 'applied'), { recursive: true });
+    await writeFile(path.join(sandboxRoot, '.yi-agent-sandbox'), 'yi-agent-sandbox-v1\n', 'utf8');
+    await writeFile(path.join(sandboxRoot, 'pending', markerName), 'execution:step:1', 'utf8');
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    await writeFile(privateKeyPath, privateKey.export({ format: 'der', type: 'pkcs8' }));
+    await writeFile(authTokenPath, 'remote-signer-test-token-2026');
+    const executionPublicKey = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
+    const signer = spawn(process.execPath, [
+      path.resolve('bin/yi-agent-execution-signer-server.mjs'),
+      '--private-key-der', privateKeyPath,
+      '--auth-token-file', authTokenPath,
+      '--host', '127.0.0.1',
+      '--port', '0',
+      '--ready-file', readyPath,
+    ], { windowsHide: true });
+    try {
+      await waitForFile(readyPath);
+      const signerPort = Number(await readFile(readyPath, 'utf8'));
+      const descriptor = {
+        adapterId: 'effect-broker-authority-v1',
+        worldId: 'idempotent-transition',
+        worldVersion: 'idempotent-transition-1',
+        capabilityIds: ['idempotent-transition.advance'],
+        scenarioIds: ['idempotent', 'alternate'],
+        valueSpec: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1] },
+        evidencePublicKey: ED25519_PUBLIC_KEY,
+        executionPublicKey,
+        supportsStateDependentActions: true,
+      };
+      const effectPlan = {
+        effectId: 'effect:os-marker:move',
+        target: { operation: 'move', from: `pending/${markerName}`, to: `applied/${markerName}` },
+        precondition: { sourceExists: true, destinationAbsent: true },
+        risk: 'LOW',
+        requiresConfirmation: false,
+        reversible: true,
+        compensation: { operation: 'move-back', from: `applied/${markerName}`, to: `pending/${markerName}` },
+        afterStateDigest: canonicalDigest({
+          schemaVersion: 1,
+          stateVersion: 'state:idempotent-transition:1',
+          revision: 1,
+          value: 1,
+          usedExecutionNonces: ['execution:step:1'],
+        }),
+      };
+      const authority = path.resolve('bin/yi-agent-effect-authority.mjs');
+      const adapter = path.join(root, 'effect-broker-remote-signer-adapter.json');
+      const authorityArgs = [
+        authority,
+        '--descriptor-json', JSON.stringify(descriptor),
+        '--effect-plan-json', JSON.stringify(effectPlan),
+        '--journal', journalPath,
+        '--sandbox-root', sandboxRoot,
+        '--signer-host', '127.0.0.1',
+        '--signer-port', String(signerPort),
+        '--signer-auth-token-file', authTokenPath,
+      ];
+      await writeFile(adapter, JSON.stringify({
+        executable: process.execPath,
+        args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, '--os-effect', '--os-effect-root', sandboxRoot, '--skip-os-effect'],
+        executionAuthority: {
+          executable: process.execPath,
+          args: authorityArgs,
+          adapterId: descriptor.adapterId,
+          worldId: descriptor.worldId,
+          executionPublicKey,
+          timeoutMs: 5000,
+        },
+        executionObserver: {
+          executable: process.execPath,
+          args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, '--execution-observer', '--os-effect', '--os-effect-root', sandboxRoot],
+          adapterId: 'idempotent-execution-observer-v1',
+          worldId: descriptor.worldId,
+          timeoutMs: 2000,
+        },
+        adapterId: 'idempotent-transition-adapter-v1',
+        worldId: descriptor.worldId,
+        timeoutMs: 2000,
+      }));
+
+      const init = await invoke('init', '--lab', lab, '--world', descriptor.worldId, '--seed', 'remote-signer-seed', '--lab-id', 'remote-signer-lab', '--adapter', adapter, '--json');
+      assert.equal(init.code, 0, JSON.stringify(init));
+      const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+      assert.equal(run.code, 0, JSON.stringify(run));
+      await assert.rejects(readFile(path.join(sandboxRoot, 'pending', markerName)), (error) => error.code === 'ENOENT');
+      assert.equal(await readFile(path.join(sandboxRoot, 'applied', markerName), 'utf8'), 'execution:step:1');
+      const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+      assert.equal(replay.code, 0, JSON.stringify(replay));
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    } finally {
+      signer.kill();
+    }
+  });
+});
+
 test('CLI recovers a persistent real EffectBroker authority after its response is lost', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'persistent-effect-broker-authority-lab');
@@ -2102,6 +2208,19 @@ async function invokeAdapter(args, request) {
     });
     child.stdin.end(`${JSON.stringify(request)}\n`);
   });
+}
+
+async function waitForFile(filePath) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      await access(filePath);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  throw new Error(`file did not appear: ${filePath}`);
 }
 
 async function rewriteExternalInputEvidence(lab) {

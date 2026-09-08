@@ -1202,3 +1202,10 @@
 - 实现：增加独立 `yi-execution-signer` JSONL 子进程协议和 `bin/yi-agent-execution-signer.mjs`。EffectBroker authority 可通过 `--signer-executable`、`--signer-args-json` 调用 signer，不再读取 `--private-key-der`；返回的 attestation 必须由 authority 按 descriptor 的 `executionPublicKey` 再验签。signer 请求使用固定可执行文件、非 shell、单请求、超时及 stdout/stderr 限额；私钥加载逻辑共享绝对路径、非符号链接、普通文件和 64 KiB 上限检查。
 - 验证：signer 真实子进程签名 `1/1`；EffectBroker authority 外部 signer 验签 `1/1`；真实 CLI 的独立 signer 执行闭环、原有 direct signer 闭环和 persistent authority response-loss 恢复 `3/3`，文件只移动一次，Replay 为 `CONSISTENT`。
 - 边界：本节点只证明持钥代码与 authority 代码路径在本机不同进程中运行，不证明低权限隔离、跨机器身份、网络重连、远程密钥托管、可信硬件或物理设备执行。相同用户权限仍可读取私钥或控制两个进程；下一步应在不同 OS 身份或远程 signer 上验证实际访问边界，再评估密钥轮换与 signer 会话复用。
+
+## F-154 受认证的远程 signer 边界
+
+- 反证/缺口：F-153 的独立 signer 仍由 authority 本机启动；若把签名端口直接暴露，任何能连入的进程都可能要求 signer 对任意回执签名，公钥验签本身不能证明请求者身份。
+- 实现：增加 `yi-execution-signer` TCP 服务和 client。authority 通过 `--signer-host`、`--signer-port`、`--signer-auth-token-file` 只持有受限认证 token；服务端通过 `--auth-token-file` 读取 token，使用常量时间比较，错误 token 不签名。请求仍受单 JSONL 响应、超时、字节上限和公钥验签约束；服务端默认只允许 `127.0.0.1/::1`，私钥不进入 authority descriptor、manifest 或日志。
+- 验证：真实 TCP signer 单测 `1/1`；真实 EffectBroker CLI 的 signer 服务闭环 `1/1`；签名结果能被 descriptor 公钥验证，完整 `init→run→replay` 保持 `CONSISTENT`。
+- 边界：token 只解决未授权调用，不提供传输加密、跨机器身份或抗同权限窃取；当前服务端强制回环，尚未形成 TLS/mTLS、不同 OS 身份、远程密钥托管、可信硬件或物理设备回执边界。下一步应先用 TLS/mTLS 或受控 IPC 测跨机器认证，再验证密钥轮换与服务重启恢复。

@@ -211,6 +211,8 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 若 `executionAuthority` 的 descriptor 发布了 `executionPublicKey`，配置中的 `executionAuthority.executionPublicKey` 必须与之相同；`bin/yi-agent-effect-authority.mjs` 可用 `--private-key-der` 指向 PKCS#8 DER 私钥文件，也可以不让 authority 进程接触私钥，改用 `--signer-executable` 与 `--signer-args-json` 调用 `bin/yi-agent-execution-signer.mjs`。两种方式都只接受绝对路径、普通文件、64 KiB 以内的私钥文件，私钥不应提交到仓库或写入共享配置。独立 signer 只把持钥代码移到另一个进程；同一用户仍可能读取私钥，因此它不是低权限隔离、远程密钥托管或可信硬件。公钥 pin 解决的是回执身份错配，不是私钥托管或 authority 诚实问题。
 
+需要把 signer 放到独立服务时，可使用 `--signer-host`、`--signer-port` 和 `--signer-auth-token-file`。signer 服务端用 `bin/yi-agent-execution-signer-server.mjs` 启动，私钥由服务端读取，authority 只读取共享认证 token；错误 token、超时、协议污染或无效签名都会失败关闭。当前服务端强制绑定 `127.0.0.1/::1`，TCP 内容未加密，token 不是 TLS 或跨机器身份方案；跨机器部署前仍需受保护网络、TLS/mTLS 和独立 ACL。
+
 在 Windows PowerShell 中运行：
 
 ```powershell
@@ -334,6 +336,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-151 把恢复窗口扩展为连续故障：authority 回执丢失后，下一次 Run 让 observer 再丢失回执，第三次才完成；3/3 E2E 验证三类角色仍绑定同一 nonce，主效果和 authority effect 都保持一次。另用真实 `EffectBroker`、`EffectJournal` 和 `SandboxFileExecutor` 验证 authority 已移动文件但回执丢失时，重启后的 Broker 只复用 `EFFECT_APPLIED` 记录，不再次移动文件，Replay 为 `CONSISTENT`。测试仍运行在本机同用户权限下，不等于跨机器身份或真实设备证明。
 - F-152 为 execution authority 增加可选 Ed25519 回执签名：authority descriptor 发布 `executionPublicKey`，配置显式 pin 同一公钥；带公钥的 authority 必须为 `EXECUTED/RECONCILED` 回执附上绑定完整回执内容的 `executionAttestation`，宿主、LabStore 和 Replay 都验签。真实 EffectBroker 沙箱 CLI 签名闭环 `1/1`，签名篡改单测 `1/1`；没有公钥的旧 authority 仍保持兼容。签名只证明持钥进程签出了这条内容，不证明持钥进程诚实、私钥未被同用户进程读取，也不证明物理设备已执行。
 - F-153 把签名私钥从 EffectBroker authority 进程移到独立的 signer 子进程。authority 通过受限的单请求 JSONL 协议发送待签回执，只接受与 descriptor 公钥匹配的 attestation；超时、协议污染、进程失败和无效签名都会 fail-closed。真实 CLI E2E 已验证 authority 不携带 `--private-key-der` 仍能执行 EffectBroker、恢复并 Replay 为 `CONSISTENT`。这只证明了代码路径和进程持钥角色的分离；两个进程仍在同一用户权限和本机 OS 下，不能当作权限隔离、跨机器身份或物理执行证明。
+- F-154 把 signer 再移到受认证的 TCP 服务：authority 只持有受限 token 文件，不持有私钥；服务端用常量时间比较校验 token，签名结果仍由 authority 按 `executionPublicKey` 验证。真实 TCP signer 与完整 EffectBroker CLI 闭环均已通过。当前只绑定本机回环地址，TCP 未加密，认证 token 解决的是未授权请求，不等于 TLS、跨机器身份或可信硬件。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
