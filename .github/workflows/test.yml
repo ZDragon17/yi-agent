@@ -14,6 +14,10 @@ jobs:
     name: full test (Windows, Node 22)
     runs-on: windows-latest
     timeout-minutes: 90
+    env:
+      TMPDIR: ${{ github.workspace }}/.yi-agent/ci-temp
+      TMP: ${{ github.workspace }}/.yi-agent/ci-temp
+      TEMP: ${{ github.workspace }}/.yi-agent/ci-temp
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -24,6 +28,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Prepare plain temporary directory
+        run: node -e "require('node:fs').mkdirSync(require('node:os').tmpdir(), { recursive: true })"
       - name: Run full test gate
         run: npm test
 
@@ -31,6 +37,10 @@ jobs:
     name: compatibility test (Ubuntu, Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      TMPDIR: ${{ github.workspace }}/.yi-agent/ci-temp
+      TMP: ${{ github.workspace }}/.yi-agent/ci-temp
+      TEMP: ${{ github.workspace }}/.yi-agent/ci-temp
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +55,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Prepare plain temporary directory
+        run: node -e "require('node:fs').mkdirSync(require('node:os').tmpdir(), { recursive: true })"
       - name: Run compatibility test gate
         run: >-
           npm run test:gate --
