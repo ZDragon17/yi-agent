@@ -1181,3 +1181,10 @@
 - 实现：扩展 idempotent-transition 夹具，让 authority 先把 `executionNonce` 和回执结果写入独立记录，再在首次 `executeExecution` 响应前退出；后续同 nonce 直接返回该记录。新增跨 CLI 故障矩阵，主 adapter、authority、observer 均使用 persistent JSONL，首次 Run 失败后下一次 Run 继续，不调用新的 nonce，也不重复效果。
 - 验证：持久 authority/observer response-loss E2E `2/2`；两条路径第一次 Run 都返回 `WORLD_ADAPTER_PROTOCOL`，主 effect 与 authority effect 各为 1，下一次 Run 完成并 Replay `CONSISTENT`。此前 F-149 的 witness/authority/observer 正常会话 `2/2` 和外部并发回归保持通过。
 - 边界：本节点只证明本机进程退出和响应丢失下的 nonce 幂等恢复；它不证明跨机器身份、低权限隔离、网络重连、authority 诚实或物理效果真实性。下一步应把 authority/observer 同时退出和真实 EffectBroker authority 的恢复窗口放入同一矩阵。
+
+## F-151 连续多角色故障与真实 EffectBroker 恢复
+
+- 反证/缺口：F-150 分别验证了 authority 或 observer 的单次响应丢失，但没有把两个故障窗口串起来，也没有验证真实 EffectBroker authority 在效果已产生、回执未返回时的重启行为。
+- 实现：新增连续三次 CLI 运行矩阵：第一次 authority 丢失回执，第二次 observer 丢失回执，第三次完成；三类角色继续使用 persistent JSONL 和原 execution nonce。扩展 `bin/yi-agent-effect-authority.mjs` 的显式测试故障注入，让真实 Broker 在 `EffectJournal` 已记录 `EFFECT_APPLIED` 后退出，下一次启动从 Journal 恢复。
+- 验证：连续多角色恢复 `3/3`；authority/observer 定向 CLI 回归 `5/5`。真实 EffectBroker 路径确认沙箱文件只移动一次、Journal 只有一条 `EFFECT_APPLIED`、第二次 Run 成功且 Replay `CONSISTENT`。
+- 边界：仍是本机同用户权限、预绑定文件计划和进程级故障注入；没有覆盖跨机器身份、权限隔离、网络分区、远程设备回执或人工确认后的真实生产副作用。下一步应评估低权限 authority 与跨边界回执身份，而不是继续把本机进程当成可信根。

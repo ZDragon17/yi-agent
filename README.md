@@ -329,6 +329,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-148 增加显式 `transport: "persistent-jsonl"` 外部 WorldPort 会话：旧配置继续使用一次请求一进程；持久模式先完成一次 `hello` 探针，再复用一个 JSONL 子进程，按请求串行化并施加 stdout/stderr 上限与单请求超时。超时、协议污染或进程退出会关闭当前会话，不自动重放可能已经产生副作用的请求；后续恢复仍由 execution nonce/idempotency 或 reconciliation 决定。真实 CLI E2E 已验证多步只复用一个运行期会话、会话响应丢失/超时后的同 nonce 恢复不重复效果，Replay 不启动 adapter；现阶段仍不改变默认 transport，也不等于 OS 沙箱或物理事实证明。
 - F-149 把同一持久 transport 扩展到独立 witness、executionAuthority 和 executionObserver；这些角色的 transport、launch digest 和身份元数据一起进入 manifest，继续运行与只读 Replay 会校验一致性。witness 证据链改为显式等待异步请求，避免持久会话把 Promise 当成同步结果；真实 E2E 验证了 6 步延迟反馈中的 witness 只复用一个运行期进程，以及 authority/observer 在同 nonce 重试中各复用一个进程且效果只写一次。Replay 仍不启动任何辅助角色。
 - F-150 用 authority 和 observer 的响应丢失夹具验证了多角色恢复窗口：角色先完成各自的 nonce 绑定工作，再故意关闭进程；第一次 Run 停在 `WORLD_ADAPTER_PROTOCOL`，下一次独立 CLI 用同一 nonce 复用主 adapter 的幂等结果、authority 的持久结果和 observer 的新观测，主效果与 authority effect 都只出现一次，Replay 仍为 `CONSISTENT`。这验证的是本机进程崩溃后的协议恢复，不是跨机器身份或可信执行证明。
+- F-151 把恢复窗口扩展为连续故障：authority 回执丢失后，下一次 Run 让 observer 再丢失回执，第三次才完成；3/3 E2E 验证三类角色仍绑定同一 nonce，主效果和 authority effect 都保持一次。另用真实 `EffectBroker`、`EffectJournal` 和 `SandboxFileExecutor` 验证 authority 已移动文件但回执丢失时，重启后的 Broker 只复用 `EFFECT_APPLIED` 记录，不再次移动文件，Replay 为 `CONSISTENT`。测试仍运行在本机同用户权限下，不等于跨机器身份或真实设备证明。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

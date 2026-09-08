@@ -133,6 +133,77 @@ test('persistent observer response loss resumes without repeating the authority 
   }
 });
 
+test('persistent authority and observer response losses recover in sequence with one effect', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-role-chain-recovery-'));
+  try {
+    const lab = path.join(root, 'lab');
+    const adapter = path.join(root, 'adapter.json');
+    const effectFile = path.join(root, 'primary-effect.json');
+    const authorityEffectFile = path.join(root, 'authority-effect.json');
+    const observerDropMarker = path.join(root, 'observer-drop.marker');
+    await mkdir(root, { recursive: true });
+    await writeFile(adapter, JSON.stringify({
+      executable: process.execPath,
+      args: [ADAPTER, '--effect-file', effectFile],
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 5000,
+      transport: 'persistent-jsonl',
+      executionAuthority: {
+        executable: process.execPath,
+        args: [ADAPTER, '--effect-file', effectFile, '--execution-authority', '--authority-effect-file', authorityEffectFile, '--drop-execution-response-once'],
+        adapterId: 'idempotent-execution-authority-v1',
+        worldId: 'idempotent-transition',
+        timeoutMs: 5000,
+        transport: 'persistent-jsonl',
+      },
+      executionObserver: {
+        executable: process.execPath,
+        args: [ADAPTER, '--effect-file', effectFile, '--execution-observer', '--observer-drop-marker', observerDropMarker],
+        adapterId: 'idempotent-execution-observer-v1',
+        worldId: 'idempotent-transition',
+        timeoutMs: 5000,
+        transport: 'persistent-jsonl',
+      },
+    }));
+
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'persistent-role-chain-recovery-seed',
+      '--lab-id', 'persistent-role-chain-recovery-lab', '--adapter', adapter, '--json',
+    ]);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const authorityLost = await invoke([
+      'run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json',
+    ]);
+    assert.notEqual(authorityLost.code, 0, JSON.stringify(authorityLost));
+    assert.equal(authorityLost.json.error.code, 'WORLD_ADAPTER_PROTOCOL');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    assert.equal(JSON.parse(await readFile(authorityEffectFile, 'utf8')).effectCount, 1);
+
+    const observerLost = await invoke([
+      'run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json',
+    ]);
+    assert.notEqual(observerLost.code, 0, JSON.stringify(observerLost));
+    assert.equal(observerLost.json.error.code, 'WORLD_ADAPTER_PROTOCOL');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    assert.equal(JSON.parse(await readFile(authorityEffectFile, 'utf8')).effectCount, 1);
+
+    const resumed = await invoke([
+      'run', '--lab', lab, '--run-id', 'run-3', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json',
+    ]);
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    assert.equal(JSON.parse(await readFile(authorityEffectFile, 'utf8')).effectCount, 1);
+
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-3', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.json.data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function invoke(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });

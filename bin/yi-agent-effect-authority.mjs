@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { stdin, stdout } from 'node:process';
+import { existsSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { EffectJournal } from '../src/effects/effect-journal.mjs';
 import { restoreEffectBroker } from '../src/effects/effect-broker.mjs';
@@ -13,6 +14,7 @@ const descriptor = publishDescriptor(parseJsonOption(options, 'descriptor-json')
 const effectPlan = parseJsonOption(options, 'effect-plan-json');
 const journalPath = required(options, 'journal');
 const sandboxRoot = required(options, 'sandbox-root');
+const dropExecutionResponseOnceMarker = options['drop-execution-response-once-marker'] ?? null;
 let authorityPromise = null;
 
 const rl = createInterface({ input: stdin, crlfDelay: Infinity });
@@ -38,7 +40,13 @@ async function handleLine(line) {
       result = descriptor;
     } else {
       const authority = await loadAuthority();
-      if (request.op === 'executeExecution') result = await authority.executeExecution(request.payload ?? {});
+      if (request.op === 'executeExecution') {
+        result = await authority.executeExecution(request.payload ?? {});
+        if (dropExecutionResponseOnceMarker !== null && !existsSync(dropExecutionResponseOnceMarker)) {
+          writeFileSync(dropExecutionResponseOnceMarker, 'dropped\n', 'utf8');
+          process.exit(17);
+        }
+      }
       else if (request.op === 'reconcileExecution') result = await authority.reconcileExecution(request.payload ?? {});
       else throw new Error(`unsupported operation: ${request.op}`);
     }

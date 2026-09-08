@@ -1101,6 +1101,101 @@ test('CLI routes an authority-owned OS effect through the real EffectBroker sand
   });
 });
 
+test('CLI recovers a persistent real EffectBroker authority after its response is lost', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'persistent-effect-broker-authority-lab');
+    const effectFile = path.join(root, 'persistent-effect-broker-primary-effect.json');
+    const sandboxRoot = path.join(root, 'persistent-effect-broker-sandbox');
+    const journalPath = path.join(sandboxRoot, 'effects.jsonl');
+    const dropMarker = path.join(root, 'authority-response-dropped.marker');
+    const markerName = `${canonicalDigest('execution:step:1').slice('sha256:'.length)}.marker`;
+    await mkdir(path.join(sandboxRoot, 'pending'), { recursive: true });
+    await mkdir(path.join(sandboxRoot, 'applied'), { recursive: true });
+    await writeFile(path.join(sandboxRoot, '.yi-agent-sandbox'), 'yi-agent-sandbox-v1\n', 'utf8');
+    await writeFile(path.join(sandboxRoot, 'pending', markerName), 'execution:step:1', 'utf8');
+    const descriptor = {
+      adapterId: 'effect-broker-authority-v1',
+      worldId: 'idempotent-transition',
+      worldVersion: 'idempotent-transition-1',
+      capabilityIds: ['idempotent-transition.advance'],
+      scenarioIds: ['idempotent', 'alternate'],
+      valueSpec: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1] },
+      evidencePublicKey: ED25519_PUBLIC_KEY,
+      supportsStateDependentActions: true,
+    };
+    const effectPlan = {
+      effectId: 'effect:os-marker:move',
+      target: { operation: 'move', from: `pending/${markerName}`, to: `applied/${markerName}` },
+      precondition: { sourceExists: true, destinationAbsent: true },
+      risk: 'LOW',
+      requiresConfirmation: false,
+      reversible: true,
+      compensation: { operation: 'move-back', from: `applied/${markerName}`, to: `pending/${markerName}` },
+      afterStateDigest: canonicalDigest({
+        schemaVersion: 1,
+        stateVersion: 'state:idempotent-transition:1',
+        revision: 1,
+        value: 1,
+        usedExecutionNonces: ['execution:step:1'],
+      }),
+    };
+    const authority = path.resolve('bin/yi-agent-effect-authority.mjs');
+    const authorityArgs = [
+      authority,
+      '--descriptor-json', JSON.stringify(descriptor),
+      '--effect-plan-json', JSON.stringify(effectPlan),
+      '--journal', journalPath,
+      '--sandbox-root', sandboxRoot,
+      '--drop-execution-response-once-marker', dropMarker,
+    ];
+    const adapter = path.join(root, 'persistent-effect-broker-authority-adapter.json');
+    await writeFile(adapter, JSON.stringify({
+      executable: process.execPath,
+      args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, '--os-effect', '--os-effect-root', sandboxRoot, '--skip-os-effect'],
+      transport: 'persistent-jsonl',
+      executionAuthority: {
+        executable: process.execPath,
+        args: authorityArgs,
+        adapterId: descriptor.adapterId,
+        worldId: descriptor.worldId,
+        timeoutMs: 5000,
+        transport: 'persistent-jsonl',
+      },
+      executionObserver: {
+        executable: process.execPath,
+        args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, '--execution-observer', '--os-effect', '--os-effect-root', sandboxRoot],
+        adapterId: 'idempotent-execution-observer-v1',
+        worldId: descriptor.worldId,
+        timeoutMs: 5000,
+        transport: 'persistent-jsonl',
+      },
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: descriptor.worldId,
+      timeoutMs: 5000,
+    }));
+
+    const init = await invoke('init', '--lab', lab, '--world', descriptor.worldId, '--seed', 'persistent-effect-broker-authority-seed', '--lab-id', 'persistent-effect-broker-authority-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const lost = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.notEqual(lost.code, 0, JSON.stringify(lost));
+    assert.equal(lost.stdout[0].error.code, 'WORLD_ADAPTER_PROTOCOL');
+    await assert.rejects(readFile(path.join(sandboxRoot, 'pending', markerName)), (error) => error.code === 'ENOENT');
+    assert.equal(await readFile(path.join(sandboxRoot, 'applied', markerName), 'utf8'), 'execution:step:1');
+    const firstJournal = (await readFile(journalPath, 'utf8')).trim().split(/\r?\n/u).map(JSON.parse);
+    assert.equal(firstJournal.filter((event) => event.type === 'EFFECT_APPLIED').length, 1);
+
+    const resumed = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    const secondJournal = (await readFile(journalPath, 'utf8')).trim().split(/\r?\n/u).map(JSON.parse);
+    assert.equal(secondJournal.filter((event) => event.type === 'EFFECT_APPLIED').length, 1);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
 test('CLI resumes a response-lost external transition through the same execution nonce', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'idempotent-lab');
