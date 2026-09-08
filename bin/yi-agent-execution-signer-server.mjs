@@ -81,7 +81,7 @@ function respond(socket, id, ok, result) {
 }
 
 function createTlsOptions(optionsValue) {
-  const hasTls = optionsValue['tls-cert-file'] !== undefined || optionsValue['tls-key-file'] !== undefined || optionsValue['tls-client-ca-file'] !== undefined;
+  const hasTls = optionsValue['tls-cert-file'] !== undefined || optionsValue['tls-key-file'] !== undefined || optionsValue['tls-client-ca-file'] !== undefined || optionsValue['tls-crl-file'] !== undefined;
   if (!hasTls) return null;
   if (optionsValue['tls-cert-file'] === undefined || optionsValue['tls-key-file'] === undefined || optionsValue['tls-client-ca-file'] === undefined) {
     throw new Error('tls-cert-file, tls-key-file, and tls-client-ca-file must be provided together');
@@ -90,6 +90,7 @@ function createTlsOptions(optionsValue) {
     cert: loadBoundedFile(optionsValue['tls-cert-file'], 'tls-cert-file'),
     key: loadBoundedFile(optionsValue['tls-key-file'], 'tls-key-file'),
     ca: loadBoundedFile(optionsValue['tls-client-ca-file'], 'tls-client-ca-file'),
+    ...(optionsValue['tls-crl-file'] === undefined ? {} : { crl: loadBoundedFile(optionsValue['tls-crl-file'], 'tls-crl-file') }),
     requestCert: true,
     rejectUnauthorized: true,
     minVersion: 'TLSv1.2',

@@ -157,7 +157,8 @@ function normalizeTlsConfig(value) {
   if (!isPlainObject(value) || !isBytes(value.cert) || value.cert.length === 0 || value.cert.length > 64 * 1024 ||
       !isBytes(value.key) || value.key.length === 0 || value.key.length > 64 * 1024 ||
       !isBytes(value.ca) || value.ca.length === 0 || value.ca.length > 64 * 1024 ||
-      typeof value.servername !== 'string' || value.servername.length === 0 || value.servername.length > 253) {
+      typeof value.servername !== 'string' || value.servername.length === 0 || value.servername.length > 253 ||
+      (value.crl !== undefined && (!isBytes(value.crl) || value.crl.length === 0 || value.crl.length > 64 * 1024))) {
     throw new RemoteExecutionAuthoritySignerError('INVALID_INPUT', 'Remote execution authority signer TLS config is invalid.');
   }
   return {
@@ -165,6 +166,7 @@ function normalizeTlsConfig(value) {
     key: Buffer.from(value.key),
     ca: Buffer.from(value.ca),
     servername: value.servername,
+    ...(value.crl === undefined ? {} : { crl: Buffer.from(value.crl) }),
   };
 }
 

@@ -211,7 +211,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 若 `executionAuthority` 的 descriptor 发布了 `executionPublicKey`，配置中的 `executionAuthority.executionPublicKey` 必须与之相同；`bin/yi-agent-effect-authority.mjs` 可用 `--private-key-der` 指向 PKCS#8 DER 私钥文件，也可以不让 authority 进程接触私钥，改用 `--signer-executable` 与 `--signer-args-json` 调用 `bin/yi-agent-execution-signer.mjs`。两种方式都只接受绝对路径、普通文件、64 KiB 以内的私钥文件，私钥不应提交到仓库或写入共享配置。独立 signer 只把持钥代码移到另一个进程；同一用户仍可能读取私钥，因此它不是低权限隔离、远程密钥托管或可信硬件。公钥 pin 解决的是回执身份错配，不是私钥托管或 authority 诚实问题。
 
-需要把 signer 放到独立服务时，可使用 `--signer-host`、`--signer-port` 和 `--signer-auth-token-file`。signer 服务端用 `bin/yi-agent-execution-signer-server.mjs` 启动，私钥由服务端读取，authority 只读取共享认证 token；错误 token、超时、协议污染或无效签名都会失败关闭。跨机器或非受信网络应同时配置 signer 的 `--tls-cert-file`、`--tls-key-file`、`--tls-client-ca-file`，以及 authority 的 `--signer-tls-cert-file`、`--signer-tls-key-file`、`--signer-tls-ca-file`、`--signer-tls-server-name`。TLS 证书密钥只负责连接认证，和 execution signing key 不是同一把钥匙。
+需要把 signer 放到独立服务时，可使用 `--signer-host`、`--signer-port` 和 `--signer-auth-token-file`。signer 服务端用 `bin/yi-agent-execution-signer-server.mjs` 启动，私钥由服务端读取，authority 只读取共享认证 token；错误 token、超时、协议污染或无效签名都会失败关闭。跨机器或非受信网络应同时配置 signer 的 `--tls-cert-file`、`--tls-key-file`、`--tls-client-ca-file`，以及 authority 的 `--signer-tls-cert-file`、`--signer-tls-key-file`、`--signer-tls-ca-file`、`--signer-tls-server-name`。需要主动拒绝已撤销客户端证书时，两端可分别增加 `--tls-crl-file` 与 `--signer-tls-crl-file`；CRL 文件同样受绝对路径、普通文件和 64 KiB 大小限制。证书密钥只负责连接认证，和 execution signing key 不是同一把钥匙；CRL 更新、旧证书审计和吊销发布仍属于部署运维责任。
 
 在 Windows PowerShell 中运行：
 
@@ -341,6 +341,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-156 将 signer 故障放进 EffectBroker 恢复窗口：signer 在签名后、响应前退出，第一次 Run 留下已移动文件和未完成账；服务重启后第二次 CLI 使用新的 run 继续，Journal 只保留一次 `EFFECT_APPLIED`，Replay 为 `CONSISTENT`。这验证的是 signer 服务退出恢复，不是网络分区或远程设备对账。
 - F-157 把 mTLS 服务端证书轮换放进连续多角色恢复：第一次 Run 在 signer 签名后丢回执；服务端在同一端口用新证书重启后，第二次 Run 完成 authority 对账但让 observer 丢回执；第三次 Run 完成。共享 CA、execution 公钥、token、EffectJournal 和 nonce 绑定保持不变，文件效果只执行一次，Replay 为 `CONSISTENT`。测试覆盖的是本机同 CA 的身份重建，不是 CA 撤销、网络分区、不同 OS 身份或真实设备证明。
 - F-158 进一步同时更换 mTLS 信任根：第一轮使用 CA-1，第二轮把 signer 服务端证书、authority 客户端证书和 signer 的 client CA 换成 CA-2，authority 的信任文件同时保留两根 CA。未决 execution nonce 在 CA 切换后恢复，EffectBroker 效果仍只执行一次，Replay 为 `CONSISTENT`。这验证的是双向 CA 更换，不是撤销列表、旧证书审计或硬件密钥。
+- F-159 把证书撤销放进恢复窗口：服务端加载 CRL，第一轮拒绝仍由同一 CA 签发但已撤销的 authority 客户端证书；此前已经产生的沙箱效果保持一次。随后只替换同一证书路径下的客户端证书内容，服务重启后用原 execution nonce 恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。真实 signer、authority、CRL 和 EffectBroker CLI 组合回归为 `9/9`。这证明的是 TLS peer 证书撤销与应用恢复可以衔接，不是私钥硬件保护、OS 权限隔离或真实设备回执。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

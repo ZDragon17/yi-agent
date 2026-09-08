@@ -1237,3 +1237,10 @@
 - 实现：新增 CA-1、CA-2 两组测试根。第一轮 signer 使用 CA-1 的服务端/客户端证书并在签名后丢回执；第二轮把服务端证书、客户端证书和 signer 的 client CA 一起换成 CA-2，authority 的 CA 文件同时信任两根，继续用原 execution nonce 恢复 EffectBroker 效果。
 - 验证：F-158 与 F-153～F-157 的 signer、mTLS、持久多角色恢复组合回归为 `8/8`；第二轮只有 CA-2 客户端证书能通过 signer 的 client CA 校验，恢复后效果计数仍为 1，Replay 为 `CONSISTENT`。
 - 边界：这证明的是双向 CA 更换和本机 nonce 恢复，不包含 CA 撤销列表、旧证书主动失效审计、网络分区、不同 OS 身份、硬件密钥或真实设备回执。撤销策略仍需接入具体部署环境。
+
+## F-159 mTLS 证书撤销与 nonce 恢复
+
+- 反证/缺口：F-158 证明了 CA 可以切换，但同一 CA 签发的旧客户端证书在轮换窗口内仍可能被接受；没有 CRL 时，身份有效期不等于当前授权有效。
+- 实现：signer server 增加可选 `--tls-crl-file`，authority 增加可选 `--signer-tls-crl-file`，两者都沿用受限文件加载并传入 Node TLS。测试夹具生成由测试 CA 签名的 CRL，撤销旧 authority 客户端 serial。第一轮使用旧证书让 TLS 握手失败，随后把新证书写回同一配置路径，signer 在同一端口重启并继续处理原 execution nonce。
+- 验证：`mTLS certificate revocation rejects the old client before nonce recovery` 通过；signer、mTLS 证书轮换、CA 轮换、证书撤销和持久 authority/observer 恢复组合回归为 `9/9`。第一轮 EffectBroker 文件效果计数为 1，第二轮恢复成功，Replay 为 `CONSISTENT`。
+- 边界：CRL 只证明 TLS 层拒绝已撤销 peer，不提供私钥硬件保护、不同 OS 身份、网络分区、证书发布审计或真实设备回执。下一步应在独立权限/机器环境验证 ACL、CRL 更新窗口和人工对账。

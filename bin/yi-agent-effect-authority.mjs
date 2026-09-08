@@ -143,7 +143,8 @@ function createSignerTlsOptions(optionsValue) {
   const hasTls = optionsValue['signer-tls-cert-file'] !== undefined ||
     optionsValue['signer-tls-key-file'] !== undefined ||
     optionsValue['signer-tls-ca-file'] !== undefined ||
-    optionsValue['signer-tls-server-name'] !== undefined;
+    optionsValue['signer-tls-server-name'] !== undefined ||
+    optionsValue['signer-tls-crl-file'] !== undefined;
   if (!hasTls) return undefined;
   if (optionsValue['signer-tls-cert-file'] === undefined ||
       optionsValue['signer-tls-key-file'] === undefined ||
@@ -156,6 +157,7 @@ function createSignerTlsOptions(optionsValue) {
     key: loadBoundedFile(optionsValue['signer-tls-key-file'], 'signer-tls-key-file'),
     ca: loadBoundedFile(optionsValue['signer-tls-ca-file'], 'signer-tls-ca-file'),
     servername: optionsValue['signer-tls-server-name'],
+    ...(optionsValue['signer-tls-crl-file'] === undefined ? {} : { crl: loadBoundedFile(optionsValue['signer-tls-crl-file'], 'signer-tls-crl-file') }),
   };
 }
 

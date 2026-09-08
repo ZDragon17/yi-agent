@@ -29,6 +29,28 @@ export async function makeCertificateSignedByAuthority(authority, keyPath, certP
   }));
 }
 
+export async function makeCertificateRevocationList(authority, crlPath, revokedSerials) {
+  const algorithm = derSequence([derOid([1, 2, 840, 113549, 1, 1, 11]), der(0x05, Buffer.alloc(0))]);
+  const now = new Date();
+  const later = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const revokedCertificates = derSequence(revokedSerials.map((serial) => derSequence([
+    derInteger(serial),
+    derUtcTime(now),
+  ])));
+  const tbs = derSequence([
+    derInteger(1),
+    algorithm,
+    authority.subjectName,
+    derUtcTime(now),
+    derUtcTime(later),
+    revokedCertificates,
+  ]);
+  const signer = createSign('sha256');
+  signer.update(tbs);
+  const crl = derSequence([tbs, algorithm, derBitString(signer.sign(authority.signingKey))]);
+  await writeFile(crlPath, `-----BEGIN X509 CRL-----\n${crl.toString('base64').match(/.{1,64}/gu).join('\n')}\n-----END X509 CRL-----\n`);
+}
+
 async function writeCertificate(certPath, certificate) {
   await writeFile(certPath, `-----BEGIN CERTIFICATE-----\n${certificate.toString('base64').match(/.{1,64}/gu).join('\n')}\n-----END CERTIFICATE-----\n`);
 }
