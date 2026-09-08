@@ -21,6 +21,11 @@ test('installed package preserves the PowerShell CLI closed loop and replay', as
     const metadata = JSON.parse(packed.stdout);
     // npm >= 12 的 --json 输出从数组改为以包名为键的对象；两种形状都接受。
     const packInfo = Array.isArray(metadata) ? metadata[0] : Object.values(metadata)[0];
+    assert.equal(
+      packInfo.files.some((file) => file.path.startsWith('.yi-agent/')),
+      false,
+      'npm package must not include local CI/cache state',
+    );
     const tarball = path.join(root, packInfo.filename);
 
     const installed = await runCommand(NPM, ['install', '--prefix', prefix, tarball, '--no-audit', '--no-fund'], { cwd: PROJECT_ROOT });

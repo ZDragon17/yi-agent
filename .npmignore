@@ -1,5 +1,6 @@
 # Repository-only material; keep the installed CLI focused on runtime files.
 .github/
+.yi-agent/
 .specify/
 test/
 prototype/

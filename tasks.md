@@ -1329,3 +1329,10 @@
 - 实现：不修改运行时代码和测试判据；在 `fe9d5fe` 上重新执行同一 GitHub Actions workflow，沿用 F-167～F-169 已收敛的临时目录隔离、Windows watchdog 和稳定夹具。
 - 验证：run `34278445810` 的 Windows Node 22 作业通过完整 `npm test`，`1..517`、`# pass 517`、`# fail 0`、`# duration_ms 2355824.3899`；作业耗时约 39 分 56 秒。Ubuntu Node 22/24 作业也成功，整条 workflow 为 `success`。这闭合了当前提交的 Windows Node 22 在线门禁缺口。
 - 边界：证据只覆盖本次 GitHub runner、Node 22 和当前测试套件；它不证明任意 runner、低权限身份、真实供应商密钥、跨机器设备回执或人工确认路径。之后可以把这次 run 作为持续演化的 CI 基线，不再把 F-170 的 runner 失联误记成代码失败。
+
+## F-172 CLI 安装包排除本机缓存
+
+- 反证/缺口：F-164 的包边界虽然排除了测试与 CI 配置，但本机 `npm pack --dry-run` 仍把 Git 忽略的 `.yi-agent/ci-temp` 缓存带入 tarball；Git 的忽略规则不会自动成为 npm 的发布排除规则。
+- 实现：在 `.npmignore` 增加 `.yi-agent/`；packaged CLI 回归在打包前检查 manifest，发现该目录仍出现时直接失败。
+- 验证：`npm pack --dry-run` 仍为 63 个文件，`.yi-agent/` 泄漏数为 0；Windows 本机 `node --test test/e2e/packaged-cli.test.mjs` 为 `1/1`，耗时约 10 秒，安装后的 CLI 完成内置世界连续运行、外部效果恢复和 Replay。
+- 边界：这只收紧本地安装包内容，不改变 npm 发布权限、运行时权限、低权限 OS 身份或真实 WorldPort 的可信度。
