@@ -53,3 +53,26 @@ export function loadBoundedSecret(filePath, label = 'secret') {
   }
   return bytes.toString('utf8');
 }
+
+export function loadBoundedFile(filePath, label = 'file', maxBytes = MAX_PRIVATE_KEY_BYTES) {
+  if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
+    throw new Error(`${label} must be an absolute path.`);
+  }
+  let status;
+  let bytes;
+  try {
+    status = lstatSync(filePath);
+    if (status.isSymbolicLink() || !status.isFile() || status.size === 0 || status.size > maxBytes) {
+      throw new Error(`${label} must be a non-empty regular file within the size limit.`);
+    }
+    bytes = readFileSync(filePath);
+    const afterRead = lstatSync(filePath);
+    if (afterRead.isSymbolicLink() || !afterRead.isFile() || bytes.length === 0 || bytes.length > maxBytes) {
+      throw new Error(`${label} must be a non-empty regular file within the size limit.`);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === `${label} must be a non-empty regular file within the size limit.`) throw error;
+    throw new Error(`${label} could not be read.`);
+  }
+  return bytes;
+}

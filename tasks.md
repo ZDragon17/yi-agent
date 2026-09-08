@@ -1209,3 +1209,10 @@
 - 实现：增加 `yi-execution-signer` TCP 服务和 client。authority 通过 `--signer-host`、`--signer-port`、`--signer-auth-token-file` 只持有受限认证 token；服务端通过 `--auth-token-file` 读取 token，使用常量时间比较，错误 token 不签名。请求仍受单 JSONL 响应、超时、字节上限和公钥验签约束；服务端默认只允许 `127.0.0.1/::1`，私钥不进入 authority descriptor、manifest 或日志。
 - 验证：真实 TCP signer 单测 `1/1`；真实 EffectBroker CLI 的 signer 服务闭环 `1/1`；签名结果能被 descriptor 公钥验证，完整 `init→run→replay` 保持 `CONSISTENT`。
 - 边界：token 只解决未授权调用，不提供传输加密、跨机器身份或抗同权限窃取；当前服务端强制回环，尚未形成 TLS/mTLS、不同 OS 身份、远程密钥托管、可信硬件或物理设备回执边界。下一步应先用 TLS/mTLS 或受控 IPC 测跨机器认证，再验证密钥轮换与服务重启恢复。
+
+## F-155 signer 的双向 TLS 传输
+
+- 反证/缺口：F-154 的 token 在明文 TCP 中传输；它能拒绝错误 token，却不能防止网络窃听，也不能证明远程 signer 的服务端身份。
+- 实现：signer client 接受受限的 client cert/key、CA 和 server name；signer server 接受 server cert/key 与 client CA，开启 `requestCert` 和 `rejectUnauthorized`。TLS 连接建立后继续使用应用层 token，回执仍由 authority 按 execution public key 验证。TLS 证书密钥与 execution signing key 分离，文件读取带绝对路径、普通文件和大小限制。
+- 验证：动态生成的双方证书完成真实 mTLS 握手并签署回执 `1/1`；普通 TCP、错误 token 和完整远程 signer EffectBroker CLI 回归保持通过。
+- 边界：mTLS 证明的是配置的证书持有者和传输通道，不证明 signer/authority 对现实世界诚实，也不提供硬件根或物理回执。未配置 TLS 时服务端强制回环；下一步应测试证书轮换、服务重启期间的 nonce 恢复，以及不同 OS 身份下私钥文件 ACL。

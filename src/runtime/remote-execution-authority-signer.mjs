@@ -1,4 +1,5 @@
-import { connect } from 'node:net';
+import { connect as connectTcp } from 'node:net';
+import { connect as connectTls } from 'node:tls';
 
 const PROTOCOL = 'yi-execution-signer';
 const PROTOCOL_VERSION = 1;
@@ -15,7 +16,7 @@ export class RemoteExecutionAuthoritySignerError extends Error {
   }
 }
 
-export function createRemoteExecutionAuthoritySigner(config, { connectImpl = connect } = {}) {
+export function createRemoteExecutionAuthoritySigner(config, { connectImpl = null } = {}) {
   const normalized = normalizeConfig(config);
   let requestNumber = 0;
   return Object.freeze({
@@ -34,7 +35,7 @@ export function createRemoteExecutionAuthoritySigner(config, { connectImpl = con
       if (Buffer.byteLength(JSON.stringify(request), 'utf8') > MAX_RECEIPT_BYTES) {
         throw new RemoteExecutionAuthoritySignerError('INVALID_INPUT', 'Execution authority receipt exceeds the size limit.');
       }
-      return invokeRemote({ config: normalized, connectImpl, signal, request });
+      return invokeRemote({ config: normalized, connectImpl: connectImpl ?? (normalized.tls === null ? connectTcp : connectTls), signal, request });
     },
   });
 }
@@ -72,7 +73,14 @@ function invokeRemote({ config, connectImpl, signal, request }) {
     if (signal !== undefined) signal.addEventListener('abort', abortFromCaller, { once: true });
     timer = setTimeout(() => fail('SIGNER_TIMEOUT', 'Remote execution authority signer timed out.', { timeoutMs: config.timeoutMs }), config.timeoutMs);
     try {
-      socket = connectImpl({ host: config.host, port: config.port });
+      socket = connectImpl({
+        host: config.host,
+        port: config.port,
+        ...(config.tls === null ? {} : {
+          ...config.tls,
+          rejectUnauthorized: true,
+        }),
+      });
     } catch (error) {
       fail('SIGNER_CONNECT', 'Remote execution authority signer could not be reached.', {}, error);
       return;
@@ -141,7 +149,27 @@ function normalizeConfig(value) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
     throw new RemoteExecutionAuthoritySignerError('INVALID_INPUT', 'Remote execution authority signer timeoutMs must be between 100 and 30000.');
   }
-  return { host: value.host, port: value.port, authToken: value.authToken, timeoutMs };
+  const tls = value.tls === undefined ? null : normalizeTlsConfig(value.tls);
+  return { host: value.host, port: value.port, authToken: value.authToken, timeoutMs, tls };
+}
+
+function normalizeTlsConfig(value) {
+  if (!isPlainObject(value) || !isBytes(value.cert) || value.cert.length === 0 || value.cert.length > 64 * 1024 ||
+      !isBytes(value.key) || value.key.length === 0 || value.key.length > 64 * 1024 ||
+      !isBytes(value.ca) || value.ca.length === 0 || value.ca.length > 64 * 1024 ||
+      typeof value.servername !== 'string' || value.servername.length === 0 || value.servername.length > 253) {
+    throw new RemoteExecutionAuthoritySignerError('INVALID_INPUT', 'Remote execution authority signer TLS config is invalid.');
+  }
+  return {
+    cert: Buffer.from(value.cert),
+    key: Buffer.from(value.key),
+    ca: Buffer.from(value.ca),
+    servername: value.servername,
+  };
+}
+
+function isBytes(value) {
+  return Buffer.isBuffer(value) || value instanceof Uint8Array;
 }
 
 function isPlainObject(value) {

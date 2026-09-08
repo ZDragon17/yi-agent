@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-import { createServer } from 'node:net';
 import { timingSafeEqual } from 'node:crypto';
+import { createServer } from 'node:net';
+import { createServer as createTlsServer } from 'node:tls';
 import { writeFileSync } from 'node:fs';
-import { loadBoundedSecret, loadPkcs8DerPrivateKey } from '../src/runtime/private-key-loader.mjs';
+import { loadBoundedFile, loadBoundedSecret, loadPkcs8DerPrivateKey } from '../src/runtime/private-key-loader.mjs';
 import { signExecutionAuthorityReceipt } from '../src/runtime/execution-authority-attestation.mjs';
 
 const options = parseArguments(process.argv.slice(2));
@@ -14,7 +15,8 @@ const port = options.port === undefined ? 0 : Number(options.port);
 if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error('port must be between 0 and 65535');
 if (host !== '127.0.0.1' && host !== '::1') throw new Error('signer server host must be loopback');
 
-const server = createServer((socket) => {
+const serverOptions = createTlsOptions(options);
+const server = (serverOptions === null ? createServer : createTlsServer)(...(serverOptions === null ? [] : [serverOptions]), (socket) => {
   let input = '';
   let handled = false;
   socket.setEncoding('utf8');
@@ -71,6 +73,22 @@ function required(optionsValue, name) {
 
 function respond(socket, id, ok, result) {
   socket.end(`${JSON.stringify({ protocol: 'yi-execution-signer', version: 1, id, ok, ...(ok ? { result } : { error: result }) })}\n`);
+}
+
+function createTlsOptions(optionsValue) {
+  const hasTls = optionsValue['tls-cert-file'] !== undefined || optionsValue['tls-key-file'] !== undefined || optionsValue['tls-client-ca-file'] !== undefined;
+  if (!hasTls) return null;
+  if (optionsValue['tls-cert-file'] === undefined || optionsValue['tls-key-file'] === undefined || optionsValue['tls-client-ca-file'] === undefined) {
+    throw new Error('tls-cert-file, tls-key-file, and tls-client-ca-file must be provided together');
+  }
+  return {
+    cert: loadBoundedFile(optionsValue['tls-cert-file'], 'tls-cert-file'),
+    key: loadBoundedFile(optionsValue['tls-key-file'], 'tls-key-file'),
+    ca: loadBoundedFile(optionsValue['tls-client-ca-file'], 'tls-client-ca-file'),
+    requestCert: true,
+    rejectUnauthorized: true,
+    minVersion: 'TLSv1.2',
+  };
 }
 
 function sameSecret(value, expected) {

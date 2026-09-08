@@ -8,7 +8,7 @@ import { restoreEffectBroker } from '../src/effects/effect-broker.mjs';
 import { createEffectBrokerAuthority } from '../src/effects/effect-broker-authority.mjs';
 import { assertSandboxRoot, createSandboxFileExecutor } from '../src/effects/sandbox-file-executor.mjs';
 import { createExecutionAuthoritySigner } from '../src/runtime/execution-authority-signer.mjs';
-import { loadBoundedSecret, loadPkcs8DerPrivateKey } from '../src/runtime/private-key-loader.mjs';
+import { loadBoundedFile, loadBoundedSecret, loadPkcs8DerPrivateKey } from '../src/runtime/private-key-loader.mjs';
 import { createRemoteExecutionAuthoritySigner } from '../src/runtime/remote-execution-authority-signer.mjs';
 import { canonicalDigest } from '../src/runtime/schema.mjs';
 
@@ -122,6 +122,7 @@ function createSigner(optionsValue, signingKey) {
       host: optionsValue['signer-host'],
       port: Number(optionsValue['signer-port']),
       authToken: loadBoundedSecret(required(optionsValue, 'signer-auth-token-file'), 'signer-auth-token-file'),
+      tls: createSignerTlsOptions(optionsValue),
       timeoutMs: optionsValue['signer-timeout-ms'] === undefined
         ? 5000
         : Number(optionsValue['signer-timeout-ms']),
@@ -136,6 +137,26 @@ function createSigner(optionsValue, signingKey) {
       ? 5000
       : Number(optionsValue['signer-timeout-ms']),
   });
+}
+
+function createSignerTlsOptions(optionsValue) {
+  const hasTls = optionsValue['signer-tls-cert-file'] !== undefined ||
+    optionsValue['signer-tls-key-file'] !== undefined ||
+    optionsValue['signer-tls-ca-file'] !== undefined ||
+    optionsValue['signer-tls-server-name'] !== undefined;
+  if (!hasTls) return undefined;
+  if (optionsValue['signer-tls-cert-file'] === undefined ||
+      optionsValue['signer-tls-key-file'] === undefined ||
+      optionsValue['signer-tls-ca-file'] === undefined ||
+      optionsValue['signer-tls-server-name'] === undefined) {
+    throw new Error('signer TLS options must include cert-file, key-file, ca-file, and server-name.');
+  }
+  return {
+    cert: loadBoundedFile(optionsValue['signer-tls-cert-file'], 'signer-tls-cert-file'),
+    key: loadBoundedFile(optionsValue['signer-tls-key-file'], 'signer-tls-key-file'),
+    ca: loadBoundedFile(optionsValue['signer-tls-ca-file'], 'signer-tls-ca-file'),
+    servername: optionsValue['signer-tls-server-name'],
+  };
 }
 
 function respond(id, ok, result) {
