@@ -441,6 +441,10 @@ function createPersistentAdapterSession(config) {
 
   function requestOne(request, op) {
     return new Promise((resolve, reject) => {
+      if (closed) {
+        reject(new ExternalWorldProtocolError('External WorldPort session is closed.', { op }));
+        return;
+      }
       ensureChild(op);
       const processHandle = child;
       current = {

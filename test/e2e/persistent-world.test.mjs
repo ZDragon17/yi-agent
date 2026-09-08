@@ -53,6 +53,60 @@ test('persistent JSONL WorldPort reuses one session and replay never starts it',
   }
 });
 
+test('closing a persistent registry rejects queued requests before starting a session', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-close-queue-'));
+  let registry = null;
+  try {
+    const stateFile = path.join(root, 'world', 'state.json');
+    const startFile = path.join(root, 'world', 'starts.log');
+    const adapter = path.join(root, 'adapter.json');
+    await mkdir(path.dirname(adapter), { recursive: true });
+    await writeFile(adapter, JSON.stringify({
+      executable: process.execPath,
+      args: [ADAPTER, '--state-file', stateFile, '--start-file', startFile],
+      adapterId: 'durable-counter-adapter-v1',
+      worldId: 'durable-counter',
+      timeoutMs: 5000,
+      transport: 'persistent-jsonl',
+    }));
+
+    registry = loadExternalWorldRegistry(adapter);
+    const manifest = {
+      schemaVersion: 1,
+      worldId: 'durable-counter',
+      labId: 'persistent-close-queue-lab',
+      seed: 'persistent-close-queue-seed',
+      ...registry.createManifestParts({
+        labId: 'persistent-close-queue-lab',
+        seed: 'persistent-close-queue-seed',
+        worldId: 'durable-counter',
+      }),
+    };
+    const world = registry.createWorld(manifest, 'steady');
+    const initialStatePromise = world.initialState();
+    const observePromise = world.observe({
+      schemaVersion: 1,
+      stateVersion: 'state:durable-counter:0',
+      revision: 0,
+      value: 0,
+      usedExecutionNonces: [],
+    });
+    await registry.close();
+
+    const results = await Promise.allSettled([initialStatePromise, observePromise]);
+    assert.deepEqual(results.map((result) => result.status), ['rejected', 'rejected']);
+    assert.deepEqual(results.map((result) => result.reason?.code), [
+      'WORLD_ADAPTER_PROTOCOL',
+      'WORLD_ADAPTER_PROTOCOL',
+    ]);
+    const starts = (await readFile(startFile, 'utf8')).trim().split(/\r?\n/u).filter(Boolean);
+    assert.equal(starts.length, 1, 'close must prevent the queued persistent session from starting');
+  } finally {
+    await registry?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('persistent session loss resumes through the existing nonce boundary', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-recovery-'));
   try {

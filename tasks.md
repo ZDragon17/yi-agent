@@ -1286,3 +1286,10 @@
 - 实现：按 workflow 与 Git ref 建立 GitHub Actions concurrency group，新提交自动取消同分支旧 run；checkout/setup-node 更新到当前官方主版本，测试命令、权限和 watchdog 配置保持不变。
 - 验证：workflow YAML 解析与 diff 检查通过；新提交的远端 run 需要重新取得 Ubuntu 兼容和 Windows 全量结论，并确认弃用提示消失。
 - 边界：并发取消只管理 CI 任务，不取消本地 CLI、WorldPort 或真实副作用；action 主版本更新也不等于供应商、低权限身份、设备回执或人工确认已验证。
+
+## F-166 持久会话关闭与排队请求边界
+
+- 反证/缺口：F-148/F-149 已验证持久 JSONL 会话的正常复用、超时、响应丢失和多角色恢复，但未覆盖请求已经进入串行队列、宿主随后关闭 registry 的时序。原实现只在请求入队时检查 `closed`，关闭后仍可能执行队列中的第一个请求并启动子进程，破坏“关闭后不再发起外部请求”的生命周期不变量。
+- 实现：在持久 client 的实际出队边界再次检查 `closed`；关闭后排队请求统一以 `WORLD_ADAPTER_PROTOCOL` 失败，不创建新 session，也不增加重试或改变 nonce 恢复规则。
+- 验证：新增真实 persistent WorldPort E2E，关闭前排队的两个请求均被拒绝且运行期子进程启动计数保持为零；持久 WorldPort、witness、authority/observer、mTLS 证书轮换、CA 轮换和撤销组合回归 `13/13` 通过。
+- 边界：该节点只收敛本地 client 的关闭生命周期，不证明跨机器权限隔离、网络分区、远程设备回执或物理效果真实性。
