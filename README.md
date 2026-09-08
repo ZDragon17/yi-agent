@@ -171,6 +171,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 合作式模型取消：截止时间会通过回调第二参数传递 `AbortSignal`，内置 Advisor/Planner 继续把它交给 OpenAI-compatible HTTP 请求；因此可合作的模型调用会主动释放网络等待，忽略信号的任意进程内回调仍受前一条“只停止宿主等待”的边界约束；
 - 取消来源可审计：HTTP client 将调用方主动取消报告为 `API_CANCELLED`，将自身请求截止报告为 `API_ERROR`；两者都不会把模型回答伪装成成功，Application 自身的模型截止仍记录为 `MODEL_TIMEOUT`/`PLANNER_TIMEOUT`；
 - 首次中止来源锁定：同一请求若内部截止先发生、底层稍后才拒绝且调用方又迟到取消，仍保持最先发生的 `API_ERROR` 归因，不让后续信号改写历史事实；
+- Provider 错误脱敏：非 2xx 响应中的错误文本在进入 `ApiClientError` 前会替换当前配置的 API Key，保留有限诊断信息但不把凭据带入上层错误消息；这不替代宿主日志系统、代理和第三方服务的独立脱敏策略；
 - 模型进程边界：`agent run|loop --model-adapter CONFIG` 可把 Advisor/Planner 放到固定可执行文件的一次一进程 JSONL 边界；请求、回包、stdout/stderr、模型内容和等待时间均有界，宿主在取消或截止时终止子进程，再由既有 Application fallback 和 Replay 规则收束；配置只按显式环境变量名向子进程传递凭据，不把宿主完整环境默认泄露给模型；
 - 模型进程竞态收束：模型请求在 `spawn()` 交接窗口被取消时，宿主会对刚返回的 child 做二次终止检查，不留下脱离闭环的运行进程；
 - 有界感知上下文：WorldPort 的结构化 observation evidence 只经过大小/深度/数据类型边界后提供给 Advisor/Planner；Kernel 仍只接收数值观测，账本只保存上下文摘要，不把原始证据当作事实或执行权限；
@@ -342,6 +343,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-157 把 mTLS 服务端证书轮换放进连续多角色恢复：第一次 Run 在 signer 签名后丢回执；服务端在同一端口用新证书重启后，第二次 Run 完成 authority 对账但让 observer 丢回执；第三次 Run 完成。共享 CA、execution 公钥、token、EffectJournal 和 nonce 绑定保持不变，文件效果只执行一次，Replay 为 `CONSISTENT`。测试覆盖的是本机同 CA 的身份重建，不是 CA 撤销、网络分区、不同 OS 身份或真实设备证明。
 - F-158 进一步同时更换 mTLS 信任根：第一轮使用 CA-1，第二轮把 signer 服务端证书、authority 客户端证书和 signer 的 client CA 换成 CA-2，authority 的信任文件同时保留两根 CA。未决 execution nonce 在 CA 切换后恢复，EffectBroker 效果仍只执行一次，Replay 为 `CONSISTENT`。这验证的是双向 CA 更换，不是撤销列表、旧证书审计或硬件密钥。
 - F-159 把证书撤销放进恢复窗口：服务端加载 CRL，第一轮拒绝仍由同一 CA 签发但已撤销的 authority 客户端证书；此前已经产生的沙箱效果保持一次。随后只替换同一证书路径下的客户端证书内容，服务重启后用原 execution nonce 恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。真实 signer、authority、CRL 和 EffectBroker CLI 组合回归为 `9/9`。这证明的是 TLS peer 证书撤销与应用恢复可以衔接，不是私钥硬件保护、OS 权限隔离或真实设备回执。
+- F-160 收紧 provider 错误边界：当非 2xx 响应正文回显当前 API Key 时，HTTP client 在构造 `ApiClientError` 前将它替换为 `[REDACTED]`；正常错误状态、HTTP 状态码和取消/超时分类保持不变。API、CLI 相关回归为 `28/28`，上一轮全量门禁为 `515/515`。这只覆盖 client 已知的当前 key，不等于第三方服务、代理或宿主日志系统已经完成全面脱敏。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

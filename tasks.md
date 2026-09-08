@@ -1244,3 +1244,10 @@
 - 实现：signer server 增加可选 `--tls-crl-file`，authority 增加可选 `--signer-tls-crl-file`，两者都沿用受限文件加载并传入 Node TLS。测试夹具生成由测试 CA 签名的 CRL，撤销旧 authority 客户端 serial。第一轮使用旧证书让 TLS 握手失败，随后把新证书写回同一配置路径，signer 在同一端口重启并继续处理原 execution nonce。
 - 验证：`mTLS certificate revocation rejects the old client before nonce recovery` 通过；signer、mTLS 证书轮换、CA 轮换、证书撤销和持久 authority/observer 恢复组合回归为 `9/9`。第一轮 EffectBroker 文件效果计数为 1，第二轮恢复成功，Replay 为 `CONSISTENT`。
 - 边界：CRL 只证明 TLS 层拒绝已撤销 peer，不提供私钥硬件保护、不同 OS 身份、网络分区、证书发布审计或真实设备回执。下一步应在独立权限/机器环境验证 ACL、CRL 更新窗口和人工对账。
+
+## F-160 Provider 错误消息凭据脱敏
+
+- 反证/缺口：HTTP client 已经限制响应体大小并区分取消与超时，但非 2xx provider 正文仍可能被原样放进 `ApiClientError.message`；如果上游错误正文回显 API Key，CLI 上层记录就会扩大凭据泄露面。
+- 实现：构造 provider `API_ERROR` 时，只对当前配置的 API Key 做有界字符串替换，命中内容改为 `[REDACTED]`；HTTP 状态码、正常 provider 诊断和既有取消/超时分类不变。
+- 验证：新增回显 API Key 的 provider 夹具，断言错误消息只保留 `bad key [REDACTED]`；API、CLI 相关回归 `28/28` 通过，包含响应体取消、HTTP API 和 agent fallback。F-159 后的全量门禁基线为 `515/515`。
+- 边界：这只覆盖 client 已知的当前 API Key 和它生成的错误消息，不覆盖第三方服务、代理、调试器或宿主日志系统自行复制的敏感数据。
