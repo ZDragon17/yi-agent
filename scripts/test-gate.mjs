@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.(?:mjs|cjs|js)$/i;
 const TEST_GATE_TIMEOUT_ENV = 'YI_AGENT_TEST_GATE_TIMEOUT_MS';
+const PROCESS_TREE_TERMINATION_TIMEOUT_MS = 5_000;
 
 if (isMainModule()) {
   process.exit(await main());
@@ -291,12 +292,29 @@ function terminateProcessTree(child) {
 
   if (process.platform === 'win32') {
     return new Promise((resolve) => {
-      const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
-        stdio: 'ignore',
-        windowsHide: true,
-      });
-      killer.once('error', resolve);
-      killer.once('close', resolve);
+      let settled = false;
+      let killer;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        resolve();
+      };
+      const deadline = setTimeout(() => {
+        try { killer?.kill(); } catch { /* taskkill may already have exited */ }
+        try { child.kill(); } catch { /* the test process may already have exited */ }
+        settle();
+      }, PROCESS_TREE_TERMINATION_TIMEOUT_MS);
+      try {
+        killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        killer.once('error', settle);
+        killer.once('close', settle);
+      } catch {
+        settle();
+      }
     });
   }
 

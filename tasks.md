@@ -1301,3 +1301,10 @@
 - 实现：Windows 与 Ubuntu workflow 都把临时目录改到 GitHub runner 的 `${{ runner.temp }}`，保持临时文件不进入 checkout；测试命令、权限和超时预算不变。
 - 验证：本地 Windows repo WorldPort 与 test-gate watchdog 联合回归 `10/10`；下一次远端 Windows 全量 run 需要确认完整顺序下的修复，以及 watchdog 失败是否为同一轮环境副作用。
 - 边界：该修复只隔离 CI 测试设施与被测仓库，不证明 repo adapter 能扫描任意规模仓库，也不替代低权限身份、跨机器权限、真实设备回执或人工确认。
+
+## F-168 watchdog 清理调用的有界退出
+
+- 反证/缺口：F-167 的第二次远端 run 已能正常创建 job，但 Windows 与 Ubuntu 三个 job 在远超 job timeout 后仍停留在 `Run ... test gate`，取消请求也未立即让状态收敛。此前 watchdog 只等待 `taskkill.exe` 的 close 事件，无法排除“清理程序本身悬挂”。
+- 实现：Windows 进程树终止增加 5 秒上限；若 `taskkill.exe` 未退出，则结束 killer、尝试结束直接测试子进程并返回，让 test-gate 保持有界失败语义。正常 `taskkill` 完成路径不变。
+- 验证：本地 Windows repo WorldPort 与 watchdog 联合回归 `10/10`；下一次远端 run 需要确认完整测试顺序能在 job timeout 前完成，或至少以 watchdog 退出码 124 收敛。
+- 边界：本节点只限制宿主等待清理命令的时间，不保证 Windows 对所有孙进程都已完成终止，也不替代 runner 层取消和外部环境的进程审计。
