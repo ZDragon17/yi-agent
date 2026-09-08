@@ -376,3 +376,9 @@ F-97 用不向 Kernel 暴露隐藏模式的 `latent-choice` WorldPort 反证“�
 活跃 Run 的锁身份使用稳定 `dev+ino`，每次写入同时重新校验锁 JSON 的自摘要；时间戳变化不再构成所有权变化，内容篡改仍会 fail-closed。身份与内容分层只收敛本地锁误报，不把 PID liveness 或分布式文件系统误称为可靠锁服务。
 
 repo WorldPort 的 writable 实验是 adapter 层的最小真实修改边界，不改变通用 Kernel 的 Token-only 决策契约：只有显式提供补丁策略和 nonce 日志时才暴露 `repo.apply-patch`。策略至少授权目标相对路径，并可用默认 `fixed` 或显式 `beforeDigestMode: current` 约束修改前 `contentDigest`；后者每次新 nonce 在写入前重新读取当前普通文件，适用于同一受控目标的连续候选演化，descriptor/worldVersion 仍绑定不变的策略文件。WorldPort 通过有界 observation evidence 把目标、摘要和 proposal 字段约束提供给模型，但这些提示仍不是权威授权；模型 proposal 携带完整替换内容，必须通过应用层边界和 adapter 的独立校验。adapter 先持久化 `PREPARED`，再做普通文件的原子替换，随后追加 `APPLIED`，同一 nonce 的重试复用已保存结果。该顺序覆盖写入前崩溃、替换中断和响应丢失的有限实验矩阵，但不提供 OS 级沙箱、通用 patch 解析、并发写入隔离或回滚保证；真实项目写权限仍属于 EffectBroker/Future-Gate。当前模型可见文件内容仍受 2 KiB 观察预算限制，实验只证明受控 proposal 能进入共同底座，不等于任意代码修改已经安全。
+
+## 10.1 signer 证书轮换与恢复边界
+
+F-157 把 mTLS 服务端证书更换放进多角色恢复矩阵。测试使用同一测试 CA 签发两张不同 serial 的 `localhost` 服务证书和一张 authority 客户端证书；signer 在首次签名后丢失响应，随后在同一端口以新服务证书重启。下一次 CLI 先通过同一 execution nonce 对账 authority 的 EffectBroker 效果，observer 再故意丢失响应，第三次 CLI 才完成。
+
+这个实验分别检查服务端身份能否在重启后重新验证、已产生的效果能否由 Journal 复用，以及 observer 失败是否会阻止 STEP 写入。当前证据只覆盖同一 CA、本机进程和测试沙箱。它没有覆盖 CA 轮换、撤销列表、网络分区、不同 OS 身份或真实设备回执。

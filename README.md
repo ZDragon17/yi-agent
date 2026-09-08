@@ -339,6 +339,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-154 把 signer 再移到受认证的 TCP 服务：authority 只持有受限 token 文件，不持有私钥；服务端用常量时间比较校验 token，签名结果仍由 authority 按 `executionPublicKey` 验证。真实 TCP signer 与完整 EffectBroker CLI 闭环均已通过。当前只绑定本机回环地址，TCP 未加密，认证 token 解决的是未授权请求，不等于 TLS、跨机器身份或可信硬件。
 - F-155 为 TCP signer 增加可选双向 TLS：服务端要求客户端证书，authority 校验服务端 CA 和 server name，完成 TLS 握手后仍用 execution 公钥验签。真实证书握手、错误 token、签名和回执链均有测试。未配置 TLS 时服务端仍只监听回环地址；TLS 也不证明 signer 对现实副作用诚实。
 - F-156 将 signer 故障放进 EffectBroker 恢复窗口：signer 在签名后、响应前退出，第一次 Run 留下已移动文件和未完成账；服务重启后第二次 CLI 使用新的 run 继续，Journal 只保留一次 `EFFECT_APPLIED`，Replay 为 `CONSISTENT`。这验证的是 signer 服务退出恢复，不是网络分区或远程设备对账。
+- F-157 把 mTLS 服务端证书轮换放进连续多角色恢复：第一次 Run 在 signer 签名后丢回执；服务端在同一端口用新证书重启后，第二次 Run 完成 authority 对账但让 observer 丢回执；第三次 Run 完成。共享 CA、execution 公钥、token、EffectJournal 和 nonce 绑定保持不变，文件效果只执行一次，Replay 为 `CONSISTENT`。测试覆盖的是本机同 CA 的身份重建，不是 CA 撤销、网络分区、不同 OS 身份或真实设备证明。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

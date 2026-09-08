@@ -1223,3 +1223,10 @@
 - 实现：signer server 增加显式测试故障注入，在签名结果产生后、JSONL 响应写出前退出。真实 CLI 先运行一次并留下已移动的沙箱文件，再重启同一端口的 signer，使用新的 Run 继续未完成 external transition；authority 继续通过 execution public key 验签。
 - 验证：signer 故障后的两次 CLI Run、EffectJournal 和 Replay 定向回归通过；第一次不追加 STEP，文件只移动一次，第二次成功并 Replay 为 `CONSISTENT`。
 - 边界：本节点验证的是本机 signer 进程响应丢失和服务重启，不是网络分区、证书轮换、跨机器人工对账或真实设备状态查询。下一步应把 mTLS 证书轮换和服务重启与多角色 authority/observer 连续故障合并测试。
+
+## F-157 mTLS 证书轮换与连续多角色恢复
+
+- 反证/缺口：F-156 只验证了 signer 进程重启，仍没有区分“旧连接恢复”与“服务端身份已经轮换后重新建立连接”。authority 和 observer 的连续故障也尚未与这条传输边界放在同一次实验里。
+- 实现：测试夹具增加共享测试 CA，分别签发旧、新两张 `localhost` signer 证书，以及 authority 客户端证书。真实 CLI 矩阵分三次运行：第一次 signer 在签名后丢回执；第二次 signer 以新证书在同一端口重启，authority 完成同一 nonce 的对账但 observer 丢回执；第三次重新连接并完成。执行签名公钥、认证 token、EffectJournal 和外部 transition marker 全程保持原契约。
+- 验证：`test/e2e/remote-signer-rotation.test.mjs` 通过 `1/1`。三次运行分别返回 authority 故障、observer 故障和成功；EffectBroker 文件效果计数为 1，marker 只移动一次，最终 Replay 为 `CONSISTENT`。证书轮换使用同一 CA，不把关闭 TLS 校验或信任叶证书 bundle 当作测试捷径。
+- 边界：这证明的是同一 CA 下服务端证书更换、服务重启和本机多角色恢复可以共同闭合；没有覆盖 CA 轮换、证书撤销、网络分区、不同 OS 身份、远程设备回执或硬件密钥。下一步应把不同权限/机器的访问控制与人工对账作为独立外部卡点。
