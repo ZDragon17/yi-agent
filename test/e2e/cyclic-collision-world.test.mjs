@@ -83,7 +83,7 @@ async function prepareWorld(root, seed) {
     args: [ADAPTER, '--state-file', stateFile],
     adapterId: 'cyclic-collision-adapter-v1',
     worldId: 'cyclic-collision',
-    timeoutMs: 2000,
+    timeoutMs: 10_000,
   }));
   const init = await invoke(['init', '--lab', lab, '--world', 'cyclic-collision', '--seed', seed, '--lab-id', `collision-${seed}`, '--adapter', adapter, '--json']);
   assert.equal(init.code, 0, JSON.stringify(init));
@@ -119,7 +119,7 @@ test('the converged policy reaches the value target and holds it without schedul
       args: [ADAPTER, '--state-file', stateFile],
       adapterId: 'cyclic-collision-adapter-v1',
       worldId: 'cyclic-collision',
-      timeoutMs: 2000,
+      timeoutMs: 10_000,
     }));
     const init = await invoke(['init', '--lab', lab, '--world', 'cyclic-collision', '--seed', 'collision-hold', '--lab-id', 'collision-hold', '--adapter', adapter, '--json']);
     assert.equal(init.code, 0, JSON.stringify(init));

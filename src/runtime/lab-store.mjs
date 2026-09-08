@@ -1357,7 +1357,7 @@ function encodeStoredLedgerEvent(event, payloadJson) {
   }
   // Long runs favor bounded CPU per step; the ledger size guard remains the
   // hard limit, and the payload is still losslessly encoded.
-  const compressedPayload = deflateRawSync(rawPayload, { level: 6 });
+  const compressedPayload = deflateRawSync(rawPayload, { level: 4 });
   return {
     ...event,
     payload: compressedPayload.toString('base64'),

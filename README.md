@@ -323,6 +323,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-144 将独立观测推进到真实临时目录的 OS 可见状态：主 adapter 写入独立 marker，observer 不读取主效果记录，只检查 marker 是否存在并据此绑定后状态摘要；marker 缺失时，即使主 transition 返回 `ACCEPTED`，也会在 STEP 前返回 `WORLD_ADAPTER_PROTOCOL`，主效果记录保留为未决。正向与缺失 marker 的 CLI E2E 定向回归 `2/2`，Replay 仍不启动 observer。OS 文件状态仍由同一用户权限和本机进程控制，不等于 OS 远程证明、硬件观测或物理真相。
 - F-145 把外部执行进一步拆成三个角色：主 adapter 只声明 `transition`，可选的 `executionAuthority` 独立进程负责产生与 nonce 绑定的 OS effect，`executionObserver` 再独立检查该 effect；宿主先校验 authority 的 `EXECUTED` 回执，再校验 observer 的 `OBSERVED` 回执，任一缺失或不一致都在 STEP 前 fail-closed。authority 的配置、descriptor/launch 摘要、恢复与 Replay 边界都写入 manifest，但 Replay 不重新启动 authority/observer。真实临时目录夹具证明主 adapter 不写 marker 也能由 authority 完成，authority 虚假成功但不产生 marker 会被 observer 拒绝，主机崩溃后同一 nonce 可恢复；这仍是同一用户权限下的本机进程隔离，不是低权限沙箱、远程 attestation、可信硬件或物理真相。
 - F-146 把 authority 接入实际的 `EffectBroker`：独立 JSONL 进程恢复 `EffectJournal`，按 nonce 绑定固定 `EffectIntent`，调用受标记根目录约束的 `SandboxFileExecutor`，并在崩溃恢复时通过 `reconcileExecution` 返回 `RECONCILED`，不重复执行。真实 CLI E2E 已验证主 adapter 不写 OS marker、文件效果确实由 Broker 移动、`EFFECT_APPLIED` 进入独立 effect journal、STEP/Replay 保留 authority 证据；高风险计划仍必须经过确认，authority 不得自动越过人工门。该示例仍只覆盖本机同用户权限和预绑定文件计划，不等于低权限隔离、远程执行证明或真实设备控制。
+- F-147 收敛长跑和外部进程压力边界：STEP 账本使用 Deflate Raw level 4，在不改变解码格式和证据内容的前提下让 10,000 步 checkpoint NFR 回到 60 秒内且保持 40 MiB 上限；cyclic-collision 夹具把单次外部请求预算提高到 10 秒，长窗口 E2E 不再被 Windows 进程启动抖动误杀。负结果也被记录：level 1/3 会突破 ledger 上限，而一次请求一次进程仍使长外部序列达到分钟级；下一步需要持久 JSONL WorldPort 会话。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

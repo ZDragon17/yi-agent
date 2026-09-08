@@ -1153,3 +1153,10 @@
 - 实现：新增 `createEffectBrokerAuthority`，把外部 execution payload 的 nonce、token、前状态版本和前后摘要绑定为一个固定 `EffectIntent`；authority 先恢复 `EffectJournal`，再调用 `EffectBroker`，由 `SandboxFileExecutor` 执行受标记根目录内的文件移动。`executeExecution` 返回 `EXECUTED`，恢复时使用 `reconcileExecution` 返回 `RECONCILED`，同一 nonce 不重复执行；确认门未满足时 authority 明确拒绝，不自动替人工确认。新增 `bin/yi-agent-effect-authority.mjs` 作为 JSONL authority 进程示例。
 - 验证：EffectBroker authority 单测 2/2；真实 CLI E2E 新增 2/2，验证 authority 产生的 `EXECUTED` 回执落入 STEP、非幂等崩溃后通过 Journal 对账为 `RECONCILED`、效果文件只移动一次、危险计划不会绕过确认；独立沙箱执行器/Journal 回归 25/25，authority/observer 与外部恢复定向回归保持通过，Replay `CONSISTENT`。
 - 边界：沙箱根目录仍是本机同用户权限，`effect-plan` 由配置预绑定且不是通用代码修改器；EffectBroker 证明的是副作用的人工确认、幂等、Journal 和受限路径契约，不证明 authority 真实连接了物理设备或远程系统。下一步应把相同 authority 接到低权限 OS 身份/真实设备驱动，并为跨机器回执引入可验证的身份与传输边界。
+
+## F-147 长跑账本压缩与外部进程压力边界
+
+- 反证/缺口：F-145/F-146 之后的全量回归在当前 Windows 主机暴露三个独立边界：10,000 步 checkpoint 长跑使用 Deflate level 6 超过 60 秒；cyclic-collision 长窗口的每请求一次性外部进程在 2 秒预算下被 Windows 进程启动压力误杀；重复外部 crash/recover 在并发负载下偶发等待 durable effect 超时。不能把这些现象统称为 authority 协议失败。
+- 实现：将已验证为 lossless 的 STEP Raw Deflate 压缩级别从 6 调整为 4，在 40 MiB ledger 上限内优先降低长跑 CPU；把 cyclic-collision 实验夹具的单请求预算从 2 秒提高到协议允许的 10 秒，只修正测试负载预算，不改变世界判据、状态转移或证据契约。
+- 验证：NFR `2/2`（10,000 步 53.4 秒且账本边界保持通过）；cyclic-collision 目标驻留 E2E `1/1`（1,200 次外部请求完成并通过）；重复 crash/recover durability `1/1`；EffectBroker、LabStore、Replay 组合回归 `103/103`。级别 1/3 因 ledger 超过 40 MiB 被否决，保留该负结果作为压缩率/CPU 判据。
+- 边界：本节点只收敛了本地账本与测试负载的两个可观测边界；外部 WorldPort 仍是“一次请求启动一个进程”，长序列在 Windows 上达到分钟级，尚未满足通用 CLI 的持续高吞吐要求。下一步应设计可复用、受超时/身份/关闭协议约束的持久 JSONL WorldPort 会话，并验证崩溃恢复和 Replay 不依赖活会话。
