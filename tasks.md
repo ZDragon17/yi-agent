@@ -1293,3 +1293,11 @@
 - 实现：在持久 client 的实际出队边界再次检查 `closed`；关闭后排队请求统一以 `WORLD_ADAPTER_PROTOCOL` 失败，不创建新 session，也不增加重试或改变 nonce 恢复规则。
 - 验证：新增真实 persistent WorldPort E2E，关闭前排队的两个请求均被拒绝且运行期子进程启动计数保持为零；持久 WorldPort、witness、authority/observer、mTLS 证书轮换、CA 轮换和撤销组合回归 `13/13` 通过。
 - 边界：该节点只收敛本地 client 的关闭生命周期，不证明跨机器权限隔离、网络分区、远程设备回执或物理效果真实性。
+
+## F-167 CI 临时目录与被扫描 WorldPort 隔离
+
+- 反证/缺口：F-166 后的首次 Windows 全量 workflow 共执行 517 个测试，513 个通过、4 个失败。三个 repo WorldPort 用例在 adapter 的 `initialState` 阶段收到 `WORLD_ADAPTER_PROTOCOL`；失败只发生在完整测试顺序中，单独运行 repo WorldPort 时不能复现。
+- 根因：workflow 把 `TEMP/TMP/TMPDIR` 指到 checkout 内的 `.yi-agent/ci-temp`。前序测试产生的临时目录属于 repo WorldPort 的扫描范围，可能触发示例 adapter 的文件数量或总容量限制，污染了被测仓库边界。
+- 实现：Windows 与 Ubuntu workflow 都把临时目录改到 GitHub runner 的 `${{ runner.temp }}`，保持临时文件不进入 checkout；测试命令、权限和超时预算不变。
+- 验证：本地 Windows repo WorldPort 与 test-gate watchdog 联合回归 `10/10`；下一次远端 Windows 全量 run 需要确认完整顺序下的修复，以及 watchdog 失败是否为同一轮环境副作用。
+- 边界：该修复只隔离 CI 测试设施与被测仓库，不证明 repo adapter 能扫描任意规模仓库，也不替代低权限身份、跨机器权限、真实设备回执或人工确认。

@@ -350,6 +350,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-164 收紧 CLI 包边界：新增 `.npmignore`，打包保留 `bin/`、`src/`、`examples/`、README 和许可证，排除测试、研究材料、CI 配置及未跟踪的 `vision.md`。`npm pack --dry-run` 验证包从 175 个文件缩为 63 个文件，运行入口和示例 WorldPort 仍在；这只减少发布面，不改变本地仓库中的开发与测试文件。
 - F-165 收敛 CI 并发与 action 运行时：workflow 按分支设置 concurrency，新提交会取消同一分支过时的 run；checkout/setup-node 更新到当前 Node 24 runner 兼容的官方 action 主版本。它只减少重复 runner 和弃用警告，不改变测试范围或运行时语义。
 - F-166 收紧持久 JSONL 会话的关闭边界：宿主调用 `registry.close()` 后，已经进入串行队列但尚未出队的请求会被拒绝，不会再启动运行期 adapter 子进程或产生外部请求；新增真实 persistent WorldPort E2E，并保持既有 nonce 恢复、辅助角色和 Replay 语义不变。这只证明本地会话生命周期收敛，不等于跨机器权限隔离或物理效果可信。
+- F-167 修复 CI 临时目录污染 repo WorldPort 的边界：GitHub Actions 的 `TEMP/TMP/TMPDIR` 改用 runner 专用临时区，不再把前序测试生成的文件放入被扫描 checkout。首次 Windows 全量 run 的 513/517 结果已定位为该环境耦合；本地 repo WorldPort 与 watchdog 联合回归为 `10/10`，下一次远端全量结果仍需单独确认。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
