@@ -389,6 +389,15 @@ npm install --global E:\demo\yi-agent
 yi-agent --help
 ```
 
+从公开 GitHub 仓库安装：
+
+```powershell
+npm install --global https://github.com/ZDragon17/yi-agent.git#main
+yi-agent --help
+```
+
+当前包仍未发布到 npm registry；上面的 Git 安装方式已在 Windows 临时 npm 前缀中实测通过。
+
 密钥只放在当前 PowerShell 会话的环境变量中：
 
 ```powershell

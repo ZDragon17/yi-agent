@@ -1336,3 +1336,10 @@
 - 实现：在 `.npmignore` 增加 `.yi-agent/`；packaged CLI 回归在打包前检查 manifest，发现该目录仍出现时直接失败。
 - 验证：`npm pack --dry-run` 仍为 63 个文件，`.yi-agent/` 泄漏数为 0；Windows 本机 `node --test test/e2e/packaged-cli.test.mjs` 为 `1/1`，耗时约 10 秒，安装后的 CLI 完成内置世界连续运行、外部效果恢复和 Replay。
 - 边界：这只收紧本地安装包内容，不改变 npm 发布权限、运行时权限、低权限 OS 身份或真实 WorldPort 的可信度。
+
+## F-173 公开 GitHub 仓库安装入口
+
+- 反证/缺口：F-172 已证明本地 tarball 安装闭环，但 README 原先只给出本机路径；外部 Windows 用户没有可直接复制的公开仓库安装入口。
+- 实现：在安装章节增加 `npm install --global https://github.com/ZDragon17/yi-agent.git#main`，明确当前没有发布到 npm registry。
+- 验证：从公开 `main` 安装到 Windows 临时 npm 前缀，安装过程成功，生成的 `yi-agent.cmd --help` 退出成功并输出 CLI 帮助；临时安装目录随后由环境清理策略处理。
+- 边界：Git 安装验证了公开仓库到 CLI 入口的链路，不等于 npm registry 发布、自动更新、签名分发或 API 供应商连通性。
