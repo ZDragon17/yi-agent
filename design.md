@@ -382,3 +382,5 @@ repo WorldPort 的 writable 实验是 adapter 层的最小真实修改边界，�
 F-157 把 mTLS 服务端证书更换放进多角色恢复矩阵。测试使用同一测试 CA 签发两张不同 serial 的 `localhost` 服务证书和一张 authority 客户端证书；signer 在首次签名后丢失响应，随后在同一端口以新服务证书重启。下一次 CLI 先通过同一 execution nonce 对账 authority 的 EffectBroker 效果，observer 再故意丢失响应，第三次 CLI 才完成。
 
 这个实验分别检查服务端身份能否在重启后重新验证、已产生的效果能否由 Journal 复用，以及 observer 失败是否会阻止 STEP 写入。当前证据只覆盖同一 CA、本机进程和测试沙箱。它没有覆盖 CA 轮换、撤销列表、网络分区、不同 OS 身份或真实设备回执。
+
+F-158 把信任根也换掉：第一轮使用 CA-1，signer 在签名后丢失响应；重启时服务端证书、authority 客户端证书和 signer 的 client CA 全部切换到 CA-2，authority 的信任文件保留两根 CA，随后用相同 execution nonce 恢复。第二轮能成功，说明当前 CLI 读取的是新证书且 signer 确实只接受新 client CA。这个结果仍不等价于证书撤销；撤销列表、轮换窗口和旧证书审计必须由部署环境提供。

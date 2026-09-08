@@ -1230,3 +1230,10 @@
 - 实现：测试夹具增加共享测试 CA，分别签发旧、新两张 `localhost` signer 证书，以及 authority 客户端证书。真实 CLI 矩阵分三次运行：第一次 signer 在签名后丢回执；第二次 signer 以新证书在同一端口重启，authority 完成同一 nonce 的对账但 observer 丢回执；第三次重新连接并完成。执行签名公钥、认证 token、EffectJournal 和外部 transition marker 全程保持原契约。
 - 验证：`test/e2e/remote-signer-rotation.test.mjs` 通过 `1/1`。三次运行分别返回 authority 故障、observer 故障和成功；EffectBroker 文件效果计数为 1，marker 只移动一次，最终 Replay 为 `CONSISTENT`。证书轮换使用同一 CA，不把关闭 TLS 校验或信任叶证书 bundle 当作测试捷径。
 - 边界：这证明的是同一 CA 下服务端证书更换、服务重启和本机多角色恢复可以共同闭合；没有覆盖 CA 轮换、证书撤销、网络分区、不同 OS 身份、远程设备回执或硬件密钥。下一步应把不同权限/机器的访问控制与人工对账作为独立外部卡点。
+
+## F-158 mTLS CA 轮换与 nonce 恢复
+
+- 反证/缺口：F-157 只更换了同一 CA 签发的 signer 服务端证书；客户端证书和服务端信任根没有变化，不能证明双向身份根真的完成了切换。
+- 实现：新增 CA-1、CA-2 两组测试根。第一轮 signer 使用 CA-1 的服务端/客户端证书并在签名后丢回执；第二轮把服务端证书、客户端证书和 signer 的 client CA 一起换成 CA-2，authority 的 CA 文件同时信任两根，继续用原 execution nonce 恢复 EffectBroker 效果。
+- 验证：F-158 与 F-153～F-157 的 signer、mTLS、持久多角色恢复组合回归为 `8/8`；第二轮只有 CA-2 客户端证书能通过 signer 的 client CA 校验，恢复后效果计数仍为 1，Replay 为 `CONSISTENT`。
+- 边界：这证明的是双向 CA 更换和本机 nonce 恢复，不包含 CA 撤销列表、旧证书主动失效审计、网络分区、不同 OS 身份、硬件密钥或真实设备回执。撤销策略仍需接入具体部署环境。
