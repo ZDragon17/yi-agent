@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -1025,11 +1026,15 @@ test('CLI routes an authority-owned OS effect through the real EffectBroker sand
     const effectFile = path.join(root, 'effect-broker-primary-effect.json');
     const sandboxRoot = path.join(root, 'effect-broker-sandbox');
     const journalPath = path.join(sandboxRoot, 'effects.jsonl');
+    const privateKeyPath = path.join(root, 'effect-broker-authority-private-key.der');
     const markerName = `${canonicalDigest('execution:step:1').slice('sha256:'.length)}.marker`;
     await mkdir(path.join(sandboxRoot, 'pending'), { recursive: true });
     await mkdir(path.join(sandboxRoot, 'applied'), { recursive: true });
     await writeFile(path.join(sandboxRoot, '.yi-agent-sandbox'), 'yi-agent-sandbox-v1\n', 'utf8');
     await writeFile(path.join(sandboxRoot, 'pending', markerName), 'execution:step:1', 'utf8');
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    await writeFile(privateKeyPath, privateKey.export({ format: 'der', type: 'pkcs8' }));
+    const executionPublicKey = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
     const descriptor = {
       adapterId: 'effect-broker-authority-v1',
       worldId: 'idempotent-transition',
@@ -1038,6 +1043,7 @@ test('CLI routes an authority-owned OS effect through the real EffectBroker sand
       scenarioIds: ['idempotent', 'alternate'],
       valueSpec: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1] },
       evidencePublicKey: ED25519_PUBLIC_KEY,
+      executionPublicKey,
       supportsStateDependentActions: true,
     };
     const effectPlan = {
@@ -1064,6 +1070,7 @@ test('CLI routes an authority-owned OS effect through the real EffectBroker sand
       '--effect-plan-json', JSON.stringify(effectPlan),
       '--journal', journalPath,
       '--sandbox-root', sandboxRoot,
+      '--private-key-der', privateKeyPath,
     ];
     await writeFile(adapter, JSON.stringify({
       executable: process.execPath,
@@ -1073,6 +1080,7 @@ test('CLI routes an authority-owned OS effect through the real EffectBroker sand
         args: authorityArgs,
         adapterId: descriptor.adapterId,
         worldId: descriptor.worldId,
+        executionPublicKey,
         timeoutMs: 5000,
       },
       executionObserver: {

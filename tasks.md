@@ -1188,3 +1188,10 @@
 - 实现：新增连续三次 CLI 运行矩阵：第一次 authority 丢失回执，第二次 observer 丢失回执，第三次完成；三类角色继续使用 persistent JSONL 和原 execution nonce。扩展 `bin/yi-agent-effect-authority.mjs` 的显式测试故障注入，让真实 Broker 在 `EffectJournal` 已记录 `EFFECT_APPLIED` 后退出，下一次启动从 Journal 恢复。
 - 验证：连续多角色恢复 `3/3`；authority/observer 定向 CLI 回归 `5/5`。真实 EffectBroker 路径确认沙箱文件只移动一次、Journal 只有一条 `EFFECT_APPLIED`、第二次 Run 成功且 Replay `CONSISTENT`。
 - 边界：仍是本机同用户权限、预绑定文件计划和进程级故障注入；没有覆盖跨机器身份、权限隔离、网络分区、远程设备回执或人工确认后的真实生产副作用。下一步应评估低权限 authority 与跨边界回执身份，而不是继续把本机进程当成可信根。
+
+## F-152 execution authority 回执的可验证持钥身份
+
+- 反证/缺口：F-151 证明了 Journal 和 nonce 可以恢复效果，但 authority 回执仍是裸 JSON；启动摘要能绑定“启动了什么”，不能绑定“这条回执由哪个持钥 authority 签出”。
+- 实现：新增 `execution-authority-attestation`，对完整 `EXECUTED/RECONCILED` 回执生成 Ed25519 `executionAttestation`。authority descriptor 增加可选 `executionPublicKey`，配置用同名字段显式 pin；宿主、LabStore、Replay 在公钥存在时都要求验签，旧无公钥 descriptor 继续兼容。
+- 验证：签名/篡改单测 `1/1`；真实 EffectBroker 沙箱 authority 的签名 CLI 闭环 `1/1`，包含 STEP 持久化和 Replay；F-151 多角色恢复回归 `3/3`。
+- 边界：签名只证明持钥进程产生了这条内容，私钥仍可能被同用户权限读取，authority 仍可对真实世界撒谎；未覆盖低权限 OS 身份、远程密钥托管、跨机器传输、可信硬件或物理设备回执。下一步应把 key ownership 与 authority 执行权限拆开，再测跨机器回执。

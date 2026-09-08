@@ -17,6 +17,7 @@ import {
   verifySignedEvidence,
   verifyExternalInputAttestation,
 } from '../runtime/external-evidence.mjs';
+import { verifyExecutionAuthorityReceipt } from '../runtime/execution-authority-attestation.mjs';
 import { LabStoreError } from '../runtime/lab-store.mjs';
 import {
   assertExactKeys,
@@ -116,6 +117,9 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
         worldId: executionAuthority.descriptor.worldId,
         worldVersion: executionAuthority.descriptor.worldVersion,
         descriptorDigest: executionAuthority.descriptor.descriptorDigest,
+        ...(executionAuthority.descriptor.executionPublicKey === undefined
+          ? {}
+          : { executionPublicKey: executionAuthority.descriptor.executionPublicKey }),
         launchDigest: executionAuthority.config.launchDigest,
         ...(executionAuthority.config.transport === undefined ? {} : { transport: executionAuthority.config.transport }),
       },
@@ -248,6 +252,9 @@ function createIdentityOnlyRegistry(config) {
             ? adapter?.executionAuthority !== undefined
             : adapter?.executionAuthority?.adapterId !== executionAuthorityConfig.adapterId ||
               adapter?.executionAuthority?.worldId !== executionAuthorityConfig.worldId ||
+              (executionAuthorityConfig.executionPublicKey === undefined
+                ? adapter?.executionAuthority?.executionPublicKey !== undefined
+                : adapter?.executionAuthority?.executionPublicKey !== executionAuthorityConfig.executionPublicKey) ||
               adapter?.executionAuthority?.launchDigest !== executionAuthorityConfig.launchDigest ||
               (executionAuthorityConfig.transport === undefined
                 ? adapter?.executionAuthority?.transport !== undefined
@@ -1119,6 +1126,7 @@ async function executeExternalExecution(authority, { worldId, scenario, state, r
     transition,
     operation: 'executeExecution',
     expectedStatus: 'EXECUTED',
+    authorityPublicKey: authority.descriptor.executionPublicKey,
   });
 }
 
@@ -1141,15 +1149,20 @@ async function reconcileExternalExecution(authority, { worldId, scenario, state,
     transition,
     operation: 'reconcileExecution',
     expectedStatus: 'RECONCILED',
+    authorityPublicKey: authority.descriptor.executionPublicKey,
   });
 }
 
-function normalizeExecutionAuthorityResult(result, { state, request, transition, operation, expectedStatus }) {
+function normalizeExecutionAuthorityResult(result, { state, request, transition, operation, expectedStatus, authorityPublicKey }) {
   const beforeStateDigest = canonicalDigest(state);
   const source = assertExactKeys(result, [
     'schemaVersion', 'status', 'executionNonce', 'token', 'basedOnVersion',
+    'beforeStateDigest', 'afterStateDigest', 'executionAttestation',
+  ], 'executionAuthority', [
+    'schemaVersion', 'status', 'executionNonce', 'token', 'basedOnVersion',
     'beforeStateDigest', 'afterStateDigest',
-  ], 'executionAuthority');
+    ...(authorityPublicKey === undefined ? [] : ['executionAttestation']),
+  ]);
   const afterStateDigest = canonicalDigest(transition.nextWorldState);
   if (
     source.schemaVersion !== SCHEMA_VERSION ||
@@ -1161,6 +1174,18 @@ function normalizeExecutionAuthorityResult(result, { state, request, transition,
     source.afterStateDigest !== afterStateDigest
   ) {
     throw new ExternalWorldProtocolError('Execution authority does not match the transition.', {
+      op: operation,
+      executionNonce: request.executionNonce,
+    });
+  }
+  if (authorityPublicKey !== undefined && !verifyExecutionAuthorityReceipt(source, authorityPublicKey)) {
+    throw new ExternalWorldProtocolError('Execution authority attestation is invalid.', {
+      op: operation,
+      executionNonce: request.executionNonce,
+    });
+  }
+  if (authorityPublicKey === undefined && source.executionAttestation !== undefined) {
+    throw new ExternalWorldProtocolError('Execution authority returned an unbound attestation.', {
       op: operation,
       executionNonce: request.executionNonce,
     });
@@ -1227,7 +1252,7 @@ function normalizeExternalReceipt(value, request, field) {
 function validateDescriptor(value, config) {
   const source = assertExactKeys(value, [
     'adapterId', 'worldId', 'worldVersion', 'capabilityIds', 'scenarioIds', 'valueSpec', 'evidencePublicKey',
-    'supportsStateDependentActions', 'supportsIdempotentTransitions', 'supportsReconciliation', 'descriptorDigest',
+    'supportsStateDependentActions', 'supportsIdempotentTransitions', 'supportsReconciliation', 'descriptorDigest', 'executionPublicKey',
   ], 'hello.result', [
     'adapterId', 'worldId', 'worldVersion', 'capabilityIds', 'scenarioIds', 'valueSpec', 'evidencePublicKey', 'descriptorDigest',
   ]);
@@ -1235,6 +1260,7 @@ function validateDescriptor(value, config) {
       typeof source.worldVersion !== 'string' || source.worldVersion.length === 0 || source.worldVersion.length > 4096 ||
       !validStringList(source.capabilityIds, 'capabilityIds') || !validStringList(source.scenarioIds, 'scenarioIds') ||
       !isValueSpec(source.valueSpec) || !isValidEvidencePublicKey(source.evidencePublicKey) ||
+      (source.executionPublicKey !== undefined && !isValidEvidencePublicKey(source.executionPublicKey)) ||
       (source.supportsStateDependentActions !== undefined && typeof source.supportsStateDependentActions !== 'boolean') ||
       (source.supportsIdempotentTransitions !== undefined && typeof source.supportsIdempotentTransitions !== 'boolean') ||
       (source.supportsReconciliation !== undefined && typeof source.supportsReconciliation !== 'boolean') ||
@@ -1255,6 +1281,7 @@ function validateDescriptor(value, config) {
         ...(source.supportsReconciliation === undefined
           ? {}
           : { supportsReconciliation: source.supportsReconciliation }),
+        ...(source.executionPublicKey === undefined ? {} : { executionPublicKey: source.executionPublicKey }),
       })) {
     throw new ExternalWorldProtocolError('External WorldPort hello descriptor is invalid.', { op: 'hello' });
   }
@@ -1302,7 +1329,10 @@ function loadExecutionAuthorityDescriptor(config, primaryDescriptor) {
       canonicalJson(descriptor.capabilityIds) !== canonicalJson(primaryDescriptor.capabilityIds) ||
       canonicalJson(descriptor.scenarioIds) !== canonicalJson(primaryDescriptor.scenarioIds) ||
       canonicalJson(descriptor.valueSpec) !== canonicalJson(primaryDescriptor.valueSpec) ||
-      descriptor.adapterId === primaryDescriptor.adapterId) {
+      descriptor.adapterId === primaryDescriptor.adapterId ||
+      (config.executionPublicKey === undefined
+        ? descriptor.executionPublicKey !== undefined
+        : descriptor.executionPublicKey !== config.executionPublicKey)) {
     throw new ExternalWorldProtocolError('Execution authority descriptor does not match the primary WorldPort boundary.', {
       op: 'hello',
     });
@@ -1501,7 +1531,7 @@ function normalizeExecutionObserverConfig(value, configPath) {
 
 function normalizeExecutionAuthorityConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport'].includes(key))) {
+      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'executionPublicKey'].includes(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Execution authority config is invalid.', { field: 'adapter.executionAuthority' });
   }
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
@@ -1523,6 +1553,9 @@ function normalizeExecutionAuthorityConfig(value, configPath) {
       typeof value.worldId !== 'string' || value.worldId.length === 0 || value.worldId.length > 4096) {
     throw new LabStoreError('INVALID_INPUT', 'Execution authority identity is invalid.', { field: 'adapter.executionAuthority' });
   }
+  if (value.executionPublicKey !== undefined && !isValidEvidencePublicKey(value.executionPublicKey)) {
+    throw new LabStoreError('INVALID_INPUT', 'Execution authority public key is invalid.', { field: 'adapter.executionAuthority.executionPublicKey' });
+  }
   const timeoutMs = value.timeoutMs ?? 5000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
     throw new LabStoreError('INVALID_INPUT', 'Execution authority timeoutMs must be between 100 and 30000.', { field: 'adapter.executionAuthority.timeoutMs' });
@@ -1536,6 +1569,7 @@ function normalizeExecutionAuthorityConfig(value, configPath) {
     adapterId: value.adapterId,
     worldId: value.worldId,
     timeoutMs,
+    ...(value.executionPublicKey === undefined ? {} : { executionPublicKey: value.executionPublicKey }),
     launchDigest: digestLaunch(configPath, value.executable, value.args),
     ...(transport === undefined ? {} : { transport }),
   };

@@ -1,4 +1,8 @@
 import { SCHEMA_VERSION, canonicalDigest, cloneJson } from '../runtime/schema.mjs';
+import {
+  publicKeyForPrivateKey,
+  signExecutionAuthorityReceipt,
+} from '../runtime/execution-authority-attestation.mjs';
 
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
@@ -12,13 +16,21 @@ export class EffectBrokerAuthorityError extends Error {
   }
 }
 
-export function createEffectBrokerAuthority({ broker, effectPlan, descriptor = null }) {
+export function createEffectBrokerAuthority({ broker, effectPlan, descriptor = null, signingKey = null }) {
   if (!broker || typeof broker.plan !== 'function' || typeof broker.get !== 'function' ||
       typeof broker.execute !== 'function' || typeof broker.reconcile !== 'function') {
     throw new EffectBrokerAuthorityError('INVALID_INPUT', 'EffectBroker authority requires a complete EffectBroker.');
   }
   const plan = normalizeEffectPlan(effectPlan);
   const publishedDescriptor = descriptor === null ? null : cloneJson(descriptor);
+  if (signingKey !== null) {
+    if (publishedDescriptor?.executionPublicKey === undefined ||
+        publicKeyForPrivateKey(signingKey) !== publishedDescriptor.executionPublicKey) {
+      throw new EffectBrokerAuthorityError('INVALID_INPUT', 'EffectBroker authority signing key does not match its published descriptor.');
+    }
+  } else if (publishedDescriptor?.executionPublicKey !== undefined) {
+    throw new EffectBrokerAuthorityError('INVALID_INPUT', 'EffectBroker authority descriptor publishes a key without a signing key.');
+  }
 
   return Object.freeze({
     hello() {
@@ -41,7 +53,7 @@ export function createEffectBrokerAuthority({ broker, effectPlan, descriptor = n
           phase: result.phase,
         });
       }
-      return authorityReceipt('EXECUTED', payload, plan);
+      return authorityReceipt('EXECUTED', payload, plan, signingKey);
     },
 
     async reconcileExecution(payload) {
@@ -57,7 +69,7 @@ export function createEffectBrokerAuthority({ broker, effectPlan, descriptor = n
           phase: result.phase,
         });
       }
-      return authorityReceipt('RECONCILED', payload, plan);
+      return authorityReceipt('RECONCILED', payload, plan, signingKey);
     },
   });
 }
@@ -113,11 +125,11 @@ function intentFor(payload, plan) {
   return { ...unsigned, planDigest: canonicalDigest(unsigned) };
 }
 
-function authorityReceipt(status, payload, plan) {
+function authorityReceipt(status, payload, plan, signingKey) {
   if (!DIGEST_PATTERN.test(plan.afterStateDigest ?? '')) {
     throw new EffectBrokerAuthorityError('INVALID_INPUT', 'EffectBroker authority plan has no bound after-state digest.');
   }
-  return {
+  const receipt = {
     schemaVersion: SCHEMA_VERSION,
     status,
     executionNonce: payload.executionNonce,
@@ -126,6 +138,7 @@ function authorityReceipt(status, payload, plan) {
     beforeStateDigest: payload.beforeStateDigest,
     afterStateDigest: plan.afterStateDigest,
   };
+  return signingKey === null ? receipt : signExecutionAuthorityReceipt(receipt, signingKey);
 }
 
 function isData(value) {

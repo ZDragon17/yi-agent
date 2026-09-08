@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import { createEffectBroker } from '../../src/effects/effect-broker.mjs';
 import { EffectJournal } from '../../src/effects/effect-journal.mjs';
 import { createSandboxFileExecutor } from '../../src/effects/sandbox-file-executor.mjs';
 import { createEffectBrokerAuthority } from '../../src/effects/effect-broker-authority.mjs';
+import { verifyExecutionAuthorityReceipt } from '../../src/runtime/execution-authority-attestation.mjs';
 
 test('EffectBroker authority executes and reconciles one sandbox effect by nonce', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-authority-'));
@@ -21,6 +23,8 @@ test('EffectBroker authority executes and reconciles one sandbox effect by nonce
       executor: createSandboxFileExecutor({ sandboxRoot: root }),
       now: clock(),
     });
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const executionPublicKey = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
     const authority = createEffectBrokerAuthority({
       broker,
       effectPlan: {
@@ -33,11 +37,14 @@ test('EffectBroker authority executes and reconciles one sandbox effect by nonce
         compensation: { operation: 'move-back', from: 'done/report.txt', to: 'inbox/report.txt' },
         afterStateDigest: 'sha256:' + '2'.repeat(64),
       },
-      descriptor: { adapterId: 'effect-broker-authority-v1' },
+      descriptor: { adapterId: 'effect-broker-authority-v1', executionPublicKey },
+      signingKey: privateKey,
     });
     const payload = executionPayload();
 
-    assert.equal((await authority.executeExecution(payload)).status, 'EXECUTED');
+    const executed = await authority.executeExecution(payload);
+    assert.equal(executed.status, 'EXECUTED');
+    assert.equal(verifyExecutionAuthorityReceipt(executed, executionPublicKey), true);
     assert.equal(await readFile(path.join(root, 'done', 'report.txt'), 'utf8'), 'report');
     assert.equal((await authority.executeExecution(payload)).status, 'EXECUTED');
 

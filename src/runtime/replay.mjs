@@ -13,6 +13,7 @@ import {
   isValidEvidencePublicKey,
   verifyExternalInputAttestation,
 } from './external-evidence.mjs';
+import { verifyExecutionAuthorityReceipt } from './execution-authority-attestation.mjs';
 import { acknowledgeReplan, advanceChangeSupervisor, createChangeSupervisor, enableGoal, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
@@ -153,6 +154,13 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
   if (adapter?.executionAuthority !== undefined &&
       !isValidExecutionAuthorityEvidence(payload.boundary.executionAuthority)) {
     corrupt('STEP is missing execution authority evidence.', { sequence: event.sequence });
+  }
+  if (adapter?.executionAuthority?.executionPublicKey !== undefined &&
+      !verifyExecutionAuthorityReceipt(
+        payload.boundary.executionAuthority,
+        adapter.executionAuthority.executionPublicKey,
+      )) {
+    corrupt('STEP execution authority attestation is invalid.', { sequence: event.sequence });
   }
   const valueSpec = cloneJson(payload.boundary.valueSpec);
   if (payload.boundary.goalActivation !== undefined) {
@@ -740,6 +748,7 @@ function isValidExecutionAuthorityMetadata(value) {
     typeof value.adapterId === 'string' && value.adapterId.length > 0 && value.adapterId.length <= 4096 &&
     typeof value.worldId === 'string' && value.worldId.length > 0 && value.worldId.length <= 4096 &&
     typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
+    (value.executionPublicKey === undefined || isValidEvidencePublicKey(value.executionPublicKey)) &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
     typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
     (value.transport === undefined || value.transport === 'persistent-jsonl');

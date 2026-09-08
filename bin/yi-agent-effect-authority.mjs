@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
+import { createPrivateKey } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { stdin, stdout } from 'node:process';
-import { existsSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { EffectJournal } from '../src/effects/effect-journal.mjs';
 import { restoreEffectBroker } from '../src/effects/effect-broker.mjs';
@@ -15,6 +16,9 @@ const effectPlan = parseJsonOption(options, 'effect-plan-json');
 const journalPath = required(options, 'journal');
 const sandboxRoot = required(options, 'sandbox-root');
 const dropExecutionResponseOnceMarker = options['drop-execution-response-once-marker'] ?? null;
+const signingKey = options['private-key-der'] === undefined
+  ? null
+  : createPrivateKey({ key: readFileSync(options['private-key-der']), format: 'der', type: 'pkcs8' });
 let authorityPromise = null;
 
 const rl = createInterface({ input: stdin, crlfDelay: Infinity });
@@ -62,7 +66,7 @@ async function loadAuthority() {
     const journal = await EffectJournal.open(journalPath);
     const executor = createSandboxFileExecutor({ sandboxRoot });
     const broker = await restoreEffectBroker({ journal, executor });
-    return createEffectBrokerAuthority({ broker, effectPlan, descriptor });
+    return createEffectBrokerAuthority({ broker, effectPlan, descriptor, signingKey });
   })();
   return authorityPromise;
 }
