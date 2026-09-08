@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, statSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   canonicalDigest,
@@ -43,6 +43,7 @@ const CREDIT_CHAIN_SHARE_TOLERANCE = 1e-9;
 const CAUSAL_CREDIT_BASIS = 'counterfactual-additive-v1';
 const ATTESTED_CAUSAL_CREDIT_BASIS = 'counterfactual-attested-v1';
 const INDEPENDENT_CAUSAL_CREDIT_BASIS = 'counterfactual-independent-v1';
+const PERSISTENT_JSONL_TRANSPORT = 'persistent-jsonl';
 
 export class ExternalWorldProtocolError extends Error {
   constructor(message, context = {}) {
@@ -91,6 +92,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
     evidencePublicKey: descriptor.evidencePublicKey,
     descriptorDigest: descriptor.descriptorDigest,
     launchDigest: normalizedConfig.launchDigest,
+    ...(normalizedConfig.transport === undefined ? {} : { transport: normalizedConfig.transport }),
     ...(descriptor.supportsIdempotentTransitions === undefined
       ? {}
       : { supportsIdempotentTransitions: descriptor.supportsIdempotentTransitions }),
@@ -149,8 +151,8 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
         scenario,
       });
     },
-    scenarioExternalInputs: ({ scenario, stateVersion }) => {
-      const response = client.request('externalInputs', {
+    scenarioExternalInputs: async ({ scenario, stateVersion }) => {
+      const response = await client.request('externalInputs', {
         worldId: descriptor.worldId,
         scenario,
         stateVersion,
@@ -162,6 +164,14 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
 
   return Object.freeze({
     ...base,
+    close() {
+      return Promise.all([
+        client.close(),
+        ...(witness === null ? [] : [witness.client.close()]),
+        ...(executionAuthority === null ? [] : [executionAuthority.client.close()]),
+        ...(executionObserver === null ? [] : [executionObserver.client.close()]),
+      ]);
+    },
     createManifestParts(input) {
       return {
         ...base.createManifestParts(input),
@@ -202,6 +212,9 @@ function createIdentityOnlyRegistry(config) {
     throw new LabStoreError('CONFLICT', 'This adapter was loaded for a read-only evidence operation.', {});
   };
   return Object.freeze({
+    close() {
+      return Promise.resolve();
+    },
     assertManifest(manifest) {
       const adapter = manifest?.adapter;
       if (manifest?.worldId !== config.worldId ||
@@ -214,6 +227,9 @@ function createIdentityOnlyRegistry(config) {
           adapter?.launchDigest !== config.launchDigest ||
           !isValidEvidencePublicKey(adapter?.evidencePublicKey) ||
           !isValueSpec(adapter?.valueSpec) ||
+          (config.transport === undefined
+            ? adapter?.transport !== undefined
+            : adapter?.transport !== config.transport) ||
           (witnessConfig === undefined
             ? adapter?.witness !== undefined
             : adapter?.witness?.adapterId !== witnessConfig.adapterId ||
@@ -311,6 +327,9 @@ export function createReplayWorld(run) {
 
 function createAdapterClient(config) {
   let requestNumber = 0;
+  const persistent = config.transport === PERSISTENT_JSONL_TRANSPORT
+    ? createPersistentAdapterSession(config)
+    : null;
   return {
     request(op, payload) {
       requestNumber += 1;
@@ -321,53 +340,236 @@ function createAdapterClient(config) {
         op,
         payload,
       };
-      let result;
+      if (persistent !== null && op !== 'hello') return persistent.request(request, op);
+      return requestOneShot(config, request, op);
+    },
+    close() {
+      return persistent?.close() ?? Promise.resolve();
+    },
+  };
+}
+
+function requestOneShot(config, request, op) {
+  let result;
+  try {
+    result = spawnSync(config.executable, config.args, {
+      input: `${JSON.stringify(request)}\n`,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      detached: false,
+      timeout: config.timeoutMs,
+      maxBuffer: Math.max(MAX_STDOUT_BYTES, MAX_STDERR_BYTES),
+      env: safeAdapterEnvironment(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    throw new ExternalWorldProtocolError('External WorldPort process could not be started.', {
+      op,
+      cause: errorName(error),
+    });
+  }
+  if (result.error || result.status !== 0 || result.signal !== null) {
+    throw new ExternalWorldProtocolError('External WorldPort process failed.', {
+      op,
+      status: result.status,
+      signal: result.signal,
+      cause: errorName(result.error),
+    });
+  }
+  return parseAdapterResponse(result.stdout, request.id, op);
+}
+
+function parseAdapterResponse(stdout, id, op) {
+  const text = typeof stdout === 'string' ? stdout : '';
+  if (Buffer.byteLength(text, 'utf8') > MAX_STDOUT_BYTES) {
+    throw new ExternalWorldProtocolError('External WorldPort response exceeded the output limit.', { op });
+  }
+  const lines = text.split(/\r?\n/u);
+  const nonEmpty = lines.filter((line) => line.length > 0);
+  if (nonEmpty.length !== 1 || (lines.length > 2 && lines.slice(1, -1).some((line) => line.length > 0))) {
+    throw new ExternalWorldProtocolError('External WorldPort stdout must contain exactly one JSONL response.', { op });
+  }
+  let response;
+  try {
+    response = JSON.parse(nonEmpty[0]);
+  } catch (error) {
+    throw new ExternalWorldProtocolError('External WorldPort response is not valid JSON.', { op, cause: errorName(error) });
+  }
+  validateResponseEnvelope(response, id, op);
+  if (response.ok !== true) {
+    throw new ExternalWorldProtocolError('External WorldPort rejected a request.', { op });
+  }
+  return response.result;
+}
+
+function createPersistentAdapterSession(config) {
+  let child = null;
+  let output = '';
+  let stderrBytes = 0;
+  let current = null;
+  let queue = Promise.resolve();
+  let closed = false;
+  const onProcessExit = () => terminateChild();
+  process.once('exit', onProcessExit);
+
+  function request(request, op) {
+    if (closed) return Promise.reject(new ExternalWorldProtocolError('External WorldPort session is closed.', { op }));
+    const next = queue.then(() => requestOne(request, op));
+    queue = next.catch(() => undefined);
+    return next;
+  }
+
+  function requestOne(request, op) {
+    return new Promise((resolve, reject) => {
+      ensureChild(op);
+      const processHandle = child;
+      current = {
+        request,
+        op,
+        processHandle,
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          const error = new ExternalWorldProtocolError('External WorldPort persistent request timed out.', {
+            op,
+            timeoutMs: config.timeoutMs,
+            cause: 'Timeout',
+          });
+          settleCurrent('reject', error, processHandle);
+          terminateChild(processHandle);
+        }, config.timeoutMs),
+      };
       try {
-        result = spawnSync(config.executable, config.args, {
-          input: `${JSON.stringify(request)}\n`,
-          encoding: 'utf8',
-          shell: false,
-          windowsHide: true,
-          detached: false,
-          timeout: config.timeoutMs,
-          maxBuffer: Math.max(MAX_STDOUT_BYTES, MAX_STDERR_BYTES),
-          env: safeAdapterEnvironment(),
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        processHandle.stdin.write(`${JSON.stringify(request)}\n`);
       } catch (error) {
-        throw new ExternalWorldProtocolError('External WorldPort process could not be started.', {
+        settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort request could not be written.', {
           op,
           cause: errorName(error),
-        });
+        }), processHandle);
+        terminateChild(processHandle);
       }
-      if (result.error || result.status !== 0 || result.signal !== null) {
-        throw new ExternalWorldProtocolError('External WorldPort process failed.', {
-          op,
-          status: result.status,
-          signal: result.signal,
-          cause: errorName(result.error),
-        });
+    });
+  }
+
+  function ensureChild(op) {
+    if (child !== null && child.exitCode === null && child.signalCode === null) return;
+    output = '';
+    stderrBytes = 0;
+    try {
+      child = spawn(config.executable, config.args, {
+        shell: false,
+        windowsHide: true,
+        detached: false,
+        env: safeAdapterEnvironment(),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      throw new ExternalWorldProtocolError('External WorldPort persistent process could not be started.', {
+        op,
+        cause: errorName(error),
+      });
+    }
+    const processHandle = child;
+    processHandle.stdout.setEncoding('utf8');
+    processHandle.stdout.on('data', (chunk) => consumeOutput(processHandle, chunk));
+    processHandle.stdin.on('error', (error) => {
+      if (current?.processHandle !== processHandle) return;
+      settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort request pipe failed.', {
+        op: current?.op ?? op,
+        cause: errorName(error),
+      }), processHandle);
+      terminateChild(processHandle);
+    });
+    processHandle.stderr.on('data', (chunk) => {
+      if (child !== processHandle || current?.processHandle !== processHandle) return;
+      stderrBytes += Buffer.byteLength(chunk, 'utf8');
+      if (stderrBytes > MAX_STDERR_BYTES) {
+        settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort stderr exceeded the output limit.', {
+          op: current?.op ?? op,
+        }), processHandle);
+        terminateChild(processHandle);
       }
-      const stdout = typeof result.stdout === 'string' ? result.stdout : '';
-      if (Buffer.byteLength(stdout, 'utf8') > MAX_STDOUT_BYTES) {
-        throw new ExternalWorldProtocolError('External WorldPort response exceeded the output limit.', { op });
+    });
+    processHandle.on('error', (error) => {
+      if (current?.processHandle === processHandle) {
+        settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort persistent process failed.', {
+          op: current?.op ?? op,
+          cause: errorName(error),
+        }), processHandle);
       }
-      const lines = stdout.split(/\r?\n/u);
-      const nonEmpty = lines.filter((line) => line.length > 0);
-      if (nonEmpty.length !== 1 || (lines.length > 2 && lines.slice(1, -1).some((line) => line.length > 0))) {
-        throw new ExternalWorldProtocolError('External WorldPort stdout must contain exactly one JSONL response.', { op });
+      terminateChild(processHandle);
+    });
+    processHandle.on('close', (status, signal) => {
+      if (current?.processHandle === processHandle) {
+        settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort persistent process closed before responding.', {
+          op: current.op,
+          status,
+          signal,
+        }), processHandle);
       }
+      if (child === processHandle) child = null;
+    });
+  }
+
+  function consumeOutput(processHandle, chunk) {
+    if (child !== processHandle || current?.processHandle !== processHandle) return;
+    output += chunk;
+    if (Buffer.byteLength(output, 'utf8') > MAX_STDOUT_BYTES) {
+      settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort response exceeded the output limit.', {
+        op: current?.op ?? 'unknown',
+      }), processHandle);
+      terminateChild(processHandle);
+      return;
+    }
+    let newline;
+    while ((newline = output.indexOf('\n')) !== -1) {
+      const line = output.slice(0, newline).replace(/\r$/u, '');
+      output = output.slice(newline + 1);
+      if (line.length === 0) continue;
+      if (current === null || current.processHandle !== processHandle) return;
+      const { request, op } = current;
       let response;
       try {
-        response = JSON.parse(nonEmpty[0]);
+        response = JSON.parse(line);
+        validateResponseEnvelope(response, request.id, op);
       } catch (error) {
-        throw new ExternalWorldProtocolError('External WorldPort response is not valid JSON.', { op, cause: errorName(error) });
+        settleCurrent('reject', error instanceof ExternalWorldProtocolError
+          ? error
+          : new ExternalWorldProtocolError('External WorldPort response is not valid JSON.', { op, cause: errorName(error) }), processHandle);
+        terminateChild(processHandle);
+        return;
       }
-      validateResponseEnvelope(response, request.id, op);
       if (response.ok !== true) {
-        throw new ExternalWorldProtocolError('External WorldPort rejected a request.', { op });
+        settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort rejected a request.', { op }), processHandle);
+      } else {
+        settleCurrent('resolve', response.result, processHandle);
       }
-      return response.result;
+    }
+  }
+
+  function settleCurrent(kind, value, processHandle = null) {
+    if (current === null || (processHandle !== null && current.processHandle !== processHandle)) return;
+    const pending = current;
+    current = null;
+    clearTimeout(pending.timer);
+    pending[kind](value);
+  }
+
+  function terminateChild(processHandle = child) {
+    if (processHandle === null) return;
+    if (child === processHandle) child = null;
+    try { processHandle.kill(); } catch { /* process already exited */ }
+  }
+
+  return {
+    request,
+    close() {
+      closed = true;
+      settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort session was closed.', {}));
+      terminateChild();
+      process.removeListener('exit', onProcessExit);
+      return Promise.resolve();
     },
   };
 }
@@ -383,8 +585,8 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
   return {
     supportsIdempotentTransitions: descriptor.supportsIdempotentTransitions === true,
     supportsExternalReconciliation: descriptor.supportsReconciliation === true,
-    initialState() {
-      const response = client.request('initialState', {
+    async initialState() {
+      const response = await client.request('initialState', {
         worldId: descriptor.worldId,
         scenario,
         seed: manifest.seed,
@@ -392,8 +594,8 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
       });
       return normalizeExternalState(response.state, descriptor.worldId, 'initialState');
     },
-    observe(state) {
-      const response = client.request('observe', { worldId: descriptor.worldId, scenario, state });
+    async observe(state) {
+      const response = await client.request('observe', { worldId: descriptor.worldId, scenario, state });
       const observation = normalizeExternalObservation(
         response.observation,
         descriptor.worldId,
@@ -410,11 +612,11 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         witness,
       });
     },
-    actions(suppliedManifest, state = undefined) {
+    async actions(suppliedManifest, state = undefined) {
       if (canonicalJson(suppliedManifest) !== capturedManifest) {
         throw new ExternalWorldProtocolError('External WorldPort received a different manifest.', { op: 'actions' });
       }
-      const response = client.request('actions', {
+      const response = await client.request('actions', {
         worldId: descriptor.worldId,
         scenario,
         manifest: worldManifest,
@@ -424,8 +626,8 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
       });
       return normalizeExternalActions(response.actions, worldManifest, descriptor);
     },
-    transition(state, request) {
-      const response = client.request('transition', {
+    async transition(state, request) {
+      const response = await client.request('transition', {
         worldId: descriptor.worldId,
         scenario,
         manifest: worldManifest,
@@ -442,7 +644,7 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         witness?.descriptor.evidencePublicKey,
       );
       const executionAuthorityEvidence = transition.receipt.status === 'ACCEPTED' && executionAuthority !== null
-        ? executeExternalExecution(executionAuthority, {
+        ? await executeExternalExecution(executionAuthority, {
           worldId: descriptor.worldId,
           scenario,
           state,
@@ -451,7 +653,7 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         })
         : null;
       const executionObservation = transition.receipt.status === 'ACCEPTED' && executionObserver !== null
-        ? observeExternalExecution(executionObserver, {
+        ? await observeExternalExecution(executionObserver, {
             worldId: descriptor.worldId,
             scenario,
             state,
@@ -472,11 +674,11 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         }),
       };
     },
-    reconcile(state, request) {
+    async reconcile(state, request) {
       if (descriptor.supportsReconciliation !== true) {
         throw new ExternalWorldProtocolError('External WorldPort does not support reconciliation.', { op: 'reconcile' });
       }
-      const response = client.request('reconcile', {
+      const response = await client.request('reconcile', {
         worldId: descriptor.worldId,
         scenario,
         state,
@@ -494,7 +696,7 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
       if (transition.status !== 'APPLIED') return transition;
       const executionAuthorityEvidence = executionAuthority === null
         ? null
-        : reconcileExternalExecution(executionAuthority, {
+        : await reconcileExternalExecution(executionAuthority, {
             worldId: descriptor.worldId,
             scenario,
             state,
@@ -503,7 +705,7 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
           });
       const executionObservation = executionObserver === null
         ? null
-        : observeExternalExecution(executionObserver, {
+        : await observeExternalExecution(executionObserver, {
             worldId: descriptor.worldId,
             scenario,
             state,
@@ -853,9 +1055,9 @@ function normalizeExternalTransition(value, state, request, worldId, expectedDim
   return { nextWorldState, receipt, postObservation };
 }
 
-function observeExternalExecution(observer, { worldId, scenario, state, request, transition }) {
+async function observeExternalExecution(observer, { worldId, scenario, state, request, transition }) {
   const beforeStateDigest = canonicalDigest(state);
-  const result = observer.client.request('observeExecution', {
+  const result = await observer.client.request('observeExecution', {
     schemaVersion: SCHEMA_VERSION,
     worldId,
     scenario,
@@ -886,9 +1088,9 @@ function observeExternalExecution(observer, { worldId, scenario, state, request,
   return structuredClone(source);
 }
 
-function executeExternalExecution(authority, { worldId, scenario, state, request, transition }) {
+async function executeExternalExecution(authority, { worldId, scenario, state, request, transition }) {
   const beforeStateDigest = canonicalDigest(state);
-  const result = authority.client.request('executeExecution', {
+  const result = await authority.client.request('executeExecution', {
     schemaVersion: SCHEMA_VERSION,
     worldId,
     scenario,
@@ -908,9 +1110,9 @@ function executeExternalExecution(authority, { worldId, scenario, state, request
   });
 }
 
-function reconcileExternalExecution(authority, { worldId, scenario, state, request, transition }) {
+async function reconcileExternalExecution(authority, { worldId, scenario, state, request, transition }) {
   const beforeStateDigest = canonicalDigest(state);
-  const result = authority.client.request('reconcileExecution', {
+  const result = await authority.client.request('reconcileExecution', {
     schemaVersion: SCHEMA_VERSION,
     worldId,
     scenario,
@@ -1142,7 +1344,7 @@ function normalizeConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config must be an object.', { field: 'adapter' });
   }
-  const allowed = new Set(['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'witness', 'executionAuthority', 'executionObserver']);
+  const allowed = new Set(['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'witness', 'executionAuthority', 'executionObserver']);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config contains an unsupported field.', { field: 'adapter' });
   }
@@ -1169,6 +1371,9 @@ function normalizeConfig(value, configPath) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter timeoutMs must be between 100 and 30000.', { field: 'adapter.timeoutMs' });
   }
+  const transport = value.transport === undefined
+    ? undefined
+    : normalizeTransport(value.transport, 'adapter.transport');
   const launchDigest = digestLaunch(configPath, value.executable, value.args);
   const witness = value.witness === undefined ? undefined : normalizeWitnessConfig(value.witness, configPath);
   const executionAuthority = value.executionAuthority === undefined
@@ -1184,10 +1389,18 @@ function normalizeConfig(value, configPath) {
     worldId: value.worldId,
     timeoutMs,
     launchDigest,
+    ...(transport === undefined ? {} : { transport }),
     ...(witness === undefined ? {} : { witness }),
     ...(executionAuthority === undefined ? {} : { executionAuthority }),
     ...(executionObserver === undefined ? {} : { executionObserver }),
   };
+}
+
+function normalizeTransport(value, field) {
+  if (value !== PERSISTENT_JSONL_TRANSPORT) {
+    throw new LabStoreError('INVALID_INPUT', 'Adapter transport is unsupported.', { field });
+  }
+  return value;
 }
 
 function normalizeWitnessConfig(value, configPath) {

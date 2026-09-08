@@ -111,26 +111,36 @@ async function dispatch(command, options) {
   if (command === 'init') {
     const labPath = required(options, 'lab');
     const labId = options['lab-id'] ?? path.basename(path.resolve(labPath));
-    const store = await initLab({
-      labPath,
-      labId,
-      worldId: required(options, 'world'),
-      seed: options.seed ?? 'seed-1',
-       registry: loadRegistry(options),
-    });
-    return (await store.inspect()).manifest;
+    const registry = loadRegistry(options);
+    try {
+      const store = await initLab({
+        labPath,
+        labId,
+        worldId: required(options, 'world'),
+        seed: options.seed ?? 'seed-1',
+        registry,
+      });
+      return (await store.inspect()).manifest;
+    } finally {
+      await closeRegistry(registry);
+    }
   }
   if (command === 'run') {
-    return runLab({
-      labPath: required(options, 'lab'),
-      steps: parseSteps(required(options, 'steps')),
-      planningHorizon: options['planning-horizon'] === undefined ? undefined : parseBoundedInt(options['planning-horizon'], 1, 8, 'planning-horizon'),
-      runId: options['run-id'],
-      scenario: options.scenario,
-      registry: loadRegistry(options),
-      maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
-      stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
-    });
+    const registry = loadRegistry(options);
+    try {
+      return await runLab({
+        labPath: required(options, 'lab'),
+        steps: parseSteps(required(options, 'steps')),
+        planningHorizon: options['planning-horizon'] === undefined ? undefined : parseBoundedInt(options['planning-horizon'], 1, 8, 'planning-horizon'),
+        runId: options['run-id'],
+        scenario: options.scenario,
+        registry,
+        maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
+        stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
+      });
+    } finally {
+      await closeRegistry(registry);
+    }
   }
   if (command === 'inspect') {
     return inspectLab({
@@ -216,6 +226,7 @@ async function dispatchAgent(options) {
         field: 'resume',
       }, 64);
     }
+    const registry = loadRegistry(options);
     let interrupted = false;
     const onSignal = () => { interrupted = true; };
     process.once('SIGINT', onSignal);
@@ -230,7 +241,7 @@ async function dispatchAgent(options) {
         shouldStop: () => interrupted,
         runId: options['run-id'],
         scenario: options.scenario,
-        registry: loadRegistry(options),
+        registry,
         ...(modelTimeoutMs === undefined ? {} : { modelTimeoutMs }),
         advisor,
         planner,
@@ -247,6 +258,7 @@ async function dispatchAgent(options) {
     } finally {
       process.removeListener('SIGINT', onSignal);
       process.removeListener('SIGTERM', onSignal);
+      await closeRegistry(registry);
     }
   }
   if (options.agentOperation !== 'run') {
@@ -258,23 +270,28 @@ async function dispatchAgent(options) {
   if (options.forever === true) {
     throw cliError('INVALID_INPUT', '--forever is only supported by agent loop.', { field: 'forever' }, 64);
   }
-  return runLab({
-    labPath: required(options, 'lab'),
-    steps: parseSteps(required(options, 'steps')),
-    planningHorizon: options['planning-horizon'] === undefined ? undefined : parseBoundedInt(options['planning-horizon'], 1, 8, 'planning-horizon'),
-    runId: options['run-id'],
-    scenario: options.scenario,
-    registry: loadRegistry(options),
-    ...(modelTimeoutMs === undefined ? {} : { modelTimeoutMs }),
-    advisor,
-    planner,
-    autoPlan: options['auto-plan'] === true,
-    goal: options.goal,
-    goalPlan,
-    randomizedTrial,
-    maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
-    stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
-  });
+  const registry = loadRegistry(options);
+  try {
+    return await runLab({
+      labPath: required(options, 'lab'),
+      steps: parseSteps(required(options, 'steps')),
+      planningHorizon: options['planning-horizon'] === undefined ? undefined : parseBoundedInt(options['planning-horizon'], 1, 8, 'planning-horizon'),
+      runId: options['run-id'],
+      scenario: options.scenario,
+      registry,
+      ...(modelTimeoutMs === undefined ? {} : { modelTimeoutMs }),
+      advisor,
+      planner,
+      autoPlan: options['auto-plan'] === true,
+      goal: options.goal,
+      goalPlan,
+      randomizedTrial,
+      maxCycles: options['max-cycles'] === undefined ? undefined : parseBoundedInt(options['max-cycles'], 1, 1_000_000, 'max-cycles'),
+      stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
+    });
+  } finally {
+    await closeRegistry(registry);
+  }
 }
 
 async function dispatchApi(options) {
@@ -526,6 +543,10 @@ function loadRegistry(options, probe = true) {
   return options.adapter === undefined
     ? undefined
     : loadExternalWorldRegistry(required(options, 'adapter'), { probe });
+}
+
+async function closeRegistry(registry) {
+  if (typeof registry?.close === 'function') await registry.close();
 }
 
 function canResumeWithoutModel(options, error) {

@@ -207,6 +207,8 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 仓库提供了一个不依赖 `src/**` 的最小外部世界示例：`examples/counter-world/adapter.mjs`。它只有一个世界状态 `value` 和一个行动 `counter.increment`，通过 `yi-world-cli` JSONL 协议接入。这个例子故意不认识 Kernel 的实现，只负责回答 `hello`、`initialState`、`actions`、`observe`、`externalInputs` 和 `transition` 请求。若 adapter 连接真实副作用，必须额外实现持久 `executionNonce` 幂等记录；没有在 `hello` 声明 `supportsIdempotentTransitions:true` 或可选 `supportsReconciliation:true` 的 adapter 发生响应丢失后会被宿主阻断续跑，等待人工对账。声明对账能力的 adapter 还需回答 `reconcile` 请求：只有明确的 `APPLIED` 结果才可恢复，`ABSENT`/`UNKNOWN` 仍保持阻断。非幂等恢复 marker 还会固化原始 intent、能力投影和完整决策边界（目标/监督器/ValueSpec）；重启时不接受新的目标或规划输入，避免恢复动作与 Replay 边界漂移。恢复边界还会对 ValueSpec、监督器、目标激活计划和 Planner 证据做语义校验；摘要可重算但内容畸形时统一判为 `CORRUPT`。
 
+默认 adapter 配置仍是一次请求一进程；需要长序列复用进程时，在配置顶层增加 `"transport": "persistent-jsonl"`，并让 adapter 保持 stdin/stdout 打开的 JSONL 会话。`hello` 仍由一次性探针完成，后续请求才进入持久会话；每个请求仍有独立超时，adapter 必须逐行返回与请求 `id` 匹配的 envelope。该选项只解决进程启动成本，不替代幂等 nonce、对账、EffectBroker 或人工确认。
+
 在 Windows PowerShell 中运行：
 
 ```powershell
@@ -324,6 +326,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-145 把外部执行进一步拆成三个角色：主 adapter 只声明 `transition`，可选的 `executionAuthority` 独立进程负责产生与 nonce 绑定的 OS effect，`executionObserver` 再独立检查该 effect；宿主先校验 authority 的 `EXECUTED` 回执，再校验 observer 的 `OBSERVED` 回执，任一缺失或不一致都在 STEP 前 fail-closed。authority 的配置、descriptor/launch 摘要、恢复与 Replay 边界都写入 manifest，但 Replay 不重新启动 authority/observer。真实临时目录夹具证明主 adapter 不写 marker 也能由 authority 完成，authority 虚假成功但不产生 marker 会被 observer 拒绝，主机崩溃后同一 nonce 可恢复；这仍是同一用户权限下的本机进程隔离，不是低权限沙箱、远程 attestation、可信硬件或物理真相。
 - F-146 把 authority 接入实际的 `EffectBroker`：独立 JSONL 进程恢复 `EffectJournal`，按 nonce 绑定固定 `EffectIntent`，调用受标记根目录约束的 `SandboxFileExecutor`，并在崩溃恢复时通过 `reconcileExecution` 返回 `RECONCILED`，不重复执行。真实 CLI E2E 已验证主 adapter 不写 OS marker、文件效果确实由 Broker 移动、`EFFECT_APPLIED` 进入独立 effect journal、STEP/Replay 保留 authority 证据；高风险计划仍必须经过确认，authority 不得自动越过人工门。该示例仍只覆盖本机同用户权限和预绑定文件计划，不等于低权限隔离、远程执行证明或真实设备控制。
 - F-147 收敛长跑和外部进程压力边界：STEP 账本使用 Deflate Raw level 4，在不改变解码格式和证据内容的前提下让 10,000 步 checkpoint NFR 回到 60 秒内且保持 40 MiB 上限；cyclic-collision 夹具把单次外部请求预算提高到 10 秒，长窗口 E2E 不再被 Windows 进程启动抖动误杀。负结果也被记录：level 1/3 会突破 ledger 上限，而一次请求一次进程仍使长外部序列达到分钟级；下一步需要持久 JSONL WorldPort 会话。
+- F-148 增加显式 `transport: "persistent-jsonl"` 外部 WorldPort 会话：旧配置继续使用一次请求一进程；持久模式先完成一次 `hello` 探针，再复用一个 JSONL 子进程，按请求串行化并施加 stdout/stderr 上限与单请求超时。超时、协议污染或进程退出会关闭当前会话，不自动重放可能已经产生副作用的请求；后续恢复仍由 execution nonce/idempotency 或 reconciliation 决定。真实 CLI E2E 已验证多步只复用一个运行期会话、会话响应丢失/超时后的同 nonce 恢复不重复效果，Replay 不启动 adapter；现阶段仍不改变默认 transport，也不等于 OS 沙箱或物理事实证明。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

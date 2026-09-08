@@ -238,7 +238,7 @@ export async function runLab(input) {
     ((source.goal !== undefined && source.goal !== null) || source.goalPlan !== undefined);
   let initialState = current.lastRunId === null
     ? suppliedInitialState ?? {
-        worldState: world.initialState(),
+        worldState: await world.initialState(),
         memory: {
           schemaVersion: SCHEMA_VERSION,
           actionModels: {},
@@ -336,7 +336,7 @@ export async function runLab(input) {
 
   try {
     for (let index = 0; index < steps; index += 1) {
-    const observedBefore = world.observe(state.worldState);
+    const observedBefore = await world.observe(state.worldState);
     const beforeObservation = projectObservation(observedBefore);
     if ((beforeObservation.feedback?.length ?? 0) > 0) {
       validateObservationFeedback(state.memory, beforeObservation);
@@ -344,7 +344,7 @@ export async function runLab(input) {
     const beforeModelObservation = source.advisor !== undefined || plannerRequested
       ? projectModelObservation(observedBefore)
       : null;
-    const capabilities = persistedRecoveryCapabilities ?? world.actions(actionManifest, state.worldState);
+    const capabilities = persistedRecoveryCapabilities ?? await world.actions(actionManifest, state.worldState);
     const randomization = recoveredDecisionBoundary?.randomization === undefined
       ? (randomizedTrial === null ? null : createRandomization(randomizedTrial, capabilities))
       : validateRandomization(recoveredDecisionBoundary.randomization, capabilities);
@@ -488,7 +488,7 @@ export async function runLab(input) {
         scenario,
         expectedObservationDigest: beforeModelObservation.digest,
       }));
-    const externalInputs = registry.scenarioExternalInputs(
+    const externalInputs = await registry.scenarioExternalInputs(
       manifest.worldId,
       scenario,
       beforeObservation.stateVersion,
@@ -517,7 +517,7 @@ export async function runLab(input) {
     externalTransitionUncertain = manifest.adapter !== undefined;
     let transition;
     if (unresolvedExternalTransition !== null && world.supportsIdempotentTransitions !== true) {
-      const reconciliation = world.reconcile(state.worldState, receiptRequest);
+      const reconciliation = await world.reconcile(state.worldState, receiptRequest);
       if (reconciliation.status !== 'APPLIED') {
         throw new LabStoreError(
           'CONFLICT',
@@ -531,7 +531,7 @@ export async function runLab(input) {
       }
       transition = reconciliation.transition;
     } else {
-      transition = world.transition(state.worldState, receiptRequest);
+      transition = await world.transition(state.worldState, receiptRequest);
     }
     externalTransitionUncertain = externalTransitionUncertain && transition.receipt.status === 'ACCEPTED';
     if (typeof failpoint === 'function' && failpoint('external-transition:returned')) {
@@ -539,7 +539,7 @@ export async function runLab(input) {
         point: 'external-transition:returned',
       });
     }
-    const afterCapabilities = world.actions(actionManifest, transition.nextWorldState);
+    const afterCapabilities = await world.actions(actionManifest, transition.nextWorldState);
     const executionAuthority = transition.executionAuthority ?? null;
     const executionObservation = transition.executionObservation ?? null;
     const receipt = externalInputs.length === 0
@@ -1271,15 +1271,15 @@ export async function inspectLab(input) {
   const actions = selectedAction?.payload?.boundary?.capabilities
     ?? (manifest.adapter
       ? recordedCapabilities ?? manifestCapabilities(manifest)
-      : (() => {
+      : await (async () => {
         const world = registry.createWorld(
           manifest,
           run?.start?.scenario ?? manifest.scenarioIds?.[0] ?? 'steady',
         );
           const actionState = run?.events?.at(-1)?.payload?.finalState?.worldState
             ?? inspection.current.worldState
-            ?? world.initialState();
-        return world.actions(worldManifest(manifest), actionState);
+            ?? await world.initialState();
+        return await world.actions(worldManifest(manifest), actionState);
         })());
   return {
     manifest,

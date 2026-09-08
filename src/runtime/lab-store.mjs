@@ -2310,6 +2310,9 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
   if (value.supportsIdempotentTransitions !== undefined && typeof value.supportsIdempotentTransitions !== 'boolean') {
     fail('Adapter metadata idempotency declaration is invalid.');
   }
+  if (value.transport !== undefined && value.transport !== 'persistent-jsonl') {
+    fail('Adapter metadata transport is invalid.');
+  }
   if (value.supportsReconciliation !== undefined && typeof value.supportsReconciliation !== 'boolean') {
     fail('Adapter metadata reconciliation declaration is invalid.');
   }
@@ -2332,6 +2335,7 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
     evidencePublicKey: value.evidencePublicKey,
     descriptorDigest: value.descriptorDigest,
     launchDigest: value.launchDigest,
+    ...(value.transport === undefined ? {} : { transport: value.transport }),
     ...(value.supportsIdempotentTransitions === undefined
       ? {}
       : { supportsIdempotentTransitions: value.supportsIdempotentTransitions }),

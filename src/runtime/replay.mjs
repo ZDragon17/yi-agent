@@ -718,6 +718,7 @@ function isValidAdapterMetadata(value) {
     isValidEvidencePublicKey(value.evidencePublicKey) &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
     typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
+    (value.transport === undefined || value.transport === 'persistent-jsonl') &&
     (value.executionAuthority === undefined || isValidExecutionAuthorityMetadata(value.executionAuthority)) &&
     (value.executionObserver === undefined || isValidExecutionObserverMetadata(value.executionObserver));
 }

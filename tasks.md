@@ -1160,3 +1160,10 @@
 - 实现：将已验证为 lossless 的 STEP Raw Deflate 压缩级别从 6 调整为 4，在 40 MiB ledger 上限内优先降低长跑 CPU；把 cyclic-collision 实验夹具的单请求预算从 2 秒提高到协议允许的 10 秒，只修正测试负载预算，不改变世界判据、状态转移或证据契约。
 - 验证：NFR `2/2`（10,000 步 53.4 秒且账本边界保持通过）；cyclic-collision 目标驻留 E2E `1/1`（1,200 次外部请求完成并通过）；重复 crash/recover durability `1/1`；EffectBroker、LabStore、Replay 组合回归 `103/103`。级别 1/3 因 ledger 超过 40 MiB 被否决，保留该负结果作为压缩率/CPU 判据。
 - 边界：本节点只收敛了本地账本与测试负载的两个可观测边界；外部 WorldPort 仍是“一次请求启动一个进程”，长序列在 Windows 上达到分钟级，尚未满足通用 CLI 的持续高吞吐要求。下一步应设计可复用、受超时/身份/关闭协议约束的持久 JSONL WorldPort 会话，并验证崩溃恢复和 Replay 不依赖活会话。
+
+## F-148 持久 JSONL WorldPort 会话
+
+- 反证/缺口：F-147 证明一次请求一次进程是长序列的共同性能瓶颈；但把请求简单改成共享进程会引入响应错配、超时后重复副作用、子进程泄漏和 Replay 重新接触实时世界的风险。必须把会话生命周期作为显式 transport 契约，而不是隐式全局连接。
+- 实现：adapter 配置可选 `transport: "persistent-jsonl"`；`hello` 仍用一次性 descriptor probe，运行期请求进入单会话、单飞串行 JSONL client。每个请求独立 timeout、stdout/stderr 受限；响应残帧、错误 envelope、协议污染、写入失败和子进程退出均 fail-closed 并终止当前 session，不自动重放 transition。CLI Run/agent 结束或失败时调用 registry close；下一次请求可建立新 session，恢复语义仍由原有 execution nonce、幂等和 reconciliation 负责。LabStore/Replay 保留 transport 元数据，但 Replay 只运行 `createReplayWorld`，不启动活 adapter。
+- 验证：新增 persistent WorldPort E2E `4/4`：多步请求只复用一个运行期子进程且 Replay 不启动它；子进程响应丢失后重建 session、同 nonce 恢复且效果不重复；单请求超时杀掉 session，后续同 nonce 恢复且效果不重复；同一进程内重建 session 时，旧进程的 close 事件不会误伤新请求。AgentService/Replay/新会话组合回归 `69/69`，现有 CLI/耐久外部回归 `65/65`。
+- 边界：当前 transport 仍是显式 opt-in，旧 adapter 不必改造；hello probe 和运行期 session 分属两个进程，启动成本尚未完全消除。持久 session 与 executionAuthority/observer 的嵌套 transport 尚未统一，跨机器身份、低权限隔离、远程 attestation 和物理效果真实性仍未解决；下一步应在真实长跑 WorldPort 上比较吞吐/恢复窗口，并决定是否推广默认 transport。

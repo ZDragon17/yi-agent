@@ -1,7 +1,6 @@
 import readline from 'node:readline';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { mkdirSync } from 'node:fs';
 import { canonicalDigest } from '../../src/runtime/schema.mjs';
 import { ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
 
@@ -12,6 +11,16 @@ const dropResponseOnce = process.argv.includes('--drop-response-once');
 const stateFileIndex = process.argv.indexOf('--state-file');
 const stateFile = stateFileIndex === -1 ? null : process.argv[stateFileIndex + 1] ?? null;
 if (stateFile === null) throw new Error('--state-file is required');
+const startFileIndex = process.argv.indexOf('--start-file');
+const startFile = startFileIndex === -1 ? null : process.argv[startFileIndex + 1] ?? null;
+if (startFile !== null) {
+  mkdirSync(dirname(startFile), { recursive: true });
+  appendFileSync(startFile, `${process.pid}\n`);
+}
+const delayOnceIndex = process.argv.indexOf('--delay-once-ms');
+const delayOnceMs = delayOnceIndex === -1 ? 0 : Number(process.argv[delayOnceIndex + 1] ?? 0);
+const delayMarkerIndex = process.argv.indexOf('--delay-marker');
+const delayMarker = delayMarkerIndex === -1 ? null : process.argv[delayMarkerIndex + 1] ?? null;
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (line) => {
@@ -25,7 +34,13 @@ rl.on('line', (line) => {
     return respond(request.id, false, 'unsupported protocol');
   }
   try {
-    return respond(request.id, true, dispatch(request.op, request.payload ?? {}));
+    const result = dispatch(request.op, request.payload ?? {});
+    if (request.op === 'transition' && delayOnceMs > 0 && delayMarker !== null && !existsSync(delayMarker)) {
+      mkdirSync(dirname(delayMarker), { recursive: true });
+      writeFileSync(delayMarker, 'delayed');
+      return setTimeout(() => respond(request.id, true, result), delayOnceMs);
+    }
+    return respond(request.id, true, result);
   } catch (error) {
     return respond(request.id, false, error instanceof Error ? error.message : String(error));
   }
