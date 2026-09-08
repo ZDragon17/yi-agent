@@ -328,7 +328,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-147 收敛长跑和外部进程压力边界：STEP 账本使用 Deflate Raw level 4，在不改变解码格式和证据内容的前提下让 10,000 步 checkpoint NFR 回到 60 秒内且保持 40 MiB 上限；cyclic-collision 夹具把单次外部请求预算提高到 10 秒，长窗口 E2E 不再被 Windows 进程启动抖动误杀。负结果也被记录：level 1/3 会突破 ledger 上限，而一次请求一次进程仍使长外部序列达到分钟级；下一步需要持久 JSONL WorldPort 会话。
 - F-148 增加显式 `transport: "persistent-jsonl"` 外部 WorldPort 会话：旧配置继续使用一次请求一进程；持久模式先完成一次 `hello` 探针，再复用一个 JSONL 子进程，按请求串行化并施加 stdout/stderr 上限与单请求超时。超时、协议污染或进程退出会关闭当前会话，不自动重放可能已经产生副作用的请求；后续恢复仍由 execution nonce/idempotency 或 reconciliation 决定。真实 CLI E2E 已验证多步只复用一个运行期会话、会话响应丢失/超时后的同 nonce 恢复不重复效果，Replay 不启动 adapter；现阶段仍不改变默认 transport，也不等于 OS 沙箱或物理事实证明。
 - F-149 把同一持久 transport 扩展到独立 witness、executionAuthority 和 executionObserver；这些角色的 transport、launch digest 和身份元数据一起进入 manifest，继续运行与只读 Replay 会校验一致性。witness 证据链改为显式等待异步请求，避免持久会话把 Promise 当成同步结果；真实 E2E 验证了 6 步延迟反馈中的 witness 只复用一个运行期进程，以及 authority/observer 在同 nonce 重试中各复用一个进程且效果只写一次。Replay 仍不启动任何辅助角色。
-- F-150 用持久 authority 的响应丢失夹具验证了多角色恢复窗口：authority 先把 execution nonce 绑定的效果记录落盘，再故意关闭进程；第一次 Run 停在 `WORLD_ADAPTER_PROTOCOL`，下一次独立 CLI 用同一 nonce 复用主 adapter 的幂等结果、authority 的持久结果和 observer 的新观测，主效果与 authority effect 都只出现一次，Replay 仍为 `CONSISTENT`。这验证的是本机进程崩溃后的协议恢复，不是跨机器身份或可信执行证明。
+- F-150 用 authority 和 observer 的响应丢失夹具验证了多角色恢复窗口：角色先完成各自的 nonce 绑定工作，再故意关闭进程；第一次 Run 停在 `WORLD_ADAPTER_PROTOCOL`，下一次独立 CLI 用同一 nonce 复用主 adapter 的幂等结果、authority 的持久结果和 observer 的新观测，主效果与 authority effect 都只出现一次，Replay 仍为 `CONSISTENT`。这验证的是本机进程崩溃后的协议恢复，不是跨机器身份或可信执行证明。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

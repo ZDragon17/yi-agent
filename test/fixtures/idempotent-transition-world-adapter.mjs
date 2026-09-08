@@ -30,6 +30,8 @@ const startFile = startFileIndex === -1 ? null : process.argv[startFileIndex + 1
 const authorityEffectFileIndex = process.argv.indexOf('--authority-effect-file');
 const authorityEffectFile = authorityEffectFileIndex === -1 ? null : process.argv[authorityEffectFileIndex + 1] ?? null;
 const dropExecutionResponseOnce = process.argv.includes('--drop-execution-response-once');
+const observerDropMarkerIndex = process.argv.indexOf('--observer-drop-marker');
+const observerDropMarker = observerDropMarkerIndex === -1 ? null : process.argv[observerDropMarkerIndex + 1] ?? null;
 
 if (effectFile === null) throw new Error('--effect-file is required');
 if (osEffect && osEffectRoot === null) throw new Error('--os-effect-root is required with --os-effect');
@@ -220,6 +222,10 @@ function observeExecution(payload) {
   const stored = readEffect();
   if (stored === null || stored.result?.receipt?.executionNonce !== payload.executionNonce) {
     throw new Error('execution effect was not observed');
+  }
+  if (observerDropMarker !== null && !existsSync(observerDropMarker)) {
+    writeFileSync(observerDropMarker, 'dropped', 'utf8');
+    process.exit(17);
   }
   return {
     schemaVersion: 1,

@@ -1179,5 +1179,5 @@
 
 - 反证/缺口：F-149 只验证了持久角色在正常请求和同进程幂等重试下复用连接；尚未证明 authority 已产生效果但回执丢失时，下一次独立 CLI 能同时保持主声明、authority effect 和 observer 观测的一致 nonce 边界。
 - 实现：扩展 idempotent-transition 夹具，让 authority 先把 `executionNonce` 和回执结果写入独立记录，再在首次 `executeExecution` 响应前退出；后续同 nonce 直接返回该记录。新增跨 CLI 故障矩阵，主 adapter、authority、observer 均使用 persistent JSONL，首次 Run 失败后下一次 Run 继续，不调用新的 nonce，也不重复效果。
-- 验证：持久 authority response-loss E2E `1/1`；第一次 Run 返回 `WORLD_ADAPTER_PROTOCOL`，主 effect 与 authority effect 各为 1，下一次 Run 完成并 Replay `CONSISTENT`。此前 F-149 的 witness/authority/observer 正常会话 `2/2` 和外部并发回归保持通过。
-- 边界：本节点只证明本机进程退出和响应丢失下的 nonce 幂等恢复；它不证明跨机器身份、低权限隔离、网络重连、authority 诚实或物理效果真实性。下一步应把 observer response-loss、authority/observer 同时退出和真实 EffectBroker authority 的恢复窗口放入同一矩阵。
+- 验证：持久 authority/observer response-loss E2E `2/2`；两条路径第一次 Run 都返回 `WORLD_ADAPTER_PROTOCOL`，主 effect 与 authority effect 各为 1，下一次 Run 完成并 Replay `CONSISTENT`。此前 F-149 的 witness/authority/observer 正常会话 `2/2` 和外部并发回归保持通过。
+- 边界：本节点只证明本机进程退出和响应丢失下的 nonce 幂等恢复；它不证明跨机器身份、低权限隔离、网络重连、authority 诚实或物理效果真实性。下一步应把 authority/observer 同时退出和真实 EffectBroker authority 的恢复窗口放入同一矩阵。
