@@ -16,7 +16,7 @@ test('test gate terminates a hanging node:test child at the configured deadline'
   try {
     await writeFile(
       fixture,
-      "import { test } from 'node:test';\ntest('hangs', async () => { await new Promise(() => {}); });\n",
+      "import { test } from 'node:test';\nsetInterval(() => {}, 1000);\ntest('hangs', async () => { await new Promise(() => {}); });\n",
       'utf8',
     );
 
