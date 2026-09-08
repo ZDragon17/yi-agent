@@ -970,7 +970,9 @@ test('model advisor failure is isolated, falls back to the kernel, and remains r
       runId: 'run-1',
       steps: 3,
       advisor: async () => {
-        throw new Error('provider outage');
+        const failure = new Error('provider outage; Authorization=Bearer secret-value');
+        failure.code = 'ECONNRESET';
+        throw failure;
       },
     });
     assert.equal(result.status, 'COMPLETED');
@@ -980,6 +982,30 @@ test('model advisor failure is isolated, falls back to the kernel, and remains r
     assert.equal(policyEvidence.token, null);
     assert.equal(policyEvidence.applied, false);
     assert.equal(policyEvidence.reason, 'MODEL_UNAVAILABLE');
+    assert.deepEqual(policyEvidence.errorContext, { code: 'ECONNRESET', message: 'Advisor callback failed.' });
+    assert.equal(JSON.stringify(policyEvidence).includes('secret-value'), false);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
+test('model advisor timeout records a timeout error context in policy evidence', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'advisor-timeout-lab', worldId: 'temperature', seed: 'advisor-timeout-seed' });
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 1,
+      modelTimeoutMs: 100,
+      advisor: async () => {
+        return new Promise(() => {});
+      },
+    });
+    assert.equal(result.status, 'COMPLETED');
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const policyEvidence = run.events.find((event) => event.kind === 'STEP').payload.policyEvidence;
+    assert.equal(policyEvidence.reason, 'MODEL_TIMEOUT');
+    assert.equal(policyEvidence.errorContext.code, 'MODEL_CALLBACK_TIMEOUT');
+    assert.equal(policyEvidence.errorContext.message, 'Model callback timed out.');
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
   });
 });

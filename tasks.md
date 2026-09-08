@@ -1251,3 +1251,10 @@
 - 实现：构造 provider `API_ERROR` 时，只对当前配置的 API Key 做有界字符串替换，命中内容改为 `[REDACTED]`；HTTP 状态码、正常 provider 诊断和既有取消/超时分类不变。
 - 验证：新增回显 API Key 的 provider 夹具，断言错误消息只保留 `bad key [REDACTED]`；API、CLI 相关回归 `28/28` 通过，包含响应体取消、HTTP API 和 agent fallback。F-159 后的全量门禁基线为 `515/515`。
 - 边界：这只覆盖 client 已知的当前 API Key 和它生成的错误消息，不覆盖第三方服务、代理、调试器或宿主日志系统自行复制的敏感数据。
+
+## F-161 Advisor 错误证据的安全收敛
+
+- 反证/缺口：F-160 只保护 OpenAI-compatible client 生成的错误消息；Application 若把任意 advisor 异常文本写入账本，外部 adapter、代理或 provider 仍可借异常消息泄露凭据或请求数据。
+- 实现：policy evidence 只保存格式受限的错误码和固定安全摘要；不保存原始 `error.message`、`error.context` 或异常对象。超时保留稳定的 `Model callback timed out.`，其它失败统一为 `Advisor callback failed.`。
+- 验证：advisor 失败/超时与 Replay 的有效、畸形错误上下文回归均通过，并断言带凭据的异常文本不会进入 policy evidence。
+- 边界：错误码仍由外部 adapter 提供，只做格式约束；它用于分类和 Replay 绑定，不证明异常来源真实，也不替代宿主日志系统的脱敏。

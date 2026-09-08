@@ -344,6 +344,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-158 进一步同时更换 mTLS 信任根：第一轮使用 CA-1，第二轮把 signer 服务端证书、authority 客户端证书和 signer 的 client CA 换成 CA-2，authority 的信任文件同时保留两根 CA。未决 execution nonce 在 CA 切换后恢复，EffectBroker 效果仍只执行一次，Replay 为 `CONSISTENT`。这验证的是双向 CA 更换，不是撤销列表、旧证书审计或硬件密钥。
 - F-159 把证书撤销放进恢复窗口：服务端加载 CRL，第一轮拒绝仍由同一 CA 签发但已撤销的 authority 客户端证书；此前已经产生的沙箱效果保持一次。随后只替换同一证书路径下的客户端证书内容，服务重启后用原 execution nonce 恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。真实 signer、authority、CRL 和 EffectBroker CLI 组合回归为 `9/9`。这证明的是 TLS peer 证书撤销与应用恢复可以衔接，不是私钥硬件保护、OS 权限隔离或真实设备回执。
 - F-160 收紧 provider 错误边界：当非 2xx 响应正文回显当前 API Key 时，HTTP client 在构造 `ApiClientError` 前将它替换为 `[REDACTED]`；正常错误状态、HTTP 状态码和取消/超时分类保持不变。API、CLI 相关回归为 `28/28`，上一轮全量门禁为 `515/515`。这只覆盖 client 已知的当前 key，不等于第三方服务、代理或宿主日志系统已经完成全面脱敏。
+- F-161 收紧 advisor 错误证据：policy evidence 只保留格式受限的错误码和固定安全摘要，不把任意 adapter/provider 异常文本、context 或异常对象写入账本；带凭据的异常消息回归确认不会进入 Replay 输入。错误码只用于分类，不证明外部错误来源真实。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

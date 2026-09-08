@@ -1743,6 +1743,7 @@ function validateExternalPolicyEvidence(value, runId) {
     (value.supersedesCandidateDigest !== undefined &&
       (typeof value.supersedesCandidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.supersedesCandidateDigest))) ||
     (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
+    (value.errorContext !== undefined && !isValidErrorContext(value.errorContext)) ||
     typeof value.applied !== 'boolean' ||
     (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))
   ) {
@@ -2198,10 +2199,17 @@ function validatePolicyEvidence(value, field, corruptOnFailure) {
         (typeof value.supersedesCandidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.supersedesCandidateDigest))) ||
       (value.candidateDigest !== undefined && !isValidCandidateDigest(value)) ||
       (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
+      (value.errorContext !== undefined && !isValidErrorContext(value.errorContext)) ||
       typeof value.applied !== 'boolean' ||
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
     fail('STEP model policy evidence is invalid.');
   }
+}
+
+function isValidErrorContext(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    typeof value.code === 'string' && value.code.length > 0 && value.code.length <= 64 &&
+    typeof value.message === 'string' && value.message.length > 0 && value.message.length <= 256;
 }
 
 function isValidModelProposal(value) {
@@ -2942,6 +2950,7 @@ async function atomicWriteJson(root, target, value, beforePublish, exclusive = f
     } else {
       await rename(staging, target);
     }
+    await syncDirectory(path.dirname(target));
   } catch (error) {
     throw error;
   } finally {
@@ -2957,6 +2966,28 @@ async function writeFileFlushed(filePath, content, { exclusive = false } = {}) {
     await handle.sync();
   } finally {
     await handle.close();
+  }
+}
+
+// A rename or hard link publishes a directory entry, not file contents: without
+// syncing the parent directory, a power-loss window can resurrect the previous
+// artifact name after the data itself is already durable. POSIX honors fsync on
+// a directory handle; Windows rejects opening directories, so this is
+// best-effort and never fails a publish that already committed.
+async function syncDirectory(directory) {
+  let handle;
+  try {
+    handle = await open(directory, 'r');
+  } catch {
+    return;
+  }
+  try {
+    await handle.sync();
+  } catch {
+    // Platforms without directory-handle sync land here; the file-level
+    // datasync in writeFileFlushed still bounds the content window.
+  } finally {
+    await handle.close().catch(() => {});
   }
 }
 

@@ -603,10 +603,17 @@ function validatePolicyEvidence(value, sequence) {
         (typeof value.supersedesCandidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.supersedesCandidateDigest))) ||
       (value.candidateDigest !== undefined && !isValidCandidateDigest(value)) ||
       (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
+      (value.errorContext !== undefined && !isValidErrorContext(value.errorContext)) ||
       typeof value.applied !== 'boolean' ||
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
     corrupt('STEP model policy evidence is invalid.', { sequence });
   }
+}
+
+function isValidErrorContext(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    typeof value.code === 'string' && value.code.length > 0 && value.code.length <= 64 &&
+    typeof value.message === 'string' && value.message.length > 0 && value.message.length <= 256;
 }
 
 function isValidModelProposal(value) {

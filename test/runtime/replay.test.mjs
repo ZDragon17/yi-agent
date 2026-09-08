@@ -249,6 +249,74 @@ test('replay rejects a candidate digest that is inconsistent with its policy evi
   }
 });
 
+test('replay rejects policy evidence with a malformed advisor error context', async () => {
+  const fixture = await createRunFixture();
+  try {
+    const events = fixture.events.map((event) => JSON.parse(JSON.stringify(event)));
+    events[1].payload.policyEvidence = {
+      schemaVersion: SCHEMA_VERSION,
+      source: 'model',
+      model: 'error-context-test',
+      token: null,
+      responseDigest: `sha256:${'a'.repeat(64)}`,
+      applied: false,
+      reason: 'MODEL_UNAVAILABLE',
+      errorContext: { code: '', message: 'broken' },
+    };
+    events[1].digest = canonicalDigest(omit(events[1], 'digest'));
+    events[2].prevDigest = events[1].digest;
+    events[2].digest = canonicalDigest(omit(events[2], 'digest'));
+    const end = { ...fixture.end, finalEventDigest: events[2].digest };
+    end.selfDigest = canonicalDigest(omit(end, 'selfDigest'));
+
+    assert.throws(
+      () => replayRun({
+        manifest: fixture.manifest,
+        start: fixture.start,
+        events,
+        end,
+        worldFactories: { temperature: createTemperatureWorld },
+      }),
+      (error) => error instanceof ReplayError && error.code === 'CORRUPT',
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('replay accepts well-formed advisor error context evidence', async () => {
+  const fixture = await createRunFixture();
+  try {
+    const events = fixture.events.map((event) => JSON.parse(JSON.stringify(event)));
+    events[1].payload.policyEvidence = {
+      schemaVersion: SCHEMA_VERSION,
+      source: 'model',
+      model: 'error-context-valid-test',
+      token: null,
+      responseDigest: `sha256:${'a'.repeat(64)}`,
+      applied: false,
+      reason: 'MODEL_UNAVAILABLE',
+      errorContext: { code: 'ECONNRESET', message: 'provider outage' },
+    };
+    events[1].digest = canonicalDigest(omit(events[1], 'digest'));
+    events[2].prevDigest = events[1].digest;
+    events[2].digest = canonicalDigest(omit(events[2], 'digest'));
+    const end = { ...fixture.end, finalEventDigest: events[2].digest };
+    end.selfDigest = canonicalDigest(omit(end, 'selfDigest'));
+
+    const result = replayRun({
+      manifest: fixture.manifest,
+      start: fixture.start,
+      events,
+      end,
+      worldFactories: { temperature: createTemperatureWorld },
+    });
+    assert.equal(result.verdict, 'CONSISTENT');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('replay rejects candidate outcome evidence that disagrees with policy selection', async () => {
   const fixture = await createRunFixture();
   try {

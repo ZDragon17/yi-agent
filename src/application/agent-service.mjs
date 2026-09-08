@@ -243,6 +243,7 @@ export async function runLab(input) {
           schemaVersion: SCHEMA_VERSION,
           actionModels: {},
           relationModels: {},
+          rejectionModels: {},
           pendingCredits: [],
           settledFeedback: [],
           // v28（pendingWindowExtension）起新 Lab 的 pending 观察窗口扩展到 16 步；
@@ -962,9 +963,24 @@ async function requestAdvice({ advisor, timeoutMs, ...input }) {
   } catch (error) {
     return normalizedAdvice(null, error?.code === 'MODEL_CALLBACK_TIMEOUT'
       ? 'MODEL_TIMEOUT'
-      : 'MODEL_UNAVAILABLE');
+      : 'MODEL_UNAVAILABLE', errorContextFrom(error));
   }
   return normalizedAdvice(result, null);
+}
+
+// An advisor failure must stay recoverable, but its cause may not vanish into a
+// generic fallback reason. The ledger keeps a bounded error code for replay and
+// audit; it never persists an adapter/provider message because that text may
+// contain credentials, URLs, prompts, or other sensitive request data.
+function errorContextFrom(error) {
+  if (error === null || error === undefined || typeof error !== 'object') return null;
+  const code = typeof error.code === 'string' && /^[A-Z][A-Z0-9_.-]{0,63}$/u.test(error.code)
+    ? error.code
+    : 'MODEL_ERROR';
+  const message = code === 'MODEL_CALLBACK_TIMEOUT'
+    ? 'Model callback timed out.'
+    : 'Advisor callback failed.';
+  return { code, message };
 }
 
 async function invokeModelCallback(callback, input, timeoutMs) {
@@ -988,9 +1004,9 @@ async function invokeModelCallback(callback, input, timeoutMs) {
   }
 }
 
-function normalizedAdvice(result, fallbackReason) {
+function normalizedAdvice(result, fallbackReason, errorContext = null) {
   if (fallbackReason !== null || result === null || typeof result !== 'object' || Array.isArray(result)) {
-    return fallbackAdvice(fallbackReason ?? 'INVALID_ADVISOR_RESULT');
+    return fallbackAdvice(fallbackReason ?? 'INVALID_ADVISOR_RESULT', errorContext);
   }
   try {
     const model = typeof result.model === 'string' && result.model.length > 0 && result.model.length <= 4096
@@ -1040,7 +1056,7 @@ function normalizeModelProposal(value) {
   }
 }
 
-function fallbackAdvice(reason) {
+function fallbackAdvice(reason, errorContext = null) {
   const model = 'unknown';
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -1049,6 +1065,7 @@ function fallbackAdvice(reason) {
     token: null,
     responseDigest: canonicalDigest({ model, reason }),
     reason,
+    ...(errorContext === null ? {} : { errorContext }),
   };
 }
 
@@ -1233,6 +1250,7 @@ function policyEvidence(modelDecision, intent, capabilities, {
     ...(observationDigest === null ? {} : { observationDigest }),
     ...(modelDecision.proposal === undefined ? {} : { proposal: cloneJson(modelDecision.proposal) }),
     ...(supersedesCandidateDigest === null ? {} : { supersedesCandidateDigest }),
+    ...(modelDecision.errorContext === undefined ? {} : { errorContext: cloneJson(modelDecision.errorContext) }),
     applied,
     reason: applied ? null : (modelDecision.reason ?? (safe ? 'KERNEL_SELECTION_REJECTED' : 'TOKEN_NOT_SAFE')),
   };
