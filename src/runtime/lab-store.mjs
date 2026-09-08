@@ -2124,9 +2124,17 @@ function validateStepPayload(
       !isValidExecutionObservationEvidence(value.boundary.executionObservation)) {
     fail('STEP execution observation evidence is invalid.');
   }
+  if (value.boundary.executionAuthority !== undefined &&
+      !isValidExecutionAuthorityEvidence(value.boundary.executionAuthority)) {
+    fail('STEP execution authority evidence is invalid.');
+  }
   if (manifest?.adapter?.executionObserver !== undefined &&
       !isValidExecutionObservationEvidence(value.boundary.executionObservation)) {
     fail('External observer STEP is missing valid execution observation evidence.');
+  }
+  if (manifest?.adapter?.executionAuthority !== undefined &&
+      !isValidExecutionAuthorityEvidence(value.boundary.executionAuthority)) {
+    fail('External authority STEP is missing valid execution authority evidence.');
   }
   if (typeof value.receipt.executionNonce !== 'string' || value.receipt.executionNonce.length === 0) {
     fail('STEP receipt executionNonce is invalid.');
@@ -2150,6 +2158,16 @@ function validateStepPayload(
 function isValidExecutionObservationEvidence(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value) &&
     value.schemaVersion === SCHEMA_VERSION && value.status === 'OBSERVED' &&
+    typeof value.executionNonce === 'string' && value.executionNonce.length > 0 && value.executionNonce.length <= 4096 &&
+    typeof value.token === 'string' && TOKEN_PATTERN.test(value.token) &&
+    typeof value.basedOnVersion === 'string' && value.basedOnVersion.length > 0 && value.basedOnVersion.length <= 4096 &&
+    typeof value.beforeStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.beforeStateDigest) &&
+    typeof value.afterStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.afterStateDigest);
+}
+
+function isValidExecutionAuthorityEvidence(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    value.schemaVersion === SCHEMA_VERSION && (value.status === 'EXECUTED' || value.status === 'RECONCILED') &&
     typeof value.executionNonce === 'string' && value.executionNonce.length > 0 && value.executionNonce.length <= 4096 &&
     typeof value.token === 'string' && TOKEN_PATTERN.test(value.token) &&
     typeof value.basedOnVersion === 'string' && value.basedOnVersion.length > 0 && value.basedOnVersion.length <= 4096 &&

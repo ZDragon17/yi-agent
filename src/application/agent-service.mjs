@@ -540,6 +540,7 @@ export async function runLab(input) {
       });
     }
     const afterCapabilities = world.actions(actionManifest, transition.nextWorldState);
+    const executionAuthority = transition.executionAuthority ?? null;
     const executionObservation = transition.executionObservation ?? null;
     const receipt = externalInputs.length === 0
       ? transition.receipt
@@ -639,6 +640,7 @@ export async function runLab(input) {
           ...(goalActivation === null ? {} : { goalActivation }),
           ...(goalReplan === null ? {} : { goalReplan }),
           ...(randomization === null ? {} : { randomization }),
+          ...(executionAuthority === null ? {} : { executionAuthority }),
           ...(executionObservation === null ? {} : { executionObservation }),
           externalInputsDigest: canonicalDigest(externalInputs),
         },

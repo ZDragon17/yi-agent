@@ -69,8 +69,9 @@ function dispatch(op, payload) {
   }
   if (op === 'initialState') return { state: state(0) };
   if (executionAuthority) {
-    if (op !== 'executeExecution') throw new Error(`unsupported execution authority operation: ${op}`);
-    return executeExecution(payload);
+    if (op === 'executeExecution') return executeExecution(payload);
+    if (op === 'reconcileExecution') return reconcileExecution(payload);
+    throw new Error(`unsupported execution authority operation: ${op}`);
   }
   if (executionObserver) {
     if (op !== 'observeExecution') throw new Error(`unsupported execution observer operation: ${op}`);
@@ -110,6 +111,21 @@ function executeExecution(payload) {
   return {
     schemaVersion: 1,
     status: 'EXECUTED',
+    executionNonce: payload.executionNonce,
+    token: payload.token,
+    basedOnVersion: payload.basedOnVersion,
+    beforeStateDigest: payload.beforeStateDigest,
+    afterStateDigest: canonicalDigest(state(1, payload.executionNonce)),
+  };
+}
+
+function reconcileExecution(payload) {
+  if (osEffect && readOsMarker(payload.executionNonce) !== payload.executionNonce) {
+    throw new Error('authority effect is not present during reconciliation');
+  }
+  return {
+    schemaVersion: 1,
+    status: 'RECONCILED',
     executionNonce: payload.executionNonce,
     token: payload.token,
     basedOnVersion: payload.basedOnVersion,

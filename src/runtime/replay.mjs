@@ -142,9 +142,17 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
       !isValidExecutionObservationEvidence(payload.boundary.executionObservation)) {
     corrupt('STEP execution observation evidence is invalid.', { sequence: event.sequence });
   }
+  if (payload.boundary.executionAuthority !== undefined &&
+      !isValidExecutionAuthorityEvidence(payload.boundary.executionAuthority)) {
+    corrupt('STEP execution authority evidence is invalid.', { sequence: event.sequence });
+  }
   if (adapter?.executionObserver !== undefined &&
       !isValidExecutionObservationEvidence(payload.boundary.executionObservation)) {
     corrupt('STEP is missing execution observation evidence.', { sequence: event.sequence });
+  }
+  if (adapter?.executionAuthority !== undefined &&
+      !isValidExecutionAuthorityEvidence(payload.boundary.executionAuthority)) {
+    corrupt('STEP is missing execution authority evidence.', { sequence: event.sequence });
   }
   const valueSpec = cloneJson(payload.boundary.valueSpec);
   if (payload.boundary.goalActivation !== undefined) {
@@ -264,6 +272,15 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
        executionObservation.beforeStateDigest !== canonicalDigest(state.worldState) ||
        executionObservation.afterStateDigest !== canonicalDigest(transition.nextWorldState))) {
     corrupt('STEP execution observation does not match the transition boundary.', { sequence: event.sequence });
+  }
+  const executionAuthority = payload.boundary.executionAuthority;
+  if (executionAuthority !== undefined &&
+      (executionAuthority.executionNonce !== payload.receipt.executionNonce ||
+       executionAuthority.token !== payload.receipt.token ||
+       executionAuthority.basedOnVersion !== payload.receipt.basedOnVersion ||
+       executionAuthority.beforeStateDigest !== canonicalDigest(state.worldState) ||
+       executionAuthority.afterStateDigest !== canonicalDigest(transition.nextWorldState))) {
+    corrupt('STEP execution authority does not match the transition boundary.', { sequence: event.sequence });
   }
   const postObservation = mergeObservationFeedback(
     beforeObservation,
@@ -725,6 +742,16 @@ function isValidExecutionObserverMetadata(value) {
 
 function isValidExecutionObservationEvidence(value) {
   return isRecord(value) && value.schemaVersion === SCHEMA_VERSION && value.status === 'OBSERVED' &&
+    typeof value.executionNonce === 'string' && value.executionNonce.length > 0 && value.executionNonce.length <= 4096 &&
+    typeof value.token === 'string' && TOKEN_PATTERN.test(value.token) &&
+    typeof value.basedOnVersion === 'string' && value.basedOnVersion.length > 0 && value.basedOnVersion.length <= 4096 &&
+    typeof value.beforeStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.beforeStateDigest) &&
+    typeof value.afterStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.afterStateDigest);
+}
+
+function isValidExecutionAuthorityEvidence(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    value.schemaVersion === SCHEMA_VERSION && (value.status === 'EXECUTED' || value.status === 'RECONCILED') &&
     typeof value.executionNonce === 'string' && value.executionNonce.length > 0 && value.executionNonce.length <= 4096 &&
     typeof value.token === 'string' && TOKEN_PATTERN.test(value.token) &&
     typeof value.basedOnVersion === 'string' && value.basedOnVersion.length > 0 && value.basedOnVersion.length <= 4096 &&

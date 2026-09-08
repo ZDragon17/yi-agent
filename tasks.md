@@ -1146,3 +1146,10 @@
 - 实现：增加可选 `adapter.executionAuthority` 配置。主 adapter 的 `transition` 只负责声明状态变化；宿主在接受的 transition 返回后，向独立 authority 只发送 world/scenario、execution nonce、token、基准版本和前状态摘要。authority 必须返回绑定相同请求且状态摘要匹配的 `EXECUTED` 回执，之后 observer 才检查 OS effect 并返回 `OBSERVED`；两道边界任一失败均在 STEP 前 `WORLD_ADAPTER_PROTOCOL` fail-closed。authority 的 descriptor、launch digest、manifest 校验、恢复和 Replay 传递保持与 observer 对称，Replay 不启动任何外部进程。
 - 验证：真实 JSONL 夹具中主 adapter 禁止写 marker、authority 写入独立临时目录后完成闭环；authority 返回成功但跳过 marker 时 observer 拒绝且不追加 STEP；主机在 authority/observer 完成后、STEP 前崩溃，恢复仍复用同一 execution nonce、效果计数保持 1，三条 CLI E2E `3/3`；F-143/F-144 观测回归 `3/3`，LabStore/Replay `76/76`，非幂等对账 `7/7`。
 - 边界：authority、observer 和宿主仍运行在同一用户权限与本机 OS 上，authority 自己的 marker 仍可能是伪造的；本节点证明的是“主声明方不再单独拥有测试效果写入权”的进程协议边界，不是低权限隔离、远程 attestation、可信硬件或物理真相。下一步应把 authority 接到已有 `EffectBroker` 的人工确认/沙箱执行器或真实设备驱动，并在不同权限/不同机器上验证不可伪造性。
+
+## F-146 EffectBroker authority 与沙箱执行器接入
+
+- 反证/缺口：F-145 的 authority 只是独立夹具进程；它能产生 OS marker，但没有进入项目已有的 `EffectBroker` 计划、确认、执行、Journal 和恢复契约，因此“执行权独立”还没有与真正副作用安全边界合流。
+- 实现：新增 `createEffectBrokerAuthority`，把外部 execution payload 的 nonce、token、前状态版本和前后摘要绑定为一个固定 `EffectIntent`；authority 先恢复 `EffectJournal`，再调用 `EffectBroker`，由 `SandboxFileExecutor` 执行受标记根目录内的文件移动。`executeExecution` 返回 `EXECUTED`，恢复时使用 `reconcileExecution` 返回 `RECONCILED`，同一 nonce 不重复执行；确认门未满足时 authority 明确拒绝，不自动替人工确认。新增 `bin/yi-agent-effect-authority.mjs` 作为 JSONL authority 进程示例。
+- 验证：EffectBroker authority 单测 2/2；真实 CLI E2E 新增 2/2，验证 authority 产生的 `EXECUTED` 回执落入 STEP、非幂等崩溃后通过 Journal 对账为 `RECONCILED`、效果文件只移动一次、危险计划不会绕过确认；独立沙箱执行器/Journal 回归 25/25，authority/observer 与外部恢复定向回归保持通过，Replay `CONSISTENT`。
+- 边界：沙箱根目录仍是本机同用户权限，`effect-plan` 由配置预绑定且不是通用代码修改器；EffectBroker 证明的是副作用的人工确认、幂等、Journal 和受限路径契约，不证明 authority 真实连接了物理设备或远程系统。下一步应把相同 authority 接到低权限 OS 身份/真实设备驱动，并为跨机器回执引入可验证的身份与传输边界。

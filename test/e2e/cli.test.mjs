@@ -915,6 +915,12 @@ test('CLI separates the external transition declaration from an authority-owned 
     assert.equal(await readFile(osExecutionMarkerPath(osEffectRoot), 'utf8'), 'execution:step:1');
     assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
     assert.equal(await countLedgerSteps(lab, 'run-1'), 1);
+    const events = (await readFile(path.join(lab, 'runs', 'run-1', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map(JSON.parse);
+    const step = decodeStoredEvent(events.find((event) => event.kind === 'STEP'));
+    assert.equal(step.payload.boundary.executionAuthority.status, 'EXECUTED');
+    assert.equal(step.payload.boundary.executionAuthority.executionNonce, step.payload.receipt.executionNonce);
+    assert.equal(step.payload.boundary.executionAuthority.afterStateDigest, canonicalDigest(step.payload.afterState.worldState));
 
     const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
     assert.equal(replay.code, 0, JSON.stringify(replay));
@@ -972,6 +978,124 @@ test('CLI recovers an authority-owned effect after the primary declaration loses
     assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
 
     const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('CLI reconciles an authority-owned effect without executing it again', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'execution-authority-reconcile-lab');
+    const effectFile = path.join(root, 'execution-authority-reconcile-effect.json');
+    const osEffectRoot = path.join(root, 'execution-authority-reconcile-root');
+    const adapter = await writeTransitionAdapterConfig(root, effectFile, ['--non-idempotent', '--reconcilable'], false, {
+      executionObserver: true,
+      executionAuthority: true,
+      osEffectRoot,
+      osEffectOwner: 'authority',
+    });
+    const init = await invoke('init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'execution-authority-reconcile-seed', '--lab-id', 'execution-authority-reconcile-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const crashed = await crashAfterExternalTransitionReturn(lab, adapter);
+    assert.equal(crashed, 17);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    assert.equal(await readFile(osExecutionMarkerPath(osEffectRoot), 'utf8'), 'execution:step:1');
+
+    const recovered = await invoke('recover', '--lab', lab, '--confirm-lock-owner-dead', '--json');
+    assert.equal(recovered.code, 0, JSON.stringify(recovered));
+    const resumed = await invoke('run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    const events = (await readFile(path.join(lab, 'runs', 'run-2', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map(JSON.parse);
+    const step = decodeStoredEvent(events.find((event) => event.kind === 'STEP'));
+    assert.equal(step.payload.boundary.executionAuthority.status, 'RECONCILED');
+    assert.equal(step.payload.boundary.executionObservation.status, 'OBSERVED');
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('CLI routes an authority-owned OS effect through the real EffectBroker sandbox executor', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'effect-broker-authority-lab');
+    const effectFile = path.join(root, 'effect-broker-primary-effect.json');
+    const sandboxRoot = path.join(root, 'effect-broker-sandbox');
+    const journalPath = path.join(sandboxRoot, 'effects.jsonl');
+    const markerName = `${canonicalDigest('execution:step:1').slice('sha256:'.length)}.marker`;
+    await mkdir(path.join(sandboxRoot, 'pending'), { recursive: true });
+    await mkdir(path.join(sandboxRoot, 'applied'), { recursive: true });
+    await writeFile(path.join(sandboxRoot, '.yi-agent-sandbox'), 'yi-agent-sandbox-v1\n', 'utf8');
+    await writeFile(path.join(sandboxRoot, 'pending', markerName), 'execution:step:1', 'utf8');
+    const descriptor = {
+      adapterId: 'effect-broker-authority-v1',
+      worldId: 'idempotent-transition',
+      worldVersion: 'idempotent-transition-1',
+      capabilityIds: ['idempotent-transition.advance'],
+      scenarioIds: ['idempotent', 'alternate'],
+      valueSpec: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [1] },
+      evidencePublicKey: ED25519_PUBLIC_KEY,
+      supportsStateDependentActions: true,
+    };
+    const effectPlan = {
+      effectId: 'effect:os-marker:move',
+      target: { operation: 'move', from: `pending/${markerName}`, to: `applied/${markerName}` },
+      precondition: { sourceExists: true, destinationAbsent: true },
+      risk: 'LOW',
+      requiresConfirmation: false,
+      reversible: true,
+      compensation: { operation: 'move-back', from: `applied/${markerName}`, to: `pending/${markerName}` },
+      afterStateDigest: canonicalDigest({
+        schemaVersion: 1,
+        stateVersion: 'state:idempotent-transition:1',
+        revision: 1,
+        value: 1,
+        usedExecutionNonces: ['execution:step:1'],
+      }),
+    };
+    const authority = path.resolve('bin/yi-agent-effect-authority.mjs');
+    const adapter = path.join(root, 'effect-broker-authority-adapter.json');
+    const authorityArgs = [
+      authority,
+      '--descriptor-json', JSON.stringify(descriptor),
+      '--effect-plan-json', JSON.stringify(effectPlan),
+      '--journal', journalPath,
+      '--sandbox-root', sandboxRoot,
+    ];
+    await writeFile(adapter, JSON.stringify({
+      executable: process.execPath,
+      args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, '--os-effect', '--os-effect-root', sandboxRoot, '--skip-os-effect'],
+      executionAuthority: {
+        executable: process.execPath,
+        args: authorityArgs,
+        adapterId: descriptor.adapterId,
+        worldId: descriptor.worldId,
+        timeoutMs: 5000,
+      },
+      executionObserver: {
+        executable: process.execPath,
+        args: [IDEMPOTENT_ADAPTER_FIXTURE, '--effect-file', effectFile, '--execution-observer', '--os-effect', '--os-effect-root', sandboxRoot],
+        adapterId: 'idempotent-execution-observer-v1',
+        worldId: descriptor.worldId,
+        timeoutMs: 2000,
+      },
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: descriptor.worldId,
+      timeoutMs: 2000,
+    }));
+
+    const init = await invoke('init', '--lab', lab, '--world', descriptor.worldId, '--seed', 'effect-broker-authority-seed', '--lab-id', 'effect-broker-authority-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0, JSON.stringify(run));
+    await assert.rejects(readFile(path.join(sandboxRoot, 'pending', markerName)), (error) => error.code === 'ENOENT');
+    assert.equal(await readFile(path.join(sandboxRoot, 'applied', markerName), 'utf8'), 'execution:step:1');
+    const journal = (await readFile(journalPath, 'utf8')).trim().split(/\r?\n/u).map(JSON.parse);
+    assert.ok(journal.some((event) => event.type === 'EFFECT_APPLIED'));
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
     assert.equal(replay.code, 0, JSON.stringify(replay));
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
   });

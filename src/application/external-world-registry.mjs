@@ -441,15 +441,15 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         descriptor.evidencePublicKey,
         witness?.descriptor.evidencePublicKey,
       );
-      if (transition.receipt.status === 'ACCEPTED' && executionAuthority !== null) {
-        executeExternalExecution(executionAuthority, {
+      const executionAuthorityEvidence = transition.receipt.status === 'ACCEPTED' && executionAuthority !== null
+        ? executeExternalExecution(executionAuthority, {
           worldId: descriptor.worldId,
           scenario,
           state,
           request,
           transition,
-        });
-      }
+        })
+        : null;
       const executionObservation = transition.receipt.status === 'ACCEPTED' && executionObserver !== null
         ? observeExternalExecution(executionObserver, {
             worldId: descriptor.worldId,
@@ -461,6 +461,7 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         : null;
       return {
         ...transition,
+        ...(executionAuthorityEvidence === null ? {} : { executionAuthority: executionAuthorityEvidence }),
         ...(executionObservation === null ? {} : { executionObservation }),
         postObservation: corroborateIndependentEvidence(transition.postObservation, {
           state,
@@ -491,6 +492,15 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         witness?.descriptor.evidencePublicKey,
       );
       if (transition.status !== 'APPLIED') return transition;
+      const executionAuthorityEvidence = executionAuthority === null
+        ? null
+        : reconcileExternalExecution(executionAuthority, {
+            worldId: descriptor.worldId,
+            scenario,
+            state,
+            request,
+            transition: transition.transition,
+          });
       const executionObservation = executionObserver === null
         ? null
         : observeExternalExecution(executionObserver, {
@@ -504,6 +514,7 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         ...transition,
         transition: {
           ...transition.transition,
+          ...(executionAuthorityEvidence === null ? {} : { executionAuthority: executionAuthorityEvidence }),
           ...(executionObservation === null ? {} : { executionObservation }),
           postObservation: corroborateIndependentEvidence(transition.transition.postObservation, {
             state,
@@ -886,6 +897,41 @@ function executeExternalExecution(authority, { worldId, scenario, state, request
     basedOnVersion: request.basedOnVersion,
     beforeStateDigest,
   });
+  return normalizeExecutionAuthorityResult(result, {
+    worldId,
+    scenario,
+    state,
+    request,
+    transition,
+    operation: 'executeExecution',
+    expectedStatus: 'EXECUTED',
+  });
+}
+
+function reconcileExternalExecution(authority, { worldId, scenario, state, request, transition }) {
+  const beforeStateDigest = canonicalDigest(state);
+  const result = authority.client.request('reconcileExecution', {
+    schemaVersion: SCHEMA_VERSION,
+    worldId,
+    scenario,
+    executionNonce: request.executionNonce,
+    token: request.token,
+    basedOnVersion: request.basedOnVersion,
+    beforeStateDigest,
+  });
+  return normalizeExecutionAuthorityResult(result, {
+    worldId,
+    scenario,
+    state,
+    request,
+    transition,
+    operation: 'reconcileExecution',
+    expectedStatus: 'RECONCILED',
+  });
+}
+
+function normalizeExecutionAuthorityResult(result, { state, request, transition, operation, expectedStatus }) {
+  const beforeStateDigest = canonicalDigest(state);
   const source = assertExactKeys(result, [
     'schemaVersion', 'status', 'executionNonce', 'token', 'basedOnVersion',
     'beforeStateDigest', 'afterStateDigest',
@@ -893,7 +939,7 @@ function executeExternalExecution(authority, { worldId, scenario, state, request
   const afterStateDigest = canonicalDigest(transition.nextWorldState);
   if (
     source.schemaVersion !== SCHEMA_VERSION ||
-    source.status !== 'EXECUTED' ||
+    source.status !== expectedStatus ||
     source.executionNonce !== request.executionNonce ||
     source.token !== request.token ||
     source.basedOnVersion !== request.basedOnVersion ||
@@ -901,7 +947,7 @@ function executeExternalExecution(authority, { worldId, scenario, state, request
     source.afterStateDigest !== afterStateDigest
   ) {
     throw new ExternalWorldProtocolError('Execution authority does not match the transition.', {
-      op: 'executeExecution',
+      op: operation,
       executionNonce: request.executionNonce,
     });
   }
