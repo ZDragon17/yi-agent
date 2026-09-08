@@ -1343,3 +1343,10 @@
 - 实现：在安装章节增加 `npm install --global https://github.com/ZDragon17/yi-agent.git#main`，明确当前没有发布到 npm registry。
 - 验证：从公开 `main` 安装到 Windows 临时 npm 前缀，安装过程成功，生成的 `yi-agent.cmd --help` 退出成功并输出 CLI 帮助；临时安装目录随后由环境清理策略处理。
 - 边界：Git 安装验证了公开仓库到 CLI 入口的链路，不等于 npm registry 发布、自动更新、签名分发或 API 供应商连通性。
+
+## F-174 文档提交不触发长时门禁
+
+- 反证/缺口：F-173 的文档-only 提交仍启动 Windows 全量和 Ubuntu 兼容门禁；其中一次 Windows runner 长时间失联，随后整条文档 run 也在三个测试步骤无输出后被取消。文档变化没有运行时影响，却消耗了与源码提交相同的长时 runner。
+- 实现：为 push/PR 增加相同的路径过滤，只包含 workflow、`.npmignore`、包元数据、`bin/`、`src/`、`examples/`、`scripts/` 和 `test/`；手动 `workflow_dispatch` 不受过滤。
+- 验证：workflow YAML 差异检查通过；后续文档-only 提交应不创建测试 run，源码或测试路径变化仍会触发三套门禁。当前提交本身修改了 workflow，仍需单独取得一轮新的 workflow 终态。
+- 边界：路径过滤只节省不相关的 CI 资源，不修复 GitHub runner 失联，也不降低源码变更的测试范围。

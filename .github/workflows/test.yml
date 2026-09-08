@@ -3,7 +3,27 @@ name: test
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/test.yml'
+      - '.npmignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'bin/**'
+      - 'src/**'
+      - 'examples/**'
+      - 'scripts/**'
+      - 'test/**'
   pull_request:
+    paths:
+      - '.github/workflows/test.yml'
+      - '.npmignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'bin/**'
+      - 'src/**'
+      - 'examples/**'
+      - 'scripts/**'
+      - 'test/**'
   workflow_dispatch:
 
 permissions:
