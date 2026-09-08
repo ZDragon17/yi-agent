@@ -1350,3 +1350,10 @@
 - 实现：为 push/PR 增加相同的路径过滤，只包含 workflow、`.npmignore`、包元数据、`bin/`、`src/`、`examples/`、`scripts/` 和 `test/`；手动 `workflow_dispatch` 不受过滤。
 - 验证：workflow YAML 差异检查通过；后续文档-only 提交应不创建测试 run，源码或测试路径变化仍会触发三套门禁。当前提交本身修改了 workflow，仍需单独取得一轮新的 workflow 终态。
 - 边界：路径过滤只节省不相关的 CI 资源，不修复 GitHub runner 失联，也不降低源码变更的测试范围。
+
+## F-175 packaged CLI 全量 challenge 验收
+
+- 反证/缺口：F-121 已在本地 CLI 记录过 10 个 challenge 全量通过，但 packaged CLI 回归只验证运行、外部恢复和 Replay，没有把公开安装入口的挑战判据纳入持续回归。
+- 实现：`test/e2e/packaged-cli.test.mjs` 在安装包初始化后执行 `challenge --lab ... --json`，要求返回 10 个 case、总 verdict 为 `PASS` 且每个 case 均为 `PASS`。
+- 验证：本机 Windows packaged CLI 回归 `1/1`，耗时约 12 秒；同一轮直接 CLI 命令返回 exit `0`、10/10 `PASS`，覆盖 unknown action、regime shift、执行拒绝、混杂反馈、全不安全、快照恢复、Replay 篡改、只读 inspect、WorldPort 多样性和配对候选。
+- 边界：挑战套件仍是有限演示判据，只能说明这些输入没有证伪当前实现；它不证明长期自主性、真实因果或任意外部世界安全。

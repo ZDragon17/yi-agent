@@ -38,6 +38,12 @@ test('installed package preserves the PowerShell CLI closed loop and replay', as
     assert.equal(init.code, 0, init.stderr);
     assert.equal(init.json.ok, true);
 
+    const challenge = await runCli(cli, ['challenge', '--lab', lab, '--json']);
+    assert.equal(challenge.code, 0, challenge.stderr);
+    assert.equal(challenge.json.data.verdict, 'PASS');
+    assert.equal(challenge.json.data.cases.length, 10);
+    assert.ok(challenge.json.data.cases.every((item) => item.verdict === 'PASS'));
+
     const loop = await runCli(cli, ['agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '2', '--kernel-only', '--json']);
     assert.equal(loop.code, 0, loop.stderr);
     assert.equal(loop.json.data.status, 'COMPLETED');
