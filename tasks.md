@@ -1279,3 +1279,10 @@
 - 实现：新增 `.npmignore`，保留 `bin/`、`src/`、`examples/`、README 和许可证，排除 `.github/`、测试、研究文档、原型和本地记录。
 - 验证：`npm pack --dry-run` 的包从 175 个文件、约 2.6MB 缩为 63 个文件、约 1.1MB；入口 `bin/yi-agent.mjs`、`src/cli.mjs` 和 `examples/counter-world/adapter.mjs` 仍在，`vision.md` 与 `test/` 不在。
 - 边界：这只是发布内容边界，不是 npm 发布授权、代码签名、依赖供应链证明或运行时权限隔离；`private` 状态保持不变。
+
+## F-165 CI 并发与 action 运行时
+
+- 反证/缺口：F-162/F-163 期间连续提交会同时保留旧 run；workflow 仍使用带 Node 20 弃用提示的 checkout/setup-node action，旧验证链不应继续占用 runner。
+- 实现：按 workflow 与 Git ref 建立 GitHub Actions concurrency group，新提交自动取消同分支旧 run；checkout/setup-node 更新到当前官方主版本，测试命令、权限和 watchdog 配置保持不变。
+- 验证：workflow YAML 解析与 diff 检查通过；新提交的远端 run 需要重新取得 Ubuntu 兼容和 Windows 全量结论，并确认弃用提示消失。
+- 边界：并发取消只管理 CI 任务，不取消本地 CLI、WorldPort 或真实副作用；action 主版本更新也不等于供应商、低权限身份、设备回执或人工确认已验证。
