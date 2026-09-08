@@ -358,6 +358,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-172 修正本机缓存进入安装包的问题：`.npmignore` 现在显式排除 `.yi-agent/`，`npm pack --dry-run` 的 63 个文件中不再出现 CI/cache 路径；packaged CLI 回归继续覆盖安装、连续运行、外部效果恢复和 Replay。这个节点只收紧包内容，不改变运行时权限或发布到 npm 的状态。
 - F-174 收紧 CI 触发范围：只有运行时代码、测试、示例、脚本、包元数据、`.npmignore` 或 workflow 变化时才触发推送/PR 门禁；README、tasks 等文档-only 提交不会再占用长时间 runner。`workflow_dispatch` 仍可手动运行完整门禁。
 - F-175 将内置 challenge suite 接入 packaged CLI 回归：公开安装后的 `yi-agent challenge --lab ... --json` 现在必须返回 10 个 case 全部 `PASS`；本机真实命令和安装包回归均通过。挑战只证明当前演示判据未被这些输入证伪，不等于通用智能或现实因果证明。
+- F-176 为 `test-gate` 增加有界 liveness 心跳：长测试期间每 60 秒输出一次 `node:test still running`，CI 可区分正常长跑、测试超时和 runner 失联；`YI_AGENT_TEST_GATE_HEARTBEAT_MS` 允许在 1～300000ms 内显式调整。心跳只改善运行证据，不改变测试结果或终止语义。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

@@ -8,6 +8,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.(?:mjs|cjs|js)$/i;
 const TEST_GATE_TIMEOUT_ENV = 'YI_AGENT_TEST_GATE_TIMEOUT_MS';
+const TEST_GATE_HEARTBEAT_ENV = 'YI_AGENT_TEST_GATE_HEARTBEAT_MS';
+const DEFAULT_TEST_GATE_HEARTBEAT_MS = 60_000;
+const MAX_TEST_GATE_HEARTBEAT_MS = 300_000;
 const PROCESS_TREE_TERMINATION_TIMEOUT_MS = 5_000;
 
 if (isMainModule()) {
@@ -69,11 +72,12 @@ async function main() {
   }
 
   const timeoutMs = configuredTimeoutMs();
+  const heartbeatMs = configuredHeartbeatMs();
   const tempDirectory = await mkdtemp(path.join(tmpdir(), 'yi-agent-test-gate-'));
   const summaryPath = path.join(tempDirectory, 'actual-cases.jsonl');
 
   try {
-    const result = await runNodeTest(testFiles, summaryPath, timeoutMs);
+    const result = await runNodeTest(testFiles, summaryPath, timeoutMs, heartbeatMs);
     const summary = await readActualCaseSummary(summaryPath);
 
     if (result.timedOut) {
@@ -203,13 +207,15 @@ function compareText(left, right) {
   return 0;
 }
 
-function runNodeTest(files, summaryPath, timeoutMs) {
+function runNodeTest(files, summaryPath, timeoutMs, heartbeatMs) {
   const reporterUrl = pathToFileURL(fileURLToPath(import.meta.url)).href;
 
   return new Promise((resolve, reject) => {
     let settled = false;
     let timedOut = false;
     let timer;
+    let heartbeatTimer;
+    const startedAt = Date.now();
     const child = spawn(
       process.execPath,
       [
@@ -231,6 +237,7 @@ function runNodeTest(files, summaryPath, timeoutMs) {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
+      if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer);
       resolve(result);
     };
 
@@ -270,6 +277,13 @@ function runNodeTest(files, summaryPath, timeoutMs) {
         });
       }, timeoutMs);
     }
+
+    heartbeatTimer = setInterval(() => {
+      if (settled) return;
+      console.error(
+        `[test-gate] heartbeat: node:test still running (${Date.now() - startedAt}ms elapsed).`,
+      );
+    }, heartbeatMs);
   });
 }
 
@@ -282,6 +296,20 @@ function configuredTimeoutMs() {
 
   if (!Number.isSafeInteger(value) || value <= 0) {
     fail(`${TEST_GATE_TIMEOUT_ENV} must be a positive integer in milliseconds.`);
+  }
+
+  return value;
+}
+
+function configuredHeartbeatMs() {
+  const raw = process.env[TEST_GATE_HEARTBEAT_ENV];
+
+  if (raw === undefined || raw.trim() === '') return DEFAULT_TEST_GATE_HEARTBEAT_MS;
+
+  const value = Number(raw);
+
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TEST_GATE_HEARTBEAT_MS) {
+    fail(`${TEST_GATE_HEARTBEAT_ENV} must be a positive integer no greater than ${MAX_TEST_GATE_HEARTBEAT_MS} milliseconds.`);
   }
 
   return value;

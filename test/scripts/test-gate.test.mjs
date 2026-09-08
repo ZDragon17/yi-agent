@@ -31,6 +31,29 @@ test('test gate terminates a hanging node:test child at the configured deadline'
   }
 });
 
+test('test gate emits a liveness heartbeat while node:test is still running', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'yi-agent-test-gate-heartbeat-'));
+  const fixture = path.join(directory, 'slow.test.mjs');
+
+  try {
+    await writeFile(
+      fixture,
+      "import { test } from 'node:test';\ntest('waits', async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });\n",
+      'utf8',
+    );
+
+    const result = await invoke([SCRIPT, fixture], {
+      YI_AGENT_TEST_GATE_TIMEOUT_MS: '1000',
+      YI_AGENT_TEST_GATE_HEARTBEAT_MS: '25',
+    });
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stderr, /test-gate.*heartbeat/i);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function invoke(args, extraEnvironment) {
   return new Promise((resolve, reject) => {
     const { NODE_TEST_CONTEXT: _nodeTestContext, ...baseEnvironment } = process.env;

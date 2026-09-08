@@ -1357,3 +1357,10 @@
 - 实现：`test/e2e/packaged-cli.test.mjs` 在安装包初始化后执行 `challenge --lab ... --json`，要求返回 10 个 case、总 verdict 为 `PASS` 且每个 case 均为 `PASS`。
 - 验证：本机 Windows packaged CLI 回归 `1/1`，耗时约 12 秒；同一轮直接 CLI 命令返回 exit `0`、10/10 `PASS`，覆盖 unknown action、regime shift、执行拒绝、混杂反馈、全不安全、快照恢复、Replay 篡改、只读 inspect、WorldPort 多样性和配对候选。
 - 边界：挑战套件仍是有限演示判据，只能说明这些输入没有证伪当前实现；它不证明长期自主性、真实因果或任意外部世界安全。
+
+## F-176 test-gate 长测试 liveness 心跳
+
+- 反证/缺口：`test-gate` 之前只转发 `node:test` 已完成用例的 TAP 输出；长用例执行期间没有宿主心跳，GitHub job 长时间无日志时无法区分测试仍在运行、测试进程卡死和 runner 失联。
+- 实现：增加默认 60 秒的 stderr 心跳，支持 `YI_AGENT_TEST_GATE_HEARTBEAT_MS` 在 1～300000ms 内显式配置；测试完成、超时或进程信号结束时清理心跳计时器。Windows/Ubuntu workflow 均显式配置 60000ms。
+- 验证：先加入心跳断言并得到预期失败；实现后 `node --test test/scripts/test-gate.test.mjs` 为 `2/2`，既有 watchdog 超时断言保持通过。组合 challenge/packaged CLI 回归继续单独验证业务闭环。
+- 边界：心跳只证明 test-gate 父进程仍能调度并观察子进程，不能证明子进程内部进度、测试正确性或 GitHub runner/网络持续可用。
