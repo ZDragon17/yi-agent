@@ -27,6 +27,9 @@ const osEffectRootIndex = process.argv.indexOf('--os-effect-root');
 const osEffectRoot = osEffectRootIndex === -1 ? null : process.argv[osEffectRootIndex + 1] ?? null;
 const startFileIndex = process.argv.indexOf('--start-file');
 const startFile = startFileIndex === -1 ? null : process.argv[startFileIndex + 1] ?? null;
+const authorityEffectFileIndex = process.argv.indexOf('--authority-effect-file');
+const authorityEffectFile = authorityEffectFileIndex === -1 ? null : process.argv[authorityEffectFileIndex + 1] ?? null;
+const dropExecutionResponseOnce = process.argv.includes('--drop-execution-response-once');
 
 if (effectFile === null) throw new Error('--effect-file is required');
 if (osEffect && osEffectRoot === null) throw new Error('--os-effect-root is required with --os-effect');
@@ -110,6 +113,29 @@ function dispatch(op, payload) {
 }
 
 function executeExecution(payload) {
+  if (authorityEffectFile !== null) {
+    const stored = readAuthorityEffect();
+    if (stored !== null) {
+      if (stored.executionNonce !== payload.executionNonce) throw new Error('a different execution nonce cannot reuse the authority effect');
+      return stored.result;
+    }
+    const result = {
+      schemaVersion: 1,
+      status: 'EXECUTED',
+      executionNonce: payload.executionNonce,
+      token: payload.token,
+      basedOnVersion: payload.basedOnVersion,
+      beforeStateDigest: payload.beforeStateDigest,
+      afterStateDigest: canonicalDigest(state(1, payload.executionNonce)),
+    };
+    writeFileSync(authorityEffectFile, JSON.stringify({
+      executionNonce: payload.executionNonce,
+      effectCount: 1,
+      result,
+    }));
+    if (dropExecutionResponseOnce) process.exit(17);
+    return result;
+  }
   if (osEffect && !skipOsEffect) writeOsMarker(payload.executionNonce);
   return {
     schemaVersion: 1,
@@ -120,6 +146,11 @@ function executeExecution(payload) {
     beforeStateDigest: payload.beforeStateDigest,
     afterStateDigest: canonicalDigest(state(1, payload.executionNonce)),
   };
+}
+
+function readAuthorityEffect() {
+  if (!existsSync(authorityEffectFile)) return null;
+  return JSON.parse(readFileSync(authorityEffectFile, 'utf8'));
 }
 
 function reconcileExecution(payload) {
