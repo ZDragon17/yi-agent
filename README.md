@@ -209,7 +209,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 默认 adapter 配置仍是一次请求一进程；需要长序列复用进程时，在配置顶层增加 `"transport": "persistent-jsonl"`，并让 adapter 保持 stdin/stdout 打开的 JSONL 会话。`hello` 仍由一次性探针完成，后续请求才进入持久会话；每个请求仍有独立超时，adapter 必须逐行返回与请求 `id` 匹配的 envelope。该选项只解决进程启动成本，不替代幂等 nonce、对账、EffectBroker 或人工确认。
 
-若 `executionAuthority` 的 descriptor 发布了 `executionPublicKey`，配置中的 `executionAuthority.executionPublicKey` 必须与之相同；`bin/yi-agent-effect-authority.mjs` 可用 `--private-key-der` 指向 PKCS#8 DER 私钥文件。authority 只接受绝对路径、普通文件、64 KiB 以内的私钥文件，私钥不应提交到仓库或写入共享配置。公钥 pin 解决的是回执身份错配，不是私钥托管或 authority 诚实问题。
+若 `executionAuthority` 的 descriptor 发布了 `executionPublicKey`，配置中的 `executionAuthority.executionPublicKey` 必须与之相同；`bin/yi-agent-effect-authority.mjs` 可用 `--private-key-der` 指向 PKCS#8 DER 私钥文件，也可以不让 authority 进程接触私钥，改用 `--signer-executable` 与 `--signer-args-json` 调用 `bin/yi-agent-execution-signer.mjs`。两种方式都只接受绝对路径、普通文件、64 KiB 以内的私钥文件，私钥不应提交到仓库或写入共享配置。独立 signer 只把持钥代码移到另一个进程；同一用户仍可能读取私钥，因此它不是低权限隔离、远程密钥托管或可信硬件。公钥 pin 解决的是回执身份错配，不是私钥托管或 authority 诚实问题。
 
 在 Windows PowerShell 中运行：
 
@@ -333,6 +333,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-150 用 authority 和 observer 的响应丢失夹具验证了多角色恢复窗口：角色先完成各自的 nonce 绑定工作，再故意关闭进程；第一次 Run 停在 `WORLD_ADAPTER_PROTOCOL`，下一次独立 CLI 用同一 nonce 复用主 adapter 的幂等结果、authority 的持久结果和 observer 的新观测，主效果与 authority effect 都只出现一次，Replay 仍为 `CONSISTENT`。这验证的是本机进程崩溃后的协议恢复，不是跨机器身份或可信执行证明。
 - F-151 把恢复窗口扩展为连续故障：authority 回执丢失后，下一次 Run 让 observer 再丢失回执，第三次才完成；3/3 E2E 验证三类角色仍绑定同一 nonce，主效果和 authority effect 都保持一次。另用真实 `EffectBroker`、`EffectJournal` 和 `SandboxFileExecutor` 验证 authority 已移动文件但回执丢失时，重启后的 Broker 只复用 `EFFECT_APPLIED` 记录，不再次移动文件，Replay 为 `CONSISTENT`。测试仍运行在本机同用户权限下，不等于跨机器身份或真实设备证明。
 - F-152 为 execution authority 增加可选 Ed25519 回执签名：authority descriptor 发布 `executionPublicKey`，配置显式 pin 同一公钥；带公钥的 authority 必须为 `EXECUTED/RECONCILED` 回执附上绑定完整回执内容的 `executionAttestation`，宿主、LabStore 和 Replay 都验签。真实 EffectBroker 沙箱 CLI 签名闭环 `1/1`，签名篡改单测 `1/1`；没有公钥的旧 authority 仍保持兼容。签名只证明持钥进程签出了这条内容，不证明持钥进程诚实、私钥未被同用户进程读取，也不证明物理设备已执行。
+- F-153 把签名私钥从 EffectBroker authority 进程移到独立的 signer 子进程。authority 通过受限的单请求 JSONL 协议发送待签回执，只接受与 descriptor 公钥匹配的 attestation；超时、协议污染、进程失败和无效签名都会 fail-closed。真实 CLI E2E 已验证 authority 不携带 `--private-key-der` 仍能执行 EffectBroker、恢复并 Replay 为 `CONSISTENT`。这只证明了代码路径和进程持钥角色的分离；两个进程仍在同一用户权限和本机 OS 下，不能当作权限隔离、跨机器身份或物理执行证明。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

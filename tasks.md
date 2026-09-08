@@ -1195,3 +1195,10 @@
 - 实现：新增 `execution-authority-attestation`，对完整 `EXECUTED/RECONCILED` 回执生成 Ed25519 `executionAttestation`。authority descriptor 增加可选 `executionPublicKey`，配置用同名字段显式 pin；宿主、LabStore、Replay 在公钥存在时都要求验签，旧无公钥 descriptor 继续兼容。示例 authority 读取私钥时只接受绝对路径、非符号链接普通文件和 64 KiB 以内的 PKCS#8 DER，私钥内容不进入 descriptor、manifest 或日志。
 - 验证：签名/篡改单测 `1/1`；真实 EffectBroker 沙箱 authority 的签名 CLI 闭环 `1/1`，包含 STEP 持久化和 Replay；F-151 多角色恢复回归 `3/3`。
 - 边界：签名只证明持钥进程产生了这条内容，私钥仍可能被同用户权限读取，authority 仍可对真实世界撒谎；未覆盖低权限 OS 身份、远程密钥托管、跨机器传输、可信硬件或物理设备回执。下一步应把 key ownership 与 authority 执行权限拆开，再测跨机器回执。
+
+## F-153 authority 与 signer 的进程级持钥拆分
+
+- 反证/缺口：F-152 的签名身份虽然能发现回执篡改和错配，但示例 authority 自己同时持有 EffectBroker 执行权和 Ed25519 私钥；同一进程失陷时，执行与签名不能相互约束。
+- 实现：增加独立 `yi-execution-signer` JSONL 子进程协议和 `bin/yi-agent-execution-signer.mjs`。EffectBroker authority 可通过 `--signer-executable`、`--signer-args-json` 调用 signer，不再读取 `--private-key-der`；返回的 attestation 必须由 authority 按 descriptor 的 `executionPublicKey` 再验签。signer 请求使用固定可执行文件、非 shell、单请求、超时及 stdout/stderr 限额；私钥加载逻辑共享绝对路径、非符号链接、普通文件和 64 KiB 上限检查。
+- 验证：signer 真实子进程签名 `1/1`；EffectBroker authority 外部 signer 验签 `1/1`；真实 CLI 的独立 signer 执行闭环、原有 direct signer 闭环和 persistent authority response-loss 恢复 `3/3`，文件只移动一次，Replay 为 `CONSISTENT`。
+- 边界：本节点只证明持钥代码与 authority 代码路径在本机不同进程中运行，不证明低权限隔离、跨机器身份、网络重连、远程密钥托管、可信硬件或物理设备执行。相同用户权限仍可读取私钥或控制两个进程；下一步应在不同 OS 身份或远程 signer 上验证实际访问边界，再评估密钥轮换与 signer 会话复用。

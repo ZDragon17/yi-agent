@@ -2,6 +2,7 @@ import { SCHEMA_VERSION, canonicalDigest, cloneJson } from '../runtime/schema.mj
 import {
   publicKeyForPrivateKey,
   signExecutionAuthorityReceipt,
+  verifyExecutionAuthorityReceipt,
 } from '../runtime/execution-authority-attestation.mjs';
 
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -16,17 +17,24 @@ export class EffectBrokerAuthorityError extends Error {
   }
 }
 
-export function createEffectBrokerAuthority({ broker, effectPlan, descriptor = null, signingKey = null }) {
+export function createEffectBrokerAuthority({ broker, effectPlan, descriptor = null, signingKey = null, signer = null }) {
   if (!broker || typeof broker.plan !== 'function' || typeof broker.get !== 'function' ||
       typeof broker.execute !== 'function' || typeof broker.reconcile !== 'function') {
     throw new EffectBrokerAuthorityError('INVALID_INPUT', 'EffectBroker authority requires a complete EffectBroker.');
   }
   const plan = normalizeEffectPlan(effectPlan);
   const publishedDescriptor = descriptor === null ? null : cloneJson(descriptor);
+  if (signingKey !== null && signer !== null) {
+    throw new EffectBrokerAuthorityError('INVALID_INPUT', 'EffectBroker authority cannot use an in-process signing key and an external signer together.');
+  }
   if (signingKey !== null) {
     if (publishedDescriptor?.executionPublicKey === undefined ||
         publicKeyForPrivateKey(signingKey) !== publishedDescriptor.executionPublicKey) {
       throw new EffectBrokerAuthorityError('INVALID_INPUT', 'EffectBroker authority signing key does not match its published descriptor.');
+    }
+  } else if (signer !== null) {
+    if (publishedDescriptor?.executionPublicKey === undefined || typeof signer.sign !== 'function') {
+      throw new EffectBrokerAuthorityError('INVALID_INPUT', 'EffectBroker authority external signer requires a published execution key.');
     }
   } else if (publishedDescriptor?.executionPublicKey !== undefined) {
     throw new EffectBrokerAuthorityError('INVALID_INPUT', 'EffectBroker authority descriptor publishes a key without a signing key.');
@@ -53,7 +61,7 @@ export function createEffectBrokerAuthority({ broker, effectPlan, descriptor = n
           phase: result.phase,
         });
       }
-      return authorityReceipt('EXECUTED', payload, plan, signingKey);
+      return authorityReceipt('EXECUTED', payload, plan, { signingKey, signer, executionPublicKey: publishedDescriptor?.executionPublicKey });
     },
 
     async reconcileExecution(payload) {
@@ -69,7 +77,7 @@ export function createEffectBrokerAuthority({ broker, effectPlan, descriptor = n
           phase: result.phase,
         });
       }
-      return authorityReceipt('RECONCILED', payload, plan, signingKey);
+      return authorityReceipt('RECONCILED', payload, plan, { signingKey, signer, executionPublicKey: publishedDescriptor?.executionPublicKey });
     },
   });
 }
@@ -125,7 +133,7 @@ function intentFor(payload, plan) {
   return { ...unsigned, planDigest: canonicalDigest(unsigned) };
 }
 
-function authorityReceipt(status, payload, plan, signingKey) {
+async function authorityReceipt(status, payload, plan, { signingKey, signer, executionPublicKey }) {
   if (!DIGEST_PATTERN.test(plan.afterStateDigest ?? '')) {
     throw new EffectBrokerAuthorityError('INVALID_INPUT', 'EffectBroker authority plan has no bound after-state digest.');
   }
@@ -138,7 +146,21 @@ function authorityReceipt(status, payload, plan, signingKey) {
     beforeStateDigest: payload.beforeStateDigest,
     afterStateDigest: plan.afterStateDigest,
   };
-  return signingKey === null ? receipt : signExecutionAuthorityReceipt(receipt, signingKey);
+  if (signingKey !== null) return signExecutionAuthorityReceipt(receipt, signingKey);
+  if (signer === null) return receipt;
+  let executionAttestation;
+  try {
+    executionAttestation = await signer.sign(receipt);
+  } catch (error) {
+    throw new EffectBrokerAuthorityError('SIGNER_FAILED', 'EffectBroker authority external signer failed.', {
+      cause: error instanceof Error ? error.code ?? error.name : 'NonErrorThrow',
+    });
+  }
+  const signed = { ...receipt, executionAttestation };
+  if (!verifyExecutionAuthorityReceipt(signed, executionPublicKey)) {
+    throw new EffectBrokerAuthorityError('INVALID_ATTESTATION', 'EffectBroker authority external signer returned invalid evidence.');
+  }
+  return signed;
 }
 
 function isData(value) {
