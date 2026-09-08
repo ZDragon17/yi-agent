@@ -351,7 +351,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-165 收敛 CI 并发与 action 运行时：workflow 按分支设置 concurrency，新提交会取消同一分支过时的 run；checkout/setup-node 更新到当前 Node 24 runner 兼容的官方 action 主版本。它只减少重复 runner 和弃用警告，不改变测试范围或运行时语义。
 - F-166 收紧持久 JSONL 会话的关闭边界：宿主调用 `registry.close()` 后，已经进入串行队列但尚未出队的请求会被拒绝，不会再启动运行期 adapter 子进程或产生外部请求；新增真实 persistent WorldPort E2E，并保持既有 nonce 恢复、辅助角色和 Replay 语义不变。这只证明本地会话生命周期收敛，不等于跨机器权限隔离或物理效果可信。
 - F-167 修复 CI 临时目录污染 repo WorldPort 的边界：GitHub Actions 的 `TEMP/TMP/TMPDIR` 改用 runner 专用临时区，不再把前序测试生成的文件放入被扫描 checkout。首次 Windows 全量 run 的 513/517 结果已定位为该环境耦合；本地 repo WorldPort 与 watchdog 联合回归为 `10/10`，下一次远端全量结果仍需单独确认。
-- F-168 收紧 watchdog 的 Windows 清理边界：`taskkill.exe` 最多等待 5 秒，清理命令自身悬挂时 test-gate 仍会返回有界失败结果。一次远端 run 超过 job timeout 仍未收敛的现象已纳入反证；本地 repo WorldPort 与 watchdog 联合回归保持 `10/10`，远端完整顺序仍待新 run 证实。
+- F-168 收紧 watchdog 的 Windows 清理边界：`taskkill.exe` 最多等待 5 秒，清理命令自身悬挂时 test-gate 仍会返回有界失败结果。这个节点是对潜在清理失控路径的主动收敛，不把尚未证实的 runner 状态当作失败证据；本地 repo WorldPort 与 watchdog 联合回归为 `10/10`，远端完整顺序仍待新 run 证实。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
