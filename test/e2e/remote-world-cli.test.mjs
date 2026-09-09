@@ -185,12 +185,15 @@ test('TLS JSONL recovers a non-idempotent effect after the remote WorldPort rest
     const serverCert = path.join(root, 'server.crt.pem');
     const clientKey = path.join(root, 'client.key.pem');
     const clientCert = path.join(root, 'client.crt.pem');
+    const rotatedServerKey = path.join(root, 'server-rotated.key.pem');
+    const rotatedServerCert = path.join(root, 'server-rotated.crt.pem');
     const authority = await createCertificateAuthority(caKey, caCert, 'yi-remote-recovery-ca');
     await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
     await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 2);
     const primaryArgs = ['--effect-file', effectFile, '--non-idempotent', '--reconcilable', '--drop-response'];
     const observerArgs = ['--effect-file', effectFile, '--reconciliation-observer'];
     const tlsFiles = { serverKey, serverCert, caCert };
+    await makeCertificateSignedByAuthority(authority, rotatedServerKey, rotatedServerCert, 'localhost', 3);
     const primary = await startRemoteServer(root, 'primary', primaryArgs, tlsFiles);
     const observer = await startRemoteServer(root, 'observer', observerArgs, tlsFiles);
     servers.push(primary.server, observer.server);
@@ -228,7 +231,7 @@ test('TLS JSONL recovers a non-idempotent effect after the remote WorldPort rest
     await primaryExit;
     const restartedPrimary = await startRemoteServer(root, 'primary-restarted', [
       '--effect-file', effectFile, '--non-idempotent', '--reconcilable',
-    ], tlsFiles, { port: primary.port });
+    ], { ...tlsFiles, serverKey: rotatedServerKey, serverCert: rotatedServerCert }, { port: primary.port });
     servers[0] = restartedPrimary.server;
 
     const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
