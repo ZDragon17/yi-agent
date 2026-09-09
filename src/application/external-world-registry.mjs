@@ -432,6 +432,8 @@ function createPersistentTlsAdapterSession(config) {
 
   async function requestOne(request, op) {
     if (closed) throw new ExternalWorldProtocolError('External WorldPort TLS session is closed.', { op });
+    // 让对端的 FIN/close 事件先完成，避免在响应已返回但 socket 正在收尾时写入旧连接。
+    await new Promise((resolve) => setImmediate(resolve));
     const handle = await ensureSocket(op);
     if (closed) throw new ExternalWorldProtocolError('External WorldPort TLS session is closed.', { op });
     return new Promise((resolve, reject) => {
@@ -467,7 +469,10 @@ function createPersistentTlsAdapterSession(config) {
   }
 
   function ensureSocket(op) {
-    if (socket !== null && !socket.destroyed && socket.authorized) return Promise.resolve(socket);
+    if (socket !== null && !socket.destroyed && !socket.readableEnded && !socket.writableEnded && socket.authorized) {
+      return Promise.resolve(socket);
+    }
+    if (socket !== null && (socket.destroyed || socket.readableEnded || socket.writableEnded)) destroySocket(socket);
     if (socketReady !== null) return socketReady;
     output = '';
     let handle;

@@ -1504,3 +1504,10 @@
 - 实现：增加显式 `transport:"persistent-tls-jsonl"`。远程客户端复用一条 mTLS JSONL 会话，串行化请求，保持每请求超时、响应大小、请求 id 和协议边界；连接关闭、协议错误或超限时关闭会话，不自动重放原请求。transport、endpoint、TLS 材料摘要和 launch digest 继续进入 manifest，identity-only registry 和 Replay 不连接远端。TLS role 配置沿用同一 transport 选择。
 - 验证：TLS 测试服务支持在一个连接内处理多行请求并记录连接数；远程 E2E 验证 init 与 run 各自只建立一条连接，原 `tls-jsonl`、证书撤销、角色恢复和离线 Replay 回归继续通过；本机远程 E2E `11/11` 通过。
 - 边界：持久会话只减少 TLS 握手和连接创建成本，不提供网络分区自动修复、非幂等请求盲重试、远程主机可信或真实设备效果证明。
+
+## F-197 持久 TLS 会话的对端主动收尾
+
+- 反证/缺口：持久会话在响应 Promise 已完成后，可能先于远端 FIN 的 `end/close` 事件开始下一请求；这会把半关闭 socket 当成可复用连接，并在 `actions` 等后续请求上出现“连接在响应前关闭”。
+- 实现：请求队列之间让出一次事件循环；复用前检查 `readableEnded`、`writableEnded` 和 `destroyed`，发现连接正在收尾就清除并重新建立 mTLS 会话。已发出的请求不因连接关闭而自动重放，未知副作用仍交给既有 nonce 对账路径。
+- 验证：新增远程对端逐响应关闭的 CLI E2E；修复前为 `11/12`，修复后为 `12/12`，init→run 的非幂等效果计数保持 1，停止远端服务后的 Replay 为 `CONSISTENT`。
+- 边界：该节点只覆盖可观察的 TCP/TLS 正常收尾和安全重连，不证明断网期间的请求状态、远程主机诚实、低权限隔离或物理设备效果。

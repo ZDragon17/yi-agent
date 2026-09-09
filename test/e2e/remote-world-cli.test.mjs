@@ -135,6 +135,54 @@ test('persistent TLS JSONL WorldPort reuses one mTLS session per CLI operation',
   }
 });
 
+test('persistent TLS JSONL reconnects after the remote peer closes a response', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-remote-reconnect-'));
+  const servers = [];
+  try {
+    const lab = path.join(root, 'lab');
+    const effectFile = path.join(root, 'effect.json');
+    const connectionCountFile = path.join(root, 'connections.log');
+    const caKey = path.join(root, 'ca.key.pem');
+    const caCert = path.join(root, 'ca.crt.pem');
+    const serverKey = path.join(root, 'server.key.pem');
+    const serverCert = path.join(root, 'server.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-persistent-remote-reconnect-ca');
+    await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 2);
+    const server = await startRemoteServer(root, 'reconnect', ['--effect-file', effectFile], {
+      serverKey, serverCert, caCert,
+    }, { connectionCountFile });
+    servers.push(server.server);
+    const adapter = path.join(root, 'adapter.json');
+    await writeFile(adapter, JSON.stringify({
+      transport: 'persistent-tls-jsonl',
+      host: '127.0.0.1',
+      port: server.port,
+      tls: { certFile: clientCert, keyFile: clientKey, caFile: caCert, serverName: 'localhost' },
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 5000,
+    }));
+
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'persistent-reconnect-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke(['run', '--lab', lab, '--run-id', 'persistent-reconnect-run', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.ok((await readFile(connectionCountFile, 'utf8')).trim().split(/\r?\n/u).length > 2, 'peer-closed responses must cause later requests to reconnect');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    await stopServers(servers);
+    servers.length = 0;
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'persistent-reconnect-run', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.json.data.verdict, 'CONSISTENT');
+  } finally {
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TLS JSONL rejects a delayed second response envelope', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-protocol-'));
   const servers = [];
