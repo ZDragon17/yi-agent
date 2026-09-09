@@ -173,6 +173,101 @@ test('TLS JSONL rejects a revoked remote server certificate before hello', async
   }
 });
 
+test('TLS JSONL rotates the remote CA with a pre-authorized trust bundle', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-ca-rotation-'));
+  const servers = [];
+  try {
+    const lab = path.join(root, 'lab');
+    const effectFile = path.join(root, 'effect.json');
+    const caKey = path.join(root, 'ca-1.key.pem');
+    const caCert = path.join(root, 'ca-1.crt.pem');
+    const nextCaKey = path.join(root, 'ca-2.key.pem');
+    const nextCaCert = path.join(root, 'ca-2.crt.pem');
+    const untrustedCaKey = path.join(root, 'ca-3.key.pem');
+    const untrustedCaCert = path.join(root, 'ca-3.crt.pem');
+    const trustBundle = path.join(root, 'trusted-ca-bundle.crt.pem');
+    const serverKey = path.join(root, 'server.key.pem');
+    const serverCert = path.join(root, 'server.crt.pem');
+    const rotatedServerKey = path.join(root, 'server-rotated.key.pem');
+    const rotatedServerCert = path.join(root, 'server-rotated.crt.pem');
+    const untrustedServerKey = path.join(root, 'server-untrusted.key.pem');
+    const untrustedServerCert = path.join(root, 'server-untrusted.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const adapter = path.join(root, 'adapter.json');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-remote-ca-1');
+    const nextAuthority = await createCertificateAuthority(nextCaKey, nextCaCert, 'yi-remote-ca-2');
+    const untrustedAuthority = await createCertificateAuthority(untrustedCaKey, untrustedCaCert, 'yi-remote-ca-3');
+    await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(nextAuthority, rotatedServerKey, rotatedServerCert, 'localhost', 2);
+    await makeCertificateSignedByAuthority(untrustedAuthority, untrustedServerKey, untrustedServerCert, 'localhost', 3);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 4);
+    await writeFile(trustBundle, `${await readFile(caCert, 'utf8')}${await readFile(nextCaCert, 'utf8')}`);
+
+    const serverArgs = ['--effect-file', effectFile, '--non-idempotent', '--reconcilable', '--both-safe'];
+    const primary = await startRemoteServer(root, 'primary', serverArgs, {
+      serverKey,
+      serverCert,
+      caCert,
+    });
+    servers.push(primary.server);
+    const connection = (port) => ({
+      transport: 'tls-jsonl',
+      host: '127.0.0.1',
+      port,
+      tls: { certFile: clientCert, keyFile: clientKey, caFile: trustBundle, serverName: 'localhost' },
+    });
+    await writeFile(adapter, JSON.stringify({
+      ...connection(primary.port),
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 5000,
+    }));
+
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'remote-ca-rotation-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const first = await invoke(['run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(first.code, 0, JSON.stringify(first));
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const primaryExit = waitForExit(primary.server);
+    primary.server.kill();
+    await primaryExit;
+    const rotated = await startRemoteServer(root, 'primary-rotated', serverArgs, {
+      serverKey: rotatedServerKey,
+      serverCert: rotatedServerCert,
+      caCert,
+    }, { port: primary.port });
+    servers[0] = rotated.server;
+
+    const second = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(second.code, 0, JSON.stringify(second));
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 2, 'the rotated CA must preserve a new remote transition');
+
+    const rotatedExit = waitForExit(rotated.server);
+    rotated.server.kill();
+    await rotatedExit;
+    const untrusted = await startRemoteServer(root, 'primary-untrusted', serverArgs, {
+      serverKey: untrustedServerKey,
+      serverCert: untrustedServerCert,
+      caCert,
+    }, { port: primary.port });
+    servers[0] = untrusted.server;
+    const rejected = await invoke(['run', '--lab', lab, '--run-id', 'run-3', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.notEqual(rejected.code, 0, 'a server certificate signed by an unlisted CA must be rejected');
+    assert.equal(rejected.json.error.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(rejected));
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 2, 'TLS rejection must happen before a third transition');
+
+    await stopServers(servers);
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.json.data.verdict, 'CONSISTENT');
+  } finally {
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TLS JSONL supports a remote reconciliation observer as a separate endpoint', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-observer-'));
   const servers = [];
