@@ -368,6 +368,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-182 把外部对账签名从草案推进为 opt-in 运行时契约：adapter 可在 descriptor 中声明 `reconciliationPublicKey`，宿主要求 `APPLIED/ABSENT/UNKNOWN` 对账结果提供 Ed25519 回执；签名绑定世界、场景、before state、原始请求和结果摘要，恢复证据写入 STEP boundary，Replay 在不重新调用 adapter 的情况下复验。有效签名、篡改签名和缺失签名回归 `3/3`，完整 reconciliation 回归 `10/10`。签名只证明持钥 adapter 声明过这段内容，不证明现实效果真实发生。
 - F-183 把非幂等对账的第二观察边界接入恢复路径：配置可声明独立 `reconciliationObserver`，宿主把 observer 对同一 `executionNonce`、before/after 状态的 `OBSERVED` 结果与主 adapter 的 `APPLIED` 声明逐项比较，再把观察证据写入 STEP；Replay 只复核已提交证据，不重新调用 observer。有效观察与矛盾观察回归 `2/2`，矛盾结果不会追加 STEP。该 observer 仍是本机进程和配置级独立，不是低权限、远程或物理可信根。
 - F-184 收紧 F-183 的配置边界：主 WorldPort 与 `reconciliationObserver` 不能复用完全相同的可执行文件、参数和 transport；宿主在第一次 `hello` 前直接拒绝这种“只换身份名”的配置，等价路径也会按平台规则归一后拒绝。对账与账本/Replay 组合回归 `92/92`，该约束仍只排除配置层面的假分离，不等于 OS 权限、跨机器身份或现实效果证明。
+- F-185 为 F-184 取得线上三矩阵门禁：提交 `a8b233e` 在 GitHub Actions 的 Ubuntu Node 22、Ubuntu Node 24 和 Windows Node 22 全部通过；三个 job 时长分别为 283 秒、237 秒和 1733 秒。该结果只覆盖当前测试套件和本次 runner，不延伸为真实权限、远程主机或现实效果证据。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

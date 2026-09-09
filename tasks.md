@@ -1420,3 +1420,10 @@
 - 实现：加载外部 WorldPort 配置后、第一次 `hello` 探测前，比较主角色与 `reconciliationObserver` 的 executable、args 和 transport；三者完全相同时返回 `WORLD_ADAPTER_PROTOCOL`，不启动任一外部角色。
 - 验证：新增复用启动配方及等价路径的 fail-closed E2E，整份 reconciliation 回归 `14/14`；与账本和 Replay 组合门禁 `92/92`。
 - 边界：启动配方不同只排除配置层面的命名伪装，不能证明两个进程由不同用户运行、位于不同主机、使用不同可信根或观察到了真实物理效果。低权限 OS、跨机器认证和人工可审计对账仍需真实环境验证。
+
+## F-185 F-184 的线上三矩阵门禁
+
+- 反证/缺口：F-184 的本机 `14/14` 与 `92/92` 不能替代当前提交在目标 CI 版本上的结果，尤其不能把 Windows Node 22 的长测试兼容性从本机 Node 26 推断出来。
+- 实现：不修改运行时代码和测试判据；在提交 `a8b233e` 上保留同一 workflow 的 Ubuntu Node 22、Ubuntu Node 24 和 Windows Node 22 三个 job，等待全部进入终态。
+- 验证：GitHub Actions run `34312578163` 三个 job 均为 `success`；Ubuntu Node 24 用时 237 秒，Ubuntu Node 22 用时 283 秒，Windows Node 22 用时 1733 秒。run 的 head SHA 与 `a8b233e2ae77f6a82b81bcbfe746c1ffa7fe7479` 一致。
+- 边界：这闭合的是当前提交、当前 workflow、当前 GitHub runner 与 Node 版本的自动门禁，不证明任意 Windows 环境、低权限 OS 身份、跨机器 WorldPort、真实设备回执或人工确认路径。
