@@ -115,6 +115,8 @@ F-192 把 mTLS 的另一半撤销边界补齐：测试 WorldPort 服务端加载
 
 F-193 把两个远程 WorldPort 的故障窗口串起来：primary 在非幂等效果已经产生后丢失 transition 回执，primary 与 reconciliation observer 都停止，并分别以新叶子证书在原端口重启。宿主继续使用原 manifest、客户端身份和 execution nonce，第二次 Run 必须先通过 primary 的 `reconcile` 与 observer 的独立观察，效果不重复执行；停止两个服务后 Replay 仍为 `CONSISTENT`。该实验把跨端点恢复的一致性证据补到同一条链上，但没有超出同一 CA、本机进程、同用户权限和测试文件效果的边界。
 
+F-194 将两个远程角色的服务端信任根拆开：primary 服务端证书由 primary CA 签发，observer 服务端证书由另一套 observer CA 签发，客户端证书则由独立 client CA 签发并同时被两端信任。初始化时 observer 的 trust bundle 预授权旧根和轮换根；恢复时 primary 换用同一根下的新叶子证书，observer 换用新根证书，宿主不改变配置、manifest 或 execution nonce，最终通过两端对账并离线 Replay。这个实验说明角色级 TLS 身份可以独立绑定到同一恢复链，但不证明不同机器的 OS 权限、密钥托管、远程代码诚实或真实设备效果。
+
 F-149 将同一 transport 规则用于 witness、executionAuthority 和 executionObserver。辅助角色的 `transport` 选择写入各自 manifest metadata，并由 identity-only registry、LabStore 和 Replay 校验；旧配置不带字段时仍保持一次请求一进程。独立 witness 请求现在显式等待异步响应，transition、reconcile 和 observe 不会把未完成的 Promise 放进证据对象。测试覆盖多次 witness evidence 请求，以及 authority/observer 对同一 execution nonce 的幂等重试；会话关闭仍由 registry 统一负责，Replay 不启动这些角色。
 
 F-150 把持久辅助会话放进响应丢失恢复实验：authority 或 observer 先完成各自的 nonce 绑定工作，再在回执发出前退出；第一次 Run 只留下未决 external transition，下一次独立 CLI 重新加载同一 manifest，主 adapter 的幂等 `transition`、authority 的 nonce 记录和 observer 的执行观测依次闭合，最终 STEP 才能落账。恢复过程不把新 nonce 当作补偿，也不让 Replay重新访问任何角色。该实验只覆盖本机同用户权限下的进程故障，不覆盖跨机器身份、断网重连或可信硬件。

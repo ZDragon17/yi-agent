@@ -379,6 +379,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-191 验证远程 WorldPort 的 CA 轮换窗口：初始化时把旧 CA 与预授权的新 CA 放入固定 trust bundle，服务端在同一 endpoint 上从旧根切换到新根后，原 Lab、连续 Run 和 Replay 仍保持一致；改用未列入 bundle 的第三根 CA 时，客户端在 `hello` 前拒绝且不产生新效果。该方案要求轮换根在初始化前明确进入信任边界，不把“任意替换 caFile”当作安全轮换。
 - F-192 把 mTLS 撤销回归补到远程 WorldPort 服务端：测试服务加载由同一 CA 签发的客户端 CRL，已撤销的 client certificate 在 `hello` 前被拒绝，CLI 不创建有效 manifest。远程 E2E 全组提升为 `7/7`；这只证明服务端按已提供 CRL 执行 peer 拒绝，不证明 CRL 发布、分发时效、私钥保护或远程主机可信。
 - F-193 把两个远程 WorldPort 的恢复放进同一条实验：primary 首次非幂等效果已产生但丢失回执，primary 与 reconciliation observer 随后分别重启并轮换服务端叶子证书；原 Lab、execution nonce 和客户端身份不变，第二次 Run 只通过对账完成，效果计数仍为 1，停止两个服务后的 Replay 为 `CONSISTENT`。远程 E2E 全组提升为 `8/8`；这仍只覆盖同一 CA、本机测试服务和配置级的跨端点一致性。
+- F-194 验证远程角色可以拥有不同的服务端信任根：primary 使用自己的 CA，observer 使用另一套 CA，并让 observer 的客户端 trust bundle 预授权下一根 CA；客户端证书由独立的 client CA 签发。两个服务同时重启后，observer 换根、primary 换叶子证书，原 nonce 仍能完成对账且效果不重复，Replay 为 `CONSISTENT`。远程 E2E 全组提升为 `9/9`；这仍不等于跨机器权限或真实执行来源。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

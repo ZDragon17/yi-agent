@@ -1483,3 +1483,10 @@
 - 实现：复用同一测试 CA 分别签发 primary、observer 及各自轮换后的新叶子证书。第一轮让 primary 在产生效果后丢失回执；随后停止两个远程服务，primary 和 observer 分别在原端口以新证书重启，客户端配置、Lab manifest、客户端证书和 nonce 全部保持不变。
 - 验证：新增“primary and observer restart with rotated certificates”回归；远程 WorldPort E2E 全组 `8/8`。第二次 Run 通过 primary `reconcile` 和 observer 观察完成，效果计数保持 1；停止两个服务后 Replay 返回 `CONSISTENT`。
 - 边界：这只验证同一 CA、本机测试服务、同用户权限和文件效果下的跨端点连续性；不证明不同机器身份、低权限隔离、网络分区中的人工对账、远程主机诚实或真实设备效果。下一步应把不同权限/机器与可审计执行来源作为外部卡点。
+
+## F-194 远程角色的独立服务端信任根与恢复
+
+- 反证/缺口：F-193 让 primary 和 observer 分别轮换叶子证书，但两端仍共享同一服务端 CA；这不能证明角色级 TLS 信任边界已经分别绑定，也不能发现把一个角色的 CA 配错到另一个角色的配置问题。
+- 实现：测试夹具支持把“服务端验证客户端证书的 CA”和“客户端验证服务端证书的 CA”分开传递。primary 使用 primary CA，observer 使用独立 observer CA；客户端证书由第三套 client CA 签发。observer 客户端 trust bundle 在初始化前同时包含旧 observer CA 和预授权的轮换 CA。
+- 验证：新增“preserves recovery across independently trusted remote roles”回归；远程 WorldPort E2E 全组 `9/9`。恢复时 primary 换用同根新叶子、observer 换用新根证书，原 execution nonce、效果计数和离线 Replay 均保持一致。
+- 边界：这只验证角色级证书/信任根配置和本机测试服务中的恢复一致性，不证明不同机器身份、低权限 OS、密钥托管、网络分区人工处置、远程主机诚实或真实设备效果。下一步仍需进入真实部署权限和可审计执行来源边界。
