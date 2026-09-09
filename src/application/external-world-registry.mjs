@@ -66,6 +66,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config is not valid JSON.', { field: 'adapter' }, { cause: error });
   }
   const normalizedConfig = normalizeConfig(config, resolvedConfigPath);
+  assertDistinctReconciliationLaunchRecipe(normalizedConfig);
   if (!probe) return createIdentityOnlyRegistry(normalizedConfig);
   const client = createAdapterClient(normalizedConfig);
   const descriptor = validateDescriptor(client.request('hello', {}), normalizedConfig);
@@ -1585,6 +1586,18 @@ function normalizeTransport(value, field) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter transport is unsupported.', { field });
   }
   return value;
+}
+
+function assertDistinctReconciliationLaunchRecipe(config) {
+  const observer = config.reconciliationObserver;
+  if (observer === undefined) return;
+  if (config.executable === observer.executable &&
+      canonicalJson({ args: config.args, transport: config.transport ?? null }) ===
+        canonicalJson({ args: observer.args, transport: observer.transport ?? null })) {
+    throw new ExternalWorldProtocolError('Reconciliation observer must use a distinct launch recipe from the primary WorldPort.', {
+      op: 'hello',
+    });
+  }
 }
 
 function normalizeWitnessConfig(value, configPath) {

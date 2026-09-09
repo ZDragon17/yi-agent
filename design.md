@@ -376,7 +376,7 @@ F-182 已把最小版本实现为独立 adapter 的 opt-in 契约，不改变未
 
 当前实现已经覆盖 descriptor、manifest、恢复路径、STEP boundary、Replay 和篡改反例。它只证明持有 pinned 公钥的 adapter 对这段内容做过签名，不证明 adapter 诚实、私钥未被同权限进程读取、回执对应真实设备或现实效果。密钥轮换、撤销、跨机器身份、独立运营者和物理效果对账仍属于 Future-Gate。
 
-F-183 又增加了可选的 `reconciliationObserver`。它使用不同的 adapter 身份和启动摘要，接收同一 nonce、before state 摘要、Token 和版本，必须返回 `OBSERVED/APPLIED` 以及相同的 before/after state 摘要。宿主在把恢复结果转成 STEP 前完成比较；不一致时不写 STEP。观察结果随 boundary 持久化，Replay 只比较已提交的 transition 和观察证据，不启动 observer。
+F-183 又增加了可选的 `reconciliationObserver`。它使用不同的 adapter 身份和启动摘要，接收同一 nonce、before state 摘要、Token 和版本，必须返回 `OBSERVED/APPLIED` 以及相同的 before/after state 摘要。宿主在把恢复结果转成 STEP 前完成比较；不一致时不写 STEP。观察结果随 boundary 持久化，Replay 只比较已提交的 transition 和观察证据，不启动 observer。加载配置时还会拒绝主 WorldPort 与 observer 复用完全相同的可执行文件、参数和 transport，避免只改 `adapterId` 就伪造来源分离。
 
 这个边界只把一个进程的声明和另一个进程看到的声明分开，不能推出物理效果真实发生。两个进程仍可能运行在同一用户权限、读取同一伪造文件或共谋；低权限 OS 身份、跨机器传输、可信执行器和人工对账仍未解决。
 

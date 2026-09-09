@@ -127,6 +127,24 @@ test('a contradictory reconciliation observer fails closed before appending a ST
   });
 });
 
+test('a reconciliation observer cannot reuse the primary launch recipe', async () => {
+  await withTemporaryLab(async ({ root, lab }) => {
+    const effectFile = path.join(root, 'same-launch-recipe-effect.json');
+    const adapter = await writeAdapterWithObserver(root, effectFile, ['--two-actions']);
+    const config = JSON.parse(await readFile(adapter, 'utf8'));
+    config.reconciliationObserver.executable = config.executable;
+    config.reconciliationObserver.args = config.args;
+    await writeFile(adapter, JSON.stringify(config));
+
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'same-launch-recipe', '--adapter', adapter, '--json',
+    ]);
+    assert.notEqual(init.code, 0, JSON.stringify(init));
+    assert.equal(init.stdout[0]?.error?.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(init));
+    assert.match(init.stdout[0]?.error?.message ?? '', /distinct launch recipe/u);
+  });
+});
+
 for (const status of ['ABSENT', 'UNKNOWN']) {
   test(`a non-idempotent WorldPort remains halted when reconciliation returns ${status}`, async () => {
     await withTemporaryLab(async ({ root, lab }) => {

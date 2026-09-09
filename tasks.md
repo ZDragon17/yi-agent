@@ -1413,3 +1413,10 @@
 - 实现：adapter 配置可声明 `reconciliationObserver`。宿主在 `reconcile` 返回 `APPLIED` 后向不同 adapter 请求同一 execution nonce 的观察结果，校验 `OBSERVED/APPLIED`、Token、版本和 before/after state 摘要；结果写入 STEP boundary，并由 Replay 离线复核。观察矛盾时在追加 STEP 前返回 `WORLD_ADAPTER_PROTOCOL`。
 - 验证：独立观察跨恢复和 Replay `1/1`；矛盾观察 fail-closed 且不追加 STEP `1/1`；合计 `2/2`。已有非幂等 reconciliation 矩阵继续作为兼容回归。
 - 边界：第二观察只建立本机进程/配置级的来源分离，不是低权限 OS 身份、远程认证、可信硬件或物理事实证明；两个进程仍可能共谋或读取同一伪造来源。下一步应在真实权限/机器边界和人工可审计效果中验证，而不是继续把同用户进程当成可信根。
+
+## F-184 拒绝对账观察者复用主启动配方
+
+- 反证/缺口：F-183 只要求 `reconciliationObserver` 的 adapter 身份不同；主 WorldPort 与观察者仍可能使用完全相同的可执行文件、参数和 transport，只更换配置中的 `adapterId`，从而制造没有实际来源差异的表面分离。
+- 实现：加载外部 WorldPort 配置后、第一次 `hello` 探测前，比较主角色与 `reconciliationObserver` 的 executable、args 和 transport；三者完全相同时返回 `WORLD_ADAPTER_PROTOCOL`，不启动任一外部角色。
+- 验证：新增复用启动配方的 fail-closed E2E，整份 reconciliation 回归 `13/13`；与账本和 Replay 组合门禁 `91/91`。
+- 边界：启动配方不同只排除配置层面的命名伪装，不能证明两个进程由不同用户运行、位于不同主机、使用不同可信根或观察到了真实物理效果。低权限 OS、跨机器认证和人工可审计对账仍需真实环境验证。
