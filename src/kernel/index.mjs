@@ -3383,7 +3383,11 @@ function boundedPlanningOutcomeVectors(vectors, limit) {
 }
 
 function planningMemoryAfterAction(memory, token, actualDelta, dimensions) {
-  const projected = cloneMemory(memory);
+  // 规划副本只会替换顶层历史字段，不会写入模型树；深拷贝整份 Memory
+  // 会在每个未来分支重复复制 action/context/belief 模型，且持久化压缩
+  // 还会重复序列化它们。共享只读模型树能保持语义不变并让规划成本随
+  // 新增历史的大小增长，而不是随整份模型树重复复制。
+  const projected = { ...memory };
   const historyOrder = nextHistoryOrder(projected);
   appendRecentHistory(projected, {
     token,
@@ -3752,7 +3756,9 @@ function compactPersistedMemory(memory, { retentionMode = 'recency-v1' } = {}) {
     stripModelAges(memory);
     memory.modelAges = compactModelAges;
   }
-  let persistedBytes = Buffer.byteLength(canonicalJson(memory), 'utf8');
+  // cloneMemory 已构造出无 undefined 的普通 JSON；键排序不会改变字节数，
+  // 原生 stringify 足够用于预算判断，真正的账本摘要仍使用 canonicalJson。
+  let persistedBytes = Buffer.byteLength(JSON.stringify(memory), 'utf8');
   while (persistedBytes > MAX_PERSISTED_MEMORY_BYTES && candidates.length > 0) {
     for (let index = 0; index < PERSISTED_MEMORY_TRIM_BATCH && candidates.length > 0; index += 1) {
       const candidate = candidates.shift();
@@ -3766,7 +3772,7 @@ function compactPersistedMemory(memory, { retentionMode = 'recency-v1' } = {}) {
       if (nextModelAges === undefined) delete memory.modelAges;
       else memory.modelAges = nextModelAges;
     }
-    persistedBytes = Buffer.byteLength(canonicalJson(memory), 'utf8');
+    persistedBytes = Buffer.byteLength(JSON.stringify(memory), 'utf8');
   }
   pruneOrphanedVerificationSteps(memory);
 }

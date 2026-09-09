@@ -364,6 +364,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-178 收紧只读 UI 的动态内容边界：汇总值改用 DOM 文本节点渲染，不再把 lab、目标或 WorldPort 状态拼入 `innerHTML`；HTML/JSON 响应增加 CSP、`nosniff`、禁止 iframe 和无 referrer 头。安全回归与 repo WorldPort 组合门禁分别为 `2/2`、`11/11`，依赖审计未发现高危漏洞。这降低本地呈现面的注入风险，不等于 OS 级隔离或生产部署安全。
 - F-179 用仓库外 late-bound Oracle 复验当前候选：未知世界、未知不透明 Token 和随机有限模型共 `48/48` 通过，且用当前候选源码摘要绑定后仍为 `PASS`。这支持“UI 修复未改变 Kernel 公共契约”，不把 Oracle 结果扩展成通用智能或现实因果证明。
 - F-180 完成一次外部 WorldPort 长跑组合门：经济/对抗课程、延迟和噪声反馈、制度切换、独立 witness、持久 authority/observer 以及会话故障恢复共 `21/21` 通过，耗时约 19 分 46 秒，最长 L4-A 约 9 分 49 秒。结果支持跨 WorldPort 账本与 Replay 一致，但也把长跑性能明确留作后续实验，不宣称已具备现实收益或高吞吐。
+- F-181 针对 F-180 的长跑瓶颈做了第一轮实测优化：ESS adapter 支持持久 JSONL 会话，L4-A 复用运行期进程；规划分支改为共享只读模型树的顶层快照，持久化预算只用原生 JSON 计算字节数，账本摘要仍保留 canonical JSON。相同 L4-A 负结果从约 589 秒降到约 324 秒，内核契约 `54/54`、规划/历史/UI 门禁 `15/15`、Level 5 `2/2` 通过。优化只证明当前 Windows 合成 WorldPort 的局部收益，尚未证明任意 adapter、跨主机或真实设备场景的吞吐。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

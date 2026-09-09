@@ -91,6 +91,7 @@ test('L5 utility WorldPort preserves a signed value channel across the durable l
     adapterId: 'ess-arbitrage-adapter-v1',
     worldId: 'ess-arbitrage',
     timeoutMs: 20000,
+    transport: 'persistent-jsonl',
   }));
 
   try {

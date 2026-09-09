@@ -12,7 +12,7 @@
 // 跨期套利（谷充回本）只能由 horizon 规划发现。判据按预注册三组 horizon 对比。
 
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 import {
   PRICE_LEVELS_BY_HOUR,
   BATTERY,
@@ -51,27 +51,36 @@ function effectiveTariffPrice(hour) {
 
 const EVIDENCE_PUBLIC_KEY = 'MCowBQYDK2VwAyEA2R0znN74/jSx8OPrwSEnDH8UKEKU4l0es4XeSwfuOEY=';
 
-const input = readFileSync(0, 'utf8').split(/\r?\n/u).find((line) => line.length > 0);
-if (input === undefined) process.exit(64);
+// 同一入口同时支持“一次请求一进程”和 persistent-jsonl：一次性宿主关闭
+// stdin 后，readline 自然结束；持久宿主保持 stdin 打开，后续请求复用同一
+// 进程。WorldPort 的 transport 选择由宿主配置决定，adapter 不需要猜测模式。
+let sawInput = false;
+const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+input.on('line', (line) => {
+  if (line.length === 0) return;
+  sawInput = true;
+  let request;
+  try {
+    request = JSON.parse(line);
+  } catch {
+    respond(null, false, 'request is not JSON');
+    return;
+  }
 
-let request;
-try {
-  request = JSON.parse(input);
-} catch {
-  respond(null, false, 'request is not JSON');
-  process.exit(0);
-}
+  if (request.protocol !== PROTOCOL || request.version !== VERSION || typeof request.id !== 'string') {
+    respond(request.id ?? null, false, 'unsupported protocol');
+    return;
+  }
 
-if (request.protocol !== PROTOCOL || request.version !== VERSION || typeof request.id !== 'string') {
-  respond(request.id ?? null, false, 'unsupported protocol');
-  process.exit(0);
-}
-
-try {
-  respond(request.id, true, dispatch(request.op, request.payload ?? {}));
-} catch (error) {
-  respond(request.id, false, error instanceof Error ? error.message : String(error));
-}
+  try {
+    respond(request.id, true, dispatch(request.op, request.payload ?? {}));
+  } catch (error) {
+    respond(request.id, false, error instanceof Error ? error.message : String(error));
+  }
+});
+input.on('close', () => {
+  if (!sawInput) process.exitCode = 64;
+});
 
 function dispatch(op, payload) {
   if (op === 'hello') {
