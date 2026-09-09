@@ -441,3 +441,5 @@ F-159 把证书撤销放进同一条恢复链：服务端加载由测试 CA 签�
 F-207 增加 `adapter test` 作为外部 WorldPort 的无副作用预检。CLI 只加载并探测主 adapter 与已配置的辅助角色，返回不含凭据的 descriptor/launch 摘要、能力、场景、状态依赖动作/幂等 transition/对账能力和角色身份；不会初始化 Lab 或写入账本。该命令解决的是接入前的协议诊断，不改变 `init→run→inspect→replay` 的执行和信任边界。
 
 F-208 将主 descriptor 中的状态依赖动作、幂等 transition 和对账支持能力原样放进预检摘要，并用带 execution observer 的外部配置验证角色身份仍能一起探测。预检结果只帮助调用者判断恢复契约是否声明齐全；它不把 adapter 自报能力升级为现实效果或远程代码诚实。
+
+F-209 增加 Python 标准库实现的外部 WorldPort 示例。CLI 仍只依赖 `yi-world-cli` JSONL envelope 和 descriptor，不依赖 adapter 的实现语言；PowerShell 示例实际完成预检、初始化、运行、检查和离线 Replay。该 adapter 不声明幂等或对账，故响应丢失后的恢复按既有安全边界阻断。

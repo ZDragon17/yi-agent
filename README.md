@@ -273,6 +273,17 @@ yi-agent agent run `
 
 这段示例的意义不是计数器本身，而是说明领域变化发生在 `WorldPort`，不是发生在 Kernel：换掉 `adapter.mjs` 的状态和行动，只要仍满足协议，CLI、账本、验证、学习和 Replay 可以保持不变。
 
+同一协议也有只使用 Python 标准库的实现：`examples/counter-world/adapter.py`。它与 Node 示例使用不同运行时和不同 WorldPort 身份，但不需要改动 Kernel 或 CLI。在 Windows PowerShell 中可直接验证：
+
+```powershell
+$exampleRoot = Join-Path $PWD 'counter-python-run'
+powershell -ExecutionPolicy Bypass `
+  -File .\examples\counter-world\run-python-example.ps1 `
+  -RootPath $exampleRoot
+```
+
+脚本会先执行无副作用预检，再完成同一条 `init→run→inspect→replay` 链。当前 Python 示例是无真实副作用、非幂等的演示 adapter；响应丢失后的恢复仍会按协议阻断，不能把跨语言接入误认为现实执行保证。
+
 ### MVP-1：把真实仓库接入同一条闭环
 
 `examples/repo-world/adapter.mjs` 是第一个 repo WorldPort 实验。它不修改 `src/**`，只把一个真实本地仓库映射成通用外部世界：观察包含有界文件树摘要，两个能力分别是读取一个配置的相对文件和运行一个配置的 Node 测试文件。它通过绝对子进程、`shell:false` 和路径/符号链接检查限制操作面；这是协议级只读约束，不等同于操作系统沙箱，生产环境仍应在独立低权限账户或容器中运行。
@@ -402,6 +413,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-206 把四个远程角色放入同一条 `persistent-tls-jsonl` 恢复链：primary、executionAuthority、executionObserver 和 reconciliationObserver 都通过独立的 mTLS endpoint 工作；第一次 Run 中 executionObserver 在返回观察前退出，primary effect 与 authority effect 各只产生一次但 Run 保持未决，第二次 CLI 为四个角色分别重建会话并沿同一 execution nonce 完成恢复。新增回归与完整远程 WorldPort 组为 `21/21`，停止所有远端服务后的 Replay 仍为 `CONSISTENT`。这证明的是同一实验主机、同一客户端证书和受控文件效果中的跨角色协议闭合，不证明跨机器锁、OS 权限隔离、远程代码诚实或真实设备效果。
 - F-207 增加 `adapter test` 作为外部 WorldPort 的无副作用预检：配置、主 adapter 和已声明辅助角色会在不创建 Lab、锁或账本的情况下完成 `hello` 探针，并返回不含凭据的世界描述、能力、场景、摘要和角色身份。它把接入前的协议诊断从实验空间初始化中分离出来，但不改变真正执行仍需经过 `init→run→inspect→replay` 的边界。
 - F-208 把主 adapter 的状态依赖动作、幂等 transition 和对账支持能力加入预检结果，并用带 execution observer 的配置回归验证。这样恢复前可以先看到影响 nonce 恢复安全性的声明；这些仍是 adapter 的协议声明，不是现实效果或远程代码诚实的证明。
+- F-209 增加只使用 Python 标准库的外部 WorldPort 示例，并用 Windows PowerShell 真实跑通预检与 `init→run→inspect→replay`。这验证协议不绑定 Node 运行时；示例仍是无真实副作用、非幂等 adapter，不扩大恢复或现实执行保证。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
