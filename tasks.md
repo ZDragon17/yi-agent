@@ -1553,3 +1553,10 @@
 - 实现：TLS 测试服务增加按操作销毁当前 socket 的夹具选项。F-203 让 primary 在 `transition` 子进程完成并写入效果后直接销毁 TLS 连接，但保持服务进程、端口和后续连接可用；客户端不增加自动重试，恢复仍使用原 execution nonce、primary `reconcile` 和独立 reconciliation observer。
 - 验证：新增“persistent TLS JSONL recovers after a connection reset without endpoint restart”回归；本机该用例通过，远程 WorldPort E2E 全组提升为 `18/18`。首次 Run 收到连接级 `WORLD_ADAPTER_PROTOCOL`，primary 仍在线且效果计数为 1；第二个 Run 完成，效果计数保持 1，停止远程服务后的 Replay 为 `CONSISTENT`。
 - 边界：这覆盖服务端触发的 TCP/TLS 连接重置，不覆盖真实网络设备或路由分区、跨机器分布式锁、时钟故障、远程代码诚实、人工对账和真实设备效果。
+
+## F-204 透明 TCP 故障代理后的非幂等恢复
+
+- 反证/缺口：F-203 的 socket 重置仍由 primary 服务端主动触发，不能区分“远端代码关闭连接”和“中间网络设备丢弃连接”。如果只测前者，持久会话对网络中间层的未知回执处理仍没有证据。
+- 实现：新增 `tcp-fault-proxy.mjs`。它只在 TCP 层转发字节，不终止 TLS、不解析 JSONL；测试控制文件表明 primary 已写入效果后，代理销毁当前 client/upstream 连接并写入一次切断标记，之后的新连接继续转发。primary 和 proxy 都保持在线，客户端不增加自动重试。
+- 验证：新增“persistent TLS JSONL recovers after an opaque TCP proxy cuts the connection”回归；本机远程 WorldPort E2E 全组 `19/19`。首次 Run 收到连接级 `WORLD_ADAPTER_PROTOCOL`，代理确实切断了一次，效果计数为 1；第二个 Run 通过原 execution nonce 的对账与 observer 完成，效果计数保持 1，Replay 为 `CONSISTENT`。
+- 边界：切断时机由测试控制文件驱动，故障代理不模拟真实路由器、丢包、半开连接或跨机器时钟；跨机器分布式锁、远程代码诚实、人工对账和真实设备效果仍未验证。
