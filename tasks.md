@@ -1371,3 +1371,10 @@
 - 实现：不增加运行时代码；组合执行 `test/e2e/ui-shell.test.mjs` 与 `test/e2e/repo-world-cli.test.mjs`，让 UI、只读 repo、受摘要绑定的 writable repo、历史候选和恢复路径共同接受现有判据。
 - 验证：Windows 本机 test-gate `11/11`，总耗时约 98.5 秒；覆盖 repo 连续 Run/Replay、只读不写、补丁保留、错误 proposal、nonce journal 越界、响应丢失、进程重启、历史引导修复，以及 UI 的 200/405/404、缺失 lab fail-closed 和目录不变。
 - 边界：这证明的是本机真实仓库与只读呈现可以共用同一账本闭环，不等于 Electron/Tauri 打包、OS 权限隔离、任意仓库安全写入或生产部署授权。
+
+## F-178 只读 UI 动态内容安全边界
+
+- 反证/缺口：UI 汇总原先把 lab、目标和 WorldPort 状态值直接拼入 `innerHTML`；这些值若来自模型或外部世界，恶意文本可能在本机浏览器上下文被解析为脚本标记。
+- 实现：改用 DOM `textContent`/文本节点渲染动态值，并为 HTML、JSON 响应统一增加最小安全头：CSP、`X-Content-Type-Options`、`X-Frame-Options` 和 `Referrer-Policy`。
+- 验证：先让 UI E2E 按安全约束失败，再修复为 `2/2`；与 repo WorldPort 组合门禁为 `11/11`；`npm audit --omit=dev --audit-level=high` 报告 `0 vulnerabilities`。
+- 边界：页面仍使用内联脚本并只绑定回环地址；这些响应头和文本渲染降低本地 UI 的注入面，不等于操作系统权限隔离或生产网络部署安全。

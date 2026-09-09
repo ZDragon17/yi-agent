@@ -32,7 +32,13 @@ test('ui shell serves the read-only inspect view without touching the lab', asyn
 
       const page = await fetch(`${base}/`);
       assert.equal(page.status, 200);
-      assert.match(await page.text(), /yi-agent 只读检查外壳/u);
+      const pageHtml = await page.text();
+      assert.match(pageHtml, /yi-agent 只读检查外壳/u);
+      assert.match(pageHtml, /summary\.replaceChildren\(\)/u);
+      assert.doesNotMatch(pageHtml, /summary\.innerHTML/u);
+      assert.match(page.headers.get('content-security-policy') ?? '', /default-src 'none'/u);
+      assert.equal(page.headers.get('x-content-type-options'), 'nosniff');
+      assert.equal(page.headers.get('x-frame-options'), 'DENY');
 
       const forbidden = await fetch(`${base}/api/state`, { method: 'POST' });
       assert.equal(forbidden.status, 405);

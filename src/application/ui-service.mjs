@@ -3,6 +3,12 @@ import { inspectLab } from './agent-service.mjs';
 
 const SCHEMA_VERSION = 1;
 const HOST = '127.0.0.1';
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+};
 
 // 只读检查外壳：宪法允许在内核通过反例实验后以只读外壳接入。
 // 服务仅绑定回环地址，仅响应 GET；/api/state 复用 inspectLab 的只读读路径
@@ -41,7 +47,11 @@ async function handleRequest(request, response, { labPath, registry }) {
     return;
   }
   if (url.pathname === '/' || url.pathname === '/index.html') {
-    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.writeHead(200, {
+      ...SECURITY_HEADERS,
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
     response.end(pageHtml());
     return;
   }
@@ -65,7 +75,11 @@ function failureEnvelope(code, message) {
 }
 
 function writeJson(response, status, value) {
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  response.writeHead(status, {
+    ...SECURITY_HEADERS,
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
   response.end(JSON.stringify(value));
 }
 
@@ -104,12 +118,15 @@ function pageHtml() {
       ['cycle', view.changeSupervisor?.cycle],
       ['bestDistance', view.changeSupervisor?.bestDistance],
     ];
-    document.getElementById('summary').innerHTML = cells
-      .map(function (cell) {
-        var value = cell[1] === undefined || cell[1] === null ? '—' : String(cell[1]);
-        return '<b>' + cell[0] + '</b>: ' + value;
-      })
-      .join(' &nbsp;|&nbsp; ');
+    const summary = document.getElementById('summary');
+    summary.replaceChildren();
+    cells.forEach(function (cell, index) {
+      if (index > 0) summary.append(document.createTextNode(' \u00a0|\u00a0 '));
+      const label = document.createElement('b');
+      label.textContent = cell[0];
+      const value = cell[1] === undefined || cell[1] === null ? '—' : String(cell[1]);
+      summary.append(label, document.createTextNode(': ' + value));
+    });
     document.getElementById('raw').textContent = JSON.stringify(data, null, 2);
   }
   async function poll() {
