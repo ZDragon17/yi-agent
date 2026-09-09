@@ -1532,3 +1532,10 @@
 - 实现：TLS 测试服务增加按操作延迟回执的夹具选项。F-200 让 primary 先写入 `transition` 效果，再延迟超过客户端 `timeoutMs` 才发送响应；客户端保持现有超时后销毁会话和不自动重放策略，下一次 CLI 仍通过同一 execution nonce、primary `reconcile` 和独立 observer 恢复。
 - 验证：新增“persistent TLS JSONL recovers an effect after a response timeout without replay”回归；本机远程 E2E `15/15` 通过。首次运行返回 `WORLD_ADAPTER_PROTOCOL` 且消息明确为超时，效果计数为 1；恢复运行完成，效果计数仍为 1，停止远程服务后的 Replay 返回 `CONSISTENT`。
 - 边界：这只覆盖本机测试服务制造的受控响应延迟，不证明真实网络分区的检测、重试窗口、跨机器权限、远程代码诚实、人工对账或真实设备效果。
+
+## F-201 持久 TLS 响应黑洞下的非幂等恢复
+
+- 反证/缺口：F-200 的响应最终会到达，只是晚于 `timeoutMs`；这还不能排除客户端只有在远端重启后才能恢复，或把“连接仍在线但没有回执”错误当成可重试请求。
+- 实现：TLS 测试服务增加按操作丢弃响应的夹具选项。F-201 让 primary 完成非幂等 `transition` 并写入效果后保持监听，不发送该请求的 envelope；客户端超时并销毁当前持久会话，下一次 CLI 使用新会话，经同一 execution nonce、primary `reconcile` 和独立 observer 完成恢复。
+- 验证：新增“persistent TLS JSONL recovers after a blackholed response without endpoint restart”回归；本机远程 E2E `16/16` 通过。首次运行明确返回超时，primary 进程仍在线，效果计数为 1；恢复运行完成，效果计数仍为 1，停止远程服务后的 Replay 返回 `CONSISTENT`。
+- 边界：这只模拟应用层响应黑洞，不证明真实网络设备、路由分区、跨机器权限、远程代码诚实、人工对账或真实设备效果。

@@ -36,6 +36,8 @@ const server = createServer({
         request?.op === options['delay-response-op']
         ? Number(options['delay-response-ms'] ?? 0)
         : 0;
+      const blackholeResponse = options['blackhole-response-op'] !== undefined &&
+        request?.op === options['blackhole-response-op'];
       const sendResponse = () => {
         if (typeof result.stdout === 'string' && result.stdout.length > 0) {
           if (options['extra-response-json'] === undefined) {
@@ -55,8 +57,10 @@ const server = createServer({
           })}\n`);
         }
       };
-      if (Number.isFinite(responseDelayMs) && responseDelayMs > 0) setTimeout(sendResponse, responseDelayMs);
-      else sendResponse();
+      if (!blackholeResponse) {
+        if (Number.isFinite(responseDelayMs) && responseDelayMs > 0) setTimeout(sendResponse, responseDelayMs);
+        else sendResponse();
+      }
     }
   });
 });

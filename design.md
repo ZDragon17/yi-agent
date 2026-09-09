@@ -129,6 +129,8 @@ F-199 把服务端证书轮换加入上述持久恢复窗口：primary 与 recon
 
 F-200 把持久 TLS 请求超时放进同一恢复窗口：测试服务先完成非幂等 `transition` 并写入效果，再延迟超过客户端预算才发送回执。宿主在 `WORLD_ADAPTER_PROTOCOL` 超时后关闭当前会话，不重发原请求；下一次 CLI 使用同一 execution nonce，经 primary `reconcile` 和独立 observer 完成未决链，效果计数保持 1，离线 Replay 返回 `CONSISTENT`。本机远程 E2E 已从 `14/14` 增至 `15/15`。这个实验覆盖的是受控响应延迟，不是网络分区、远程主机诚实或真实设备效果。
 
+F-201 把响应黑洞与 endpoint 存活放进同一窗口：primary 在 `transition` 已写入效果后保持 TLS 服务监听，却丢弃这一次响应；客户端按 `timeoutMs` 关闭当前持久会话，下一次 CLI 新建连接，经 primary `reconcile` 和独立 observer 恢复同一个 execution nonce。primary 进程没有重启，效果计数仍为 1，离线 Replay 返回 `CONSISTENT`；本机远程 E2E 已从 `15/15` 增至 `16/16`。这排除了“必须重启远端才能恢复”的更窄假设，但仍不是实际网络分区、跨机器权限或物理效果证据。
+
 F-149 将同一 transport 规则用于 witness、executionAuthority 和 executionObserver。辅助角色的 `transport` 选择写入各自 manifest metadata，并由 identity-only registry、LabStore 和 Replay 校验；旧配置不带字段时仍保持一次请求一进程。独立 witness 请求现在显式等待异步响应，transition、reconcile 和 observe 不会把未完成的 Promise 放进证据对象。测试覆盖多次 witness evidence 请求，以及 authority/observer 对同一 execution nonce 的幂等重试；会话关闭仍由 registry 统一负责，Replay 不启动这些角色。
 
 F-150 把持久辅助会话放进响应丢失恢复实验：authority 或 observer 先完成各自的 nonce 绑定工作，再在回执发出前退出；第一次 Run 只留下未决 external transition，下一次独立 CLI 重新加载同一 manifest，主 adapter 的幂等 `transition`、authority 的 nonce 记录和 observer 的执行观测依次闭合，最终 STEP 才能落账。恢复过程不把新 nonce 当作补偿，也不让 Replay重新访问任何角色。该实验只覆盖本机同用户权限下的进程故障，不覆盖跨机器身份、断网重连或可信硬件。
