@@ -86,6 +86,55 @@ test('TLS JSONL WorldPort runs across a remote process and Replay does not recon
   }
 });
 
+test('persistent TLS JSONL WorldPort reuses one mTLS session per CLI operation', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-remote-world-'));
+  const servers = [];
+  try {
+    const lab = path.join(root, 'lab');
+    const effectFile = path.join(root, 'effect.json');
+    const connectionCountFile = path.join(root, 'connections.log');
+    const caKey = path.join(root, 'ca.key.pem');
+    const caCert = path.join(root, 'ca.crt.pem');
+    const serverKey = path.join(root, 'server.key.pem');
+    const serverCert = path.join(root, 'server.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-persistent-remote-world-ca');
+    await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 2);
+    const server = await startRemoteServer(root, 'persistent', ['--effect-file', effectFile], {
+      serverKey, serverCert, caCert,
+    }, { keepAlive: true, connectionCountFile });
+    servers.push(server.server);
+    const adapter = path.join(root, 'adapter.json');
+    await writeFile(adapter, JSON.stringify({
+      transport: 'persistent-tls-jsonl',
+      host: '127.0.0.1',
+      port: server.port,
+      tls: { certFile: clientCert, keyFile: clientKey, caFile: caCert, serverName: 'localhost' },
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 5000,
+    }));
+
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'persistent-remote-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    assert.equal((await readFile(connectionCountFile, 'utf8')).trim().split(/\r?\n/u).length, 1, 'init must reuse one TLS session for hello and initialState');
+    const run = await invoke(['run', '--lab', lab, '--run-id', 'persistent-remote-run', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal((await readFile(connectionCountFile, 'utf8')).trim().split(/\r?\n/u).length, 2, 'run must reuse one TLS session for its requests');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+    await stopServers(servers);
+    servers.length = 0;
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'persistent-remote-run', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.json.data.verdict, 'CONSISTENT');
+  } finally {
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TLS JSONL rejects a delayed second response envelope', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-protocol-'));
   const servers = [];
@@ -808,6 +857,8 @@ async function startRemoteServerWithOptions(root, name, adapterArgs, tlsFiles, {
   extraResponseJson,
   extraResponseDelayMs,
   clientCrlFile,
+  keepAlive = false,
+  connectionCountFile,
 } = {}) {
   const portFile = path.join(root, `${name}-port.txt`);
   const server = spawn(process.execPath, [
@@ -820,6 +871,8 @@ async function startRemoteServerWithOptions(root, name, adapterArgs, tlsFiles, {
     '--tls-client-ca-file', tlsFiles.clientCaCert ?? tlsFiles.caCert,
     '--port', String(port),
     ...(clientCrlFile === undefined ? [] : ['--tls-client-crl-file', clientCrlFile]),
+    ...(keepAlive ? ['--keep-alive', 'true'] : []),
+    ...(connectionCountFile === undefined ? [] : ['--connection-count-file', connectionCountFile]),
     ...(extraResponseJson === undefined ? [] : ['--extra-response-json', extraResponseJson]),
     ...(extraResponseDelayMs === undefined ? [] : ['--extra-response-delay-ms', String(extraResponseDelayMs)]),
   ], { windowsHide: true });

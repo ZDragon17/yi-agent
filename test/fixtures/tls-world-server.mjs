@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:tls';
 
@@ -15,35 +15,39 @@ const server = createServer({
   requestCert: true,
   rejectUnauthorized: true,
 }, (socket) => {
+  if (options['connection-count-file'] !== undefined) appendFileSync(options['connection-count-file'], 'connection\n', 'utf8');
   let input = '';
   socket.setEncoding('utf8');
   socket.on('data', (chunk) => {
     input += chunk;
-    const newline = input.indexOf('\n');
-    if (newline === -1) return;
-    const requestLine = input.slice(0, newline);
-    const result = spawnSync(process.execPath, [options.adapter, ...adapterArgs], {
-      input: `${requestLine}\n`,
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 10_000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    if (typeof result.stdout === 'string' && result.stdout.length > 0) {
-      if (options['extra-response-json'] === undefined) {
-        socket.end(result.stdout);
+    let newline;
+    while ((newline = input.indexOf('\n')) !== -1) {
+      const requestLine = input.slice(0, newline);
+      input = input.slice(newline + 1);
+      const result = spawnSync(process.execPath, [options.adapter, ...adapterArgs], {
+        input: `${requestLine}\n`,
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 10_000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      if (typeof result.stdout === 'string' && result.stdout.length > 0) {
+        if (options['extra-response-json'] === undefined) {
+          if (options['keep-alive'] === 'true') socket.write(result.stdout);
+          else socket.end(result.stdout);
+        } else {
+          socket.write(result.stdout);
+          setTimeout(() => socket.end(`${options['extra-response-json']}\n`), Number(options['extra-response-delay-ms'] ?? 10));
+        }
       } else {
-        socket.write(result.stdout);
-        setTimeout(() => socket.end(`${options['extra-response-json']}\n`), Number(options['extra-response-delay-ms'] ?? 10));
+        socket.end(`${JSON.stringify({
+          protocol: 'yi-world-cli',
+          version: 1,
+          id: 'unknown',
+          ok: false,
+          error: result.error?.message ?? 'adapter did not return a response',
+        })}\n`);
       }
-    } else {
-      socket.end(`${JSON.stringify({
-        protocol: 'yi-world-cli',
-        version: 1,
-        id: 'unknown',
-        ok: false,
-        error: result.error?.message ?? 'adapter did not return a response',
-      })}\n`);
     }
   });
 });

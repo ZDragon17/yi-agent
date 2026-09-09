@@ -1497,3 +1497,10 @@
 - 实现：远程 primary 在非幂等效果产生后丢失 transition 回执；恢复前停止 reconciliation observer，使用同一 Lab 和 nonce 发起恢复。primary 对账成功但 observer TLS 连接失败，随后在不改变 observer endpoint 的情况下重启 observer。
 - 验证：新增“keeps recovery pending when the observer is unavailable”回归；远程 WorldPort E2E 全组 `10/10`。observer 不可达时恢复命令失败、效果计数保持 1 且不追加完成 STEP；observer 恢复后再次运行闭合未决链，Replay 返回 `CONSISTENT`。
 - 边界：这只验证本机测试服务、同用户权限和受控连接故障下的 fail-closed/可继续性；不证明真实网络分区检测、重试策略、服务健康、人工对账或真实设备效果。下一步应把网络分区处置与不同权限/机器交给外部部署实验。
+
+## F-196 远程 WorldPort 的持久 TLS 会话
+
+- 反证/缺口：`tls-jsonl` 每个请求都重新建立 mTLS 连接；连续 CLI 操作因此重复 TLS 握手，且现有测试没有证明远程端点能在同一安全会话中按顺序处理 `hello` 与后续请求。
+- 实现：增加显式 `transport:"persistent-tls-jsonl"`。远程客户端复用一条 mTLS JSONL 会话，串行化请求，保持每请求超时、响应大小、请求 id 和协议边界；连接关闭、协议错误或超限时关闭会话，不自动重放原请求。transport、endpoint、TLS 材料摘要和 launch digest 继续进入 manifest，identity-only registry 和 Replay 不连接远端。TLS role 配置沿用同一 transport 选择。
+- 验证：TLS 测试服务支持在一个连接内处理多行请求并记录连接数；远程 E2E 验证 init 与 run 各自只建立一条连接，原 `tls-jsonl`、证书撤销、角色恢复和离线 Replay 回归继续通过；本机远程 E2E `11/11` 通过。
+- 边界：持久会话只减少 TLS 握手和连接创建成本，不提供网络分区自动修复、非幂等请求盲重试、远程主机可信或真实设备效果证明。

@@ -208,9 +208,9 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 仓库提供了一个不依赖 `src/**` 的最小外部世界示例：`examples/counter-world/adapter.mjs`。它只有一个世界状态 `value` 和一个行动 `counter.increment`，通过 `yi-world-cli` JSONL 协议接入。这个例子故意不认识 Kernel 的实现，只负责回答 `hello`、`initialState`、`actions`、`observe`、`externalInputs` 和 `transition` 请求。若 adapter 连接真实副作用，必须额外实现持久 `executionNonce` 幂等记录；没有在 `hello` 声明 `supportsIdempotentTransitions:true` 或可选 `supportsReconciliation:true` 的 adapter 发生响应丢失后会被宿主阻断续跑，等待人工对账。声明对账能力的 adapter 还需回答 `reconcile` 请求：只有明确的 `APPLIED` 结果才可恢复，`ABSENT`/`UNKNOWN` 仍保持阻断。非幂等恢复 marker 还会固化原始 intent、能力投影和完整决策边界（目标/监督器/ValueSpec）；重启时不接受新的目标或规划输入，避免恢复动作与 Replay 边界漂移。恢复边界还会对 ValueSpec、监督器、目标激活计划和 Planner 证据做语义校验；摘要可重算但内容畸形时统一判为 `CORRUPT`。
 
-默认 adapter 配置仍是一次请求一进程；需要长序列复用进程时，在配置顶层增加 `"transport": "persistent-jsonl"`，并让 adapter 保持 stdin/stdout 打开的 JSONL 会话。`hello` 仍由一次性探针完成，后续请求才进入持久会话；每个请求仍有独立超时，adapter 必须逐行返回与请求 `id` 匹配的 envelope。该选项只解决进程启动成本，不替代幂等 nonce、对账、EffectBroker 或人工确认。
+默认 adapter 配置仍是一次请求一进程；本地 adapter 需要复用进程时，在配置顶层增加 `"transport": "persistent-jsonl"`，并让 adapter 保持 stdin/stdout 打开的 JSONL 会话。`hello` 仍由一次性探针完成，后续请求才进入持久会话。远程 adapter 也可以使用 `"transport": "persistent-tls-jsonl"`，在一条经过 mTLS 校验的连接上串行发送 `hello` 和后续请求；连接断开后只建立新会话，不自动重放可能产生副作用的请求。两种持久模式的每个请求都有独立超时，adapter 必须逐行返回与请求 `id` 匹配的 envelope。它们只减少进程或 TLS 握手成本，不替代幂等 nonce、对账、EffectBroker 或人工确认。
 
-需要把 WorldPort 放在另一台主机或独立网络服务时，可使用 `"transport": "tls-jsonl"`。此时配置不再填写 `executable/args`，而是填写 `host`、`port` 和指向客户端证书、私钥、CA、server name 的绝对路径。每个请求都新建一个强制校验服务端证书并要求客户端证书的 TLS 连接；超时、证书错误、协议污染和响应超限都会在外部边界 fail-closed。远程连接只参与 init/run 的实时 WorldPort，Replay/inspect 使用已固化的 manifest 和 STEP 证据，不重新连接远端。这个传输证明的是网络协议和身份校验闭环，不证明远端主机诚实、硬件效果或物理因果。
+需要把 WorldPort 放在另一台主机或独立网络服务时，可使用 `"transport": "tls-jsonl"`；需要在一次 CLI 操作内复用远程连接时使用 `"transport": "persistent-tls-jsonl"`。这两种配置都不填写 `executable/args`，而是填写 `host`、`port` 和指向客户端证书、私钥、CA、server name 的绝对路径。`tls-jsonl` 每个请求新建一条强制校验服务端证书并要求客户端证书的连接；`persistent-tls-jsonl` 在同一连接上按请求顺序复用会话，连接关闭后重新建立，但不盲目重放原请求。超时、证书错误、协议污染和响应超限都会在外部边界 fail-closed。远程连接只参与 init/run 的实时 WorldPort，Replay/inspect 使用已固化的 manifest 和 STEP 证据，不重新连接远端。这个传输证明的是网络协议和身份校验闭环，不证明远端主机诚实、硬件效果或物理因果。
 
 若 `executionAuthority` 的 descriptor 发布了 `executionPublicKey`，配置中的 `executionAuthority.executionPublicKey` 必须与之相同；`bin/yi-agent-effect-authority.mjs` 可用 `--private-key-der` 指向 PKCS#8 DER 私钥文件，也可以不让 authority 进程接触私钥，改用 `--signer-executable` 与 `--signer-args-json` 调用 `bin/yi-agent-execution-signer.mjs`。两种方式都只接受绝对路径、普通文件、64 KiB 以内的私钥文件，私钥不应提交到仓库或写入共享配置。独立 signer 只把持钥代码移到另一个进程；同一用户仍可能读取私钥，因此它不是低权限隔离、远程密钥托管或可信硬件。公钥 pin 解决的是回执身份错配，不是私钥托管或 authority 诚实问题。
 
@@ -381,6 +381,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-193 把两个远程 WorldPort 的恢复放进同一条实验：primary 首次非幂等效果已产生但丢失回执，primary 与 reconciliation observer 随后分别重启并轮换服务端叶子证书；原 Lab、execution nonce 和客户端身份不变，第二次 Run 只通过对账完成，效果计数仍为 1，停止两个服务后的 Replay 为 `CONSISTENT`。远程 E2E 全组提升为 `8/8`；这仍只覆盖同一 CA、本机测试服务和配置级的跨端点一致性。
 - F-194 验证远程角色可以拥有不同的服务端信任根：primary 使用自己的 CA，observer 使用另一套 CA，并让 observer 的客户端 trust bundle 预授权下一根 CA；客户端证书由独立的 client CA 签发。两个服务同时重启后，observer 换根、primary 换叶子证书，原 nonce 仍能完成对账且效果不重复，Replay 为 `CONSISTENT`。远程 E2E 全组提升为 `9/9`；这仍不等于跨机器权限或真实执行来源。
 - F-195 验证 observer 失联不会被当成恢复完成：primary 已产生效果但丢失回执后，observer 暂时不可达，恢复请求失败且不追加 STEP；observer 在原端口恢复后，同一未决链继续完成，效果计数仍为 1，离线 Replay 为 `CONSISTENT`。远程 E2E 全组提升为 `10/10`；这仍只覆盖受控测试服务，不代表真实网络分区已有自动处置能力。
+- F-196 增加远程 `persistent-tls-jsonl` transport：同一次 CLI 操作中的 `hello`、状态读取和后续请求复用一条 mTLS JSONL 会话，按请求串行化；连接身份、TLS 材料摘要、endpoint 和 transport 仍进入 manifest 的 launch digest，连接断开时关闭当前会话，不自动重放请求。远程 E2E 验证了初始化和运行各自只建立一条连接，账本与 Replay 的 transport 校验继续通过。它减少的是 TLS 握手开销，不解决网络分区、非幂等请求的自动重试或远程效果真实性。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

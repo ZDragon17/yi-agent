@@ -48,6 +48,7 @@ const ATTESTED_CAUSAL_CREDIT_BASIS = 'counterfactual-attested-v1';
 const INDEPENDENT_CAUSAL_CREDIT_BASIS = 'counterfactual-independent-v1';
 const PERSISTENT_JSONL_TRANSPORT = 'persistent-jsonl';
 const TLS_JSONL_TRANSPORT = 'tls-jsonl';
+const PERSISTENT_TLS_JSONL_TRANSPORT = 'persistent-tls-jsonl';
 const MAX_REMOTE_HOST_LENGTH = 253;
 const MAX_TLS_MATERIAL_BYTES = 64 * 1024;
 
@@ -389,7 +390,9 @@ function createAdapterClient(config) {
   let requestNumber = 0;
   const persistent = config.transport === PERSISTENT_JSONL_TRANSPORT
     ? createPersistentAdapterSession(config)
-    : null;
+    : config.transport === PERSISTENT_TLS_JSONL_TRANSPORT
+      ? createPersistentTlsAdapterSession(config)
+      : null;
   return {
     request(op, payload) {
       requestNumber += 1;
@@ -401,11 +404,203 @@ function createAdapterClient(config) {
         payload,
       };
       if (config.transport === TLS_JSONL_TRANSPORT) return requestRemoteTls(config, request, op);
-      if (persistent !== null && op !== 'hello') return persistent.request(request, op);
+      if (persistent !== null && (config.transport === PERSISTENT_TLS_JSONL_TRANSPORT || op !== 'hello')) {
+        return persistent.request(request, op);
+      }
       return requestOneShot(config, request, op);
     },
     close() {
       return persistent?.close() ?? Promise.resolve();
+    },
+  };
+}
+
+function createPersistentTlsAdapterSession(config) {
+  let socket = null;
+  let socketReady = null;
+  let output = '';
+  let current = null;
+  let queue = Promise.resolve();
+  let closed = false;
+
+  function request(request, op) {
+    if (closed) return Promise.reject(new ExternalWorldProtocolError('External WorldPort TLS session is closed.', { op }));
+    const next = queue.then(() => requestOne(request, op));
+    queue = next.catch(() => undefined);
+    return next;
+  }
+
+  async function requestOne(request, op) {
+    if (closed) throw new ExternalWorldProtocolError('External WorldPort TLS session is closed.', { op });
+    const handle = await ensureSocket(op);
+    if (closed) throw new ExternalWorldProtocolError('External WorldPort TLS session is closed.', { op });
+    return new Promise((resolve, reject) => {
+      if (socket !== handle || handle.destroyed) {
+        reject(new ExternalWorldProtocolError('External WorldPort TLS session is not connected.', { op }));
+        return;
+      }
+      current = {
+        request,
+        op,
+        socket: handle,
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort persistent TLS request timed out.', {
+            op,
+            timeoutMs: config.timeoutMs,
+            cause: 'Timeout',
+          }), handle);
+          destroySocket(handle);
+        }, config.timeoutMs),
+      };
+      try {
+        handle.write(`${JSON.stringify(request)}\n`);
+      } catch (error) {
+        settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort TLS request could not be written.', {
+          op,
+          cause: errorName(error),
+        }), handle);
+        destroySocket(handle);
+      }
+    });
+  }
+
+  function ensureSocket(op) {
+    if (socket !== null && !socket.destroyed && socket.authorized) return Promise.resolve(socket);
+    if (socketReady !== null) return socketReady;
+    output = '';
+    let handle;
+    socketReady = new Promise((resolve, reject) => {
+      try {
+        handle = connectTls({
+          host: config.host,
+          port: config.port,
+          cert: config.tls.cert,
+          key: config.tls.key,
+          ca: config.tls.ca,
+          servername: config.tls.servername,
+          ...(config.tls.crl === undefined ? {} : { crl: config.tls.crl }),
+          rejectUnauthorized: true,
+        });
+      } catch (error) {
+        socketReady = null;
+        reject(new ExternalWorldProtocolError('External WorldPort persistent TLS connection could not be opened.', {
+          op,
+          cause: errorName(error),
+        }));
+        return;
+      }
+      socket = handle;
+      handle.setEncoding('utf8');
+      handle.on('data', (chunk) => consumeOutput(handle, chunk));
+      handle.once('secureConnect', () => {
+        if (handle.authorized) resolve(handle);
+        else {
+          const error = new ExternalWorldProtocolError('External WorldPort persistent TLS certificate was rejected.', { op });
+          reject(error);
+          destroySocket(handle);
+        }
+      });
+      handle.on('error', (error) => {
+        if (socketReady !== null) reject(new ExternalWorldProtocolError('External WorldPort persistent TLS connection failed.', {
+          op,
+          cause: errorName(error),
+        }));
+        if (current?.socket === handle) {
+          settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort persistent TLS connection failed.', {
+            op: current.op,
+            cause: errorName(error),
+          }), handle);
+        }
+        destroySocket(handle);
+      });
+      handle.on('end', () => {
+        if (current?.socket === handle) {
+          settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort persistent TLS connection closed before responding.', {
+            op: current.op,
+          }), handle);
+        }
+        if (socket === handle) socket = null;
+      });
+      handle.on('close', () => {
+        if (socketReady !== null) {
+          reject(new ExternalWorldProtocolError('External WorldPort persistent TLS connection closed before secure connection.', { op }));
+        }
+        if (current?.socket === handle) {
+          settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort persistent TLS connection closed before responding.', {
+            op: current.op,
+          }), handle);
+        }
+        if (socket === handle) socket = null;
+      });
+    });
+    socketReady = socketReady.finally(() => {
+      socketReady = null;
+    });
+    return socketReady;
+  }
+
+  function consumeOutput(handle, chunk) {
+    if (socket !== handle) return;
+    output += chunk;
+    if (Buffer.byteLength(output, 'utf8') > MAX_STDOUT_BYTES) {
+      failProtocol(handle, 'External WorldPort persistent TLS response exceeded the output limit.');
+      return;
+    }
+    let newline;
+    while ((newline = output.indexOf('\n')) !== -1) {
+      const line = output.slice(0, newline).replace(/\r$/u, '');
+      output = output.slice(newline + 1);
+      if (line.length === 0 || current === null || current.socket !== handle) {
+        failProtocol(handle, 'External WorldPort persistent TLS response must contain one response per request.');
+        return;
+      }
+      const pending = current;
+      let response;
+      try {
+        response = JSON.parse(line);
+        validateResponseEnvelope(response, pending.request.id, pending.op);
+      } catch (error) {
+        failProtocol(handle, error instanceof ExternalWorldProtocolError
+          ? error.message
+          : 'External WorldPort persistent TLS response is not valid JSON.');
+        return;
+      }
+      if (response.ok !== true) {
+        settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort rejected a persistent TLS request.', { op: pending.op }), handle);
+      } else {
+        settleCurrent('resolve', response.result, handle);
+      }
+    }
+  }
+
+  function failProtocol(handle, message) {
+    settleCurrent('reject', new ExternalWorldProtocolError(message, { op: current?.op ?? 'unknown' }), handle);
+    destroySocket(handle);
+  }
+
+  function settleCurrent(kind, value, handle) {
+    if (current === null || current.socket !== handle) return;
+    const pending = current;
+    current = null;
+    clearTimeout(pending.timer);
+    pending[kind](value);
+  }
+
+  function destroySocket(handle = socket) {
+    if (handle === null) return;
+    if (socket === handle) socket = null;
+    try { handle.destroy(); } catch { /* the connection already closed */ }
+  }
+
+  return {
+    request,
+    close() {
+      closed = true;
+      settleCurrent('reject', new ExternalWorldProtocolError('External WorldPort TLS session was closed.', {}), socket);
+      destroySocket();
+      return Promise.resolve();
     },
   };
 }
@@ -1645,7 +1840,9 @@ function normalizeConfig(value, configPath) {
   const transport = value.transport === undefined
     ? undefined
     : normalizeTransport(value.transport, 'adapter.transport');
-  if (transport === TLS_JSONL_TRANSPORT) return normalizeRemoteConfig(value, configPath, timeoutMs);
+  if (transport === TLS_JSONL_TRANSPORT || transport === PERSISTENT_TLS_JSONL_TRANSPORT) {
+    return normalizeRemoteConfig(value, configPath, timeoutMs);
+  }
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter executable must be an absolute non-shell executable path.', { field: 'adapter.executable' });
   }
@@ -1688,7 +1885,7 @@ function normalizeConfig(value, configPath) {
 }
 
 function normalizeTransport(value, field) {
-  if (value !== PERSISTENT_JSONL_TRANSPORT && value !== TLS_JSONL_TRANSPORT) {
+  if (value !== PERSISTENT_JSONL_TRANSPORT && value !== TLS_JSONL_TRANSPORT && value !== PERSISTENT_TLS_JSONL_TRANSPORT) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter transport is unsupported.', { field });
   }
   return value;
@@ -1696,7 +1893,7 @@ function normalizeTransport(value, field) {
 
 function normalizeRemoteConfig(value, configPath, timeoutMs) {
   if (value.executable !== undefined || value.args !== undefined) {
-    throw new LabStoreError('INVALID_INPUT', 'TLS JSONL adapters must not declare a local executable or args.', { field: 'adapter' });
+    throw new LabStoreError('INVALID_INPUT', 'Remote TLS JSONL adapters must not declare a local executable or args.', { field: 'adapter' });
   }
   if (typeof value.host !== 'string' || value.host.length === 0 || value.host.length > MAX_REMOTE_HOST_LENGTH ||
       !Number.isSafeInteger(value.port) || value.port < 1 || value.port > 65535) {
@@ -1720,7 +1917,7 @@ function normalizeRemoteConfig(value, configPath, timeoutMs) {
     adapterId: value.adapterId,
     worldId: value.worldId,
     timeoutMs,
-    transport: TLS_JSONL_TRANSPORT,
+    transport: value.transport,
     launchDigest: digestRemoteLaunch(configPath, value, tls),
     ...(witness === undefined ? {} : { witness }),
     ...(executionAuthority === undefined ? {} : { executionAuthority }),
@@ -1783,7 +1980,7 @@ function assertDistinctReconciliationLaunchRecipe(config) {
 
 function sameLaunchRecipe(left, right) {
   if (left.transport !== right.transport) return false;
-  if (left.transport === TLS_JSONL_TRANSPORT) {
+  if (left.transport === TLS_JSONL_TRANSPORT || left.transport === PERSISTENT_TLS_JSONL_TRANSPORT) {
     return canonicalJson({ host: left.host, port: left.port, tls: left.tls.identity }) ===
       canonicalJson({ host: right.host, port: right.port, tls: right.tls.identity });
   }
@@ -1817,7 +2014,7 @@ function normalizeWitnessConfig(value, configPath) {
       Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'host', 'port', 'tls'].includes(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Independent witness config is invalid.', { field: 'adapter.witness' });
   }
-  if (value.transport === TLS_JSONL_TRANSPORT) return normalizeRemoteRoleConfig(value, configPath, 'adapter.witness');
+  if (value.transport === TLS_JSONL_TRANSPORT || value.transport === PERSISTENT_TLS_JSONL_TRANSPORT) return normalizeRemoteRoleConfig(value, configPath, 'adapter.witness');
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
     throw new LabStoreError('INVALID_INPUT', 'Independent witness executable must be an absolute non-shell executable path.', { field: 'adapter.witness.executable' });
   }
@@ -1860,7 +2057,7 @@ function normalizeExecutionObserverConfig(value, configPath) {
       Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'host', 'port', 'tls'].includes(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Execution observer config is invalid.', { field: 'adapter.executionObserver' });
   }
-  if (value.transport === TLS_JSONL_TRANSPORT) return normalizeRemoteRoleConfig(value, configPath, 'adapter.executionObserver');
+  if (value.transport === TLS_JSONL_TRANSPORT || value.transport === PERSISTENT_TLS_JSONL_TRANSPORT) return normalizeRemoteRoleConfig(value, configPath, 'adapter.executionObserver');
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
     throw new LabStoreError('INVALID_INPUT', 'Execution observer executable must be an absolute non-shell executable path.', { field: 'adapter.executionObserver.executable' });
   }
@@ -1903,7 +2100,7 @@ function normalizeExecutionAuthorityConfig(value, configPath) {
       Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'host', 'port', 'tls', 'executionPublicKey'].includes(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Execution authority config is invalid.', { field: 'adapter.executionAuthority' });
   }
-  if (value.transport === TLS_JSONL_TRANSPORT) {
+  if (value.transport === TLS_JSONL_TRANSPORT || value.transport === PERSISTENT_TLS_JSONL_TRANSPORT) {
     if (value.executionPublicKey !== undefined && !isValidEvidencePublicKey(value.executionPublicKey)) {
       throw new LabStoreError('INVALID_INPUT', 'Execution authority public key is invalid.', { field: 'adapter.executionAuthority.executionPublicKey' });
     }
@@ -1983,7 +2180,7 @@ function digestRemoteLaunch(configPath, config, tls) {
   const hash = createHash('sha256');
   hash.update(readBoundedFile(configPath, 'adapter config'));
   hash.update(Buffer.from(canonicalJson({
-    transport: TLS_JSONL_TRANSPORT,
+    transport: config.transport,
     host: config.host,
     port: config.port,
     tls: tls.identity,
