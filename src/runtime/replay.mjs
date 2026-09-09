@@ -148,6 +148,10 @@ function replayStep({ event, state, manifest, adapter, world, kernel, worldId, s
       !isValidExecutionAuthorityEvidence(payload.boundary.executionAuthority)) {
     corrupt('STEP execution authority evidence is invalid.', { sequence: event.sequence });
   }
+  if (payload.boundary.reconciliationObservation !== undefined &&
+      !isValidReconciliationObservationEvidence(payload.boundary.reconciliationObservation)) {
+    corrupt('STEP reconciliation observation evidence is invalid.', { sequence: event.sequence });
+  }
   if (adapter?.executionObserver !== undefined &&
       !isValidExecutionObservationEvidence(payload.boundary.executionObservation)) {
     corrupt('STEP is missing execution observation evidence.', { sequence: event.sequence });
@@ -155,6 +159,10 @@ function replayStep({ event, state, manifest, adapter, world, kernel, worldId, s
   if (adapter?.executionAuthority !== undefined &&
       !isValidExecutionAuthorityEvidence(payload.boundary.executionAuthority)) {
     corrupt('STEP is missing execution authority evidence.', { sequence: event.sequence });
+  }
+  if (adapter?.reconciliationObserver !== undefined &&
+      !isValidReconciliationObservationEvidence(payload.boundary.reconciliationObservation)) {
+    corrupt('STEP is missing reconciliation observation evidence.', { sequence: event.sequence });
   }
   if (adapter?.executionAuthority?.executionPublicKey !== undefined &&
       !verifyExecutionAuthorityReceipt(
@@ -282,6 +290,15 @@ function replayStep({ event, state, manifest, adapter, world, kernel, worldId, s
        executionObservation.beforeStateDigest !== canonicalDigest(state.worldState) ||
        executionObservation.afterStateDigest !== canonicalDigest(transition.nextWorldState))) {
     corrupt('STEP execution observation does not match the transition boundary.', { sequence: event.sequence });
+  }
+  const reconciliationObservation = payload.boundary.reconciliationObservation;
+  if (reconciliationObservation !== undefined &&
+      (reconciliationObservation.executionNonce !== payload.receipt.executionNonce ||
+       reconciliationObservation.token !== payload.receipt.token ||
+       reconciliationObservation.basedOnVersion !== payload.receipt.basedOnVersion ||
+       reconciliationObservation.beforeStateDigest !== canonicalDigest(state.worldState) ||
+       reconciliationObservation.afterStateDigest !== canonicalDigest(transition.nextWorldState))) {
+    corrupt('STEP reconciliation observation does not match the transition boundary.', { sequence: event.sequence });
   }
   const executionAuthority = payload.boundary.executionAuthority;
   if (executionAuthority !== undefined &&
@@ -759,7 +776,8 @@ function isValidAdapterMetadata(value) {
     (value.transport === undefined || value.transport === 'persistent-jsonl') &&
     (value.witness === undefined || isValidWitnessMetadata(value.witness)) &&
     (value.executionAuthority === undefined || isValidExecutionAuthorityMetadata(value.executionAuthority)) &&
-    (value.executionObserver === undefined || isValidExecutionObserverMetadata(value.executionObserver));
+    (value.executionObserver === undefined || isValidExecutionObserverMetadata(value.executionObserver)) &&
+    (value.reconciliationObserver === undefined || isValidExecutionObserverMetadata(value.reconciliationObserver));
 }
 
 function isValidWitnessMetadata(value) {
@@ -801,6 +819,10 @@ function isValidExecutionObservationEvidence(value) {
     typeof value.basedOnVersion === 'string' && value.basedOnVersion.length > 0 && value.basedOnVersion.length <= 4096 &&
     typeof value.beforeStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.beforeStateDigest) &&
     typeof value.afterStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.afterStateDigest);
+}
+
+function isValidReconciliationObservationEvidence(value) {
+  return isValidExecutionObservationEvidence(value) && value.reconciliationStatus === 'APPLIED';
 }
 
 function isValidExecutionAuthorityEvidence(value) {

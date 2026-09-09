@@ -86,6 +86,44 @@ test('a signed descriptor rejects an unsigned reconciliation response', async ()
   });
 });
 
+test('an independent reconciliation observer corroborates an applied recovery claim and survives Replay', async () => {
+  await withTemporaryLab(async ({ root, lab }) => {
+    const effectFile = path.join(root, 'observed-applied-effect.json');
+    const adapter = await writeAdapterWithObserver(root, effectFile, ['--two-actions', '--reconciliation-attested']);
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'observed-reconcile', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const lost = await invoke(['run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.notEqual(lost.code, 0, JSON.stringify(lost));
+    const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+
+    const events = (await readFile(path.join(lab, 'runs', 'run-2', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map((line) => decodeStoredEvent(JSON.parse(line)));
+    const step = events.find((event) => event.kind === 'STEP');
+    assert.equal(step?.payload?.boundary?.reconciliationObservation?.status, 'OBSERVED');
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('a contradictory reconciliation observer fails closed before appending a STEP', async () => {
+  await withTemporaryLab(async ({ root, lab }) => {
+    const effectFile = path.join(root, 'contradictory-observer-effect.json');
+    const adapter = await writeAdapterWithObserver(root, effectFile, ['--two-actions', '--reconciliation-attested', '--observer-mismatch']);
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'contradictory-observer', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const lost = await invoke(['run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.notEqual(lost.code, 0, JSON.stringify(lost));
+    const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.notEqual(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.stdout[0]?.error?.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(resumed));
+    assert.equal(await countSteps(lab, 'run-2'), 0, 'contradictory observation must not append a STEP');
+  });
+});
+
 for (const status of ['ABSENT', 'UNKNOWN']) {
   test(`a non-idempotent WorldPort remains halted when reconciliation returns ${status}`, async () => {
     await withTemporaryLab(async ({ root, lab }) => {
@@ -273,6 +311,28 @@ async function writeAdapter(root, effectFile, reconciliationStatus, fixtureArgs 
   return config;
 }
 
+async function writeAdapterWithObserver(root, effectFile, fixtureArgs = []) {
+  const adapter = await writeAdapter(root, effectFile, 'APPLIED', fixtureArgs);
+  const observerWrapper = path.join(root, 'reconciliation-observer.mjs');
+  await writeFile(observerWrapper, observerAdapterSource());
+  const config = JSON.parse(await readFile(adapter, 'utf8'));
+  config.reconciliationObserver = {
+    executable: process.execPath,
+    args: [
+      observerWrapper,
+      FIXTURE,
+      ...(fixtureArgs.includes('--two-actions') ? ['--two-actions'] : []),
+      ...(fixtureArgs.includes('--observer-mismatch') ? ['--observer-mismatch'] : []),
+      '--effect-file', effectFile,
+    ],
+    adapterId: 'idempotent-reconciliation-observer-v1',
+    worldId: 'idempotent-transition',
+    timeoutMs: 10_000,
+  };
+  await writeFile(adapter, JSON.stringify(config));
+  return adapter;
+}
+
 async function writeHeldAdapter(root, effectFile, releaseFile) {
   const config = path.join(root, 'held-transition-adapter.json');
   await writeFile(config, JSON.stringify({
@@ -311,6 +371,7 @@ if (request.op === 'reconcile' && status !== 'APPLIED') {
   }) + '\\n');
   process.exit(0);
 }
+
 const result = spawnSync(process.execPath, [
   fixture,
   ...process.argv.slice(3, process.argv.indexOf('--reconciliation-status')),
@@ -318,6 +379,24 @@ const result = spawnSync(process.execPath, [
   '--reconcilable',
   '--drop-response',
 ], {
+  input: requestText,
+  encoding: 'utf8',
+  windowsHide: true,
+  stdio: ['pipe', 'pipe', 'pipe'],
+});
+process.stdout.write(result.stdout ?? '');
+  process.exit(result.status ?? 17);
+`;
+}
+
+function observerAdapterSource() {
+  return `import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+
+const fixture = process.argv[2];
+const requestText = readFileSync(0, 'utf8');
+const request = JSON.parse(requestText);
+const result = spawnSync(process.execPath, [fixture, ...process.argv.slice(3), '--reconciliation-observer'], {
   input: requestText,
   encoding: 'utf8',
   windowsHide: true,

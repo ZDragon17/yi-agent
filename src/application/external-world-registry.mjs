@@ -78,9 +78,17 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
   const executionObserver = normalizedConfig.executionObserver === undefined
     ? null
     : loadExecutionObserverDescriptor(normalizedConfig.executionObserver, descriptor);
+  const reconciliationObserver = normalizedConfig.reconciliationObserver === undefined
+    ? null
+    : loadReconciliationObserverDescriptor(normalizedConfig.reconciliationObserver, descriptor);
   if (executionAuthority !== null && executionObserver !== null &&
       executionAuthority.descriptor.adapterId === executionObserver.descriptor.adapterId) {
     throw new ExternalWorldProtocolError('Execution authority must use a different adapter identity from the observer.', {
+      op: 'hello',
+    });
+  }
+  if (reconciliationObserver !== null && reconciliationObserver.descriptor.adapterId === descriptor.adapterId) {
+    throw new ExternalWorldProtocolError('Reconciliation observer must use a different adapter identity from the primary WorldPort.', {
       op: 'hello',
     });
   }
@@ -138,6 +146,16 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
         ...(executionObserver.config.transport === undefined ? {} : { transport: executionObserver.config.transport }),
       },
     }),
+    ...(reconciliationObserver === null ? {} : {
+      reconciliationObserver: {
+        adapterId: reconciliationObserver.descriptor.adapterId,
+        worldId: reconciliationObserver.descriptor.worldId,
+        worldVersion: reconciliationObserver.descriptor.worldVersion,
+        descriptorDigest: reconciliationObserver.descriptor.descriptorDigest,
+        launchDigest: reconciliationObserver.config.launchDigest,
+        ...(reconciliationObserver.config.transport === undefined ? {} : { transport: reconciliationObserver.config.transport }),
+      },
+    }),
   };
 
   const definition = {
@@ -158,6 +176,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
         witness,
         executionAuthority,
         executionObserver,
+        reconciliationObserver,
         manifest,
         scenario,
       });
@@ -181,6 +200,7 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
         ...(witness === null ? [] : [witness.client.close()]),
         ...(executionAuthority === null ? [] : [executionAuthority.client.close()]),
         ...(executionObserver === null ? [] : [executionObserver.client.close()]),
+        ...(reconciliationObserver === null ? [] : [reconciliationObserver.client.close()]),
       ]);
     },
     createManifestParts(input) {
@@ -219,6 +239,7 @@ function createIdentityOnlyRegistry(config) {
   const witnessConfig = config.witness;
   const executionAuthorityConfig = config.executionAuthority;
   const executionObserverConfig = config.executionObserver;
+  const reconciliationObserverConfig = config.reconciliationObserver;
   const unsupported = () => {
     throw new LabStoreError('CONFLICT', 'This adapter was loaded for a read-only evidence operation.', {});
   };
@@ -275,7 +296,17 @@ function createIdentityOnlyRegistry(config) {
                 ? adapter?.executionObserver?.transport !== undefined
                 : adapter?.executionObserver?.transport !== executionObserverConfig.transport) ||
               typeof adapter?.executionObserver?.worldVersion !== 'string' ||
-              !/^sha256:[0-9a-f]{64}$/u.test(adapter?.executionObserver?.descriptorDigest ?? ''))) {
+              !/^sha256:[0-9a-f]{64}$/u.test(adapter?.executionObserver?.descriptorDigest ?? '')) ||
+          (reconciliationObserverConfig === undefined
+            ? adapter?.reconciliationObserver !== undefined
+            : adapter?.reconciliationObserver?.adapterId !== reconciliationObserverConfig.adapterId ||
+              adapter?.reconciliationObserver?.worldId !== reconciliationObserverConfig.worldId ||
+              adapter?.reconciliationObserver?.launchDigest !== reconciliationObserverConfig.launchDigest ||
+              (reconciliationObserverConfig.transport === undefined
+                ? adapter?.reconciliationObserver?.transport !== undefined
+                : adapter?.reconciliationObserver?.transport !== reconciliationObserverConfig.transport) ||
+              typeof adapter?.reconciliationObserver?.worldVersion !== 'string' ||
+              !/^sha256:[0-9a-f]{64}$/u.test(adapter?.reconciliationObserver?.descriptorDigest ?? ''))) {
         throw new LabStoreError('CONFLICT', 'The supplied adapter does not match the lab adapter contract.', {
           field: 'adapter',
         });
@@ -602,7 +633,7 @@ function createPersistentAdapterSession(config) {
   };
 }
 
-function createExternalWorldPort({ client, descriptor, witness, executionAuthority, executionObserver, manifest, scenario }) {
+function createExternalWorldPort({ client, descriptor, witness, executionAuthority, executionObserver, reconciliationObserver, manifest, scenario }) {
   const worldManifest = {
     schemaVersion: manifest.schemaVersion,
     tokenMap: manifest.tokenMap,
@@ -742,6 +773,15 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
             request,
             transition: transition.transition,
           });
+      const reconciliationObservation = reconciliationObserver === null
+        ? null
+        : await observeReconciliationObserver(reconciliationObserver, {
+            worldId: descriptor.worldId,
+            scenario,
+            state,
+            request,
+            transition: transition.transition,
+          });
       return {
         ...transition,
         transition: {
@@ -751,6 +791,7 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
             : { reconciliationAttestation: transition.reconciliationAttestation }),
           ...(executionAuthorityEvidence === null ? {} : { executionAuthority: executionAuthorityEvidence }),
           ...(executionObservation === null ? {} : { executionObservation }),
+          ...(reconciliationObservation === null ? {} : { reconciliationObservation }),
           postObservation: await corroborateIndependentEvidence(transition.transition.postObservation, {
             state,
             scenario,
@@ -1121,6 +1162,40 @@ async function observeExternalExecution(observer, { worldId, scenario, state, re
   return structuredClone(source);
 }
 
+async function observeReconciliationObserver(observer, { worldId, scenario, state, request, transition }) {
+  const beforeStateDigest = canonicalDigest(state);
+  const result = await observer.client.request('observeReconciliation', {
+    schemaVersion: SCHEMA_VERSION,
+    worldId,
+    scenario,
+    executionNonce: request.executionNonce,
+    token: request.token,
+    basedOnVersion: request.basedOnVersion,
+    beforeStateDigest,
+  });
+  const source = assertExactKeys(result, [
+    'schemaVersion', 'status', 'reconciliationStatus', 'executionNonce', 'token', 'basedOnVersion',
+    'beforeStateDigest', 'afterStateDigest',
+  ], 'reconciliationObservation');
+  const afterStateDigest = canonicalDigest(transition.nextWorldState);
+  if (
+    source.schemaVersion !== SCHEMA_VERSION ||
+    source.status !== 'OBSERVED' ||
+    source.reconciliationStatus !== 'APPLIED' ||
+    source.executionNonce !== request.executionNonce ||
+    source.token !== request.token ||
+    source.basedOnVersion !== request.basedOnVersion ||
+    source.beforeStateDigest !== beforeStateDigest ||
+    source.afterStateDigest !== afterStateDigest
+  ) {
+    throw new ExternalWorldProtocolError('Independent reconciliation observation does not match the applied transition.', {
+      op: 'observeReconciliation',
+      executionNonce: request.executionNonce,
+    });
+  }
+  return structuredClone(source);
+}
+
 async function executeExternalExecution(authority, { worldId, scenario, state, request, transition }) {
   const beforeStateDigest = canonicalDigest(state);
   const result = await authority.client.request('executeExecution', {
@@ -1368,6 +1443,22 @@ function loadExecutionObserverDescriptor(config, primaryDescriptor) {
   return { config, client, descriptor };
 }
 
+function loadReconciliationObserverDescriptor(config, primaryDescriptor) {
+  const client = createAdapterClient(config);
+  const descriptor = validateDescriptor(client.request('hello', {}), config);
+  if (descriptor.worldId !== primaryDescriptor.worldId ||
+      descriptor.worldVersion !== primaryDescriptor.worldVersion ||
+      canonicalJson(descriptor.capabilityIds) !== canonicalJson(primaryDescriptor.capabilityIds) ||
+      canonicalJson(descriptor.scenarioIds) !== canonicalJson(primaryDescriptor.scenarioIds) ||
+      canonicalJson(descriptor.valueSpec) !== canonicalJson(primaryDescriptor.valueSpec) ||
+      descriptor.adapterId === primaryDescriptor.adapterId) {
+    throw new ExternalWorldProtocolError('Reconciliation observer descriptor does not match the primary WorldPort boundary.', {
+      op: 'hello',
+    });
+  }
+  return { config, client, descriptor };
+}
+
 function loadExecutionAuthorityDescriptor(config, primaryDescriptor) {
   const client = createAdapterClient(config);
   const descriptor = validateDescriptor(client.request('hello', {}), config);
@@ -1433,7 +1524,7 @@ function normalizeConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config must be an object.', { field: 'adapter' });
   }
-  const allowed = new Set(['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'witness', 'executionAuthority', 'executionObserver']);
+  const allowed = new Set(['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'witness', 'executionAuthority', 'executionObserver', 'reconciliationObserver']);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config contains an unsupported field.', { field: 'adapter' });
   }
@@ -1471,6 +1562,9 @@ function normalizeConfig(value, configPath) {
   const executionObserver = value.executionObserver === undefined
     ? undefined
     : normalizeExecutionObserverConfig(value.executionObserver, configPath);
+  const reconciliationObserver = value.reconciliationObserver === undefined
+    ? undefined
+    : normalizeExecutionObserverConfig(value.reconciliationObserver, configPath);
   return {
     executable: value.executable,
     args: [...value.args],
@@ -1482,6 +1576,7 @@ function normalizeConfig(value, configPath) {
     ...(witness === undefined ? {} : { witness }),
     ...(executionAuthority === undefined ? {} : { executionAuthority }),
     ...(executionObserver === undefined ? {} : { executionObserver }),
+    ...(reconciliationObserver === undefined ? {} : { reconciliationObserver }),
   };
 }
 

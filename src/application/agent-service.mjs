@@ -644,6 +644,9 @@ export async function runLab(input) {
           ...(transition.reconciliationAttestation === undefined
             ? {}
             : { reconciliationAttestation: transition.reconciliationAttestation }),
+          ...(transition.reconciliationObservation === undefined
+            ? {}
+            : { reconciliationObservation: transition.reconciliationObservation }),
           ...(executionAuthority === null ? {} : { executionAuthority }),
           ...(executionObservation === null ? {} : { executionObservation }),
           externalInputsDigest: canonicalDigest(externalInputs),

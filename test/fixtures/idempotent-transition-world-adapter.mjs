@@ -18,6 +18,7 @@ const supportsReconciliation = process.argv.includes('--reconcilable');
 const reconciliationAttested = process.argv.includes('--reconciliation-attested');
 const tamperReconciliationAttestation = process.argv.includes('--tamper-reconciliation-attestation');
 const omitReconciliationAttestation = process.argv.includes('--omit-reconciliation-attestation');
+const reconciliationObserver = process.argv.includes('--reconciliation-observer');
 const executionAuthority = process.argv.includes('--execution-authority');
 const executionObserver = process.argv.includes('--execution-observer');
 const observerMismatch = process.argv.includes('--observer-mismatch');
@@ -66,6 +67,8 @@ function dispatch(op, payload) {
         ? 'idempotent-execution-authority-v1'
         : executionObserver
           ? 'idempotent-execution-observer-v1'
+          : reconciliationObserver
+            ? 'idempotent-reconciliation-observer-v1'
           : 'idempotent-transition-adapter-v1',
       worldId: WORLD_ID,
       worldVersion: 'idempotent-transition-1',
@@ -89,6 +92,10 @@ function dispatch(op, payload) {
   if (executionObserver) {
     if (op !== 'observeExecution') throw new Error(`unsupported execution observer operation: ${op}`);
     return observeExecution(payload);
+  }
+  if (reconciliationObserver) {
+    if (op !== 'observeReconciliation') throw new Error(`unsupported reconciliation observer operation: ${op}`);
+    return observeReconciliation(payload);
   }
   if (op === 'actions') {
     if (payload.state === undefined) throw new Error('state-dependent actions require state');
@@ -290,6 +297,31 @@ function reconcile(prior, request) {
     ...(reconciliationAttested && !omitReconciliationAttestation
       ? { reconciliationAttestation: createReconciliationAttestation(prior, request, status, transition) }
       : {}),
+  };
+}
+
+function observeReconciliation(request) {
+  const stored = readEffect();
+  const observedStatus = stored === null
+    ? 'ABSENT'
+    : stored.executionNonce !== request.executionNonce
+      ? 'UNKNOWN'
+      : 'APPLIED';
+  const reconciliationStatus = observerMismatch
+    ? (observedStatus === 'APPLIED' ? 'ABSENT' : 'APPLIED')
+    : observedStatus;
+  const afterStateDigest = observedStatus === 'APPLIED'
+    ? canonicalDigest(stored.result.nextWorldState)
+    : request.beforeStateDigest;
+  return {
+    schemaVersion: 1,
+    status: 'OBSERVED',
+    reconciliationStatus,
+    executionNonce: request.executionNonce,
+    token: request.token,
+    basedOnVersion: request.basedOnVersion,
+    beforeStateDigest: request.beforeStateDigest,
+    afterStateDigest,
   };
 }
 

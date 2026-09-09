@@ -376,6 +376,10 @@ F-182 已把最小版本实现为独立 adapter 的 opt-in 契约，不改变未
 
 当前实现已经覆盖 descriptor、manifest、恢复路径、STEP boundary、Replay 和篡改反例。它只证明持有 pinned 公钥的 adapter 对这段内容做过签名，不证明 adapter 诚实、私钥未被同权限进程读取、回执对应真实设备或现实效果。密钥轮换、撤销、跨机器身份、独立运营者和物理效果对账仍属于 Future-Gate。
 
+F-183 又增加了可选的 `reconciliationObserver`。它使用不同的 adapter 身份和启动摘要，接收同一 nonce、before state 摘要、Token 和版本，必须返回 `OBSERVED/APPLIED` 以及相同的 before/after state 摘要。宿主在把恢复结果转成 STEP 前完成比较；不一致时不写 STEP。观察结果随 boundary 持久化，Replay 只比较已提交的 transition 和观察证据，不启动 observer。
+
+这个边界只把一个进程的声明和另一个进程看到的声明分开，不能推出物理效果真实发生。两个进程仍可能运行在同一用户权限、读取同一伪造文件或共谋；低权限 OS 身份、跨机器传输、可信执行器和人工对账仍未解决。
+
 活跃 Run 的锁身份使用稳定 `dev+ino`，每次写入同时重新校验锁 JSON 的自摘要；时间戳变化不再构成所有权变化，内容篡改仍会 fail-closed。身份与内容分层只收敛本地锁误报，不把 PID liveness 或分布式文件系统误称为可靠锁服务。
 
 repo WorldPort 的 writable 实验是 adapter 层的最小真实修改边界，不改变通用 Kernel 的 Token-only 决策契约：只有显式提供补丁策略和 nonce 日志时才暴露 `repo.apply-patch`。策略至少授权目标相对路径，并可用默认 `fixed` 或显式 `beforeDigestMode: current` 约束修改前 `contentDigest`；后者每次新 nonce 在写入前重新读取当前普通文件，适用于同一受控目标的连续候选演化，descriptor/worldVersion 仍绑定不变的策略文件。WorldPort 通过有界 observation evidence 把目标、摘要和 proposal 字段约束提供给模型，但这些提示仍不是权威授权；模型 proposal 携带完整替换内容，必须通过应用层边界和 adapter 的独立校验。adapter 先持久化 `PREPARED`，再做普通文件的原子替换，随后追加 `APPLIED`，同一 nonce 的重试复用已保存结果。该顺序覆盖写入前崩溃、替换中断和响应丢失的有限实验矩阵，但不提供 OS 级沙箱、通用 patch 解析、并发写入隔离或回滚保证；真实项目写权限仍属于 EffectBroker/Future-Gate。当前模型可见文件内容仍受 2 KiB 观察预算限制，实验只证明受控 proposal 能进入共同底座，不等于任意代码修改已经安全。

@@ -1406,3 +1406,10 @@
 - 实现：新增 `reconciliationPublicKey` descriptor/manifest 字段和 `world-reconciliation-v1` Ed25519 回执。签名覆盖世界、场景、完整 before state、原始 request、对账状态和结果摘要；宿主在恢复路径验签，成功后把回执写入 STEP boundary，Replay 使用已提交的结果投影复验，不重新调用 `reconcile`。未声明公钥的旧 adapter 保持旧语义；声明公钥后，缺失、错配或篡改回执均 fail-closed。
 - 验证：有效签名恢复、篡改签名和缺失签名三条回归 `3/3` 通过；完整外部 reconciliation 矩阵 `10/10` 通过，并确认非法回执不会追加 STEP。签名结果去掉 adapter observation evidence 后再绑定到宿主可重放投影，避免运行时成功而 Replay 因展示层字段不同误报。
 - 边界：公钥 pin 只证明持钥进程签署了这段内容，不证明进程诚实、私钥未被同权限代码读取、现实设备已执行或签名者独立于 adapter。密钥轮换/撤销、跨机器身份、独立运营者和物理效果对账仍未实现。
+
+## F-183 非幂等对账的第二观察边界
+
+- 反证/缺口：F-182 的 Ed25519 只能证明主 adapter 持钥签署了 `APPLIED` 声明；同一进程仍同时控制效果记录和回执内容，无法把“主声明”与“另一观察边界”区分开。
+- 实现：adapter 配置可声明 `reconciliationObserver`。宿主在 `reconcile` 返回 `APPLIED` 后向不同 adapter 请求同一 execution nonce 的观察结果，校验 `OBSERVED/APPLIED`、Token、版本和 before/after state 摘要；结果写入 STEP boundary，并由 Replay 离线复核。观察矛盾时在追加 STEP 前返回 `WORLD_ADAPTER_PROTOCOL`。
+- 验证：独立观察跨恢复和 Replay `1/1`；矛盾观察 fail-closed 且不追加 STEP `1/1`；合计 `2/2`。已有非幂等 reconciliation 矩阵继续作为兼容回归。
+- 边界：第二观察只建立本机进程/配置级的来源分离，不是低权限 OS 身份、远程认证、可信硬件或物理事实证明；两个进程仍可能共谋或读取同一伪造来源。下一步应在真实权限/机器边界和人工可审计效果中验证，而不是继续把同用户进程当成可信根。

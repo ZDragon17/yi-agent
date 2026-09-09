@@ -2130,6 +2130,10 @@ function validateStepPayload(
       !isValidExecutionAuthorityEvidence(value.boundary.executionAuthority)) {
     fail('STEP execution authority evidence is invalid.');
   }
+  if (value.boundary.reconciliationObservation !== undefined &&
+      !isValidReconciliationObservationEvidence(value.boundary.reconciliationObservation)) {
+    fail('STEP reconciliation observation evidence is invalid.');
+  }
   if (manifest?.adapter?.executionObserver !== undefined &&
       !isValidExecutionObservationEvidence(value.boundary.executionObservation)) {
     fail('External observer STEP is missing valid execution observation evidence.');
@@ -2137,6 +2141,10 @@ function validateStepPayload(
   if (manifest?.adapter?.executionAuthority !== undefined &&
       !isValidExecutionAuthorityEvidence(value.boundary.executionAuthority)) {
     fail('External authority STEP is missing valid execution authority evidence.');
+  }
+  if (manifest?.adapter?.reconciliationObserver !== undefined &&
+      !isValidReconciliationObservationEvidence(value.boundary.reconciliationObservation)) {
+    fail('External reconciliation observer STEP is missing valid observation evidence.');
   }
   if (manifest?.adapter?.executionAuthority?.executionPublicKey !== undefined &&
       !verifyExecutionAuthorityReceipt(
@@ -2180,6 +2188,10 @@ function isValidExecutionObservationEvidence(value) {
     typeof value.basedOnVersion === 'string' && value.basedOnVersion.length > 0 && value.basedOnVersion.length <= 4096 &&
     typeof value.beforeStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.beforeStateDigest) &&
     typeof value.afterStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.afterStateDigest);
+}
+
+function isValidReconciliationObservationEvidence(value) {
+  return isValidExecutionObservationEvidence(value) && value.reconciliationStatus === 'APPLIED';
 }
 
 function isValidExecutionAuthorityEvidence(value) {
@@ -2367,6 +2379,9 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
   if (value.executionAuthority !== undefined && !isValidExecutionAuthorityMetadata(value.executionAuthority)) {
     fail('Adapter execution authority metadata is invalid.');
   }
+  if (value.reconciliationObserver !== undefined && !isValidExecutionObserverMetadata(value.reconciliationObserver)) {
+    fail('Adapter reconciliation observer metadata is invalid.');
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
     protocol: 'yi-world-cli',
@@ -2390,6 +2405,7 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
     ...(value.witness === undefined ? {} : { witness: cloneJson(value.witness) }),
     ...(value.executionAuthority === undefined ? {} : { executionAuthority: cloneJson(value.executionAuthority) }),
     ...(value.executionObserver === undefined ? {} : { executionObserver: cloneJson(value.executionObserver) }),
+    ...(value.reconciliationObserver === undefined ? {} : { reconciliationObserver: cloneJson(value.reconciliationObserver) }),
   };
 }
 
