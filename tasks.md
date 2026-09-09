@@ -1476,3 +1476,10 @@
 - 实现：TLS WorldPort 测试服务增加可选客户端 CRL，测试 CA 签发服务端证书和 client certificate，再撤销 client serial。CLI 使用该撤销客户端连接，服务端必须在应用层 `hello` 之前拒绝握手。
 - 验证：新增“TLS JSONL rejects a revoked client certificate before hello”回归；远程 WorldPort E2E 全组 `7/7`，既有 CA 轮换、服务端证书撤销、协议收尾、服务重启恢复、独立 observer 和离线 Replay 继续通过。
 - 边界：这只证明测试服务按已加载的 CRL 执行 peer 拒绝，不证明 CRL 的发布链、分发时效、服务端私钥保护、不同机器权限、远程主机代码诚实或人工部署审计。下一步仍需把这些交给真实部署环境和人工卡点。
+
+## F-193 两个远程 WorldPort 的独立重启与证书轮换恢复
+
+- 反证/缺口：F-187/F-189 只把 primary 的非幂等恢复和服务端证书轮换放进连续路径；reconciliation observer 虽然参与第二观察，却没有证明它自身重启、换证书后仍能在同一个 execution nonce 上接续。
+- 实现：复用同一测试 CA 分别签发 primary、observer 及各自轮换后的新叶子证书。第一轮让 primary 在产生效果后丢失回执；随后停止两个远程服务，primary 和 observer 分别在原端口以新证书重启，客户端配置、Lab manifest、客户端证书和 nonce 全部保持不变。
+- 验证：新增“primary and observer restart with rotated certificates”回归；远程 WorldPort E2E 全组 `8/8`。第二次 Run 通过 primary `reconcile` 和 observer 观察完成，效果计数保持 1；停止两个服务后 Replay 返回 `CONSISTENT`。
+- 边界：这只验证同一 CA、本机测试服务、同用户权限和文件效果下的跨端点连续性；不证明不同机器身份、低权限隔离、网络分区中的人工对账、远程主机诚实或真实设备效果。下一步应把不同权限/机器与可审计执行来源作为外部卡点。

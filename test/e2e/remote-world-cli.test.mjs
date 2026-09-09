@@ -436,6 +436,109 @@ test('TLS JSONL recovers a non-idempotent effect after the remote WorldPort rest
   }
 });
 
+test('TLS JSONL recovers when primary and observer restart with rotated certificates', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-multi-recovery-'));
+  const servers = [];
+  try {
+    const lab = path.join(root, 'lab');
+    const effectFile = path.join(root, 'effect.json');
+    const caKey = path.join(root, 'ca.key.pem');
+    const caCert = path.join(root, 'ca.crt.pem');
+    const primaryKey = path.join(root, 'primary.key.pem');
+    const primaryCert = path.join(root, 'primary.crt.pem');
+    const observerKey = path.join(root, 'observer.key.pem');
+    const observerCert = path.join(root, 'observer.crt.pem');
+    const rotatedPrimaryKey = path.join(root, 'primary-rotated.key.pem');
+    const rotatedPrimaryCert = path.join(root, 'primary-rotated.crt.pem');
+    const rotatedObserverKey = path.join(root, 'observer-rotated.key.pem');
+    const rotatedObserverCert = path.join(root, 'observer-rotated.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-remote-multi-recovery-ca');
+    await makeCertificateSignedByAuthority(authority, primaryKey, primaryCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(authority, observerKey, observerCert, 'localhost', 2);
+    await makeCertificateSignedByAuthority(authority, rotatedPrimaryKey, rotatedPrimaryCert, 'localhost', 3);
+    await makeCertificateSignedByAuthority(authority, rotatedObserverKey, rotatedObserverCert, 'localhost', 4);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 5);
+
+    const primaryArgs = ['--effect-file', effectFile, '--non-idempotent', '--reconcilable', '--drop-response'];
+    const observerArgs = ['--effect-file', effectFile, '--reconciliation-observer'];
+    const primary = await startRemoteServer(root, 'primary', primaryArgs, {
+      serverKey: primaryKey,
+      serverCert: primaryCert,
+      caCert,
+    });
+    const observer = await startRemoteServer(root, 'observer', observerArgs, {
+      serverKey: observerKey,
+      serverCert: observerCert,
+      caCert,
+    });
+    servers.push(primary.server, observer.server);
+
+    const adapter = path.join(root, 'adapter.json');
+    const connection = (port) => ({
+      transport: 'tls-jsonl',
+      host: '127.0.0.1',
+      port,
+      tls: { certFile: clientCert, keyFile: clientKey, caFile: caCert, serverName: 'localhost' },
+    });
+    await writeFile(adapter, JSON.stringify({
+      ...connection(primary.port),
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 5000,
+      reconciliationObserver: {
+        ...connection(observer.port),
+        adapterId: 'idempotent-reconciliation-observer-v1',
+        worldId: 'idempotent-transition',
+        timeoutMs: 5000,
+      },
+    }));
+
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'remote-multi-recovery-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const lost = await invoke([
+      'agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent',
+      '--adapter', adapter, '--kernel-only', '--goal', '完成两个远程 WorldPort 的恢复', '--json',
+    ]);
+    assert.notEqual(lost.code, 0, 'the remote primary must lose the first transition response');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, JSON.stringify(lost));
+
+    const primaryExit = waitForExit(primary.server);
+    const observerExit = waitForExit(observer.server);
+    primary.server.kill();
+    observer.server.kill();
+    await Promise.all([primaryExit, observerExit]);
+    const restartedPrimary = await startRemoteServer(root, 'primary-restarted', [
+      '--effect-file', effectFile, '--non-idempotent', '--reconcilable',
+    ], {
+      serverKey: rotatedPrimaryKey,
+      serverCert: rotatedPrimaryCert,
+      caCert,
+    }, { port: primary.port });
+    const restartedObserver = await startRemoteServer(root, 'observer-restarted', observerArgs, {
+      serverKey: rotatedObserverKey,
+      serverCert: rotatedObserverCert,
+      caCert,
+    }, { port: observer.port });
+    servers[0] = restartedPrimary.server;
+    servers[1] = restartedObserver.server;
+
+    const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.json.data.status, 'COMPLETED');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, 'multi-WorldPort recovery must not execute the effect again');
+
+    await stopServers(servers);
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.json.data.verdict, 'CONSISTENT');
+  } finally {
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function invoke(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });
