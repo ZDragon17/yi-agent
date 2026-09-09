@@ -377,6 +377,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-189 在远程恢复路径加入同一 CA 下的服务端证书轮换：primary 重启时更换服务端密钥和证书，旧 manifest、同一 nonce、独立 observer 与离线 Replay 仍保持一致。该场景包含在远程 E2E `4/4` 中；它不等于 CA 轮换、撤销审计或远程主机可信。
 - F-190 为远程 WorldPort 的 `crlFile` 增加负向回归：客户端在 `hello` 前拒绝已被 CRL 撤销的服务端证书。远程 E2E 全组提升为 `5/5`；CRL 只覆盖 TLS 层撤销，不代表部署系统已经完成证书发布、吊销传播或人工审计。
 - F-191 验证远程 WorldPort 的 CA 轮换窗口：初始化时把旧 CA 与预授权的新 CA 放入固定 trust bundle，服务端在同一 endpoint 上从旧根切换到新根后，原 Lab、连续 Run 和 Replay 仍保持一致；改用未列入 bundle 的第三根 CA 时，客户端在 `hello` 前拒绝且不产生新效果。该方案要求轮换根在初始化前明确进入信任边界，不把“任意替换 caFile”当作安全轮换。
+- F-192 把 mTLS 撤销回归补到远程 WorldPort 服务端：测试服务加载由同一 CA 签发的客户端 CRL，已撤销的 client certificate 在 `hello` 前被拒绝，CLI 不创建有效 manifest。远程 E2E 全组提升为 `7/7`；这只证明服务端按已提供 CRL 执行 peer 拒绝，不证明 CRL 发布、分发时效、私钥保护或远程主机可信。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

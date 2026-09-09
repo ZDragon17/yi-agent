@@ -9,6 +9,9 @@ const server = createServer({
   key: readFileSync(options['tls-key-file']),
   cert: readFileSync(options['tls-cert-file']),
   ca: readFileSync(options['tls-client-ca-file']),
+  ...(options['tls-client-crl-file'] === undefined
+    ? {}
+    : { crl: readFileSync(options['tls-client-crl-file']) }),
   requestCert: true,
   rejectUnauthorized: true,
 }, (socket) => {

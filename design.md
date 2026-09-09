@@ -111,6 +111,8 @@ F-190 为远程 `tls-jsonl` 配置的 `crlFile` 加入服务端证书撤销回�
 
 F-191 验证 WorldPort 的 CA 轮换窗口。初始化时把 CA-1 和预授权的 CA-2 放进同一个固定 trust bundle；服务端先用 CA-1 证书运行并完成一个 Run，再在相同 endpoint、server name 和客户端身份下换用 CA-2 证书，后续 Run 不改变 Lab manifest，效果继续提交，Replay 仍为 `CONSISTENT`。随后使用未进入 bundle 的 CA-3 服务端证书，客户端在 `hello` 前 fail-closed，效果计数不增加。这个实验依赖部署方提前声明轮换根；它不允许通过任意修改 `caFile` 把新的信任根悄悄带入既有 Lab，也不证明 CA 发布、bundle 分发、私钥保护或人工审批可信。
 
+F-192 把 mTLS 的另一半撤销边界补齐：测试 WorldPort 服务端加载由同一 CA 签发的客户端 CRL，客户端继续使用已被撤销的证书连接时，TLS 握手在 `hello` 前失败，CLI 不创建有效 manifest。F-190 只证明客户端拒绝被撤销的服务端证书，F-192 不再从客户端行为推断服务端策略；但它仍只证明服务端执行了已提供的 CRL，不证明 CRL 发布、分发时效、私钥保护、远程主机代码诚实或人工审批可信。
+
 F-149 将同一 transport 规则用于 witness、executionAuthority 和 executionObserver。辅助角色的 `transport` 选择写入各自 manifest metadata，并由 identity-only registry、LabStore 和 Replay 校验；旧配置不带字段时仍保持一次请求一进程。独立 witness 请求现在显式等待异步响应，transition、reconcile 和 observe 不会把未完成的 Promise 放进证据对象。测试覆盖多次 witness evidence 请求，以及 authority/observer 对同一 execution nonce 的幂等重试；会话关闭仍由 registry 统一负责，Replay 不启动这些角色。
 
 F-150 把持久辅助会话放进响应丢失恢复实验：authority 或 observer 先完成各自的 nonce 绑定工作，再在回执发出前退出；第一次 Run 只留下未决 external transition，下一次独立 CLI 重新加载同一 manifest，主 adapter 的幂等 `transition`、authority 的 nonce 记录和 observer 的执行观测依次闭合，最终 STEP 才能落账。恢复过程不把新 nonce 当作补偿，也不让 Replay重新访问任何角色。该实验只覆盖本机同用户权限下的进程故障，不覆盖跨机器身份、断网重连或可信硬件。

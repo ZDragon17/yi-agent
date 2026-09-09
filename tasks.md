@@ -1469,3 +1469,10 @@
 - 实现：测试初始化时生成 CA-1、CA-2 和未授权的 CA-3，把 CA-1 与 CA-2 固定写入客户端 trust bundle。远程 primary 先用 CA-1 服务端证书完成一个 Run，再在相同端口切换到 CA-2 证书；随后用 CA-3 证书重启，客户端必须在 `hello` 前拒绝。客户端证书、adapter 配置、Lab manifest 和服务端用于校验客户端的 CA-1 保持不变。
 - 验证：远程 WorldPort E2E 全组 `6/6`；CA-2 切换后第二个 Run 使效果计数从 1 增至 2，`run-2` Replay 为 `CONSISTENT`；CA-3 被拒绝且效果计数保持 2。
 - 边界：这验证的是初始化前预授权的 CA bundle 和服务端信任根切换，不是任意运行时证书文件变更许可。bundle 的发布、分发时效、旧根移除、私钥保护、不同 OS 身份和人工部署审批仍需真实环境验证。
+
+## F-192 远程 WorldPort 服务端的客户端证书撤销
+
+- 反证/缺口：F-190 只验证 CLI 能拒绝已被撤销的远程服务端证书；mTLS 是双向约束，客户端配置成功不能推出远程 WorldPort 服务端会拒绝已撤销的客户端证书。
+- 实现：TLS WorldPort 测试服务增加可选客户端 CRL，测试 CA 签发服务端证书和 client certificate，再撤销 client serial。CLI 使用该撤销客户端连接，服务端必须在应用层 `hello` 之前拒绝握手。
+- 验证：新增“TLS JSONL rejects a revoked client certificate before hello”回归；远程 WorldPort E2E 全组 `7/7`，既有 CA 轮换、服务端证书撤销、协议收尾、服务重启恢复、独立 observer 和离线 Replay 继续通过。
+- 边界：这只证明测试服务按已加载的 CRL 执行 peer 拒绝，不证明 CRL 的发布链、分发时效、服务端私钥保护、不同机器权限、远程主机代码诚实或人工部署审计。下一步仍需把这些交给真实部署环境和人工卡点。

@@ -268,6 +268,48 @@ test('TLS JSONL rotates the remote CA with a pre-authorized trust bundle', async
   }
 });
 
+test('TLS JSONL rejects a revoked client certificate before hello', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-client-revocation-'));
+  const servers = [];
+  try {
+    const caKey = path.join(root, 'ca.key.pem');
+    const caCert = path.join(root, 'ca.crt.pem');
+    const serverKey = path.join(root, 'server.key.pem');
+    const serverCert = path.join(root, 'server.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const crlFile = path.join(root, 'client.crl.pem');
+    const effectFile = path.join(root, 'effect.json');
+    const adapter = path.join(root, 'adapter.json');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-remote-client-revocation-ca');
+    await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 2);
+    await makeCertificateRevocationList(authority, crlFile, [2]);
+    const server = await startRemoteServer(root, 'revoked-client-server', ['--effect-file', effectFile], {
+      serverKey,
+      serverCert,
+      caCert,
+    }, { clientCrlFile: crlFile });
+    servers.push(server.server);
+    await writeFile(adapter, JSON.stringify({
+      transport: 'tls-jsonl',
+      host: '127.0.0.1',
+      port: server.port,
+      tls: { certFile: clientCert, keyFile: clientKey, caFile: caCert, serverName: 'localhost' },
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 5000,
+    }));
+
+    const init = await invoke(['init', '--lab', path.join(root, 'lab'), '--world', 'idempotent-transition', '--seed', 'remote-client-revocation-seed', '--adapter', adapter, '--json']);
+    assert.notEqual(init.code, 0, JSON.stringify(init));
+    assert.equal(init.json.error.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(init));
+  } finally {
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TLS JSONL supports a remote reconciliation observer as a separate endpoint', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-observer-'));
   const servers = [];
@@ -454,6 +496,7 @@ async function startRemoteServerWithOptions(root, name, adapterArgs, tlsFiles, {
   port = 0,
   extraResponseJson,
   extraResponseDelayMs,
+  clientCrlFile,
 } = {}) {
   const portFile = path.join(root, `${name}-port.txt`);
   const server = spawn(process.execPath, [
@@ -465,6 +508,7 @@ async function startRemoteServerWithOptions(root, name, adapterArgs, tlsFiles, {
     '--tls-cert-file', tlsFiles.serverCert,
     '--tls-client-ca-file', tlsFiles.caCert,
     '--port', String(port),
+    ...(clientCrlFile === undefined ? [] : ['--tls-client-crl-file', clientCrlFile]),
     ...(extraResponseJson === undefined ? [] : ['--extra-response-json', extraResponseJson]),
     ...(extraResponseDelayMs === undefined ? [] : ['--extra-response-delay-ms', String(extraResponseDelayMs)]),
   ], { windowsHide: true });
