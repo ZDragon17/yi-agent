@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -156,6 +156,26 @@ test('a reconciliation observer cannot bypass launch recipe isolation with an eq
 
     const init = await invoke([
       'init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'aliased-launch-recipe', '--adapter', adapter, '--json',
+    ]);
+    assert.notEqual(init.code, 0, JSON.stringify(init));
+    assert.equal(init.stdout[0]?.error?.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(init));
+    assert.match(init.stdout[0]?.error?.message ?? '', /distinct launch recipe/u);
+  });
+});
+
+test('a reconciliation observer cannot bypass launch recipe isolation with a hard-linked executable', async () => {
+  await withTemporaryLab(async ({ root, lab }) => {
+    const effectFile = path.join(root, 'hard-linked-launch-recipe-effect.json');
+    const adapter = await writeAdapterWithObserver(root, effectFile, ['--two-actions']);
+    const config = JSON.parse(await readFile(adapter, 'utf8'));
+    const hardLinkedExecutable = path.join(root, 'node-hardlink.exe');
+    await link(config.executable, hardLinkedExecutable);
+    config.reconciliationObserver.executable = hardLinkedExecutable;
+    config.reconciliationObserver.args = config.args;
+    await writeFile(adapter, JSON.stringify(config));
+
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'hard-linked-launch-recipe', '--adapter', adapter, '--json',
     ]);
     assert.notEqual(init.code, 0, JSON.stringify(init));
     assert.equal(init.stdout[0]?.error?.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(init));

@@ -1591,7 +1591,8 @@ function normalizeTransport(value, field) {
 function assertDistinctReconciliationLaunchRecipe(config) {
   const observer = config.reconciliationObserver;
   if (observer === undefined) return;
-  if (sameExecutablePath(config.executable, observer.executable) &&
+  if ((sameExecutablePath(config.executable, observer.executable) ||
+       sameExecutableFile(config.executable, observer.executable)) &&
       canonicalJson({ args: config.args, transport: config.transport ?? null }) ===
         canonicalJson({ args: observer.args, transport: observer.transport ?? null })) {
     throw new ExternalWorldProtocolError('Reconciliation observer must use a distinct launch recipe from the primary WorldPort.', {
@@ -1606,6 +1607,17 @@ function sameExecutablePath(left, right) {
   return process.platform === 'win32'
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
+}
+
+function sameExecutableFile(left, right) {
+  try {
+    const leftStat = statSync(left);
+    const rightStat = statSync(right);
+    return leftStat.dev > 0 && leftStat.ino > 0 &&
+      leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeWitnessConfig(value, configPath) {
