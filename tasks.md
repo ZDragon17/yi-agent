@@ -1362,5 +1362,5 @@
 
 - 反证/缺口：`test-gate` 之前只转发 `node:test` 已完成用例的 TAP 输出；长用例执行期间没有宿主心跳，GitHub job 长时间无日志时无法区分测试仍在运行、测试进程卡死和 runner 失联。
 - 实现：增加默认 60 秒的 stderr 心跳，支持 `YI_AGENT_TEST_GATE_HEARTBEAT_MS` 在 1～300000ms 内显式配置；测试完成、超时或进程信号结束时清理心跳计时器。Windows/Ubuntu workflow 均显式配置 60000ms。
-- 验证：先加入心跳断言并得到预期失败；实现后 `node --test test/scripts/test-gate.test.mjs` 为 `2/2`，既有 watchdog 超时断言保持通过。组合 challenge/packaged CLI 回归继续单独验证业务闭环。
+- 验证：先加入心跳断言并得到预期失败；实现后 `node --test test/scripts/test-gate.test.mjs` 为 `2/2`，既有 watchdog 超时断言保持通过。跨 WorldPort/恢复组合门禁 `14/14` 通过，长测试期间实际观察到 `[test-gate] heartbeat ... 60032ms elapsed`；challenge/packaged CLI 回归继续单独验证业务闭环。
 - 边界：心跳只证明 test-gate 父进程仍能调度并观察子进程，不能证明子进程内部进度、测试正确性或 GitHub runner/网络持续可用。
