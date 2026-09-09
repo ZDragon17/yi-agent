@@ -443,3 +443,5 @@ F-207 增加 `adapter test` 作为外部 WorldPort 的无副作用预检。CLI �
 F-208 将主 descriptor 中的状态依赖动作、幂等 transition 和对账支持能力原样放进预检摘要，并用带 execution observer 的外部配置验证角色身份仍能一起探测。预检结果只帮助调用者判断恢复契约是否声明齐全；它不把 adapter 自报能力升级为现实效果或远程代码诚实。
 
 F-209 增加 Python 标准库实现的外部 WorldPort 示例。CLI 仍只依赖 `yi-world-cli` JSONL envelope 和 descriptor，不依赖 adapter 的实现语言；PowerShell 示例实际完成预检、初始化、运行、检查和离线 Replay，运行期配置使用 `persistent-jsonl` 复用 Python 进程。该 adapter 不声明幂等或对账，故响应丢失后的恢复按既有安全边界阻断。
+
+F-210 增加 WSL Ubuntu 运行脚本，通过 Windows `wsl.exe` 启动同一个 Python adapter；Windows CLI 在同机不同 OS 用户态之间完成预检、初始化、运行、检查和离线 Replay。该边界只证明协议互操作与会话生命周期，不证明跨机器、不同账户、容器隔离或真实副作用权限。

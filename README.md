@@ -284,6 +284,18 @@ powershell -ExecutionPolicy Bypass `
 
 脚本会先执行无副作用预检，再完成同一条 `init→run→inspect→replay` 链；配置使用 `persistent-jsonl`，因此运行期请求会复用 Python 进程。当前 Python 示例是无真实副作用、非幂等的演示 adapter；响应丢失后的恢复仍会按协议阻断，不能把跨语言接入误认为现实执行保证。
 
+如果本机安装了 WSL，还可以把同一个 Python adapter 放到 Ubuntu 用户态运行：
+
+```powershell
+$exampleRoot = Join-Path $PWD 'counter-wsl-run'
+powershell -ExecutionPolicy Bypass `
+  -File .\examples\counter-world\run-wsl-example.ps1 `
+  -RootPath $exampleRoot `
+  -Distribution Ubuntu
+```
+
+该脚本通过 `wsl.exe` 启动 Linux 进程，仍由 Windows CLI 完成预检、初始化、运行、检查和离线 Replay。它验证的是同机不同 OS 用户态的协议边界，不等同于跨机器、不同账户或容器隔离。
+
 ### MVP-1：把真实仓库接入同一条闭环
 
 `examples/repo-world/adapter.mjs` 是第一个 repo WorldPort 实验。它不修改 `src/**`，只把一个真实本地仓库映射成通用外部世界：观察包含有界文件树摘要，两个能力分别是读取一个配置的相对文件和运行一个配置的 Node 测试文件。它通过绝对子进程、`shell:false` 和路径/符号链接检查限制操作面；这是协议级只读约束，不等同于操作系统沙箱，生产环境仍应在独立低权限账户或容器中运行。
@@ -414,6 +426,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-207 增加 `adapter test` 作为外部 WorldPort 的无副作用预检：配置、主 adapter 和已声明辅助角色会在不创建 Lab、锁或账本的情况下完成 `hello` 探针，并返回不含凭据的世界描述、能力、场景、摘要和角色身份。它把接入前的协议诊断从实验空间初始化中分离出来，但不改变真正执行仍需经过 `init→run→inspect→replay` 的边界。
 - F-208 把主 adapter 的状态依赖动作、幂等 transition 和对账支持能力加入预检结果，并用带 execution observer 的配置回归验证。这样恢复前可以先看到影响 nonce 恢复安全性的声明；这些仍是 adapter 的协议声明，不是现实效果或远程代码诚实的证明。
 - F-209 增加只使用 Python 标准库的外部 WorldPort 示例，并用 Windows PowerShell 真实跑通预检与 `init→run→inspect→replay`。这验证协议不绑定 Node 运行时；示例仍是无真实副作用、非幂等 adapter，不扩大恢复或现实执行保证。
+- F-210 将 Python WorldPort 放入 WSL Ubuntu 用户态，通过 Windows `wsl.exe` 启动并用 `persistent-jsonl` 完成同一条闭环；本机结果为 `COMPLETED`、3 步、Replay `CONSISTENT`。这验证同机跨 OS 用户态的协议互操作，不等同于跨机器、不同账户或容器隔离。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

@@ -1595,3 +1595,10 @@
 - 实现：新增 `examples/counter-world/adapter.py`、Python 配置生成脚本和 PowerShell 运行脚本。Python adapter 只使用标准库，实现 `hello`、`initialState`、状态依赖 `actions`、`observe`、`externalInputs` 和 `transition`；配置使用 `persistent-jsonl`，但不声明幂等恢复或对账能力。
 - 验证：Windows 本机真实运行脚本，先通过 `adapter test`，再完成 `init→run→inspect→replay`；持久会话配置下结果为 `COMPLETED`、3 步、Replay `CONSISTENT`。生成的测试目录已清理，工作区没有留下运行产物。
 - 边界：这是跨语言和进程边界证据，不是跨机器、低权限、真实副作用或非幂等恢复证据；Python 示例故意保持无副作用。
+
+## F-210 WSL 跨用户态 WorldPort
+
+- 反证/缺口：F-209 只在 Windows 用户态运行 Python adapter，仍无法区分“不同语言进程”与“不同 OS 用户态进程”对 JSONL 会话的影响。
+- 实现：新增 WSL 配置生成脚本和运行脚本，将 Windows 路径转换为 WSL `/mnt/<drive>/...` 路径，通过 `wsl.exe -d <Distribution> -- python3 ...` 启动同一 Python adapter；配置继续使用 `persistent-jsonl`。
+- 验证：本机 Ubuntu WSL 可用，Windows CLI 通过 WSL adapter 完成 `adapter test`、`init→run→inspect→replay`，结果为 `COMPLETED`、3 步、Replay `CONSISTENT`；生成目录已清理。
+- 边界：WSL 与 Windows 仍是同一台主机，运行身份和文件共享边界未等同于不同账户、容器、跨机器锁或真实副作用权限。
