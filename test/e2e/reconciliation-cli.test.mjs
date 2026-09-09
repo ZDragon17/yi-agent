@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { inflateRawSync } from 'node:zlib';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const FIXTURE = path.resolve('test/fixtures/idempotent-transition-world-adapter.mjs');
@@ -28,6 +29,60 @@ test('a non-idempotent WorldPort reconciles an applied effect without executing 
     assert.equal(replay.code, 0, JSON.stringify(replay));
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
     assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, 'Replay must not execute or reconcile an external effect');
+  });
+});
+
+test('signed reconciliation binds the applied recovery claim and survives Replay', async () => {
+  await withTemporaryLab(async ({ root, lab }) => {
+    const effectFile = path.join(root, 'signed-applied-effect.json');
+    const adapter = await writeAdapter(root, effectFile, 'APPLIED', ['--two-actions', '--reconciliation-attested']);
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'signed-reconcile', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const lost = await invoke(['run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.notEqual(lost.code, 0, JSON.stringify(lost));
+    const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+
+    const events = (await readFile(path.join(lab, 'runs', 'run-2', 'events.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/u).map((line) => decodeStoredEvent(JSON.parse(line)));
+    const step = events.find((event) => event.kind === 'STEP');
+    assert.equal(step?.payload?.boundary?.reconciliationAttestation?.type, 'world-reconciliation-v1');
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
+test('tampered signed reconciliation fails closed before appending a STEP', async () => {
+  await withTemporaryLab(async ({ root, lab }) => {
+    const effectFile = path.join(root, 'tampered-signed-effect.json');
+    const adapter = await writeAdapter(root, effectFile, 'APPLIED', ['--two-actions', '--reconciliation-attested', '--tamper-reconciliation-attestation']);
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'tampered-signed-reconcile', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const lost = await invoke(['run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.notEqual(lost.code, 0, JSON.stringify(lost));
+    const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.notEqual(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.stdout[0]?.error?.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(resumed));
+    assert.equal(await countSteps(lab, 'run-2'), 0, 'invalid reconciliation evidence must not append a STEP');
+  });
+});
+
+test('a signed descriptor rejects an unsigned reconciliation response', async () => {
+  await withTemporaryLab(async ({ root, lab }) => {
+    const effectFile = path.join(root, 'missing-signed-effect.json');
+    const adapter = await writeAdapter(root, effectFile, 'APPLIED', ['--two-actions', '--reconciliation-attested', '--omit-reconciliation-attestation']);
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'missing-signed-reconcile', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const lost = await invoke(['run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.notEqual(lost.code, 0, JSON.stringify(lost));
+    const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.notEqual(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.stdout[0]?.error?.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(resumed));
+    assert.equal(await countSteps(lab, 'run-2'), 0);
   });
 });
 
@@ -329,6 +384,12 @@ async function fileExists(file) {
 
 function parseJsonLines(value) {
   return value.trim() === '' ? [] : value.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+}
+
+function decodeStoredEvent(event) {
+  return typeof event.payload === 'string'
+    ? { ...event, payload: JSON.parse(inflateRawSync(Buffer.from(event.payload, 'base64')).toString('utf8')) }
+    : event;
 }
 
 function invokeUntilEffectThenKill(args, effectFile, releaseFile, timeoutMs = 20_000) {

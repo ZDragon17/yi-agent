@@ -1399,3 +1399,10 @@
 - 实现：ESS arbitrage adapter 同时支持一次请求一进程和 `persistent-jsonl`；L4-A 测试显式使用持久运行期会话。规划副本只复制会被替换的顶层历史字段，共享只读的 action/context/belief 模型树；持久化预算判断改用原生 `JSON.stringify` 计算字节数，账本摘要和完整性字段仍使用 `canonicalJson`。
 - 验证：最新 L4-A 负结果为 `1/1`、`323720.2624ms`（约 5 分 24 秒），同一类历史证据为约 589 秒；Level 5 `2/2`，内核完整契约 `54/54`，规划/历史/UI 门禁 `15/15`。L4-A 仍拒绝单步几何和 horizon-8 规划跨过跨期阈值，Replay 与持久 WorldPort 故障语义没有改变。
 - 边界：这是当前 Windows 合成 WorldPort 的局部测量，不是通用性能承诺；共享只读模型树依赖规划路径不修改模型树，后续若加入新的可变字段必须补不变性测试。默认一次性 adapter transport 仍保留，真实设备、远程会话、权限隔离和高并发尚未验证。
+
+## F-182 外部对账回执的可选签名来源
+
+- 反证/缺口：非幂等 WorldPort 的 `reconcile` 已能验证 nonce、before/after state 和 transition 结构，但 adapter 可以用任意进程身份返回同样的 `APPLIED` 内容；没有来源声明时，账本无法区分“内容合法”和“谁签了这条声明”。
+- 实现：新增 `reconciliationPublicKey` descriptor/manifest 字段和 `world-reconciliation-v1` Ed25519 回执。签名覆盖世界、场景、完整 before state、原始 request、对账状态和结果摘要；宿主在恢复路径验签，成功后把回执写入 STEP boundary，Replay 使用已提交的结果投影复验，不重新调用 `reconcile`。未声明公钥的旧 adapter 保持旧语义；声明公钥后，缺失、错配或篡改回执均 fail-closed。
+- 验证：有效签名恢复、篡改签名和缺失签名三条回归 `3/3` 通过；完整外部 reconciliation 矩阵 `10/10` 通过，并确认非法回执不会追加 STEP。签名结果去掉 adapter observation evidence 后再绑定到宿主可重放投影，避免运行时成功而 Replay 因展示层字段不同误报。
+- 边界：公钥 pin 只证明持钥进程签署了这段内容，不证明进程诚实、私钥未被同权限代码读取、现实设备已执行或签名者独立于 adapter。密钥轮换/撤销、跨机器身份、独立运营者和物理效果对账仍未实现。

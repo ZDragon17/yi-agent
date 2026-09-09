@@ -14,6 +14,7 @@ import {
   verifyExternalInputAttestation,
 } from './external-evidence.mjs';
 import { verifyExecutionAuthorityReceipt } from './execution-authority-attestation.mjs';
+import { verifyReconciliationAttestation } from './reconciliation-attestation.mjs';
 import { acknowledgeReplan, advanceChangeSupervisor, createChangeSupervisor, enableGoal, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
@@ -88,7 +89,7 @@ function replayRunInternal(input) {
   let state = cloneJson(start.initialState);
   for (const event of events.slice(1)) {
     if (event.kind === 'STEP') {
-      const replay = replayStep({ event, state, manifest: worldManifest, adapter: manifest.adapter, world, kernel });
+      const replay = replayStep({ event, state, manifest: worldManifest, adapter: manifest.adapter, world, kernel, worldId: start.worldId, scenario: start.scenario });
       if (replay.difference) return inconsistent(start.runId, replay.difference, state);
       state = cloneJson(replay.nextState);
       continue;
@@ -121,7 +122,7 @@ function replayRunInternal(input) {
   };
 }
 
-function replayStep({ event, state, manifest, adapter, world, kernel }) {
+function replayStep({ event, state, manifest, adapter, world, kernel, worldId, scenario }) {
   const payload = event.payload;
   if (!isRecord(payload.boundary) || payload.boundary.schemaVersion !== SCHEMA_VERSION ||
       REQUIRED_BOUNDARY_KEYS.some((key) => !(key in payload.boundary))) {
@@ -254,21 +255,22 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
     ?? compareValue(payload.choice, intent.choice, 'payload.choice', event.sequence);
   if (difference) return { difference };
 
+  const transitionRequest = {
+    schemaVersion: SCHEMA_VERSION,
+    token: intent.choice.token,
+    basedOnVersion: beforeObservation.stateVersion,
+    policyVersion: manifest.authorityPolicy.policyVersion,
+    constraintsDigest: manifest.authorityPolicy.constraintsDigest,
+    executionNonce: payload.receipt.executionNonce,
+    // proposal 只属于声明 adapter 的 WorldPort 写入边界；内置世界的封闭
+    // 键集会拒收带 proposal 的请求，重放必须与原 run 的构造规则一致。
+    ...(payload.policyEvidence?.applied === true && payload.policyEvidence.proposal !== undefined && adapter !== undefined
+      ? { proposal: cloneJson(payload.policyEvidence.proposal) }
+      : {}),
+  };
   let transition;
   try {
-    transition = world.transition(state.worldState, {
-      schemaVersion: SCHEMA_VERSION,
-      token: intent.choice.token,
-      basedOnVersion: beforeObservation.stateVersion,
-      policyVersion: manifest.authorityPolicy.policyVersion,
-      constraintsDigest: manifest.authorityPolicy.constraintsDigest,
-      executionNonce: payload.receipt.executionNonce,
-      // proposal 只属于声明 adapter 的 WorldPort 写入边界；内置世界的封闭
-      // 键集会拒收带 proposal 的请求，重放必须与原 run 的构造规则一致。
-      ...(payload.policyEvidence?.applied === true && payload.policyEvidence.proposal !== undefined && adapter !== undefined
-        ? { proposal: cloneJson(payload.policyEvidence.proposal) }
-        : {}),
-    });
+    transition = world.transition(state.worldState, transitionRequest);
   } catch (error) {
     corrupt('Replay world transition failed.', { sequence: event.sequence, cause: errorName(error) });
   }
@@ -289,6 +291,27 @@ function replayStep({ event, state, manifest, adapter, world, kernel }) {
        executionAuthority.beforeStateDigest !== canonicalDigest(state.worldState) ||
        executionAuthority.afterStateDigest !== canonicalDigest(transition.nextWorldState))) {
     corrupt('STEP execution authority does not match the transition boundary.', { sequence: event.sequence });
+  }
+  const reconciliationAttestation = payload.boundary.reconciliationAttestation;
+  if (reconciliationAttestation !== undefined && adapter?.reconciliationPublicKey !== undefined &&
+      !verifyReconciliationAttestation({
+        attestation: reconciliationAttestation,
+        publicKey: adapter.reconciliationPublicKey,
+        worldId,
+        scenario,
+        state: state.worldState,
+        request: transitionRequest,
+        status: 'APPLIED',
+        transition: {
+          nextWorldState: transition.nextWorldState,
+          receipt: transition.receipt,
+          postObservation: transition.postObservation,
+        },
+      })) {
+    corrupt('STEP reconciliation attestation is invalid.', { sequence: event.sequence });
+  }
+  if (adapter?.reconciliationPublicKey === undefined && reconciliationAttestation !== undefined) {
+    corrupt('STEP reconciliation attestation is unbound.', { sequence: event.sequence });
   }
   const postObservation = mergeObservationFeedback(
     beforeObservation,

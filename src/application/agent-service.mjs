@@ -641,6 +641,9 @@ export async function runLab(input) {
           ...(goalActivation === null ? {} : { goalActivation }),
           ...(goalReplan === null ? {} : { goalReplan }),
           ...(randomization === null ? {} : { randomization }),
+          ...(transition.reconciliationAttestation === undefined
+            ? {}
+            : { reconciliationAttestation: transition.reconciliationAttestation }),
           ...(executionAuthority === null ? {} : { executionAuthority }),
           ...(executionObservation === null ? {} : { executionObservation }),
           externalInputsDigest: canonicalDigest(externalInputs),

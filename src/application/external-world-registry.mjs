@@ -18,6 +18,7 @@ import {
   verifyExternalInputAttestation,
 } from '../runtime/external-evidence.mjs';
 import { verifyExecutionAuthorityReceipt } from '../runtime/execution-authority-attestation.mjs';
+import { verifyReconciliationAttestation } from '../runtime/reconciliation-attestation.mjs';
 import { LabStoreError } from '../runtime/lab-store.mjs';
 import {
   assertExactKeys,
@@ -100,6 +101,9 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
     ...(descriptor.supportsReconciliation === undefined
       ? {}
       : { supportsReconciliation: descriptor.supportsReconciliation }),
+    ...(descriptor.reconciliationPublicKey === undefined
+      ? {}
+      : { reconciliationPublicKey: descriptor.reconciliationPublicKey }),
     ...(witness === null ? {} : {
       witness: {
         adapterId: witness.descriptor.adapterId,
@@ -233,6 +237,7 @@ function createIdentityOnlyRegistry(config) {
           (manifest.worldImplementationDigest !== undefined && manifest.worldImplementationDigest !== adapter?.descriptorDigest) ||
           adapter?.launchDigest !== config.launchDigest ||
           !isValidEvidencePublicKey(adapter?.evidencePublicKey) ||
+          (adapter?.reconciliationPublicKey !== undefined && !isValidEvidencePublicKey(adapter.reconciliationPublicKey)) ||
           !isValueSpec(adapter?.valueSpec) ||
           (config.transport === undefined
             ? adapter?.transport !== undefined
@@ -715,6 +720,8 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         descriptor.valueSpec.observationDimensions,
         descriptor.evidencePublicKey,
         witness?.descriptor.evidencePublicKey,
+        scenario,
+        descriptor.reconciliationPublicKey,
       );
       if (transition.status !== 'APPLIED') return transition;
       const executionAuthorityEvidence = executionAuthority === null
@@ -739,6 +746,9 @@ function createExternalWorldPort({ client, descriptor, witness, executionAuthori
         ...transition,
         transition: {
           ...transition.transition,
+          ...(transition.reconciliationAttestation === undefined
+            ? {}
+            : { reconciliationAttestation: transition.reconciliationAttestation }),
           ...(executionAuthorityEvidence === null ? {} : { executionAuthority: executionAuthorityEvidence }),
           ...(executionObservation === null ? {} : { executionObservation }),
           postObservation: await corroborateIndependentEvidence(transition.transition.postObservation, {
@@ -1197,8 +1207,8 @@ function normalizeExecutionAuthorityResult(result, { state, request, transition,
   return structuredClone(source);
 }
 
-function normalizeExternalReconciliation(value, state, request, worldId, expectedDimensions, evidencePublicKey, witnessPublicKey) {
-  const source = assertExactKeys(value, ['status', 'transition'], 'reconcile', ['status']);
+function normalizeExternalReconciliation(value, state, request, worldId, expectedDimensions, evidencePublicKey, witnessPublicKey, scenario, reconciliationPublicKey) {
+  const source = assertExactKeys(value, ['status', 'transition', 'reconciliationAttestation'], 'reconcile', ['status']);
   if (!['APPLIED', 'ABSENT', 'UNKNOWN'].includes(source.status)) {
     throw new ExternalWorldProtocolError('External WorldPort reconciliation status is invalid.', { op: 'reconcile' });
   }
@@ -1206,7 +1216,11 @@ function normalizeExternalReconciliation(value, state, request, worldId, expecte
     if (source.transition !== undefined) {
       throw new ExternalWorldProtocolError('A non-applied reconciliation cannot contain a transition result.', { op: 'reconcile' });
     }
-    return { status: source.status };
+    assertReconciliationAttestation(source, state, request, worldId, scenario, source.status, undefined, reconciliationPublicKey);
+    return {
+      status: source.status,
+      ...(source.reconciliationAttestation === undefined ? {} : { reconciliationAttestation: source.reconciliationAttestation }),
+    };
   }
   if (source.transition === null || typeof source.transition !== 'object' || Array.isArray(source.transition)) {
     throw new ExternalWorldProtocolError('Applied reconciliation must contain a transition result.', { op: 'reconcile' });
@@ -1223,10 +1237,34 @@ function normalizeExternalReconciliation(value, state, request, worldId, expecte
   if (transition.receipt.status !== 'ACCEPTED') {
     throw new ExternalWorldProtocolError('Applied reconciliation must contain an accepted transition.', { op: 'reconcile' });
   }
+  assertReconciliationAttestation(source, state, request, worldId, scenario, source.status, transition, reconciliationPublicKey);
   return {
     status: 'APPLIED',
     transition,
+    ...(source.reconciliationAttestation === undefined ? {} : { reconciliationAttestation: source.reconciliationAttestation }),
   };
+}
+
+function assertReconciliationAttestation(source, state, request, worldId, scenario, status, transition, reconciliationPublicKey) {
+  if (reconciliationPublicKey === undefined) {
+    if (source.reconciliationAttestation !== undefined) {
+      throw new ExternalWorldProtocolError('External WorldPort returned an unbound reconciliation attestation.', { op: 'reconcile' });
+    }
+    return;
+  }
+  if (source.reconciliationAttestation === undefined ||
+      !verifyReconciliationAttestation({
+        attestation: source.reconciliationAttestation,
+        publicKey: reconciliationPublicKey,
+        worldId,
+        scenario,
+        state,
+        request,
+        status,
+        transition,
+      })) {
+    throw new ExternalWorldProtocolError('External WorldPort reconciliation attestation is invalid.', { op: 'reconcile' });
+  }
 }
 
 function hasNonceWindowPrefix(previous, next) {
@@ -1256,7 +1294,7 @@ function normalizeExternalReceipt(value, request, field) {
 function validateDescriptor(value, config) {
   const source = assertExactKeys(value, [
     'adapterId', 'worldId', 'worldVersion', 'capabilityIds', 'scenarioIds', 'valueSpec', 'evidencePublicKey',
-    'supportsStateDependentActions', 'supportsIdempotentTransitions', 'supportsReconciliation', 'descriptorDigest', 'executionPublicKey',
+    'supportsStateDependentActions', 'supportsIdempotentTransitions', 'supportsReconciliation', 'reconciliationPublicKey', 'descriptorDigest', 'executionPublicKey',
   ], 'hello.result', [
     'adapterId', 'worldId', 'worldVersion', 'capabilityIds', 'scenarioIds', 'valueSpec', 'evidencePublicKey', 'descriptorDigest',
   ]);
@@ -1265,9 +1303,11 @@ function validateDescriptor(value, config) {
       !validStringList(source.capabilityIds, 'capabilityIds') || !validStringList(source.scenarioIds, 'scenarioIds') ||
       !isValueSpec(source.valueSpec) || !isValidEvidencePublicKey(source.evidencePublicKey) ||
       (source.executionPublicKey !== undefined && !isValidEvidencePublicKey(source.executionPublicKey)) ||
+      (source.reconciliationPublicKey !== undefined && !isValidEvidencePublicKey(source.reconciliationPublicKey)) ||
       (source.supportsStateDependentActions !== undefined && typeof source.supportsStateDependentActions !== 'boolean') ||
       (source.supportsIdempotentTransitions !== undefined && typeof source.supportsIdempotentTransitions !== 'boolean') ||
       (source.supportsReconciliation !== undefined && typeof source.supportsReconciliation !== 'boolean') ||
+      (source.reconciliationPublicKey !== undefined && source.supportsReconciliation !== true) ||
       source.descriptorDigest !== canonicalDigest({
         adapterId: source.adapterId,
         worldId: source.worldId,
@@ -1285,6 +1325,9 @@ function validateDescriptor(value, config) {
         ...(source.supportsReconciliation === undefined
           ? {}
           : { supportsReconciliation: source.supportsReconciliation }),
+        ...(source.reconciliationPublicKey === undefined
+          ? {}
+          : { reconciliationPublicKey: source.reconciliationPublicKey }),
         ...(source.executionPublicKey === undefined ? {} : { executionPublicKey: source.executionPublicKey }),
       })) {
     throw new ExternalWorldProtocolError('External WorldPort hello descriptor is invalid.', { op: 'hello' });

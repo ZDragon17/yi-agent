@@ -2,7 +2,8 @@ import readline from 'node:readline';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { canonicalDigest } from '../../src/runtime/schema.mjs';
-import { ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
+import { reconciliationUnsigned } from '../../src/runtime/reconciliation-attestation.mjs';
+import { attestationFor, ED25519_PUBLIC_KEY } from './ed25519-proof.mjs';
 
 const WORLD_ID = 'idempotent-transition';
 const CAPABILITY_ID = 'idempotent-transition.advance';
@@ -14,6 +15,9 @@ const releaseFileIndex = process.argv.indexOf('--release-file');
 const releaseFile = releaseFileIndex === -1 ? null : process.argv[releaseFileIndex + 1] ?? null;
 const supportsIdempotentTransitions = !process.argv.includes('--non-idempotent');
 const supportsReconciliation = process.argv.includes('--reconcilable');
+const reconciliationAttested = process.argv.includes('--reconciliation-attested');
+const tamperReconciliationAttestation = process.argv.includes('--tamper-reconciliation-attestation');
+const omitReconciliationAttestation = process.argv.includes('--omit-reconciliation-attestation');
 const executionAuthority = process.argv.includes('--execution-authority');
 const executionObserver = process.argv.includes('--execution-observer');
 const observerMismatch = process.argv.includes('--observer-mismatch');
@@ -72,6 +76,7 @@ function dispatch(op, payload) {
       supportsStateDependentActions: true,
       ...(supportsIdempotentTransitions ? { supportsIdempotentTransitions: true } : {}),
       ...(supportsReconciliation ? { supportsReconciliation: true } : {}),
+      ...(reconciliationAttested ? { reconciliationPublicKey: ED25519_PUBLIC_KEY } : {}),
     };
     return { ...descriptor, descriptorDigest: canonicalDigest(descriptor) };
   }
@@ -273,9 +278,30 @@ function holdResponseUntilReleased() {
 function reconcile(prior, request) {
   if (!supportsReconciliation) throw new Error('reconciliation is not supported');
   const stored = readEffect();
-  if (stored === null) return { status: 'ABSENT' };
-  if (stored.executionNonce !== request.executionNonce) return { status: 'UNKNOWN' };
-  return { status: 'APPLIED', transition: stored.result };
+  const status = stored === null
+    ? 'ABSENT'
+    : stored.executionNonce !== request.executionNonce
+      ? 'UNKNOWN'
+      : 'APPLIED';
+  const transition = status === 'APPLIED' ? stored.result : undefined;
+  return {
+    status,
+    ...(transition === undefined ? {} : { transition }),
+    ...(reconciliationAttested && !omitReconciliationAttestation
+      ? { reconciliationAttestation: createReconciliationAttestation(prior, request, status, transition) }
+      : {}),
+  };
+}
+
+function createReconciliationAttestation(prior, request, status, transition) {
+  const unsigned = reconciliationUnsigned({ worldId: WORLD_ID, scenario: 'idempotent', state: prior, request, status, transition });
+  const { requestDigest, resultDigest } = unsigned;
+  const digest = canonicalDigest(unsigned);
+  const signature = attestationFor({ ...unsigned, digest });
+  if (!tamperReconciliationAttestation) {
+    return { schemaVersion: 1, type: unsigned.type, algorithm: unsigned.algorithm, requestDigest, resultDigest, digest, signature };
+  }
+  return { schemaVersion: 1, type: unsigned.type, algorithm: unsigned.algorithm, requestDigest, resultDigest, digest, signature: `${signature.slice(0, -2)}xx` };
 }
 
 function readEffect() {

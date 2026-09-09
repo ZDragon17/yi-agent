@@ -365,6 +365,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-179 用仓库外 late-bound Oracle 复验当前候选：未知世界、未知不透明 Token 和随机有限模型共 `48/48` 通过，且用当前候选源码摘要绑定后仍为 `PASS`。这支持“UI 修复未改变 Kernel 公共契约”，不把 Oracle 结果扩展成通用智能或现实因果证明。
 - F-180 完成一次外部 WorldPort 长跑组合门：经济/对抗课程、延迟和噪声反馈、制度切换、独立 witness、持久 authority/observer 以及会话故障恢复共 `21/21` 通过，耗时约 19 分 46 秒，最长 L4-A 约 9 分 49 秒。结果支持跨 WorldPort 账本与 Replay 一致，但也把长跑性能明确留作后续实验，不宣称已具备现实收益或高吞吐。
 - F-181 针对 F-180 的长跑瓶颈做了第一轮实测优化：ESS adapter 支持持久 JSONL 会话，L4-A 复用运行期进程；规划分支改为共享只读模型树的顶层快照，持久化预算只用原生 JSON 计算字节数，账本摘要仍保留 canonical JSON。相同 L4-A 负结果从约 589 秒降到约 324 秒，内核契约 `54/54`、规划/历史/UI 门禁 `15/15`、Level 5 `2/2` 通过。优化只证明当前 Windows 合成 WorldPort 的局部收益，尚未证明任意 adapter、跨主机或真实设备场景的吞吐。
+- F-182 把外部对账签名从草案推进为 opt-in 运行时契约：adapter 可在 descriptor 中声明 `reconciliationPublicKey`，宿主要求 `APPLIED/ABSENT/UNKNOWN` 对账结果提供 Ed25519 回执；签名绑定世界、场景、before state、原始请求和结果摘要，恢复证据写入 STEP boundary，Replay 在不重新调用 adapter 的情况下复验。有效签名、篡改签名和缺失签名回归 `3/3`，完整 reconciliation 回归 `10/10`。签名只证明持钥 adapter 声明过这段内容，不证明现实效果真实发生。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

@@ -354,26 +354,27 @@ F-97 用不向 Kernel 暴露隐藏模式的 `latent-choice` WorldPort 反证“�
 
 周期-7 碰撞世界（`test/fixtures/cyclic-collision-world-adapter.mjs`，赢家调度 A,B,A,C,B,A,D）进一步区分出窗口-1/2 的表达力上限：碰撞相位上任何窗口-2 条件策略的赢家率上限约 5.5/7。`kernelLearningVersion: 26` 因此把 h2 键的基底从按构造永不复现的累加器摘要改为最近 8 条已验证变化的窗口摘要（`LONG_CONTEXT_KEY_WINDOW = 8`，`MAX_LONG_CONTEXTS = 8`），`recentHistory` 容量扩至 8，h1 键显式取最近 2 条切片。读取始终使用窗口基（旧记忆的累加器 h2 模型本就不可读，行为无差异）；写入按学习版本门控，v25 及更早的 Replay 继续写累加器键。实测：赢家率从盲选水平在 ~150 步内收敛到 6/7 平台（窗口-2 类的信息论最优），双 seed 真实 CLI 360 步成熟窗口通过预注册判据。长跑中的「平台赢家率瓦解」经 F-118 值曲线插桩证实为度量伪影：~650 步时值精确到达目标并转入驻留（|v-400| ≤ 0.2 持续 500+ 步），越过目标后调度赢家不再是价值最优动作，调度赢家率失效——「元稳定恢复失败」的 F-117 叙事据此撤回。同轮以 `kernelLearningVersion: 27`（`revalidationBeliefGate`）把强制重验门控为信念比较：过期行动只有在其预期变化信念仍不劣于任何安全候选时才被强制重访（隐藏漂移场景中该候选仍是信念强者，检测能力保留），全局证据已判劣的冷门候选交由上下文反事实探测层；`step` 输入新增可选 `learningVersion`，Replay 与应用层分别传账本版本与当前版本，v25 及更早语义按版本原样保留（`EXPLORATORY` 模式门控与「饥饿上下文探测」均曾被尝试并分别被漂移 E2E 与四个学习契约 E2E 否决回退）。目标驻留行为由 2×400 步稳定性 E2E 固化；多目标切换后的重新收敛是后续反证方向。
 
-## 10. Future-Gate：外部对账回执的签名证明草案
+## 10. 外部对账回执的签名证明边界
 
 当前 v0.1 的 `reconcile` 只验证回执的结构、原始请求身份、前后状态和 `effectDigest`；它能防止宿主误把不同动作拼接起来，却不能证明回执来自真实的 WorldPort。签名不能证明现实系统本身诚实，但能把“谁声明了这个事实”从无来源文本提升为可验证的来源声明。
 
-该能力只允许作为独立 adapter 的 opt-in 契约，不改变未声明能力的旧 adapter。建议在 `hello.result` 和 manifest adapter metadata 中增加 `reconciliationAttestation: "ed25519-v1"`。声明后，`reconcile` 的 `APPLIED`、`ABSENT` 和 `UNKNOWN` 都必须携带：
+F-182 已把最小版本实现为独立 adapter 的 opt-in 契约，不改变未声明能力的旧 adapter。`hello.result` 可以声明 `reconciliationPublicKey`；宿主把它复制进 manifest adapter metadata。声明后，`reconcile` 的 `APPLIED`、`ABSENT` 和 `UNKNOWN` 都必须携带以下回执字段：
 
 ```json
 {
   "schemaVersion": 1,
-  "type": "world-reconciliation",
+  "type": "world-reconciliation-v1",
   "algorithm": "ed25519-v1",
   "requestDigest": "sha256:<canonical reconcile request>",
   "resultDigest": "sha256:<canonical status and transition>",
+  "digest": "sha256:<canonical unsigned attestation>",
   "signature": "<base64 Ed25519 signature>"
 }
 ```
 
-签名输入固定为规范化对象 `{schemaVersion,type,algorithm,worldId,scenario,state,request,status,transition,requestDigest,resultDigest}`；`requestDigest` 覆盖本次世界身份、场景、完整 before state 和 execution request，`resultDigest` 覆盖 status 及可选 transition。宿主先验签并重新计算两个摘要，再执行现有的 `APPLIED` 状态/回执校验；验签失败、摘要错配、跨 nonce 或跨状态复用均为协议错误。签名的 `ABSENT`/`UNKNOWN` 仍然只证明“adapter 的否定声明”，不能自动升级为可执行重试。Replay 永不调用 `reconcile`，而是继续只消费已提交证据。
+签名输入固定为规范化对象 `{schemaVersion,type,algorithm,worldId,scenario,state,request,status,transition,requestDigest,resultDigest}`。其中 `requestDigest` 覆盖世界身份、场景、完整 before state 和 execution request；`resultDigest` 覆盖 status 及 transition。为了让宿主和 Replay 使用同一字节边界，transition 中的 observation evidence 不进入签名结果投影，Kernel 需要的 vector、版本和 feedback 仍由 STEP 账本独立保存。宿主先验签并重新计算两个摘要，再执行现有的 `APPLIED` 状态/回执校验；验签失败、摘要错配、跨 nonce 或跨状态复用均为协议错误。签名的 `ABSENT`/`UNKNOWN` 仍然只证明 adapter 的否定声明，不能自动升级为可执行重试。Replay 不调用 `reconcile`，而是用已提交的 transition 投影重新验签。
 
-这项草案尚未进入运行时协议。正式实现前必须由独立 WorldPort 的拥有者确认字段命名、签名覆盖范围、密钥轮换和“同一 nonce 的签名结果是否可缓存”语义；确认后再同步协议校验、manifest 版本边界、测试 adapter 和伪造/重放反例。
+当前实现已经覆盖 descriptor、manifest、恢复路径、STEP boundary、Replay 和篡改反例。它只证明持有 pinned 公钥的 adapter 对这段内容做过签名，不证明 adapter 诚实、私钥未被同权限进程读取、回执对应真实设备或现实效果。密钥轮换、撤销、跨机器身份、独立运营者和物理效果对账仍属于 Future-Gate。
 
 活跃 Run 的锁身份使用稳定 `dev+ino`，每次写入同时重新校验锁 JSON 的自摘要；时间戳变化不再构成所有权变化，内容篡改仍会 fail-closed。身份与内容分层只收敛本地锁误报，不把 PID liveness 或分布式文件系统误称为可靠锁服务。
 

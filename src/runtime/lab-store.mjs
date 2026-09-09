@@ -2145,6 +2145,14 @@ function validateStepPayload(
       )) {
     fail('External authority STEP attestation is invalid.');
   }
+  if (value.boundary.reconciliationAttestation !== undefined &&
+      !isValidReconciliationAttestation(value.boundary.reconciliationAttestation)) {
+    fail('External reconciliation STEP attestation is invalid.');
+  }
+  if (manifest?.adapter?.reconciliationPublicKey === undefined &&
+      value.boundary.reconciliationAttestation !== undefined) {
+    fail('External reconciliation STEP attestation is unbound.');
+  }
   if (typeof value.receipt.executionNonce !== 'string' || value.receipt.executionNonce.length === 0) {
     fail('STEP receipt executionNonce is invalid.');
   }
@@ -2182,6 +2190,20 @@ function isValidExecutionAuthorityEvidence(value) {
     typeof value.basedOnVersion === 'string' && value.basedOnVersion.length > 0 && value.basedOnVersion.length <= 4096 &&
     typeof value.beforeStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.beforeStateDigest) &&
     typeof value.afterStateDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.afterStateDigest);
+}
+
+function isValidReconciliationAttestation(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).every((key) => [
+      'schemaVersion', 'type', 'algorithm', 'requestDigest', 'resultDigest', 'digest', 'signature',
+    ].includes(key)) &&
+    value.schemaVersion === SCHEMA_VERSION &&
+    value.type === 'world-reconciliation-v1' &&
+    value.algorithm === 'ed25519-v1' &&
+    /^sha256:[0-9a-f]{64}$/u.test(value.requestDigest ?? '') &&
+    /^sha256:[0-9a-f]{64}$/u.test(value.resultDigest ?? '') &&
+    /^sha256:[0-9a-f]{64}$/u.test(value.digest ?? '') &&
+    typeof value.signature === 'string' && value.signature.length > 0 && value.signature.length <= 8192;
 }
 
 function validatePolicyEvidence(value, field, corruptOnFailure) {
@@ -2332,6 +2354,10 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
   if (value.supportsReconciliation !== undefined && typeof value.supportsReconciliation !== 'boolean') {
     fail('Adapter metadata reconciliation declaration is invalid.');
   }
+  if (value.reconciliationPublicKey !== undefined &&
+      (!isValidEvidencePublicKey(value.reconciliationPublicKey) || value.supportsReconciliation !== true)) {
+    fail('Adapter metadata reconciliation public key is invalid.');
+  }
   if (value.witness !== undefined && !isValidWitnessMetadata(value.witness)) {
     fail('Adapter witness metadata is invalid.');
   }
@@ -2358,6 +2384,9 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
     ...(value.supportsReconciliation === undefined
       ? {}
       : { supportsReconciliation: value.supportsReconciliation }),
+    ...(value.reconciliationPublicKey === undefined
+      ? {}
+      : { reconciliationPublicKey: value.reconciliationPublicKey }),
     ...(value.witness === undefined ? {} : { witness: cloneJson(value.witness) }),
     ...(value.executionAuthority === undefined ? {} : { executionAuthority: cloneJson(value.executionAuthority) }),
     ...(value.executionObserver === undefined ? {} : { executionObserver: cloneJson(value.executionObserver) }),
