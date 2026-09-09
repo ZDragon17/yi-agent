@@ -385,6 +385,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-197 修复持久 TLS 会话在对端返回响应后立即发送 FIN 时的重连竞态：下一请求不会复用半关闭 socket，而会建立新 mTLS 会话；已发出的请求仍不自动重放。远程 E2E `12/12` 验证逐响应关闭时 init→run 可完成、非幂等效果只执行一次，Replay 为 `CONSISTENT`。这只覆盖正常连接收尾，不覆盖网络分区或远程效果真实性。
 - F-198 将 `persistent-tls-jsonl` 放入远程非幂等恢复链：主端点产生效果后丢失回执并重启，下一次 CLI 通过同一 nonce 的 `reconcile` 和独立 observer 闭合未决链；效果只执行一次，Replay 为 `CONSISTENT`。本机远程 E2E `13/13` 通过。这只说明持久 transport 沿用既有恢复边界，不说明网络分区或远程效果真实。
 - F-199 把服务端叶子证书轮换放进持久 TLS 恢复：primary 与 reconciliation observer 在非幂等效果回执丢失后同时重启，并在原端口使用同一 CA 签发的新证书；客户端配置、trust bundle、nonce 和 Lab manifest 不变，恢复仍只执行一次且 Replay 为 `CONSISTENT`。本机远程 E2E `14/14` 通过。这只验证 mTLS 会话重建与既有恢复契约相容，不等于 CA 发布、密钥保护、跨机器身份或真实效果证明。
+- F-200 把持久 TLS 的请求超时放进非幂等恢复窗口：远端已写入效果但延迟发送 `transition` 回执，客户端在固定超时后关闭会话并返回 `WORLD_ADAPTER_PROTOCOL`；下一次 CLI 通过同一 nonce 的对账和 observer 完成恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `15/15` 通过。这只证明受控延迟下的未知回执不会触发盲重放，不等于网络分区检测、重试时限或远程效果真实性。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

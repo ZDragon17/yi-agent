@@ -1525,3 +1525,10 @@
 - 实现：新增远程 E2E，主 WorldPort 与 reconciliation observer 都使用 `persistent-tls-jsonl`。第一次运行让主端点产生非幂等效果后丢失回执；随后两个端点在原端口以同一 CA 签发的新服务端叶子证书重启。客户端证书、trust bundle、server name、Lab manifest 和 execution nonce 保持不变。
 - 验证：新增“persistent TLS JSONL preserves recovery when remote role certificates rotate”回归；本机远程 E2E `14/14` 通过。恢复后效果计数保持 1，停止远程服务后的 Replay 返回 `CONSISTENT`。
 - 边界：这只验证同一 CA、本机测试服务和受控文件效果下，持久会话重建与证书校验可以接入既有恢复链；不证明 CA 发布、密钥保护、不同机器或 OS 身份、网络分区处置、远程代码诚实或真实设备效果。
+
+## F-200 持久 TLS 超时后的非幂等恢复
+
+- 反证/缺口：F-198/F-199 覆盖了回执丢失、端点重启和证书轮换，但没有区分“远端已经产生效果、响应只是迟到”与普通连接关闭。若超时路径把原请求再次发送，非幂等效果可能重复。
+- 实现：TLS 测试服务增加按操作延迟回执的夹具选项。F-200 让 primary 先写入 `transition` 效果，再延迟超过客户端 `timeoutMs` 才发送响应；客户端保持现有超时后销毁会话和不自动重放策略，下一次 CLI 仍通过同一 execution nonce、primary `reconcile` 和独立 observer 恢复。
+- 验证：新增“persistent TLS JSONL recovers an effect after a response timeout without replay”回归；本机远程 E2E `15/15` 通过。首次运行返回 `WORLD_ADAPTER_PROTOCOL` 且消息明确为超时，效果计数为 1；恢复运行完成，效果计数仍为 1，停止远程服务后的 Replay 返回 `CONSISTENT`。
+- 边界：这只覆盖本机测试服务制造的受控响应延迟，不证明真实网络分区的检测、重试窗口、跨机器权限、远程代码诚实、人工对账或真实设备效果。

@@ -31,23 +31,32 @@ const server = createServer({
         timeout: 10_000,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-      if (typeof result.stdout === 'string' && result.stdout.length > 0) {
-        if (options['extra-response-json'] === undefined) {
-          if (options['keep-alive'] === 'true') socket.write(result.stdout);
-          else socket.end(result.stdout);
+      const request = parseJson(requestLine);
+      const responseDelayMs = options['delay-response-op'] !== undefined &&
+        request?.op === options['delay-response-op']
+        ? Number(options['delay-response-ms'] ?? 0)
+        : 0;
+      const sendResponse = () => {
+        if (typeof result.stdout === 'string' && result.stdout.length > 0) {
+          if (options['extra-response-json'] === undefined) {
+            if (options['keep-alive'] === 'true') socket.write(result.stdout);
+            else socket.end(result.stdout);
+          } else {
+            socket.write(result.stdout);
+            setTimeout(() => socket.end(`${options['extra-response-json']}\n`), Number(options['extra-response-delay-ms'] ?? 10));
+          }
         } else {
-          socket.write(result.stdout);
-          setTimeout(() => socket.end(`${options['extra-response-json']}\n`), Number(options['extra-response-delay-ms'] ?? 10));
+          socket.end(`${JSON.stringify({
+            protocol: 'yi-world-cli',
+            version: 1,
+            id: 'unknown',
+            ok: false,
+            error: result.error?.message ?? 'adapter did not return a response',
+          })}\n`);
         }
-      } else {
-        socket.end(`${JSON.stringify({
-          protocol: 'yi-world-cli',
-          version: 1,
-          id: 'unknown',
-          ok: false,
-          error: result.error?.message ?? 'adapter did not return a response',
-        })}\n`);
-      }
+      };
+      if (Number.isFinite(responseDelayMs) && responseDelayMs > 0) setTimeout(sendResponse, responseDelayMs);
+      else sendResponse();
     }
   });
 });
@@ -62,4 +71,8 @@ function parseOptions(args) {
     result[args[index].replace(/^--/u, '')] = args[index + 1];
   }
   return result;
+}
+
+function parseJson(value) {
+  try { return JSON.parse(value); } catch { return null; }
 }

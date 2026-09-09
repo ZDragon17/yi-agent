@@ -348,6 +348,78 @@ test('persistent TLS JSONL preserves recovery when remote role certificates rota
   }
 });
 
+test('persistent TLS JSONL recovers an effect after a response timeout without replay', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-remote-timeout-'));
+  const servers = [];
+  try {
+    const lab = path.join(root, 'lab');
+    const effectFile = path.join(root, 'effect.json');
+    const caKey = path.join(root, 'ca.key.pem');
+    const caCert = path.join(root, 'ca.crt.pem');
+    const serverKey = path.join(root, 'server.key.pem');
+    const serverCert = path.join(root, 'server.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-persistent-remote-timeout-ca');
+    await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 2);
+    const primary = await startRemoteServer(root, 'persistent-timeout-primary', [
+      '--effect-file', effectFile, '--non-idempotent', '--reconcilable',
+    ], { serverKey, serverCert, caCert }, {
+      keepAlive: true,
+      delayResponseOp: 'transition',
+      delayResponseMs: 1500,
+    });
+    const observer = await startRemoteServer(root, 'persistent-timeout-observer', [
+      '--effect-file', effectFile, '--reconciliation-observer',
+    ], { serverKey, serverCert, caCert }, { keepAlive: true });
+    servers.push(primary.server, observer.server);
+    const adapter = path.join(root, 'adapter.json');
+    const connection = (port) => ({
+      transport: 'persistent-tls-jsonl',
+      host: '127.0.0.1',
+      port,
+      tls: { certFile: clientCert, keyFile: clientKey, caFile: caCert, serverName: 'localhost' },
+    });
+    await writeFile(adapter, JSON.stringify({
+      ...connection(primary.port),
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 500,
+      reconciliationObserver: {
+        ...connection(observer.port),
+        adapterId: 'idempotent-reconciliation-observer-v1',
+        worldId: 'idempotent-transition',
+        timeoutMs: 500,
+      },
+    }));
+
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'persistent-remote-timeout-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const timedOut = await invoke([
+      'agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent',
+      '--adapter', adapter, '--kernel-only', '--goal', '验证持久远程超时后的恢复', '--json',
+    ]);
+    assert.notEqual(timedOut.code, 0, 'the delayed response must cross the persistent TLS timeout');
+    assert.equal(timedOut.json?.error?.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(timedOut));
+    assert.match(timedOut.json?.error?.message ?? '', /timed out/iu, JSON.stringify(timedOut));
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, JSON.stringify(timedOut));
+
+    const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.json.data.status, 'COMPLETED');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, 'a timeout must not cause the non-idempotent effect to run again');
+
+    await stopServers(servers);
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.json.data.verdict, 'CONSISTENT');
+  } finally {
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TLS JSONL rejects a delayed second response envelope', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-protocol-'));
   const servers = [];
@@ -1069,6 +1141,8 @@ async function startRemoteServerWithOptions(root, name, adapterArgs, tlsFiles, {
   port = 0,
   extraResponseJson,
   extraResponseDelayMs,
+  delayResponseOp,
+  delayResponseMs,
   clientCrlFile,
   keepAlive = false,
   connectionCountFile,
@@ -1088,6 +1162,8 @@ async function startRemoteServerWithOptions(root, name, adapterArgs, tlsFiles, {
     ...(connectionCountFile === undefined ? [] : ['--connection-count-file', connectionCountFile]),
     ...(extraResponseJson === undefined ? [] : ['--extra-response-json', extraResponseJson]),
     ...(extraResponseDelayMs === undefined ? [] : ['--extra-response-delay-ms', String(extraResponseDelayMs)]),
+    ...(delayResponseOp === undefined ? [] : ['--delay-response-op', delayResponseOp]),
+    ...(delayResponseMs === undefined ? [] : ['--delay-response-ms', String(delayResponseMs)]),
   ], { windowsHide: true });
   await waitForFile(portFile);
   return { server, port: Number(await readFile(portFile, 'utf8')) };
