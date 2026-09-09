@@ -133,6 +133,8 @@ F-201 把响应黑洞与 endpoint 存活放进同一窗口：primary 在 `transi
 
 F-202 把同一未决远程 Run 的并发恢复放进持久会话：第一次 CLI 在 primary 已产生效果后遇到响应黑洞，随后两个独立 CLI 进程同时以相同 `run-2` 发起恢复。LabStore 的单 writer 锁只允许一个进程进入对账和 STEP 追加，另一个进程失败；primary、observer 和新建的持久 TLS 会话仍使用同一 execution nonce，效果计数保持 1，最终 Replay 返回 `CONSISTENT`。本机远程 E2E 已从 `16/16` 增至 `17/17`。这验证的是同一实验空间内的排他性，不是分布式锁、跨机器网络时钟或真实设备原子执行。
 
+F-203 将连接级中断与应用层黑洞区分开：测试 primary 在已完成非幂等 `transition` 后直接销毁当前 TLS socket，但保持服务进程和监听端口在线，不发送该请求的 JSONL envelope。持久会话必须把这次关闭报告为 `WORLD_ADAPTER_PROTOCOL`，不能自动重放；下一次 CLI 通过同一 execution nonce 的 `reconcile` 和独立 observer 完成恢复，效果计数保持 1，离线 Replay 返回 `CONSISTENT`。本机远程 E2E 已从 `17/17` 增至 `18/18`。该实验覆盖的是服务端触发的 TCP/TLS 连接重置，不等于网络设备、路由分区、跨机器锁或真实物理效果。
+
 F-149 将同一 transport 规则用于 witness、executionAuthority 和 executionObserver。辅助角色的 `transport` 选择写入各自 manifest metadata，并由 identity-only registry、LabStore 和 Replay 校验；旧配置不带字段时仍保持一次请求一进程。独立 witness 请求现在显式等待异步响应，transition、reconcile 和 observe 不会把未完成的 Promise 放进证据对象。测试覆盖多次 witness evidence 请求，以及 authority/observer 对同一 execution nonce 的幂等重试；会话关闭仍由 registry 统一负责，Replay 不启动这些角色。
 
 F-150 把持久辅助会话放进响应丢失恢复实验：authority 或 observer 先完成各自的 nonce 绑定工作，再在回执发出前退出；第一次 Run 只留下未决 external transition，下一次独立 CLI 重新加载同一 manifest，主 adapter 的幂等 `transition`、authority 的 nonce 记录和 observer 的执行观测依次闭合，最终 STEP 才能落账。恢复过程不把新 nonce 当作补偿，也不让 Replay重新访问任何角色。该实验只覆盖本机同用户权限下的进程故障，不覆盖跨机器身份、断网重连或可信硬件。

@@ -1546,3 +1546,10 @@
 - 实现：新增远程 E2E。primary 在非幂等效果产生后黑洞 `transition` 回执并保持在线；两个 CLI 随后同时用相同 `run-2`、相同 manifest 和 execution nonce 发起恢复。两个角色都使用 `persistent-tls-jsonl`，宿主沿用现有 LabStore 单 writer 锁，未引入自动重试或分布式锁。
 - 验证：新增“persistent TLS JSONL serializes concurrent recovery of one unresolved Run”回归；本机远程 E2E `17/17` 通过。两个恢复进程中只有一个以 `COMPLETED` 结束，效果计数为 1，`run-2` 只有一条 STEP，停止远程服务后的 Replay 返回 `CONSISTENT`。
 - 边界：这只证明同一实验空间、同一文件锁和本机远程进程下的排他性，不证明跨机器锁、分布式存储一致性、时钟故障、远程代码诚实、人工对账或真实设备原子执行。
+
+## F-203 持久 TLS 连接重置后的非幂等恢复
+
+- 反证/缺口：F-201 让 primary 保持连接但不发送响应，客户端只能通过超时发现未知状态；真实连接也可能在效果已经产生后被对端立即重置。若这条错误路径没有进入同一未决恢复链，客户端可能把连接错误误判为可安全重放，或无法在服务仍在线时恢复。
+- 实现：TLS 测试服务增加按操作销毁当前 socket 的夹具选项。F-203 让 primary 在 `transition` 子进程完成并写入效果后直接销毁 TLS 连接，但保持服务进程、端口和后续连接可用；客户端不增加自动重试，恢复仍使用原 execution nonce、primary `reconcile` 和独立 reconciliation observer。
+- 验证：新增“persistent TLS JSONL recovers after a connection reset without endpoint restart”回归；本机该用例通过，远程 WorldPort E2E 全组提升为 `18/18`。首次 Run 收到连接级 `WORLD_ADAPTER_PROTOCOL`，primary 仍在线且效果计数为 1；第二个 Run 完成，效果计数保持 1，停止远程服务后的 Replay 为 `CONSISTENT`。
+- 边界：这覆盖服务端触发的 TCP/TLS 连接重置，不覆盖真实网络设备或路由分区、跨机器分布式锁、时钟故障、远程代码诚实、人工对账和真实设备效果。

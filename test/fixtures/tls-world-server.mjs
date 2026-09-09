@@ -38,6 +38,8 @@ const server = createServer({
         : 0;
       const blackholeResponse = options['blackhole-response-op'] !== undefined &&
         request?.op === options['blackhole-response-op'];
+      const resetResponse = options['reset-response-op'] !== undefined &&
+        request?.op === options['reset-response-op'];
       const sendResponse = () => {
         if (typeof result.stdout === 'string' && result.stdout.length > 0) {
           if (options['extra-response-json'] === undefined) {
@@ -57,7 +59,9 @@ const server = createServer({
           })}\n`);
         }
       };
-      if (!blackholeResponse) {
+      if (resetResponse) {
+        socket.destroy();
+      } else if (!blackholeResponse) {
         if (Number.isFinite(responseDelayMs) && responseDelayMs > 0) setTimeout(sendResponse, responseDelayMs);
         else sendResponse();
       }

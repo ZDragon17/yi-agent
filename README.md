@@ -388,6 +388,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-200 把持久 TLS 的请求超时放进非幂等恢复窗口：远端已写入效果但延迟发送 `transition` 回执，客户端在固定超时后关闭会话并返回 `WORLD_ADAPTER_PROTOCOL`；下一次 CLI 通过同一 nonce 的对账和 observer 完成恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `15/15` 通过。这只证明受控延迟下的未知回执不会触发盲重放，不等于网络分区检测、重试时限或远程效果真实性。
 - F-201 把持久 TLS 的响应黑洞放进恢复窗口：primary 在写入非幂等效果后保持 endpoint 在线，却永远不发送这次 `transition` 回执；客户端超时并销毁当前会话，下一次 CLI 通过新会话和 observer 完成同一 nonce 的对账，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `16/16` 通过。这比迟到响应更接近连接黑洞，但仍不等于真实网络设备、路由状态或跨机器故障证据。
 - F-202 把并发恢复接入远程持久会话：两个 CLI 同时争抢同一个未决 `run-2`，单 writer 锁只允许一个恢复路径完成；primary 与 observer 仍经 `persistent-tls-jsonl` 对账，效果计数为 1、STEP 只有 1 条，Replay 为 `CONSISTENT`。本机远程 E2E `17/17` 通过。这只证明同一实验空间的并发排他，不证明分布式锁、跨机器时钟或真实设备的原子执行。
+- F-203 把“效果已产生但连接被立即重置”与应用层响应黑洞分开验证：primary 在执行 `transition` 后直接销毁当前 TLS socket，服务进程继续监听；CLI 收到连接级协议错误后不重放原请求，下一次 Run 经同一 nonce、reconcile 和 observer 完成恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `18/18` 通过。这比应用层黑洞更接近 TCP/TLS 连接故障，但仍不是路由分区、跨机器锁或真实设备效果证据。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
