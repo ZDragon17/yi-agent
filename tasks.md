@@ -1518,3 +1518,10 @@
 - 实现：新增同时使用 `persistent-tls-jsonl` 的远程 primary 与 reconciliation observer。primary 在非幂等效果产生后丢失回执并重启，下一次 CLI 使用原 execution nonce 经 `reconcile` 和 observer 观察闭合未决链；不新增自动重试，也不改变 Replay 的离线约束。
 - 验证：本机远程 E2E `13/13` 通过；持久 TLS 恢复用例确认效果计数为 1，停止两个远程端点后的 Replay 返回 `CONSISTENT`。
 - 边界：该节点只验证 transport 复用与既有 nonce/observer 恢复契约相容，不证明网络分区期间的请求状态、远程主机诚实、低权限隔离或物理效果。
+
+## F-199 持久 TLS 恢复中的远程角色证书轮换
+
+- 反证/缺口：F-198 已验证持久 TLS 会话在主端点重启后可以沿同一 nonce 对账，但恢复服务仍使用原服务端叶子证书；F-189 和 F-193 的证书轮换实验使用的是一次请求一条连接，尚未把两条边界合并。
+- 实现：新增远程 E2E，主 WorldPort 与 reconciliation observer 都使用 `persistent-tls-jsonl`。第一次运行让主端点产生非幂等效果后丢失回执；随后两个端点在原端口以同一 CA 签发的新服务端叶子证书重启。客户端证书、trust bundle、server name、Lab manifest 和 execution nonce 保持不变。
+- 验证：新增“persistent TLS JSONL preserves recovery when remote role certificates rotate”回归；本机远程 E2E `14/14` 通过。恢复后效果计数保持 1，停止远程服务后的 Replay 返回 `CONSISTENT`。
+- 边界：这只验证同一 CA、本机测试服务和受控文件效果下，持久会话重建与证书校验可以接入既有恢复链；不证明 CA 发布、密钥保护、不同机器或 OS 身份、网络分区处置、远程代码诚实或真实设备效果。
