@@ -1511,3 +1511,10 @@
 - 实现：请求队列之间让出一次事件循环；复用前检查 `readableEnded`、`writableEnded` 和 `destroyed`，发现连接正在收尾就清除并重新建立 mTLS 会话。已发出的请求不因连接关闭而自动重放，未知副作用仍交给既有 nonce 对账路径。
 - 验证：新增远程对端逐响应关闭的 CLI E2E；修复前为 `11/12`，修复后为 `12/12`，init→run 的非幂等效果计数保持 1，停止远端服务后的 Replay 为 `CONSISTENT`。
 - 边界：该节点只覆盖可观察的 TCP/TLS 正常收尾和安全重连，不证明断网期间的请求状态、远程主机诚实、低权限隔离或物理设备效果。
+
+## F-198 持久 TLS 的远程非幂等恢复
+
+- 反证/缺口：F-196/F-197 已验证持久远程连接和正常收尾，但恢复实验仍使用一次请求一条连接的 `tls-jsonl`；因此尚未排除持久会话在回执丢失、主端点重启和独立 observer 对账之间出现状态漂移。
+- 实现：新增同时使用 `persistent-tls-jsonl` 的远程 primary 与 reconciliation observer。primary 在非幂等效果产生后丢失回执并重启，下一次 CLI 使用原 execution nonce 经 `reconcile` 和 observer 观察闭合未决链；不新增自动重试，也不改变 Replay 的离线约束。
+- 验证：本机远程 E2E `13/13` 通过；持久 TLS 恢复用例确认效果计数为 1，停止两个远程端点后的 Replay 返回 `CONSISTENT`。
+- 边界：该节点只验证 transport 复用与既有 nonce/observer 恢复契约相容，不证明网络分区期间的请求状态、远程主机诚实、低权限隔离或物理效果。

@@ -383,6 +383,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-195 验证 observer 失联不会被当成恢复完成：primary 已产生效果但丢失回执后，observer 暂时不可达，恢复请求失败且不追加 STEP；observer 在原端口恢复后，同一未决链继续完成，效果计数仍为 1，离线 Replay 为 `CONSISTENT`。远程 E2E 全组提升为 `10/10`；这仍只覆盖受控测试服务，不代表真实网络分区已有自动处置能力。
 - F-196 增加远程 `persistent-tls-jsonl` transport：同一次 CLI 操作中的 `hello`、状态读取和后续请求复用一条 mTLS JSONL 会话，按请求串行化；连接身份、TLS 材料摘要、endpoint 和 transport 仍进入 manifest 的 launch digest，连接断开时关闭当前会话，不自动重放请求。远程 E2E 验证了初始化和运行各自只建立一条连接，账本与 Replay 的 transport 校验继续通过。它减少的是 TLS 握手开销，不解决网络分区、非幂等请求的自动重试或远程效果真实性。
 - F-197 修复持久 TLS 会话在对端返回响应后立即发送 FIN 时的重连竞态：下一请求不会复用半关闭 socket，而会建立新 mTLS 会话；已发出的请求仍不自动重放。远程 E2E `12/12` 验证逐响应关闭时 init→run 可完成、非幂等效果只执行一次，Replay 为 `CONSISTENT`。这只覆盖正常连接收尾，不覆盖网络分区或远程效果真实性。
+- F-198 将 `persistent-tls-jsonl` 放入远程非幂等恢复链：主端点产生效果后丢失回执并重启，下一次 CLI 通过同一 nonce 的 `reconcile` 和独立 observer 闭合未决链；效果只执行一次，Replay 为 `CONSISTENT`。本机远程 E2E `13/13` 通过。这只说明持久 transport 沿用既有恢复边界，不说明网络分区或远程效果真实。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
