@@ -66,6 +66,7 @@ async function dispatchUi(options, io, json) {
 async function dispatch(command, options) {
   if (command === 'agent') return dispatchAgent(options);
   if (command === 'api') return dispatchApi(options);
+  if (command === 'adapter') return dispatchAdapter(options);
   if (command === 'ask') return askApi(options);
   if (command === 'effect') return dispatchEffect(options);
   if (command === 'experiment') {
@@ -301,6 +302,15 @@ async function dispatchApi(options) {
   throw cliError('INVALID_INPUT', `Unsupported api operation: ${options.apiOperation ?? '(missing)'}`, {}, 64);
 }
 
+async function dispatchAdapter(options) {
+  const registry = await loadExternalWorldRegistry(requiredAbsolute(options, 'adapter'));
+  try {
+    return { status: 'READY', adapter: registry.describe() };
+  } finally {
+    await closeRegistry(registry);
+  }
+}
+
 async function askApi(options) {
   const prompt = await readPrompt(options);
   const config = loadApiConfig();
@@ -355,6 +365,13 @@ function parseArguments(argv) {
     }
     options.apiOperation = operation;
   }
+  if (command === 'adapter') {
+    const operation = args.shift();
+    if (operation !== 'test') {
+      throw cliError('INVALID_INPUT', `Unsupported adapter operation: ${operation ?? '(missing)'}`, {}, 64);
+    }
+    options.adapterOperation = operation;
+  }
   if (command === 'agent') {
     const operation = args.shift();
     if (!['run', 'loop'].includes(operation)) {
@@ -388,6 +405,7 @@ function parseArguments(argv) {
   const allowed = {
     agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'goal', 'goal-plan', 'randomized-trial', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     api: ['apiOperation'],
+    adapter: ['adapterOperation', 'adapter'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
     run: ['lab', 'run-id', 'steps', 'scenario', 'adapter', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
@@ -636,6 +654,7 @@ function helpText() {
     '',
     'API:',
     '  yi-agent api test [--json]',
+    '  yi-agent adapter test --adapter CONFIG [--json]     只探针外部 WorldPort，不创建实验室',
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',

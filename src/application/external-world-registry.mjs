@@ -200,6 +200,31 @@ export async function loadExternalWorldRegistry(configPath, { probe = true } = {
 
   return Object.freeze({
     ...base,
+    describe() {
+      return structuredClone({
+        adapterId: descriptor.adapterId,
+        worldId: descriptor.worldId,
+        worldVersion: descriptor.worldVersion,
+        capabilityIds: descriptor.capabilityIds,
+        scenarioIds: descriptor.scenarioIds,
+        valueSpec: descriptor.valueSpec,
+        descriptorDigest: descriptor.descriptorDigest,
+        launchDigest: normalizedConfig.launchDigest,
+        ...(normalizedConfig.transport === undefined ? {} : { transport: normalizedConfig.transport }),
+        roles: Object.fromEntries([
+          ['witness', witness],
+          ['executionAuthority', executionAuthority],
+          ['executionObserver', executionObserver],
+          ['reconciliationObserver', reconciliationObserver],
+        ].filter(([, role]) => role !== null).map(([name, role]) => [name, {
+          adapterId: role.descriptor.adapterId,
+          worldId: role.descriptor.worldId,
+          worldVersion: role.descriptor.worldVersion,
+          descriptorDigest: role.descriptor.descriptorDigest,
+          ...(role.config.transport === undefined ? {} : { transport: role.config.transport }),
+        }])),
+      });
+    },
     close() {
       return Promise.all([
         client.close(),

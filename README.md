@@ -208,6 +208,14 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 仓库提供了一个不依赖 `src/**` 的最小外部世界示例：`examples/counter-world/adapter.mjs`。它只有一个世界状态 `value` 和一个行动 `counter.increment`，通过 `yi-world-cli` JSONL 协议接入。这个例子故意不认识 Kernel 的实现，只负责回答 `hello`、`initialState`、`actions`、`observe`、`externalInputs` 和 `transition` 请求。若 adapter 连接真实副作用，必须额外实现持久 `executionNonce` 幂等记录；没有在 `hello` 声明 `supportsIdempotentTransitions:true` 或可选 `supportsReconciliation:true` 的 adapter 发生响应丢失后会被宿主阻断续跑，等待人工对账。声明对账能力的 adapter 还需回答 `reconcile` 请求：只有明确的 `APPLIED` 结果才可恢复，`ABSENT`/`UNKNOWN` 仍保持阻断。非幂等恢复 marker 还会固化原始 intent、能力投影和完整决策边界（目标/监督器/ValueSpec）；重启时不接受新的目标或规划输入，避免恢复动作与 Replay 边界漂移。恢复边界还会对 ValueSpec、监督器、目标激活计划和 Planner 证据做语义校验；摘要可重算但内容畸形时统一判为 `CORRUPT`。
 
+接入新 WorldPort 时，可以先做不落盘的预检：
+
+```powershell
+yi-agent adapter test --adapter $adapterConfig --json
+```
+
+这个命令会读取配置并探测主 adapter 及其已声明的 witness、execution authority、execution observer 和 reconciliation observer，输出世界描述、能力、场景、descriptor digest 和角色摘要。它不会创建 Lab、锁或事件账本；预检成功只说明协议边界可建立，不代表外部世界已经可执行或可信。真正运行仍需经过 `init --adapter`、`run`、`inspect` 和 `replay`。
+
 默认 adapter 配置仍是一次请求一进程；本地 adapter 需要复用进程时，在配置顶层增加 `"transport": "persistent-jsonl"`，并让 adapter 保持 stdin/stdout 打开的 JSONL 会话。`hello` 仍由一次性探针完成，后续请求才进入持久会话。远程 adapter 也可以使用 `"transport": "persistent-tls-jsonl"`，在一条经过 mTLS 校验的连接上串行发送 `hello` 和后续请求；连接断开后只建立新会话，不自动重放可能产生副作用的请求。两种持久模式的每个请求都有独立超时，adapter 必须逐行返回与请求 `id` 匹配的 envelope。它们只减少进程或 TLS 握手成本，不替代幂等 nonce、对账、EffectBroker 或人工确认。
 
 需要把 WorldPort 放在另一台主机或独立网络服务时，可使用 `"transport": "tls-jsonl"`；需要在一次 CLI 操作内复用远程连接时使用 `"transport": "persistent-tls-jsonl"`。这两种配置都不填写 `executable/args`，而是填写 `host`、`port` 和指向客户端证书、私钥、CA、server name 的绝对路径。`tls-jsonl` 每个请求新建一条强制校验服务端证书并要求客户端证书的连接；`persistent-tls-jsonl` 在同一连接上按请求顺序复用会话，连接关闭后重新建立，但不盲目重放原请求。超时、证书错误、协议污染和响应超限都会在外部边界 fail-closed。远程连接只参与 init/run 的实时 WorldPort，Replay/inspect 使用已固化的 manifest 和 STEP 证据，不重新连接远端。这个传输证明的是网络协议和身份校验闭环，不证明远端主机诚实、硬件效果或物理因果。

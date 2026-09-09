@@ -43,6 +43,7 @@
 | `recover --lab PATH --confirm-lock-owner-dead [--json]` | 显式恢复请求 | stale lock 证据、恢复后的 current | 活进程/未确认 75；损坏 3；参数 64；I/O 74 | 唯一允许处理陈旧锁的命令 |
 | `effect plan|confirm|execute|reconcile|compensate|reconcile-compensation|inspect --journal PATH [--sandbox-root PATH] [--intent PATH] [--nonce N] [--json]` | EffectIntent、durable journal、显式标记 sandbox | EffectBroker 状态快照或全部 effect 状态 | 参数 64；损坏 3；不存在 66；I/O 74；状态错误 70 | 每次进程从 journal 恢复；execute/compensate 只允许标记 sandbox root |
 | `api test [--json]` | 环境变量中的 API 配置 | 连通状态与模型数量 | 参数 64；API 74；协议 70 | 无本地状态副作用 |
+| `adapter test --adapter CONFIG [--json]` | 外部 WorldPort 配置与其声明角色 | `READY`、世界描述、能力/场景和角色摘要 | 参数/配置 64；协议 70；I/O 74 | 只执行配置归一化与 `hello` 探针，不创建 Lab、锁或账本 |
 | `ask --prompt TEXT|--prompt-file PATH [--json]` | 环境变量中的 API 配置与用户提示 | 模型、回答、可选 usage | 参数 64；API 74；协议 70 | 单次非流式请求；提示文件只读 |
 | `agent run --lab PATH --steps N [--kernel-only] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间；默认使用 API，`--kernel-only` 不需要 API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 默认每步一次模型提议；`--kernel-only` 只运行 Kernel；`--auto-plan` 激活持久化 Planner 策略；停滞时只修订未完成计划；replay 不访问 API |
 | `agent loop --lab PATH --steps N [--runs N|--forever] [--kernel-only] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间；默认使用 API，`--kernel-only` 不需要 API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；同一 lab 只允许一条未完成 continuation 持有调度权；SIGINT/SIGTERM 只在 Run 边界停止；loop 身份和预算写入每个 Run start，重启可从 current 继续 |
@@ -437,3 +438,4 @@ F-158 把信任根也换掉：第一轮使用 CA-1，signer 在签名后丢失�
 F-159 把证书撤销放进同一条恢复链：服务端加载由测试 CA 签发的 CRL，第一轮使用已被撤销的 authority 客户端证书，TLS 握手在 signer 请求到达应用协议前失败；此前已经发生的 EffectBroker 文件效果保持一次。随后把新的、未撤销的客户端证书写回同一配置路径，服务在同一端口重启，第二轮使用原 execution nonce 恢复，Replay 为 `CONSISTENT`。authority 同时加载该 CRL，验证客户端 TLS 参数能安全传递到 Node TLS 层。
 
 这个实验把“证书仍由可信 CA 签发”和“证书当前仍被允许使用”分开了。CRL 只约束 TLS peer 身份，不能证明 signer 私钥未被同权限进程读取，也不能证明 signer 对现实副作用诚实；CRL 的发布、更新时机、旧证书审计和 OS 文件权限仍是部署边界。
+F-207 增加 `adapter test` 作为外部 WorldPort 的无副作用预检。CLI 只加载并探测主 adapter 与已配置的辅助角色，返回不含凭据的 descriptor/launch 摘要、能力、场景和角色身份；不会初始化 Lab 或写入账本。该命令解决的是接入前的协议诊断，不改变 `init→run→inspect→replay` 的执行和信任边界。

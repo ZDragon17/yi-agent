@@ -35,6 +35,25 @@ test('generated adapter exposes a fixed Ed25519 key for its hello descriptor', a
   assert.equal(verifyAttestation(input, input.attestation), true);
 });
 
+test('adapter test probes an external WorldPort without creating a lab', async () => {
+  await withTemp(async (root) => {
+    const adapter = await writeAdapterConfig(root);
+    const result = await invoke('adapter', 'test', '--adapter', adapter, '--json');
+
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout.length, 1);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout[0].ok, true);
+    assert.equal(result.stdout[0].data.status, 'READY');
+    assert.equal(result.stdout[0].data.adapter.adapterId, 'generated-adapter-v1');
+    assert.equal(result.stdout[0].data.adapter.worldId, 'generated');
+    assert.deepEqual(result.stdout[0].data.adapter.capabilityIds, ['generated.advance']);
+    assert.equal(typeof result.stdout[0].data.adapter.descriptorDigest, 'string');
+    assert.deepEqual(result.stdout[0].data.adapter.roles, {});
+    assert.equal(await pathExists(path.join(root, 'lab')), false);
+  });
+});
+
 test('CLI executes init, run, inspect, and replay as one JSON-envelope chain', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'lab');
@@ -2472,5 +2491,14 @@ async function withTemp(callback) {
     await callback(root);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function pathExists(filePath) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
   }
 }

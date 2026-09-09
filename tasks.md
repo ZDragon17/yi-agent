@@ -1574,3 +1574,10 @@
 - 实现：新增四角色远程 E2E。primary、executionAuthority、executionObserver 和 reconciliationObserver 都使用独立的 `persistent-tls-jsonl` mTLS endpoint。第一次 Run 让 executionObserver 在 `observeExecution` 返回前退出；primary effect 与 authority effect 已产生，但 Run 不追加完成 STEP。第二次 CLI 重新建立四个角色会话，经 primary `reconcile`、authority 对账、execution observer 和 reconciliation observer 完成未决链。
 - 验证：新增“persistent TLS JSONL keeps all remote execution roles aligned after an observer process exit”回归；本机远程 WorldPort E2E 全组 `21/21`，新增用例单独 `1/1`。第一次和第二次 Run 的 primary/authority effect 计数均保持 1，reconciliation observer 只记录一次完成观察；停止所有远端服务后 Replay 返回 `CONSISTENT`。
 - 边界：实验仍运行在同一主机、同一客户端证书/CA 和受控文件效果中，不证明跨机器分布式锁、OS 权限隔离、远程代码诚实、网络分区人工处置或真实设备效果。下一步应进入真实部署权限、机器边界和人工可审计副作用实验。
+
+## F-207 外部 WorldPort 的无副作用预检
+
+- 反证/缺口：新用户此前必须直接执行 `init --adapter` 才能看到外部 WorldPort 的 `hello` 和辅助角色是否可用；协议配置错误与实验空间初始化混在同一条命令里，接入前没有可单独复现的诊断入口。
+- 实现：新增 `yi-agent adapter test --adapter CONFIG [--json]`。它复用现有配置归一化、主 descriptor、witness、execution authority、execution observer 和 reconciliation observer 探针，返回不含凭据的世界描述、能力、场景、descriptor digest、launch digest 和角色摘要；不创建 Lab、锁、current 或事件账本。
+- 验证：CLI E2E 覆盖有效外部 adapter 的 `READY` 结果、能力摘要和“没有创建 Lab”；原有 `init→run→inspect→replay` 与错误协议回归继续复用同一加载路径。
+- 边界：预检成功只说明当前配置下协议探针可建立，不证明外部代码诚实、权限隔离、现实效果或后续 transition 一定成功；真正执行仍必须经过 Lab manifest、Kernel、verify、EffectBroker/对账和 Replay。
