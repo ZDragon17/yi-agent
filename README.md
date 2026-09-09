@@ -391,6 +391,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-203 把“效果已产生但连接被立即重置”与应用层响应黑洞分开验证：primary 在执行 `transition` 后直接销毁当前 TLS socket，服务进程继续监听；CLI 收到连接级协议错误后不重放原请求，下一次 Run 经同一 nonce、reconcile 和 observer 完成恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `18/18` 通过。这比应用层黑洞更接近 TCP/TLS 连接故障，但仍不是路由分区、跨机器锁或真实设备效果证据。
 - F-204 增加只转发加密字节的 TCP 故障代理：代理在观察到主 WorldPort 已写入效果后切断当前上下游连接，但不解析或修改 TLS 内容，随后放行新连接。primary 和代理进程都保持在线，CLI 通过同一 nonce 的对账恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `19/19` 通过。这把“中间网络切断”与服务端主动 reset 分开，但仍不等于真实路由分区、跨机器锁或设备效果证明。
 - F-205 让透明 TCP 代理保持连接，只吞掉效果产生后的回程数据：客户端按固定超时关闭本地会话，primary 与代理继续在线，下一次新连接经同一 nonce 对账完成恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `20/20` 通过。这把网络层超时与网络层断连分开，但故障时机仍由测试控制文件驱动。
+- F-206 把四个远程角色放入同一条 `persistent-tls-jsonl` 恢复链：primary、executionAuthority、executionObserver 和 reconciliationObserver 都通过独立的 mTLS endpoint 工作；第一次 Run 中 executionObserver 在返回观察前退出，primary effect 与 authority effect 各只产生一次但 Run 保持未决，第二次 CLI 为四个角色分别重建会话并沿同一 execution nonce 完成恢复。新增回归与完整远程 WorldPort 组为 `21/21`，停止所有远端服务后的 Replay 仍为 `CONSISTENT`。这证明的是同一实验主机、同一客户端证书和受控文件效果中的跨角色协议闭合，不证明跨机器锁、OS 权限隔离、远程代码诚实或真实设备效果。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

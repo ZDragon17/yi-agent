@@ -1567,3 +1567,10 @@
 - 实现：扩展 `tcp-fault-proxy.mjs` 的测试模式。代理只在 TCP 层转发字节，不终止 TLS；primary 写入效果后，代理停止转发当前连接的上游数据，保持两端 socket 和自身进程在线，并只允许后续新连接正常转发。客户端继续使用固定请求超时，不增加自动重试。
 - 验证：新增“persistent TLS JSONL recovers after an opaque TCP proxy blackholes the response”回归；本机远程 WorldPort E2E 全组提升为 `20/20`。首次 Run 收到超时型 `WORLD_ADAPTER_PROTOCOL`，代理写入一次黑洞标记，primary 与 proxy 仍在线且效果计数为 1；第二个 Run 通过原 execution nonce 的对账与 observer 完成，效果计数保持 1，Replay 为 `CONSISTENT`。
 - 边界：黑洞时机由测试控制文件驱动，代理不模拟真实路由器的丢包、半开连接或时钟漂移；跨机器分布式锁、远程代码诚实、人工对账和真实设备效果仍未验证。
+
+## F-206 四个远程角色的持久会话恢复闭合
+
+- 反证/缺口：F-198 至 F-205 已覆盖 primary 与 reconciliation observer 的持久远程恢复，以及单独的连接错误签名；但没有把 executionAuthority、executionObserver 和 reconciliationObserver 同时放入同一条远程恢复链。缺少这条证据时，主 WorldPort 对账成功不能推出 authority effect 与两类观察证据也能沿同一 execution nonce 接续。
+- 实现：新增四角色远程 E2E。primary、executionAuthority、executionObserver 和 reconciliationObserver 都使用独立的 `persistent-tls-jsonl` mTLS endpoint。第一次 Run 让 executionObserver 在 `observeExecution` 返回前退出；primary effect 与 authority effect 已产生，但 Run 不追加完成 STEP。第二次 CLI 重新建立四个角色会话，经 primary `reconcile`、authority 对账、execution observer 和 reconciliation observer 完成未决链。
+- 验证：新增“persistent TLS JSONL keeps all remote execution roles aligned after an observer process exit”回归；本机远程 WorldPort E2E 全组 `21/21`，新增用例单独 `1/1`。第一次和第二次 Run 的 primary/authority effect 计数均保持 1，reconciliation observer 只记录一次完成观察；停止所有远端服务后 Replay 返回 `CONSISTENT`。
+- 边界：实验仍运行在同一主机、同一客户端证书/CA 和受控文件效果中，不证明跨机器分布式锁、OS 权限隔离、远程代码诚实、网络分区人工处置或真实设备效果。下一步应进入真实部署权限、机器边界和人工可审计副作用实验。
