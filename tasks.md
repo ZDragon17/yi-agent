@@ -1560,3 +1560,10 @@
 - 实现：新增 `tcp-fault-proxy.mjs`。它只在 TCP 层转发字节，不终止 TLS、不解析 JSONL；测试控制文件表明 primary 已写入效果后，代理销毁当前 client/upstream 连接并写入一次切断标记，之后的新连接继续转发。primary 和 proxy 都保持在线，客户端不增加自动重试。
 - 验证：新增“persistent TLS JSONL recovers after an opaque TCP proxy cuts the connection”回归；本机远程 WorldPort E2E 全组 `19/19`。首次 Run 收到连接级 `WORLD_ADAPTER_PROTOCOL`，代理确实切断了一次，效果计数为 1；第二个 Run 通过原 execution nonce 的对账与 observer 完成，效果计数保持 1，Replay 为 `CONSISTENT`。
 - 边界：切断时机由测试控制文件驱动，故障代理不模拟真实路由器、丢包、半开连接或跨机器时钟；跨机器分布式锁、远程代码诚实、人工对账和真实设备效果仍未验证。
+
+## F-205 透明 TCP 回程黑洞后的非幂等恢复
+
+- 反证/缺口：F-204 的代理切断会让客户端立即收到连接关闭；真实网络故障也可能保留连接而只丢失回程数据。如果只验证断连，仍无法区分连接错误处理与超时处理是否都保持“未知请求不重放”的不变量。
+- 实现：扩展 `tcp-fault-proxy.mjs` 的测试模式。代理只在 TCP 层转发字节，不终止 TLS；primary 写入效果后，代理停止转发当前连接的上游数据，保持两端 socket 和自身进程在线，并只允许后续新连接正常转发。客户端继续使用固定请求超时，不增加自动重试。
+- 验证：新增“persistent TLS JSONL recovers after an opaque TCP proxy blackholes the response”回归；本机远程 WorldPort E2E 全组提升为 `20/20`。首次 Run 收到超时型 `WORLD_ADAPTER_PROTOCOL`，代理写入一次黑洞标记，primary 与 proxy 仍在线且效果计数为 1；第二个 Run 通过原 execution nonce 的对账与 observer 完成，效果计数保持 1，Replay 为 `CONSISTENT`。
+- 边界：黑洞时机由测试控制文件驱动，代理不模拟真实路由器的丢包、半开连接或时钟漂移；跨机器分布式锁、远程代码诚实、人工对账和真实设备效果仍未验证。

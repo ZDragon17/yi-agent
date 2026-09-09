@@ -7,18 +7,23 @@ const upstreamPort = Number(options['upstream-port']);
 const port = Number(options.port ?? 0);
 const dropMarkerFile = options['drop-marker-file'];
 const dropLogFile = options['drop-log-file'];
+const blackholeMarkerFile = options['blackhole-marker-file'];
+const blackholeLogFile = options['blackhole-log-file'];
+const hasCutFault = dropMarkerFile !== undefined && dropLogFile !== undefined;
+const hasBlackholeFault = blackholeMarkerFile !== undefined && blackholeLogFile !== undefined;
 
 if (!Number.isInteger(upstreamPort) || upstreamPort < 1 || upstreamPort > 65535) {
   throw new Error('--upstream-port must be a valid TCP port');
 }
-if (dropMarkerFile === undefined || dropLogFile === undefined || options['port-file'] === undefined) {
-  throw new Error('--port-file, --drop-marker-file and --drop-log-file are required');
+if ((!hasCutFault && !hasBlackholeFault) || (hasCutFault && hasBlackholeFault) || options['port-file'] === undefined) {
+  throw new Error('--port-file and exactly one TCP fault mode are required');
 }
 
-let dropped = false;
+let faultTriggered = false;
 const server = createServer((downstream) => {
   let upstream = null;
   let closed = false;
+  let blackholed = false;
 
   const closePair = () => {
     if (closed) return;
@@ -28,10 +33,18 @@ const server = createServer((downstream) => {
   };
 
   const dropIfMarkerExists = () => {
-    if (dropped || closed || !existsSync(dropMarkerFile)) return false;
-    dropped = true;
+    if (!hasCutFault || faultTriggered || closed || !existsSync(dropMarkerFile)) return false;
+    faultTriggered = true;
     appendFileSync(dropLogFile, 'drop\n', 'utf8');
     closePair();
+    return true;
+  };
+
+  const blackholeIfMarkerExists = () => {
+    if (!hasBlackholeFault || faultTriggered || closed || !existsSync(blackholeMarkerFile)) return false;
+    faultTriggered = true;
+    blackholed = true;
+    appendFileSync(blackholeLogFile, 'blackhole\n', 'utf8');
     return true;
   };
 
@@ -43,6 +56,8 @@ const server = createServer((downstream) => {
   downstream.on('error', closePair);
   downstream.on('close', closePair);
   upstream.on('data', (chunk) => {
+    if (blackholed) return;
+    if (blackholeIfMarkerExists()) return;
     if (dropIfMarkerExists()) return;
     if (!closed && !downstream.destroyed) downstream.write(chunk);
   });

@@ -641,6 +641,82 @@ test('persistent TLS JSONL recovers after an opaque TCP proxy cuts the connectio
   }
 });
 
+test('persistent TLS JSONL recovers after an opaque TCP proxy blackholes the response', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-remote-tcp-blackhole-'));
+  const servers = [];
+  try {
+    const lab = path.join(root, 'lab');
+    const effectFile = path.join(root, 'effect.json');
+    const blackholeLogFile = path.join(root, 'tcp-blackhole.log');
+    const caKey = path.join(root, 'ca.key.pem');
+    const caCert = path.join(root, 'ca.crt.pem');
+    const serverKey = path.join(root, 'server.key.pem');
+    const serverCert = path.join(root, 'server.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-persistent-remote-tcp-blackhole-ca');
+    await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 2);
+    const primary = await startRemoteServer(root, 'tcp-blackhole-primary', [
+      '--effect-file', effectFile, '--non-idempotent', '--reconcilable',
+    ], { serverKey, serverCert, caCert }, { keepAlive: true });
+    const observer = await startRemoteServer(root, 'tcp-blackhole-observer', [
+      '--effect-file', effectFile, '--reconciliation-observer',
+    ], { serverKey, serverCert, caCert }, { keepAlive: true });
+    const proxy = await startTcpFaultProxy(root, 'tcp-blackhole-proxy', primary.port, {
+      blackholeMarkerFile: effectFile,
+      blackholeLogFile,
+    });
+    servers.push(primary.server, observer.server, proxy.server);
+    const adapter = path.join(root, 'adapter.json');
+    const connection = (port) => ({
+      transport: 'persistent-tls-jsonl',
+      host: '127.0.0.1',
+      port,
+      tls: { certFile: clientCert, keyFile: clientKey, caFile: caCert, serverName: 'localhost' },
+    });
+    await writeFile(adapter, JSON.stringify({
+      ...connection(proxy.port),
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 500,
+      reconciliationObserver: {
+        ...connection(observer.port),
+        adapterId: 'idempotent-reconciliation-observer-v1',
+        worldId: 'idempotent-transition',
+        timeoutMs: 500,
+      },
+    }));
+
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'persistent-remote-tcp-blackhole-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const blackholed = await invoke([
+      'agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent',
+      '--adapter', adapter, '--kernel-only', '--goal', '验证透明 TCP 黑洞后的恢复', '--json',
+    ]);
+    assert.notEqual(blackholed.code, 0, JSON.stringify(blackholed));
+    assert.equal(blackholed.json?.error?.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(blackholed));
+    assert.match(blackholed.json?.error?.message ?? '', /timed out/iu, JSON.stringify(blackholed));
+    await waitForFile(blackholeLogFile);
+    assert.equal(primary.server.exitCode, null, 'the upstream WorldPort must remain online after the proxy blackhole');
+    assert.equal(proxy.server.exitCode, null, 'the TCP fault proxy must remain online for recovery');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, JSON.stringify(blackholed));
+
+    const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.json.data.status, 'COMPLETED');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, 'a proxy blackhole must not cause the non-idempotent effect to run again');
+
+    await stopServers(servers);
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.json.data.verdict, 'CONSISTENT');
+  } finally {
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('persistent TLS JSONL serializes concurrent recovery of one unresolved Run', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-remote-concurrent-'));
   const servers = [];
@@ -1434,6 +1510,8 @@ async function startRemoteServer(root, name, adapterArgs, tlsFiles, options = {}
 async function startTcpFaultProxy(root, name, upstreamPort, {
   dropMarkerFile,
   dropLogFile,
+  blackholeMarkerFile,
+  blackholeLogFile,
 } = {}) {
   const portFile = path.join(root, `${name}-port.txt`);
   const server = spawn(process.execPath, [
@@ -1441,8 +1519,10 @@ async function startTcpFaultProxy(root, name, upstreamPort, {
     '--upstream-host', '127.0.0.1',
     '--upstream-port', String(upstreamPort),
     '--port-file', portFile,
-    '--drop-marker-file', dropMarkerFile,
-    '--drop-log-file', dropLogFile,
+    ...(dropMarkerFile === undefined ? [] : ['--drop-marker-file', dropMarkerFile]),
+    ...(dropLogFile === undefined ? [] : ['--drop-log-file', dropLogFile]),
+    ...(blackholeMarkerFile === undefined ? [] : ['--blackhole-marker-file', blackholeMarkerFile]),
+    ...(blackholeLogFile === undefined ? [] : ['--blackhole-log-file', blackholeLogFile]),
   ], { windowsHide: true });
   await waitForFile(portFile);
   return { server, port: Number(await readFile(portFile, 'utf8')) };

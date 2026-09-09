@@ -137,6 +137,8 @@ F-203 将连接级中断与应用层黑洞区分开：测试 primary 在已完�
 
 F-204 增加一个只转发原始 TCP 字节的故障代理。代理不终止 TLS，也不读取 JSONL；当测试控制文件表明 primary 已写入非幂等效果时，代理销毁当前 client/upstream 连接并记录一次切断，后续连接继续转发。客户端收到连接关闭后不重放未知请求，下一次 CLI 通过原 execution nonce 的 `reconcile` 和独立 observer 完成恢复，primary 与代理仍在线，效果计数保持 1，离线 Replay 返回 `CONSISTENT`。本机远程 E2E 已从 `18/18` 增至 `19/19`。这比服务端主动销毁 socket 更接近中间网络设备故障，但故障时机由测试文件控制，不能外推为真实网络分区、分布式锁或物理设备事实。
 
+F-205 在同一透明 TCP 代理上增加回程黑洞模式。代理在检测到 primary 已写入效果后停止向客户端转发上游字节，但保持 client/upstream socket 和代理进程存活；客户端在 `timeoutMs` 到期后销毁自己的会话，不重放原 `transition`。下一次 CLI 通过新连接、同一 execution nonce 的 `reconcile` 和独立 observer 完成恢复，效果计数保持 1，离线 Replay 返回 `CONSISTENT`。本机远程 E2E 已从 `19/19` 增至 `20/20`。这覆盖网络层超时与连接重置的不同错误签名，但控制文件仍决定故障时机，不能替代真实路由器、丢包或半开连接实验。
+
 F-149 将同一 transport 规则用于 witness、executionAuthority 和 executionObserver。辅助角色的 `transport` 选择写入各自 manifest metadata，并由 identity-only registry、LabStore 和 Replay 校验；旧配置不带字段时仍保持一次请求一进程。独立 witness 请求现在显式等待异步响应，transition、reconcile 和 observe 不会把未完成的 Promise 放进证据对象。测试覆盖多次 witness evidence 请求，以及 authority/observer 对同一 execution nonce 的幂等重试；会话关闭仍由 registry 统一负责，Replay 不启动这些角色。
 
 F-150 把持久辅助会话放进响应丢失恢复实验：authority 或 observer 先完成各自的 nonce 绑定工作，再在回执发出前退出；第一次 Run 只留下未决 external transition，下一次独立 CLI 重新加载同一 manifest，主 adapter 的幂等 `transition`、authority 的 nonce 记录和 observer 的执行观测依次闭合，最终 STEP 才能落账。恢复过程不把新 nonce 当作补偿，也不让 Replay重新访问任何角色。该实验只覆盖本机同用户权限下的进程故障，不覆盖跨机器身份、断网重连或可信硬件。
