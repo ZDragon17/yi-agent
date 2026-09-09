@@ -11,6 +11,7 @@ $config = [ordered]@{
   adapterId = 'counter-python-v1'
   worldId = 'counter-python'
   timeoutMs = 5000
+  transport = 'persistent-jsonl'
 }
 
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)

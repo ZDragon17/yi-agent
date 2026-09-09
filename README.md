@@ -282,7 +282,7 @@ powershell -ExecutionPolicy Bypass `
   -RootPath $exampleRoot
 ```
 
-脚本会先执行无副作用预检，再完成同一条 `init→run→inspect→replay` 链。当前 Python 示例是无真实副作用、非幂等的演示 adapter；响应丢失后的恢复仍会按协议阻断，不能把跨语言接入误认为现实执行保证。
+脚本会先执行无副作用预检，再完成同一条 `init→run→inspect→replay` 链；配置使用 `persistent-jsonl`，因此运行期请求会复用 Python 进程。当前 Python 示例是无真实副作用、非幂等的演示 adapter；响应丢失后的恢复仍会按协议阻断，不能把跨语言接入误认为现实执行保证。
 
 ### MVP-1：把真实仓库接入同一条闭环
 

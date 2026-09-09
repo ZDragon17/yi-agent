@@ -1592,6 +1592,6 @@
 ## F-209 跨语言 WorldPort 示例
 
 - 反证/缺口：现有外部示例和所有真实 CLI 样本都以 Node.js 实现，虽然协议设计上没有语言要求，但还缺少不同运行时的实际证据。
-- 实现：新增 `examples/counter-world/adapter.py`、Python 配置生成脚本和 PowerShell 运行脚本。Python adapter 只使用标准库，实现 `hello`、`initialState`、状态依赖 `actions`、`observe`、`externalInputs` 和 `transition`，不声明幂等恢复或对账能力。
-- 验证：Windows 本机真实运行脚本，先通过 `adapter test`，再完成 `init→run→inspect→replay`；结果为 `COMPLETED`、3 步、Replay `CONSISTENT`。生成的测试目录已清理，工作区没有留下运行产物。
+- 实现：新增 `examples/counter-world/adapter.py`、Python 配置生成脚本和 PowerShell 运行脚本。Python adapter 只使用标准库，实现 `hello`、`initialState`、状态依赖 `actions`、`observe`、`externalInputs` 和 `transition`；配置使用 `persistent-jsonl`，但不声明幂等恢复或对账能力。
+- 验证：Windows 本机真实运行脚本，先通过 `adapter test`，再完成 `init→run→inspect→replay`；持久会话配置下结果为 `COMPLETED`、3 步、Replay `CONSISTENT`。生成的测试目录已清理，工作区没有留下运行产物。
 - 边界：这是跨语言和进程边界证据，不是跨机器、低权限、真实副作用或非幂等恢复证据；Python 示例故意保持无副作用。
