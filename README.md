@@ -214,7 +214,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 yi-agent adapter test --adapter $adapterConfig --json
 ```
 
-这个命令会读取配置并探测主 adapter 及其已声明的 witness、execution authority、execution observer 和 reconciliation observer，输出世界描述、能力、场景、descriptor digest 和角色摘要。它不会创建 Lab、锁或事件账本；预检成功只说明协议边界可建立，不代表外部世界已经可执行或可信。真正运行仍需经过 `init --adapter`、`run`、`inspect` 和 `replay`。
+这个命令会读取配置并探测主 adapter 及其已声明的 witness、execution authority、execution observer 和 reconciliation observer，输出世界描述、能力、场景、状态依赖动作、幂等 transition、对账支持、descriptor digest 和角色摘要。它不会创建 Lab、锁或事件账本；预检成功只说明协议边界可建立，不代表外部世界已经可执行或可信。真正运行仍需经过 `init --adapter`、`run`、`inspect` 和 `replay`。
 
 默认 adapter 配置仍是一次请求一进程；本地 adapter 需要复用进程时，在配置顶层增加 `"transport": "persistent-jsonl"`，并让 adapter 保持 stdin/stdout 打开的 JSONL 会话。`hello` 仍由一次性探针完成，后续请求才进入持久会话。远程 adapter 也可以使用 `"transport": "persistent-tls-jsonl"`，在一条经过 mTLS 校验的连接上串行发送 `hello` 和后续请求；连接断开后只建立新会话，不自动重放可能产生副作用的请求。两种持久模式的每个请求都有独立超时，adapter 必须逐行返回与请求 `id` 匹配的 envelope。它们只减少进程或 TLS 握手成本，不替代幂等 nonce、对账、EffectBroker 或人工确认。
 
@@ -400,6 +400,8 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-204 增加只转发加密字节的 TCP 故障代理：代理在观察到主 WorldPort 已写入效果后切断当前上下游连接，但不解析或修改 TLS 内容，随后放行新连接。primary 和代理进程都保持在线，CLI 通过同一 nonce 的对账恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `19/19` 通过。这把“中间网络切断”与服务端主动 reset 分开，但仍不等于真实路由分区、跨机器锁或设备效果证明。
 - F-205 让透明 TCP 代理保持连接，只吞掉效果产生后的回程数据：客户端按固定超时关闭本地会话，primary 与代理继续在线，下一次新连接经同一 nonce 对账完成恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `20/20` 通过。这把网络层超时与网络层断连分开，但故障时机仍由测试控制文件驱动。
 - F-206 把四个远程角色放入同一条 `persistent-tls-jsonl` 恢复链：primary、executionAuthority、executionObserver 和 reconciliationObserver 都通过独立的 mTLS endpoint 工作；第一次 Run 中 executionObserver 在返回观察前退出，primary effect 与 authority effect 各只产生一次但 Run 保持未决，第二次 CLI 为四个角色分别重建会话并沿同一 execution nonce 完成恢复。新增回归与完整远程 WorldPort 组为 `21/21`，停止所有远端服务后的 Replay 仍为 `CONSISTENT`。这证明的是同一实验主机、同一客户端证书和受控文件效果中的跨角色协议闭合，不证明跨机器锁、OS 权限隔离、远程代码诚实或真实设备效果。
+- F-207 增加 `adapter test` 作为外部 WorldPort 的无副作用预检：配置、主 adapter 和已声明辅助角色会在不创建 Lab、锁或账本的情况下完成 `hello` 探针，并返回不含凭据的世界描述、能力、场景、摘要和角色身份。它把接入前的协议诊断从实验空间初始化中分离出来，但不改变真正执行仍需经过 `init→run→inspect→replay` 的边界。
+- F-208 把主 adapter 的状态依赖动作、幂等 transition 和对账支持能力加入预检结果，并用带 execution observer 的配置回归验证。这样恢复前可以先看到影响 nonce 恢复安全性的声明；这些仍是 adapter 的协议声明，不是现实效果或远程代码诚实的证明。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

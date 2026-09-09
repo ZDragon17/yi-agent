@@ -54,6 +54,32 @@ test('adapter test probes an external WorldPort without creating a lab', async (
   });
 });
 
+test('adapter test reports recovery semantics and configured role identities', async () => {
+  await withTemp(async (root) => {
+    const effectFile = path.join(root, 'effects.json');
+    const adapter = await writeTransitionAdapterConfig(
+      root,
+      effectFile,
+      ['--reconcilable'],
+      false,
+      { executionObserver: true },
+    );
+    const result = await invoke('adapter', 'test', '--adapter', adapter, '--json');
+
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout.length, 1);
+    assert.equal(result.stdout[0].data.status, 'READY');
+    assert.equal(result.stdout[0].data.adapter.supportsStateDependentActions, true);
+    assert.equal(result.stdout[0].data.adapter.supportsIdempotentTransitions, true);
+    assert.equal(result.stdout[0].data.adapter.supportsReconciliation, true);
+    assert.equal(
+      result.stdout[0].data.adapter.roles.executionObserver.adapterId,
+      'idempotent-execution-observer-v1',
+    );
+    assert.equal(await pathExists(path.join(root, 'lab')), false);
+  });
+});
+
 test('CLI executes init, run, inspect, and replay as one JSON-envelope chain', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'lab');

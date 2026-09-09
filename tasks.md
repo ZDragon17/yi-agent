@@ -1578,6 +1578,13 @@
 ## F-207 外部 WorldPort 的无副作用预检
 
 - 反证/缺口：新用户此前必须直接执行 `init --adapter` 才能看到外部 WorldPort 的 `hello` 和辅助角色是否可用；协议配置错误与实验空间初始化混在同一条命令里，接入前没有可单独复现的诊断入口。
-- 实现：新增 `yi-agent adapter test --adapter CONFIG [--json]`。它复用现有配置归一化、主 descriptor、witness、execution authority、execution observer 和 reconciliation observer 探针，返回不含凭据的世界描述、能力、场景、descriptor digest、launch digest 和角色摘要；不创建 Lab、锁、current 或事件账本。
+- 实现：新增 `yi-agent adapter test --adapter CONFIG [--json]`。它复用现有配置归一化、主 descriptor、witness、execution authority、execution observer 和 reconciliation observer 探针，返回不含凭据的世界描述、能力、场景、状态依赖动作/幂等 transition/对账能力、descriptor digest、launch digest 和角色摘要；不创建 Lab、锁、current 或事件账本。
 - 验证：CLI E2E 覆盖有效外部 adapter 的 `READY` 结果、能力摘要和“没有创建 Lab”；原有 `init→run→inspect→replay` 与错误协议回归继续复用同一加载路径。
 - 边界：预检成功只说明当前配置下协议探针可建立，不证明外部代码诚实、权限隔离、现实效果或后续 transition 一定成功；真正执行仍必须经过 Lab manifest、Kernel、verify、EffectBroker/对账和 Replay。
+
+## F-208 预检公开恢复语义
+
+- 反证/缺口：F-207 的预检能证明角色可达，却隐藏了主 descriptor 已声明的状态依赖动作、幂等 transition 和对账能力；调用者无法仅看预检结果判断未知回执是否具备协议层恢复条件。
+- 实现：`ExternalWorldRegistry.describe()` 原样保留上述可选能力字段；`adapter test` 继续只探测 `hello`，并把带 execution observer 的角色身份一并返回，不引入 Lab 或外部 transition。
+- 验证：新增带 `--reconcilable` 和 execution observer 的 CLI E2E；预检返回 `READY`、三项能力均为 `true`、observer 身份匹配且没有创建 Lab。完整 CLI 门禁 `67/67` 通过。
+- 边界：这些字段是 adapter 的声明和配置摘要，不证明它真的具备幂等效果、对账事实、权限隔离或现实设备回执；真实副作用仍须进入人工可审计部署实验。

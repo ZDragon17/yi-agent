@@ -208,6 +208,15 @@ export async function loadExternalWorldRegistry(configPath, { probe = true } = {
         capabilityIds: descriptor.capabilityIds,
         scenarioIds: descriptor.scenarioIds,
         valueSpec: descriptor.valueSpec,
+        ...(descriptor.supportsStateDependentActions === undefined
+          ? {}
+          : { supportsStateDependentActions: descriptor.supportsStateDependentActions }),
+        ...(descriptor.supportsIdempotentTransitions === undefined
+          ? {}
+          : { supportsIdempotentTransitions: descriptor.supportsIdempotentTransitions }),
+        ...(descriptor.supportsReconciliation === undefined
+          ? {}
+          : { supportsReconciliation: descriptor.supportsReconciliation }),
         descriptorDigest: descriptor.descriptorDigest,
         launchDigest: normalizedConfig.launchDigest,
         ...(normalizedConfig.transport === undefined ? {} : { transport: normalizedConfig.transport }),
