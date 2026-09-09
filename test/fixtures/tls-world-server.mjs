@@ -5,6 +5,7 @@ import { createServer } from 'node:tls';
 const options = parseOptions(process.argv.slice(2));
 const adapterArgs = JSON.parse(options['adapter-args-json']);
 const server = createServer({
+  allowHalfOpen: true,
   key: readFileSync(options['tls-key-file']),
   cert: readFileSync(options['tls-cert-file']),
   ca: readFileSync(options['tls-client-ca-file']),
@@ -26,7 +27,12 @@ const server = createServer({
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     if (typeof result.stdout === 'string' && result.stdout.length > 0) {
-      socket.end(result.stdout);
+      if (options['extra-response-json'] === undefined) {
+        socket.end(result.stdout);
+      } else {
+        socket.write(result.stdout);
+        setTimeout(() => socket.end(`${options['extra-response-json']}\n`), Number(options['extra-response-delay-ms'] ?? 10));
+      }
     } else {
       socket.end(`${JSON.stringify({
         protocol: 'yi-world-cli',

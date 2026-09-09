@@ -416,6 +416,8 @@ function requestRemoteTls(config, request, op) {
     let settled = false;
     let timer;
     let output = '';
+    let responseReceived = false;
+    let responseResult;
 
     const finish = (error, value) => {
       if (settled) return;
@@ -461,11 +463,15 @@ function requestRemoteTls(config, request, op) {
         fail('External WorldPort TLS response exceeded the output limit.');
         return;
       }
+      if (responseReceived) {
+        if (output.trim().length > 0) fail('External WorldPort TLS response must contain exactly one JSONL response.');
+        return;
+      }
       const newline = output.indexOf('\n');
       if (newline === -1) return;
       const line = output.slice(0, newline).replace(/\r$/u, '');
-      const rest = output.slice(newline + 1);
-      if (line.length === 0 || rest.trim().length > 0) {
+      output = output.slice(newline + 1);
+      if (line.length === 0 || output.trim().length > 0) {
         fail('External WorldPort TLS response must contain exactly one JSONL response.');
         return;
       }
@@ -476,7 +482,8 @@ function requestRemoteTls(config, request, op) {
           fail('External WorldPort rejected a TLS request.');
           return;
         }
-        finish(null, response.result);
+        responseReceived = true;
+        responseResult = response.result;
       } catch (error) {
         if (error instanceof ExternalWorldProtocolError) finish(error, null);
         else fail('External WorldPort TLS response is not valid JSON.', {}, error);
@@ -484,6 +491,18 @@ function requestRemoteTls(config, request, op) {
     });
     socket.on('error', (error) => {
       if (!settled) fail('External WorldPort TLS connection failed.', {}, error);
+    });
+    socket.on('end', () => {
+      if (settled) return;
+      if (!responseReceived) {
+        fail('External WorldPort TLS connection closed before responding.');
+        return;
+      }
+      if (output.trim().length > 0) {
+        fail('External WorldPort TLS response must contain exactly one JSONL response.');
+        return;
+      }
+      finish(null, responseResult);
     });
     socket.on('close', () => {
       if (!settled) fail('External WorldPort TLS connection closed before responding.');

@@ -373,6 +373,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-185 为 F-184 取得线上三矩阵门禁：提交 `a8b233e` 在 GitHub Actions 的 Ubuntu Node 22、Ubuntu Node 24 和 Windows Node 22 全部通过；三个 job 时长分别为 283 秒、237 秒和 1733 秒。该结果只覆盖当前测试套件和本次 runner，不延伸为真实权限、远程主机或现实效果证据。
 - F-186 把外部 WorldPort 的网络边界推进为异步 `tls-jsonl` transport：主 WorldPort 和 `reconciliationObserver` 都可使用双向 TLS 的远程 JSONL endpoint，证书、CA、server name、endpoint 和启动摘要进入 manifest 约束；错误 CA 在 `hello` 前拒绝，远端服务停止后 Replay 仍离线保持 `CONSISTENT`。远程 WorldPort 与远程 observer E2E 为 `2/2`；提交 `b20e1e7` 的 GitHub Actions 三矩阵门禁全部通过，Ubuntu Node 22 用时 272 秒、Ubuntu Node 24 用时 233 秒、Windows Node 22 用时 2149 秒。这只是可验证的传输/身份边界，不等于远端主机、可信硬件或现实效果真实。
 - F-187 把远程边界放进恢复路径：主 WorldPort 首次产生非幂等效果后丢失回执，服务端重启，再由同一 endpoint 的 `reconcile` 和独立远程 observer 恢复；效果计数保持 1，两个服务停止后 Replay 仍为 `CONSISTENT`。本机远程恢复 E2E 为 `3/3`，它验证的是 nonce、重启和离线账本的一致性，不是远程主机诚实或物理效果证明。
+- F-188 修正 `tls-jsonl` 的响应收尾：客户端不再在第一行合法 envelope 到达后立即销毁连接，而是等远端结束并检查后续字节；延迟到达的第二个 envelope、未结束的响应和超时都会失败关闭。新增协议污染回归后，远程 WorldPort E2E 为 `4/4`。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
