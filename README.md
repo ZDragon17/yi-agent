@@ -214,7 +214,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 yi-agent adapter test --adapter $adapterConfig --json
 ```
 
-这个命令会读取配置并探测主 adapter 及其已声明的 witness、execution authority、execution observer 和 reconciliation observer，输出世界描述、能力、场景、状态依赖动作、幂等 transition、对账支持、descriptor digest 和角色摘要。它不会创建 Lab、锁或事件账本；预检成功只说明协议边界可建立，不代表外部世界已经可执行或可信。真正运行仍需经过 `init --adapter`、`run`、`inspect` 和 `replay`。
+这个命令会读取配置并探测主 adapter 及其已声明的 witness、execution authority、execution observer 和 reconciliation observer，输出世界描述、能力、场景、状态依赖动作、幂等 transition、对账支持、`recoveryMode`、descriptor digest 和角色摘要。`recoveryMode` 为 `idempotent` 时优先按同一 nonce 恢复，`reconciliation` 时依赖 adapter 的 `reconcile`，`blocked` 时未知 transition 只能停下等待人工处理。它不会创建 Lab、锁或事件账本；预检成功只说明协议边界可建立，不代表外部世界已经可执行或可信。真正运行仍需经过 `init --adapter`、`run`、`inspect` 和 `replay`。
 
 默认 adapter 配置仍是一次请求一进程；本地 adapter 需要复用进程时，在配置顶层增加 `"transport": "persistent-jsonl"`，并让 adapter 保持 stdin/stdout 打开的 JSONL 会话。`hello` 仍由一次性探针完成，后续请求才进入持久会话。远程 adapter 也可以使用 `"transport": "persistent-tls-jsonl"`，在一条经过 mTLS 校验的连接上串行发送 `hello` 和后续请求；连接断开后只建立新会话，不自动重放可能产生副作用的请求。两种持久模式的每个请求都有独立超时，adapter 必须逐行返回与请求 `id` 匹配的 envelope。它们只减少进程或 TLS 握手成本，不替代幂等 nonce、对账、EffectBroker 或人工确认。
 
@@ -427,6 +427,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-208 把主 adapter 的状态依赖动作、幂等 transition 和对账支持能力加入预检结果，并用带 execution observer 的配置回归验证。这样恢复前可以先看到影响 nonce 恢复安全性的声明；这些仍是 adapter 的协议声明，不是现实效果或远程代码诚实的证明。
 - F-209 增加只使用 Python 标准库的外部 WorldPort 示例，并用 Windows PowerShell 真实跑通预检与 `init→run→inspect→replay`。这验证协议不绑定 Node 运行时；示例仍是无真实副作用、非幂等 adapter，不扩大恢复或现实执行保证。
 - F-210 将 Python WorldPort 放入 WSL Ubuntu 用户态，通过 Windows `wsl.exe` 启动并用 `persistent-jsonl` 完成同一条闭环；本机结果为 `COMPLETED`、3 步、Replay `CONSISTENT`。这验证同机跨 OS 用户态的协议互操作，不等同于跨机器、不同账户或容器隔离。
+- F-211 让 `adapter test` 根据主 descriptor 直接给出 `recoveryMode`：幂等优先为 `idempotent`，仅支持对账为 `reconciliation`，两者都没有则为 `blocked`；正反配置回归均通过。它把未知回执的处理边界变成可读结果，但不把 adapter 声明变成现实效果证明。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

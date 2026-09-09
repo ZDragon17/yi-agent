@@ -43,7 +43,7 @@
 | `recover --lab PATH --confirm-lock-owner-dead [--json]` | 显式恢复请求 | stale lock 证据、恢复后的 current | 活进程/未确认 75；损坏 3；参数 64；I/O 74 | 唯一允许处理陈旧锁的命令 |
 | `effect plan|confirm|execute|reconcile|compensate|reconcile-compensation|inspect --journal PATH [--sandbox-root PATH] [--intent PATH] [--nonce N] [--json]` | EffectIntent、durable journal、显式标记 sandbox | EffectBroker 状态快照或全部 effect 状态 | 参数 64；损坏 3；不存在 66；I/O 74；状态错误 70 | 每次进程从 journal 恢复；execute/compensate 只允许标记 sandbox root |
 | `api test [--json]` | 环境变量中的 API 配置 | 连通状态与模型数量 | 参数 64；API 74；协议 70 | 无本地状态副作用 |
-| `adapter test --adapter CONFIG [--json]` | 外部 WorldPort 配置与其声明角色 | `READY`、世界描述、能力/场景、状态依赖动作/幂等 transition/对账能力和角色摘要 | 参数/配置 64；协议 70；I/O 74 | 只执行配置归一化与 `hello` 探针，不创建 Lab、锁或账本 |
+| `adapter test --adapter CONFIG [--json]` | 外部 WorldPort 配置与其声明角色 | `READY`、世界描述、能力/场景、状态依赖动作/幂等 transition/对账能力、`recoveryMode` 和角色摘要 | 参数/配置 64；协议 70；I/O 74 | 只执行配置归一化与 `hello` 探针，不创建 Lab、锁或账本 |
 | `ask --prompt TEXT|--prompt-file PATH [--json]` | 环境变量中的 API 配置与用户提示 | 模型、回答、可选 usage | 参数 64；API 74；协议 70 | 单次非流式请求；提示文件只读 |
 | `agent run --lab PATH --steps N [--kernel-only] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间；默认使用 API，`--kernel-only` 不需要 API 配置 | 闭环 run 摘要 | 参数 64；安全停机 2；API 74；协议 70 | 默认每步一次模型提议；`--kernel-only` 只运行 Kernel；`--auto-plan` 激活持久化 Planner 策略；停滞时只修订未完成计划；replay 不访问 API |
 | `agent loop --lab PATH --steps N [--runs N|--forever] [--kernel-only] [--scenario ID] [--adapter CONFIG] [--goal TEXT] [--goal-plan PATH|--auto-plan] [--json]` | 已初始化实验空间；默认使用 API，`--kernel-only` 不需要 API 配置；`--runs` 与 `--forever` 互斥 | 多 Run 摘要；长期模式可返回 `INTERRUPTED` | 参数 64；安全停机 2；API 74；协议 70 | Run 串行提交；同一 lab 只允许一条未完成 continuation 持有调度权；SIGINT/SIGTERM 只在 Run 边界停止；loop 身份和预算写入每个 Run start，重启可从 current 继续 |
@@ -445,3 +445,5 @@ F-208 将主 descriptor 中的状态依赖动作、幂等 transition 和对账�
 F-209 增加 Python 标准库实现的外部 WorldPort 示例。CLI 仍只依赖 `yi-world-cli` JSONL envelope 和 descriptor，不依赖 adapter 的实现语言；PowerShell 示例实际完成预检、初始化、运行、检查和离线 Replay，运行期配置使用 `persistent-jsonl` 复用 Python 进程。该 adapter 不声明幂等或对账，故响应丢失后的恢复按既有安全边界阻断。
 
 F-210 增加 WSL Ubuntu 运行脚本，通过 Windows `wsl.exe` 启动同一个 Python adapter；Windows CLI 在同机不同 OS 用户态之间完成预检、初始化、运行、检查和离线 Replay。该边界只证明协议互操作与会话生命周期，不证明跨机器、不同账户、容器隔离或真实副作用权限。
+
+F-211 为 `adapter test` 增加派生的 `recoveryMode`：主 descriptor 声明幂等 transition 时为 `idempotent`，否则声明对账能力时为 `reconciliation`，否则为 `blocked`。该字段与宿主实际恢复分支保持一致，帮助接入者在创建 Lab 前发现未知回执的停机边界；它仍只是协议能力摘要。

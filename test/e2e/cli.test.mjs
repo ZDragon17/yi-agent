@@ -49,6 +49,7 @@ test('adapter test probes an external WorldPort without creating a lab', async (
     assert.equal(result.stdout[0].data.adapter.worldId, 'generated');
     assert.deepEqual(result.stdout[0].data.adapter.capabilityIds, ['generated.advance']);
     assert.equal(typeof result.stdout[0].data.adapter.descriptorDigest, 'string');
+    assert.equal(result.stdout[0].data.adapter.recoveryMode, 'blocked');
     assert.deepEqual(result.stdout[0].data.adapter.roles, {});
     assert.equal(await pathExists(path.join(root, 'lab')), false);
   });
@@ -72,10 +73,22 @@ test('adapter test reports recovery semantics and configured role identities', a
     assert.equal(result.stdout[0].data.adapter.supportsStateDependentActions, true);
     assert.equal(result.stdout[0].data.adapter.supportsIdempotentTransitions, true);
     assert.equal(result.stdout[0].data.adapter.supportsReconciliation, true);
+    assert.equal(result.stdout[0].data.adapter.recoveryMode, 'idempotent');
     assert.equal(
       result.stdout[0].data.adapter.roles.executionObserver.adapterId,
       'idempotent-execution-observer-v1',
     );
+    assert.equal(await pathExists(path.join(root, 'lab')), false);
+
+    const nonIdempotentAdapter = await writeTransitionAdapterConfig(
+      root,
+      effectFile,
+      ['--non-idempotent', '--reconcilable'],
+      false,
+    );
+    const nonIdempotentResult = await invoke('adapter', 'test', '--adapter', nonIdempotentAdapter, '--json');
+    assert.equal(nonIdempotentResult.code, 0);
+    assert.equal(nonIdempotentResult.stdout[0].data.adapter.recoveryMode, 'reconciliation');
     assert.equal(await pathExists(path.join(root, 'lab')), false);
   });
 });

@@ -1602,3 +1602,10 @@
 - 实现：新增 WSL 配置生成脚本和运行脚本，将 Windows 路径转换为 WSL `/mnt/<drive>/...` 路径，通过 `wsl.exe -d <Distribution> -- python3 ...` 启动同一 Python adapter；配置继续使用 `persistent-jsonl`。
 - 验证：本机 Ubuntu WSL 可用，Windows CLI 通过 WSL adapter 完成 `adapter test`、`init→run→inspect→replay`，结果为 `COMPLETED`、3 步、Replay `CONSISTENT`；生成目录已清理。
 - 边界：WSL 与 Windows 仍是同一台主机，运行身份和文件共享边界未等同于不同账户、容器、跨机器锁或真实副作用权限。
+
+## F-211 预检派生恢复姿态
+
+- 反证/缺口：F-208 虽然公开了幂等和对账布尔值，但接入者仍需要自己复刻宿主分支，容易把“可运行”误解为“未知回执可自动恢复”。
+- 实现：`ExternalWorldRegistry.describe()` 增加 `recoveryMode`；幂等声明优先映射为 `idempotent`，否则对账声明映射为 `reconciliation`，两者都没有映射为 `blocked`。该字段只由已验证的 `hello` descriptor 派生，不执行 transition。
+- 验证：生成 adapter 预检返回 `blocked`；同时声明幂等/对账的配置返回 `idempotent`；仅声明对账且关闭幂等的配置返回 `reconciliation`。两条预检均不创建 Lab，定向 CLI 回归 `2/2` 通过。
+- 边界：`recoveryMode` 是宿主协议分支的摘要，不证明 adapter 真的幂等、真的能对账或拥有现实副作用权限；`blocked` 仍可能需要人工处理外部未决效果。

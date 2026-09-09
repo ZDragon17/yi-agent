@@ -217,6 +217,11 @@ export async function loadExternalWorldRegistry(configPath, { probe = true } = {
         ...(descriptor.supportsReconciliation === undefined
           ? {}
           : { supportsReconciliation: descriptor.supportsReconciliation }),
+        recoveryMode: descriptor.supportsIdempotentTransitions === true
+          ? 'idempotent'
+          : descriptor.supportsReconciliation === true
+            ? 'reconciliation'
+            : 'blocked',
         descriptorDigest: descriptor.descriptorDigest,
         launchDigest: normalizedConfig.launchDigest,
         ...(normalizedConfig.transport === undefined ? {} : { transport: normalizedConfig.transport }),
