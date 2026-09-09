@@ -210,6 +210,8 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 默认 adapter 配置仍是一次请求一进程；需要长序列复用进程时，在配置顶层增加 `"transport": "persistent-jsonl"`，并让 adapter 保持 stdin/stdout 打开的 JSONL 会话。`hello` 仍由一次性探针完成，后续请求才进入持久会话；每个请求仍有独立超时，adapter 必须逐行返回与请求 `id` 匹配的 envelope。该选项只解决进程启动成本，不替代幂等 nonce、对账、EffectBroker 或人工确认。
 
+需要把 WorldPort 放在另一台主机或独立网络服务时，可使用 `"transport": "tls-jsonl"`。此时配置不再填写 `executable/args`，而是填写 `host`、`port` 和指向客户端证书、私钥、CA、server name 的绝对路径。每个请求都新建一个强制校验服务端证书并要求客户端证书的 TLS 连接；超时、证书错误、协议污染和响应超限都会在外部边界 fail-closed。远程连接只参与 init/run 的实时 WorldPort，Replay/inspect 使用已固化的 manifest 和 STEP 证据，不重新连接远端。这个传输证明的是网络协议和身份校验闭环，不证明远端主机诚实、硬件效果或物理因果。
+
 若 `executionAuthority` 的 descriptor 发布了 `executionPublicKey`，配置中的 `executionAuthority.executionPublicKey` 必须与之相同；`bin/yi-agent-effect-authority.mjs` 可用 `--private-key-der` 指向 PKCS#8 DER 私钥文件，也可以不让 authority 进程接触私钥，改用 `--signer-executable` 与 `--signer-args-json` 调用 `bin/yi-agent-execution-signer.mjs`。两种方式都只接受绝对路径、普通文件、64 KiB 以内的私钥文件，私钥不应提交到仓库或写入共享配置。独立 signer 只把持钥代码移到另一个进程；同一用户仍可能读取私钥，因此它不是低权限隔离、远程密钥托管或可信硬件。公钥 pin 解决的是回执身份错配，不是私钥托管或 authority 诚实问题。
 
 需要把 signer 放到独立服务时，可使用 `--signer-host`、`--signer-port` 和 `--signer-auth-token-file`。signer 服务端用 `bin/yi-agent-execution-signer-server.mjs` 启动，私钥由服务端读取，authority 只读取共享认证 token；错误 token、超时、协议污染或无效签名都会失败关闭。跨机器或非受信网络应同时配置 signer 的 `--tls-cert-file`、`--tls-key-file`、`--tls-client-ca-file`，以及 authority 的 `--signer-tls-cert-file`、`--signer-tls-key-file`、`--signer-tls-ca-file`、`--signer-tls-server-name`。需要主动拒绝已撤销客户端证书时，两端可分别增加 `--tls-crl-file` 与 `--signer-tls-crl-file`；CRL 文件同样受绝对路径、普通文件和 64 KiB 大小限制。证书密钥只负责连接认证，和 execution signing key 不是同一把钥匙；CRL 更新、旧证书审计和吊销发布仍属于部署运维责任。
@@ -369,6 +371,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-183 把非幂等对账的第二观察边界接入恢复路径：配置可声明独立 `reconciliationObserver`，宿主把 observer 对同一 `executionNonce`、before/after 状态的 `OBSERVED` 结果与主 adapter 的 `APPLIED` 声明逐项比较，再把观察证据写入 STEP；Replay 只复核已提交证据，不重新调用 observer。有效观察与矛盾观察回归 `2/2`，矛盾结果不会追加 STEP。该 observer 仍是本机进程和配置级独立，不是低权限、远程或物理可信根。
 - F-184 收紧 F-183 的配置边界：主 WorldPort 与 `reconciliationObserver` 不能复用完全相同的可执行文件、参数和 transport；宿主在第一次 `hello` 前直接拒绝这种“只换身份名”的配置，等价路径和指向同一底层文件的硬链接也会被拒绝。对账 E2E 回归 `13/13`，与账本/Replay 组合门禁 `93/93`；该约束仍只排除配置层面的假分离，不等于 OS 权限、跨机器身份或现实效果证明。
 - F-185 为 F-184 取得线上三矩阵门禁：提交 `a8b233e` 在 GitHub Actions 的 Ubuntu Node 22、Ubuntu Node 24 和 Windows Node 22 全部通过；三个 job 时长分别为 283 秒、237 秒和 1733 秒。该结果只覆盖当前测试套件和本次 runner，不延伸为真实权限、远程主机或现实效果证据。
+- F-186 把外部 WorldPort 的网络边界推进为异步 `tls-jsonl` transport：主 WorldPort 和 `reconciliationObserver` 都可使用双向 TLS 的远程 JSONL endpoint，证书、CA、server name、endpoint 和启动摘要进入 manifest 约束；错误 CA 在 `hello` 前拒绝，远端服务停止后 Replay 仍离线保持 `CONSISTENT`。远程 WorldPort 与远程 observer E2E 为 `2/2`；这只是可验证的传输/身份边界，不等于远端主机、可信硬件或现实效果真实。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

@@ -2023,7 +2023,7 @@ async function crashAfterExternalTransitionReturn(lab, adapter) {
   const script = [
     `import { runLab } from ${JSON.stringify(agentService)};`,
     `import { loadExternalWorldRegistry } from ${JSON.stringify(externalRegistry)};`,
-    `const registry = loadExternalWorldRegistry(${JSON.stringify(adapter)});`,
+    `const registry = await loadExternalWorldRegistry(${JSON.stringify(adapter)});`,
     `runLab({ labPath: ${JSON.stringify(lab)}, runId: 'crashed-external-run', steps: 1, scenario: 'idempotent', registry, failpoint: (point) => point === 'external-transition:returned' ? process.exit(17) : false })`,
     '.then(() => process.exit(0), () => process.exit(17));',
   ].join('\n');
@@ -2045,7 +2045,7 @@ async function crashAfterExternalTransitionReturnWithAdvisor(lab, adapter, token
   const script = [
     `import { runLab } from ${JSON.stringify(agentService)};`,
     `import { loadExternalWorldRegistry } from ${JSON.stringify(externalRegistry)};`,
-    `const registry = loadExternalWorldRegistry(${JSON.stringify(adapter)});`,
+    `const registry = await loadExternalWorldRegistry(${JSON.stringify(adapter)});`,
     `const advisor = async () => ({ model: 'stable-test-advisor', token: ${JSON.stringify(token)}, responseDigest: 'sha256:${'a'.repeat(64)}', reason: null });`,
     `runLab({ labPath: ${JSON.stringify(lab)}, runId: 'advisor-crashed-run', steps: 1, scenario: 'idempotent', registry, advisor, failpoint: (point) => point === 'external-transition:returned' ? process.exit(17) : false })`,
     '.then(() => process.exit(0), () => process.exit(17));',
@@ -2068,7 +2068,7 @@ async function crashAfterUnknownTerminalAppend(lab, adapter) {
   const script = [
     `import { runLab } from ${JSON.stringify(agentService)};`,
     `import { loadExternalWorldRegistry } from ${JSON.stringify(externalRegistry)};`,
-    `const registry = loadExternalWorldRegistry(${JSON.stringify(adapter)});`,
+    `const registry = await loadExternalWorldRegistry(${JSON.stringify(adapter)});`,
     `runLab({ labPath: ${JSON.stringify(lab)}, runId: 'terminal-append-unknown-run', steps: 1, scenario: 'idempotent', registry, failpoint: (point) => point === 'external-transition:returned' || point === 'terminal:appended' })`,
     '.then(() => process.exit(0), () => process.exit(17));',
   ].join('\n');

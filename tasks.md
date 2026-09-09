@@ -1427,3 +1427,10 @@
 - 实现：不修改运行时代码和测试判据；在提交 `a8b233e` 上保留同一 workflow 的 Ubuntu Node 22、Ubuntu Node 24 和 Windows Node 22 三个 job，等待全部进入终态。
 - 验证：GitHub Actions run `34312578163` 三个 job 均为 `success`；Ubuntu Node 24 用时 237 秒，Ubuntu Node 22 用时 283 秒，Windows Node 22 用时 1733 秒。run 的 head SHA 与 `a8b233e2ae77f6a82b81bcbfe746c1ffa7fe7479` 一致。
 - 边界：这闭合的是当前提交、当前 workflow、当前 GitHub runner 与 Node 版本的自动门禁，不证明任意 Windows 环境、低权限 OS 身份、跨机器 WorldPort、真实设备回执或人工确认路径。
+
+## F-186 远程 WorldPort 的 TLS JSONL 边界
+
+- 反证/缺口：F-184 只排除了本机配置的表面来源分离；现有网络能力只服务于 execution signer，WorldPort 本身仍要求本地 executable，无法把远程主机/网络身份纳入同一 manifest、Run 和 Replay 契约。
+- 实现：将外部 registry 加载改为异步；新增 `transport:"tls-jsonl"`，远程主 WorldPort、witness、execution authority/observer 和 reconciliation observer 使用 host/port、客户端证书、私钥、CA 与 server name。每个请求建立一次 mTLS 连接，强制响应上限、单请求超时、单 JSONL envelope 和服务端证书校验；TLS 材料摘要与 endpoint 进入 launch digest。identity-only registry 和 Replay 不连接远端。
+- 验证：本机独立 TLS WorldPort 服务完成 init→run→Replay，错误 CA 在 `hello` 前返回 `WORLD_ADAPTER_PROTOCOL`；远程 reconciliation observer 独立 endpoint 的 descriptor probe 通过；远程服务停止后 Replay 仍为 `CONSISTENT`，远程 E2E `2/2`。受影响组合门首跑为 `85/89`，其中 4 个长时 CLI 用例在资源竞争下超时；这 4 个用例随后单独重跑为 `4/4`，完整线上门禁仍以 push 后三矩阵结果为准。
+- 边界：mTLS 证明的是本次连接的证书链和 endpoint 配置，不证明远端主机代码诚实、证书私钥未被同权限读取、网络另一端观察到真实物理效果，也不自动形成低权限 OS 或可信硬件根。远程断网后的非幂等效果仍必须依赖 nonce 对账或人工确认。

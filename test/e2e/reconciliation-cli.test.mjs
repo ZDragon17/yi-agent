@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { link, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, link, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -168,8 +168,11 @@ test('a reconciliation observer cannot bypass launch recipe isolation with a har
     const effectFile = path.join(root, 'hard-linked-launch-recipe-effect.json');
     const adapter = await writeAdapterWithObserver(root, effectFile, ['--two-actions']);
     const config = JSON.parse(await readFile(adapter, 'utf8'));
+    const sameVolumeExecutable = path.join(root, 'node-same-volume.exe');
+    await copyFile(config.executable, sameVolumeExecutable);
+    config.executable = sameVolumeExecutable;
     const hardLinkedExecutable = path.join(root, 'node-hardlink.exe');
-    await link(config.executable, hardLinkedExecutable);
+    await link(sameVolumeExecutable, hardLinkedExecutable);
     config.reconciliationObserver.executable = hardLinkedExecutable;
     config.reconciliationObserver.args = config.args;
     await writeFile(adapter, JSON.stringify(config));

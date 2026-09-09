@@ -70,7 +70,7 @@ test('closing a persistent registry rejects queued requests before starting a se
       transport: 'persistent-jsonl',
     }));
 
-    registry = loadExternalWorldRegistry(adapter);
+    registry = await loadExternalWorldRegistry(adapter);
     const manifest = {
       schemaVersion: 1,
       worldId: 'durable-counter',
@@ -195,7 +195,7 @@ test('persistent session rebuild ignores the old process close event', async () 
       transport: 'persistent-jsonl',
     }));
 
-    registry = loadExternalWorldRegistry(adapter);
+    registry = await loadExternalWorldRegistry(adapter);
     const manifest = {
       schemaVersion: 1,
       worldId: 'durable-counter',

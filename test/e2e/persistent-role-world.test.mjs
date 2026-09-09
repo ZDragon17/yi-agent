@@ -105,7 +105,7 @@ test('persistent transport keeps authority and observer sessions across an idemp
       },
     }));
 
-    registry = loadExternalWorldRegistry(adapter);
+    registry = await loadExternalWorldRegistry(adapter);
     const manifest = {
       schemaVersion: 1,
       worldId: 'idempotent-transition',

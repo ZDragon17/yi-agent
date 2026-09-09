@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, statSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { connect as connectTls } from 'node:tls';
 import {
   canonicalDigest,
   canonicalJson,
@@ -46,6 +47,9 @@ const CAUSAL_CREDIT_BASIS = 'counterfactual-additive-v1';
 const ATTESTED_CAUSAL_CREDIT_BASIS = 'counterfactual-attested-v1';
 const INDEPENDENT_CAUSAL_CREDIT_BASIS = 'counterfactual-independent-v1';
 const PERSISTENT_JSONL_TRANSPORT = 'persistent-jsonl';
+const TLS_JSONL_TRANSPORT = 'tls-jsonl';
+const MAX_REMOTE_HOST_LENGTH = 253;
+const MAX_TLS_MATERIAL_BYTES = 64 * 1024;
 
 export class ExternalWorldProtocolError extends Error {
   constructor(message, context = {}) {
@@ -56,7 +60,7 @@ export class ExternalWorldProtocolError extends Error {
   }
 }
 
-export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
+export async function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
   const resolvedConfigPath = resolveConfigPath(configPath);
   const configBytes = readBoundedFile(resolvedConfigPath, 'adapter config');
   let config;
@@ -69,19 +73,19 @@ export function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
   assertDistinctReconciliationLaunchRecipe(normalizedConfig);
   if (!probe) return createIdentityOnlyRegistry(normalizedConfig);
   const client = createAdapterClient(normalizedConfig);
-  const descriptor = validateDescriptor(client.request('hello', {}), normalizedConfig);
+  const descriptor = validateDescriptor(await client.request('hello', {}), normalizedConfig);
   const witness = normalizedConfig.witness === undefined
     ? null
-    : loadWitnessDescriptor(normalizedConfig.witness, descriptor);
+    : await loadWitnessDescriptor(normalizedConfig.witness, descriptor);
   const executionAuthority = normalizedConfig.executionAuthority === undefined
     ? null
-    : loadExecutionAuthorityDescriptor(normalizedConfig.executionAuthority, descriptor);
+    : await loadExecutionAuthorityDescriptor(normalizedConfig.executionAuthority, descriptor);
   const executionObserver = normalizedConfig.executionObserver === undefined
     ? null
-    : loadExecutionObserverDescriptor(normalizedConfig.executionObserver, descriptor);
+    : await loadExecutionObserverDescriptor(normalizedConfig.executionObserver, descriptor);
   const reconciliationObserver = normalizedConfig.reconciliationObserver === undefined
     ? null
-    : loadReconciliationObserverDescriptor(normalizedConfig.reconciliationObserver, descriptor);
+    : await loadReconciliationObserverDescriptor(normalizedConfig.reconciliationObserver, descriptor);
   if (executionAuthority !== null && executionObserver !== null &&
       executionAuthority.descriptor.adapterId === executionObserver.descriptor.adapterId) {
     throw new ExternalWorldProtocolError('Execution authority must use a different adapter identity from the observer.', {
@@ -396,6 +400,7 @@ function createAdapterClient(config) {
         op,
         payload,
       };
+      if (config.transport === TLS_JSONL_TRANSPORT) return requestRemoteTls(config, request, op);
       if (persistent !== null && op !== 'hello') return persistent.request(request, op);
       return requestOneShot(config, request, op);
     },
@@ -403,6 +408,87 @@ function createAdapterClient(config) {
       return persistent?.close() ?? Promise.resolve();
     },
   };
+}
+
+function requestRemoteTls(config, request, op) {
+  return new Promise((resolve, reject) => {
+    let socket;
+    let settled = false;
+    let timer;
+    let output = '';
+
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket?.destroy();
+      if (error === null) resolve(value);
+      else reject(error);
+    };
+    const fail = (message, context = {}, cause) => finish(new ExternalWorldProtocolError(message, {
+      op,
+      ...context,
+      ...(cause === undefined ? {} : { cause: errorName(cause) }),
+    }), null);
+
+    timer = setTimeout(() => fail('External WorldPort TLS request timed out.', {
+      timeoutMs: config.timeoutMs,
+      cause: 'Timeout',
+    }), config.timeoutMs);
+    try {
+      socket = connectTls({
+        host: config.host,
+        port: config.port,
+        cert: config.tls.cert,
+        key: config.tls.key,
+        ca: config.tls.ca,
+        servername: config.tls.servername,
+        ...(config.tls.crl === undefined ? {} : { crl: config.tls.crl }),
+        rejectUnauthorized: true,
+      });
+    } catch (error) {
+      fail('External WorldPort TLS connection could not be opened.', {}, error);
+      return;
+    }
+    socket.setEncoding('utf8');
+    socket.once('secureConnect', () => {
+      if (!settled) socket.end(`${JSON.stringify(request)}\n`);
+    });
+    socket.on('data', (chunk) => {
+      if (settled) return;
+      output += chunk;
+      if (Buffer.byteLength(output, 'utf8') > MAX_STDOUT_BYTES) {
+        fail('External WorldPort TLS response exceeded the output limit.');
+        return;
+      }
+      const newline = output.indexOf('\n');
+      if (newline === -1) return;
+      const line = output.slice(0, newline).replace(/\r$/u, '');
+      const rest = output.slice(newline + 1);
+      if (line.length === 0 || rest.trim().length > 0) {
+        fail('External WorldPort TLS response must contain exactly one JSONL response.');
+        return;
+      }
+      try {
+        const response = JSON.parse(line);
+        validateResponseEnvelope(response, request.id, op);
+        if (response.ok !== true) {
+          fail('External WorldPort rejected a TLS request.');
+          return;
+        }
+        finish(null, response.result);
+      } catch (error) {
+        if (error instanceof ExternalWorldProtocolError) finish(error, null);
+        else fail('External WorldPort TLS response is not valid JSON.', {}, error);
+      }
+    });
+    socket.on('error', (error) => {
+      if (!settled) fail('External WorldPort TLS connection failed.', {}, error);
+    });
+    socket.on('close', () => {
+      if (!settled) fail('External WorldPort TLS connection closed before responding.');
+    });
+  });
 }
 
 function requestOneShot(config, request, op) {
@@ -1411,9 +1497,9 @@ function validateDescriptor(value, config) {
   return source;
 }
 
-function loadWitnessDescriptor(config, primaryDescriptor) {
+async function loadWitnessDescriptor(config, primaryDescriptor) {
   const client = createAdapterClient(config);
-  const descriptor = validateDescriptor(client.request('hello', {}), config);
+  const descriptor = validateDescriptor(await client.request('hello', {}), config);
   if (descriptor.worldId !== primaryDescriptor.worldId ||
       descriptor.worldVersion !== primaryDescriptor.worldVersion ||
       canonicalJson(descriptor.capabilityIds) !== canonicalJson(primaryDescriptor.capabilityIds) ||
@@ -1428,9 +1514,9 @@ function loadWitnessDescriptor(config, primaryDescriptor) {
   return { config, client, descriptor };
 }
 
-function loadExecutionObserverDescriptor(config, primaryDescriptor) {
+async function loadExecutionObserverDescriptor(config, primaryDescriptor) {
   const client = createAdapterClient(config);
-  const descriptor = validateDescriptor(client.request('hello', {}), config);
+  const descriptor = validateDescriptor(await client.request('hello', {}), config);
   if (descriptor.worldId !== primaryDescriptor.worldId ||
       descriptor.worldVersion !== primaryDescriptor.worldVersion ||
       canonicalJson(descriptor.capabilityIds) !== canonicalJson(primaryDescriptor.capabilityIds) ||
@@ -1444,9 +1530,9 @@ function loadExecutionObserverDescriptor(config, primaryDescriptor) {
   return { config, client, descriptor };
 }
 
-function loadReconciliationObserverDescriptor(config, primaryDescriptor) {
+async function loadReconciliationObserverDescriptor(config, primaryDescriptor) {
   const client = createAdapterClient(config);
-  const descriptor = validateDescriptor(client.request('hello', {}), config);
+  const descriptor = validateDescriptor(await client.request('hello', {}), config);
   if (descriptor.worldId !== primaryDescriptor.worldId ||
       descriptor.worldVersion !== primaryDescriptor.worldVersion ||
       canonicalJson(descriptor.capabilityIds) !== canonicalJson(primaryDescriptor.capabilityIds) ||
@@ -1460,9 +1546,9 @@ function loadReconciliationObserverDescriptor(config, primaryDescriptor) {
   return { config, client, descriptor };
 }
 
-function loadExecutionAuthorityDescriptor(config, primaryDescriptor) {
+async function loadExecutionAuthorityDescriptor(config, primaryDescriptor) {
   const client = createAdapterClient(config);
-  const descriptor = validateDescriptor(client.request('hello', {}), config);
+  const descriptor = validateDescriptor(await client.request('hello', {}), config);
   if (descriptor.worldId !== primaryDescriptor.worldId ||
       descriptor.worldVersion !== primaryDescriptor.worldVersion ||
       canonicalJson(descriptor.capabilityIds) !== canonicalJson(primaryDescriptor.capabilityIds) ||
@@ -1525,10 +1611,22 @@ function normalizeConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config must be an object.', { field: 'adapter' });
   }
-  const allowed = new Set(['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'witness', 'executionAuthority', 'executionObserver', 'reconciliationObserver']);
+  const allowed = new Set(['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'host', 'port', 'tls', 'witness', 'executionAuthority', 'executionObserver', 'reconciliationObserver']);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter config contains an unsupported field.', { field: 'adapter' });
   }
+  if (typeof value.adapterId !== 'string' || value.adapterId.length === 0 || value.adapterId.length > 4096 ||
+      typeof value.worldId !== 'string' || value.worldId.length === 0 || value.worldId.length > 4096) {
+    throw new LabStoreError('INVALID_INPUT', 'Adapter identity is invalid.', { field: 'adapter' });
+  }
+  const timeoutMs = value.timeoutMs ?? 5000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
+    throw new LabStoreError('INVALID_INPUT', 'Adapter timeoutMs must be between 100 and 30000.', { field: 'adapter.timeoutMs' });
+  }
+  const transport = value.transport === undefined
+    ? undefined
+    : normalizeTransport(value.transport, 'adapter.transport');
+  if (transport === TLS_JSONL_TRANSPORT) return normalizeRemoteConfig(value, configPath, timeoutMs);
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter executable must be an absolute non-shell executable path.', { field: 'adapter.executable' });
   }
@@ -1544,17 +1642,6 @@ function normalizeConfig(value, configPath) {
   if (!Array.isArray(value.args) || value.args.length === 0 || value.args.length > 64 || value.args.some((arg) => typeof arg !== 'string' || arg.length > 4096)) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter args must be a bounded string array.', { field: 'adapter.args' });
   }
-  if (typeof value.adapterId !== 'string' || value.adapterId.length === 0 || value.adapterId.length > 4096 ||
-      typeof value.worldId !== 'string' || value.worldId.length === 0 || value.worldId.length > 4096) {
-    throw new LabStoreError('INVALID_INPUT', 'Adapter identity is invalid.', { field: 'adapter' });
-  }
-  const timeoutMs = value.timeoutMs ?? 5000;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
-    throw new LabStoreError('INVALID_INPUT', 'Adapter timeoutMs must be between 100 and 30000.', { field: 'adapter.timeoutMs' });
-  }
-  const transport = value.transport === undefined
-    ? undefined
-    : normalizeTransport(value.transport, 'adapter.transport');
   const launchDigest = digestLaunch(configPath, value.executable, value.args);
   const witness = value.witness === undefined ? undefined : normalizeWitnessConfig(value.witness, configPath);
   const executionAuthority = value.executionAuthority === undefined
@@ -1582,23 +1669,109 @@ function normalizeConfig(value, configPath) {
 }
 
 function normalizeTransport(value, field) {
-  if (value !== PERSISTENT_JSONL_TRANSPORT) {
+  if (value !== PERSISTENT_JSONL_TRANSPORT && value !== TLS_JSONL_TRANSPORT) {
     throw new LabStoreError('INVALID_INPUT', 'Adapter transport is unsupported.', { field });
   }
   return value;
 }
 
+function normalizeRemoteConfig(value, configPath, timeoutMs) {
+  if (value.executable !== undefined || value.args !== undefined) {
+    throw new LabStoreError('INVALID_INPUT', 'TLS JSONL adapters must not declare a local executable or args.', { field: 'adapter' });
+  }
+  if (typeof value.host !== 'string' || value.host.length === 0 || value.host.length > MAX_REMOTE_HOST_LENGTH ||
+      !Number.isSafeInteger(value.port) || value.port < 1 || value.port > 65535) {
+    throw new LabStoreError('INVALID_INPUT', 'TLS JSONL adapter endpoint is invalid.', { field: 'adapter' });
+  }
+  const tls = normalizeRemoteTlsConfig(value.tls);
+  const witness = value.witness === undefined ? undefined : normalizeWitnessConfig(value.witness, configPath);
+  const executionAuthority = value.executionAuthority === undefined
+    ? undefined
+    : normalizeExecutionAuthorityConfig(value.executionAuthority, configPath);
+  const executionObserver = value.executionObserver === undefined
+    ? undefined
+    : normalizeExecutionObserverConfig(value.executionObserver, configPath);
+  const reconciliationObserver = value.reconciliationObserver === undefined
+    ? undefined
+    : normalizeExecutionObserverConfig(value.reconciliationObserver, configPath);
+  return {
+    host: value.host,
+    port: value.port,
+    tls,
+    adapterId: value.adapterId,
+    worldId: value.worldId,
+    timeoutMs,
+    transport: TLS_JSONL_TRANSPORT,
+    launchDigest: digestRemoteLaunch(configPath, value, tls),
+    ...(witness === undefined ? {} : { witness }),
+    ...(executionAuthority === undefined ? {} : { executionAuthority }),
+    ...(executionObserver === undefined ? {} : { executionObserver }),
+    ...(reconciliationObserver === undefined ? {} : { reconciliationObserver }),
+  };
+}
+
+function normalizeRemoteTlsConfig(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).some((key) => !['certFile', 'keyFile', 'caFile', 'serverName', 'crlFile'].includes(key)) ||
+      !isAbsoluteRegularFilePath(value.certFile) || !isAbsoluteRegularFilePath(value.keyFile) ||
+      !isAbsoluteRegularFilePath(value.caFile) || typeof value.serverName !== 'string' ||
+      value.serverName.length === 0 || value.serverName.length > MAX_REMOTE_HOST_LENGTH ||
+      (value.crlFile !== undefined && !isAbsoluteRegularFilePath(value.crlFile))) {
+    throw new LabStoreError('INVALID_INPUT', 'TLS JSONL adapter TLS configuration is invalid.', { field: 'adapter.tls' });
+  }
+  const cert = readBoundedFile(value.certFile, 'adapter TLS certificate', MAX_TLS_MATERIAL_BYTES);
+  const key = readBoundedFile(value.keyFile, 'adapter TLS private key', MAX_TLS_MATERIAL_BYTES);
+  const ca = readBoundedFile(value.caFile, 'adapter TLS CA', MAX_TLS_MATERIAL_BYTES);
+  const crl = value.crlFile === undefined
+    ? undefined
+    : readBoundedFile(value.crlFile, 'adapter TLS CRL', MAX_TLS_MATERIAL_BYTES);
+  const identity = {
+    serverName: value.serverName,
+    caDigest: canonicalDigest(ca.toString('base64')),
+    certDigest: canonicalDigest(cert.toString('base64')),
+    keyDigest: canonicalDigest(key.toString('base64')),
+    ...(crl === undefined ? {} : { crlDigest: canonicalDigest(crl.toString('base64')) }),
+  };
+  return {
+    cert,
+    key,
+    ca,
+    servername: value.serverName,
+    ...(crl === undefined ? {} : { crl }),
+    identity,
+  };
+}
+
+function isAbsoluteRegularFilePath(value) {
+  if (typeof value !== 'string' || !path.isAbsolute(value)) return false;
+  try {
+    const status = lstatSync(value);
+    return status.isFile() && !status.isSymbolicLink() && statSync(value).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function assertDistinctReconciliationLaunchRecipe(config) {
   const observer = config.reconciliationObserver;
   if (observer === undefined) return;
-  if ((sameExecutablePath(config.executable, observer.executable) ||
-       sameExecutableFile(config.executable, observer.executable)) &&
-      canonicalJson({ args: config.args, transport: config.transport ?? null }) ===
-        canonicalJson({ args: observer.args, transport: observer.transport ?? null })) {
+  if (sameLaunchRecipe(config, observer)) {
     throw new ExternalWorldProtocolError('Reconciliation observer must use a distinct launch recipe from the primary WorldPort.', {
       op: 'hello',
     });
   }
+}
+
+function sameLaunchRecipe(left, right) {
+  if (left.transport !== right.transport) return false;
+  if (left.transport === TLS_JSONL_TRANSPORT) {
+    return canonicalJson({ host: left.host, port: left.port, tls: left.tls.identity }) ===
+      canonicalJson({ host: right.host, port: right.port, tls: right.tls.identity });
+  }
+  return (sameExecutablePath(left.executable, right.executable) ||
+      sameExecutableFile(left.executable, right.executable)) &&
+    canonicalJson({ args: left.args, transport: left.transport ?? null }) ===
+      canonicalJson({ args: right.args, transport: right.transport ?? null });
 }
 
 function sameExecutablePath(left, right) {
@@ -1622,9 +1795,10 @@ function sameExecutableFile(left, right) {
 
 function normalizeWitnessConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport'].includes(key))) {
+      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'host', 'port', 'tls'].includes(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Independent witness config is invalid.', { field: 'adapter.witness' });
   }
+  if (value.transport === TLS_JSONL_TRANSPORT) return normalizeRemoteRoleConfig(value, configPath, 'adapter.witness');
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
     throw new LabStoreError('INVALID_INPUT', 'Independent witness executable must be an absolute non-shell executable path.', { field: 'adapter.witness.executable' });
   }
@@ -1664,9 +1838,10 @@ function normalizeWitnessConfig(value, configPath) {
 
 function normalizeExecutionObserverConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport'].includes(key))) {
+      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'host', 'port', 'tls'].includes(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Execution observer config is invalid.', { field: 'adapter.executionObserver' });
   }
+  if (value.transport === TLS_JSONL_TRANSPORT) return normalizeRemoteRoleConfig(value, configPath, 'adapter.executionObserver');
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
     throw new LabStoreError('INVALID_INPUT', 'Execution observer executable must be an absolute non-shell executable path.', { field: 'adapter.executionObserver.executable' });
   }
@@ -1706,8 +1881,16 @@ function normalizeExecutionObserverConfig(value, configPath) {
 
 function normalizeExecutionAuthorityConfig(value, configPath) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'executionPublicKey'].includes(key))) {
+      Object.keys(value).some((key) => !['executable', 'args', 'adapterId', 'worldId', 'timeoutMs', 'transport', 'host', 'port', 'tls', 'executionPublicKey'].includes(key))) {
     throw new LabStoreError('INVALID_INPUT', 'Execution authority config is invalid.', { field: 'adapter.executionAuthority' });
+  }
+  if (value.transport === TLS_JSONL_TRANSPORT) {
+    if (value.executionPublicKey !== undefined && !isValidEvidencePublicKey(value.executionPublicKey)) {
+      throw new LabStoreError('INVALID_INPUT', 'Execution authority public key is invalid.', { field: 'adapter.executionAuthority.executionPublicKey' });
+    }
+    return normalizeRemoteRoleConfig(value, configPath, 'adapter.executionAuthority', {
+      ...(value.executionPublicKey === undefined ? {} : { executionPublicKey: value.executionPublicKey }),
+    });
   }
   if (typeof value.executable !== 'string' || !path.isAbsolute(value.executable) || /(?:cmd|powershell)(?:\.exe)?$/iu.test(path.basename(value.executable))) {
     throw new LabStoreError('INVALID_INPUT', 'Execution authority executable must be an absolute non-shell executable path.', { field: 'adapter.executionAuthority.executable' });
@@ -1750,6 +1933,23 @@ function normalizeExecutionAuthorityConfig(value, configPath) {
   };
 }
 
+function normalizeRemoteRoleConfig(value, configPath, field, extras = {}) {
+  const allowed = new Set(['adapterId', 'worldId', 'timeoutMs', 'transport', 'host', 'port', 'tls', ...Object.keys(extras)]);
+  if (Object.keys(value).some((key) => !allowed.has(key)) || value.executable !== undefined || value.args !== undefined) {
+    throw new LabStoreError('INVALID_INPUT', 'TLS JSONL role must not declare a local executable or unsupported field.', { field });
+  }
+  const timeoutMs = value.timeoutMs ?? 5000;
+  if (typeof value.adapterId !== 'string' || value.adapterId.length === 0 || value.adapterId.length > 4096 ||
+      typeof value.worldId !== 'string' || value.worldId.length === 0 || value.worldId.length > 4096 ||
+      !Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
+    throw new LabStoreError('INVALID_INPUT', 'TLS JSONL role identity or timeout is invalid.', { field });
+  }
+  return {
+    ...normalizeRemoteConfig(value, configPath, timeoutMs),
+    ...extras,
+  };
+}
+
 function digestLaunch(configPath, executable, args) {
   const hash = createHash('sha256');
   hash.update(readBoundedFile(configPath, 'adapter config'));
@@ -1757,6 +1957,18 @@ function digestLaunch(configPath, executable, args) {
   for (const arg of args) {
     hash.update(Buffer.from(`\0${arg}`, 'utf8'));
   }
+  return `sha256:${hash.digest('hex')}`;
+}
+
+function digestRemoteLaunch(configPath, config, tls) {
+  const hash = createHash('sha256');
+  hash.update(readBoundedFile(configPath, 'adapter config'));
+  hash.update(Buffer.from(canonicalJson({
+    transport: TLS_JSONL_TRANSPORT,
+    host: config.host,
+    port: config.port,
+    tls: tls.identity,
+  }), 'utf8'));
   return `sha256:${hash.digest('hex')}`;
 }
 

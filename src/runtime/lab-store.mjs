@@ -2360,7 +2360,7 @@ function normalizeAdapterMetadata(value, field, corruptOnFailure = false) {
   if (value.supportsIdempotentTransitions !== undefined && typeof value.supportsIdempotentTransitions !== 'boolean') {
     fail('Adapter metadata idempotency declaration is invalid.');
   }
-  if (value.transport !== undefined && value.transport !== 'persistent-jsonl') {
+  if (value.transport !== undefined && !['persistent-jsonl', 'tls-jsonl'].includes(value.transport)) {
     fail('Adapter metadata transport is invalid.');
   }
   if (value.supportsReconciliation !== undefined && typeof value.supportsReconciliation !== 'boolean') {
@@ -2417,7 +2417,7 @@ function isValidWitnessMetadata(value) {
     isValidEvidencePublicKey(value.evidencePublicKey) &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
     typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
-    (value.transport === undefined || value.transport === 'persistent-jsonl');
+    (value.transport === undefined || value.transport === 'persistent-jsonl' || value.transport === 'tls-jsonl');
 }
 
 function isValidExecutionObserverMetadata(value) {
@@ -2427,7 +2427,7 @@ function isValidExecutionObserverMetadata(value) {
     typeof value.worldVersion === 'string' && value.worldVersion.length > 0 && value.worldVersion.length <= 4096 &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
     typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
-    (value.transport === undefined || value.transport === 'persistent-jsonl');
+    (value.transport === undefined || value.transport === 'persistent-jsonl' || value.transport === 'tls-jsonl');
 }
 
 function isValidExecutionAuthorityMetadata(value) {
@@ -2438,7 +2438,7 @@ function isValidExecutionAuthorityMetadata(value) {
     (value.executionPublicKey === undefined || isValidEvidencePublicKey(value.executionPublicKey)) &&
     typeof value.descriptorDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.descriptorDigest) &&
     typeof value.launchDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.launchDigest) &&
-    (value.transport === undefined || value.transport === 'persistent-jsonl');
+    (value.transport === undefined || value.transport === 'persistent-jsonl' || value.transport === 'tls-jsonl');
 }
 
 function isValidValueSpec(value) {

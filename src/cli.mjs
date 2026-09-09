@@ -41,10 +41,10 @@ async function dispatchUi(options, io, json) {
     ? 0
     : parseBoundedInt(required(options, 'port'), 0, 65535, 'port');
   const labPath = requiredAbsolute(options, 'lab');
-  const registry = loadRegistry(options, false);
+  const registry = await loadRegistry(options, false);
   const server = createUiServer({ labPath, port, registry });
   // 启动自检：lab 不可读在监听前失败，错误走统一信封与退出码。
-  await inspectLab({ labPath: labPath, registry: loadRegistry(options, false) });
+  await inspectLab({ labPath: labPath, registry: await loadRegistry(options, false) });
   const listening = await server.listen();
   io.stdout(json
     ? `${JSON.stringify({ schemaVersion: 1, ok: true, data: { event: 'listening', host: '127.0.0.1', port: listening.port } })}
@@ -111,7 +111,7 @@ async function dispatch(command, options) {
   if (command === 'init') {
     const labPath = required(options, 'lab');
     const labId = options['lab-id'] ?? path.basename(path.resolve(labPath));
-    const registry = loadRegistry(options);
+    const registry = await loadRegistry(options);
     try {
       const store = await initLab({
         labPath,
@@ -126,7 +126,7 @@ async function dispatch(command, options) {
     }
   }
   if (command === 'run') {
-    const registry = loadRegistry(options);
+    const registry = await loadRegistry(options);
     try {
       return await runLab({
         labPath: required(options, 'lab'),
@@ -147,14 +147,14 @@ async function dispatch(command, options) {
       labPath: required(options, 'lab'),
       runId: options.run,
       action: options.action,
-      registry: loadRegistry(options, false),
+      registry: await loadRegistry(options, false),
     });
   }
   if (command === 'replay') {
     return replayLab({
       labPath: required(options, 'lab'),
       runId: required(options, 'run'),
-      registry: loadRegistry(options, false),
+      registry: await loadRegistry(options, false),
     });
   }
   if (command === 'recover') {
@@ -226,7 +226,7 @@ async function dispatchAgent(options) {
         field: 'resume',
       }, 64);
     }
-    const registry = loadRegistry(options);
+    const registry = await loadRegistry(options);
     let interrupted = false;
     const onSignal = () => { interrupted = true; };
     process.once('SIGINT', onSignal);
@@ -270,7 +270,7 @@ async function dispatchAgent(options) {
   if (options.forever === true) {
     throw cliError('INVALID_INPUT', '--forever is only supported by agent loop.', { field: 'forever' }, 64);
   }
-  const registry = loadRegistry(options);
+  const registry = await loadRegistry(options);
   try {
     return await runLab({
       labPath: required(options, 'lab'),
@@ -539,10 +539,10 @@ function inertExecutor() {
   };
 }
 
-function loadRegistry(options, probe = true) {
+async function loadRegistry(options, probe = true) {
   return options.adapter === undefined
     ? undefined
-    : loadExternalWorldRegistry(required(options, 'adapter'), { probe });
+    : await loadExternalWorldRegistry(required(options, 'adapter'), { probe });
 }
 
 async function closeRegistry(registry) {
