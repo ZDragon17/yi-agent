@@ -1418,5 +1418,5 @@
 
 - 反证/缺口：F-183 只要求 `reconciliationObserver` 的 adapter 身份不同；主 WorldPort 与观察者仍可能使用完全相同的可执行文件、参数和 transport，只更换配置中的 `adapterId`，从而制造没有实际来源差异的表面分离。
 - 实现：加载外部 WorldPort 配置后、第一次 `hello` 探测前，比较主角色与 `reconciliationObserver` 的 executable、args 和 transport；三者完全相同时返回 `WORLD_ADAPTER_PROTOCOL`，不启动任一外部角色。
-- 验证：新增复用启动配方的 fail-closed E2E，整份 reconciliation 回归 `13/13`；与账本和 Replay 组合门禁 `91/91`。
+- 验证：新增复用启动配方及等价路径的 fail-closed E2E，整份 reconciliation 回归 `14/14`；与账本和 Replay 组合门禁 `92/92`。
 - 边界：启动配方不同只排除配置层面的命名伪装，不能证明两个进程由不同用户运行、位于不同主机、使用不同可信根或观察到了真实物理效果。低权限 OS、跨机器认证和人工可审计对账仍需真实环境验证。

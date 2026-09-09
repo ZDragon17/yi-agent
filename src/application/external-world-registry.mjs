@@ -1591,13 +1591,21 @@ function normalizeTransport(value, field) {
 function assertDistinctReconciliationLaunchRecipe(config) {
   const observer = config.reconciliationObserver;
   if (observer === undefined) return;
-  if (config.executable === observer.executable &&
+  if (sameExecutablePath(config.executable, observer.executable) &&
       canonicalJson({ args: config.args, transport: config.transport ?? null }) ===
         canonicalJson({ args: observer.args, transport: observer.transport ?? null })) {
     throw new ExternalWorldProtocolError('Reconciliation observer must use a distinct launch recipe from the primary WorldPort.', {
       op: 'hello',
     });
   }
+}
+
+function sameExecutablePath(left, right) {
+  const normalizedLeft = path.normalize(left);
+  const normalizedRight = path.normalize(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
 }
 
 function normalizeWitnessConfig(value, configPath) {

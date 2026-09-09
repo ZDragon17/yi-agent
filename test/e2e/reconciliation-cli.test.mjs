@@ -145,6 +145,24 @@ test('a reconciliation observer cannot reuse the primary launch recipe', async (
   });
 });
 
+test('a reconciliation observer cannot bypass launch recipe isolation with an equivalent executable path', async () => {
+  await withTemporaryLab(async ({ root, lab }) => {
+    const effectFile = path.join(root, 'aliased-launch-recipe-effect.json');
+    const adapter = await writeAdapterWithObserver(root, effectFile, ['--two-actions']);
+    const config = JSON.parse(await readFile(adapter, 'utf8'));
+    config.reconciliationObserver.executable = `${path.dirname(config.executable)}${path.sep}.${path.sep}${path.basename(config.executable)}`;
+    config.reconciliationObserver.args = config.args;
+    await writeFile(adapter, JSON.stringify(config));
+
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'aliased-launch-recipe', '--adapter', adapter, '--json',
+    ]);
+    assert.notEqual(init.code, 0, JSON.stringify(init));
+    assert.equal(init.stdout[0]?.error?.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(init));
+    assert.match(init.stdout[0]?.error?.message ?? '', /distinct launch recipe/u);
+  });
+});
+
 for (const status of ['ABSENT', 'UNKNOWN']) {
   test(`a non-idempotent WorldPort remains halted when reconciliation returns ${status}`, async () => {
     await withTemporaryLab(async ({ root, lab }) => {
