@@ -1364,3 +1364,10 @@
 - 实现：增加默认 60 秒的 stderr 心跳，支持 `YI_AGENT_TEST_GATE_HEARTBEAT_MS` 在 1～300000ms 内显式配置；测试完成、超时或进程信号结束时清理心跳计时器。Windows/Ubuntu workflow 均显式配置 60000ms。
 - 验证：先加入心跳断言并得到预期失败；实现后 `node --test test/scripts/test-gate.test.mjs` 为 `2/2`，既有 watchdog 超时断言保持通过。跨 WorldPort/恢复组合门禁 `14/14` 通过，长测试期间实际观察到 `[test-gate] heartbeat ... 60032ms elapsed`；challenge/packaged CLI 回归继续单独验证业务闭环。
 - 边界：心跳只证明 test-gate 父进程仍能调度并观察子进程，不能证明子进程内部进度、测试正确性或 GitHub runner/网络持续可用。
+
+## F-177 UI 与 repo WorldPort 组合回归
+
+- 反证/缺口：F-119 的 UI 只读外壳和 repo WorldPort 的文件闭环分别有证据，但尚未在同一门禁中验证桌面面读取的是可恢复的真实仓库世界，并与写入/恢复边界保持隔离。
+- 实现：不增加运行时代码；组合执行 `test/e2e/ui-shell.test.mjs` 与 `test/e2e/repo-world-cli.test.mjs`，让 UI、只读 repo、受摘要绑定的 writable repo、历史候选和恢复路径共同接受现有判据。
+- 验证：Windows 本机 test-gate `11/11`，总耗时约 98.5 秒；覆盖 repo 连续 Run/Replay、只读不写、补丁保留、错误 proposal、nonce journal 越界、响应丢失、进程重启、历史引导修复，以及 UI 的 200/405/404、缺失 lab fail-closed 和目录不变。
+- 边界：这证明的是本机真实仓库与只读呈现可以共用同一账本闭环，不等于 Electron/Tauri 打包、OS 权限隔离、任意仓库安全写入或生产部署授权。

@@ -360,6 +360,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-174 收紧 CI 触发范围：只有运行时代码、测试、示例、脚本、包元数据、`.npmignore` 或 workflow 变化时才触发推送/PR 门禁；README、tasks 等文档-only 提交不会再占用长时间 runner。`workflow_dispatch` 仍可手动运行完整门禁。
 - F-175 将内置 challenge suite 接入 packaged CLI 回归：公开安装后的 `yi-agent challenge --lab ... --json` 现在必须返回 10 个 case 全部 `PASS`；本机真实命令和安装包回归均通过。挑战只证明当前演示判据未被这些输入证伪，不等于通用智能或现实因果证明。
 - F-176 为 `test-gate` 增加有界 liveness 心跳：长测试期间每 60 秒输出一次 `node:test still running`，CI 可区分正常长跑、测试超时和 runner 失联；`YI_AGENT_TEST_GATE_HEARTBEAT_MS` 允许在 1～300000ms 内显式调整。心跳只改善运行证据，不改变测试结果或终止语义。
+- F-177 把只读 UI 外壳与真实 repo WorldPort 放进同一组合回归：`11/11` 覆盖仓库观察、受摘要约束的补丁、错误候选拒绝、响应丢失恢复、跨进程重启、历史引导修复，以及 UI 的只读和缺失实验空间 fail-closed。它支持继续研究桌面呈现，但不授权任意文件或生产项目写入。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
