@@ -363,6 +363,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-177 把只读 UI 外壳与真实 repo WorldPort 放进同一组合回归：`11/11` 覆盖仓库观察、受摘要约束的补丁、错误候选拒绝、响应丢失恢复、跨进程重启、历史引导修复，以及 UI 的只读和缺失实验空间 fail-closed。它支持继续研究桌面呈现，但不授权任意文件或生产项目写入。
 - F-178 收紧只读 UI 的动态内容边界：汇总值改用 DOM 文本节点渲染，不再把 lab、目标或 WorldPort 状态拼入 `innerHTML`；HTML/JSON 响应增加 CSP、`nosniff`、禁止 iframe 和无 referrer 头。安全回归与 repo WorldPort 组合门禁分别为 `2/2`、`11/11`，依赖审计未发现高危漏洞。这降低本地呈现面的注入风险，不等于 OS 级隔离或生产部署安全。
 - F-179 用仓库外 late-bound Oracle 复验当前候选：未知世界、未知不透明 Token 和随机有限模型共 `48/48` 通过，且用当前候选源码摘要绑定后仍为 `PASS`。这支持“UI 修复未改变 Kernel 公共契约”，不把 Oracle 结果扩展成通用智能或现实因果证明。
+- F-180 完成一次外部 WorldPort 长跑组合门：经济/对抗课程、延迟和噪声反馈、制度切换、独立 witness、持久 authority/observer 以及会话故障恢复共 `21/21` 通过，耗时约 19 分 46 秒，最长 L4-A 约 9 分 49 秒。结果支持跨 WorldPort 账本与 Replay 一致，但也把长跑性能明确留作后续实验，不宣称已具备现实收益或高吞吐。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
