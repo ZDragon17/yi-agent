@@ -657,6 +657,86 @@ test('TLS JSONL preserves recovery across independently trusted remote roles', a
   }
 });
 
+test('TLS JSONL keeps recovery pending when the observer is unavailable', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-observer-outage-'));
+  const servers = [];
+  try {
+    const lab = path.join(root, 'lab');
+    const effectFile = path.join(root, 'effect.json');
+    const caKey = path.join(root, 'ca.key.pem');
+    const caCert = path.join(root, 'ca.crt.pem');
+    const serverKey = path.join(root, 'server.key.pem');
+    const serverCert = path.join(root, 'server.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-remote-observer-outage-ca');
+    await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 2);
+
+    const primary = await startRemoteServer(root, 'primary', [
+      '--effect-file', effectFile, '--non-idempotent', '--reconcilable', '--drop-response',
+    ], { serverKey, serverCert, caCert });
+    const observer = await startRemoteServer(root, 'observer', [
+      '--effect-file', effectFile, '--reconciliation-observer',
+    ], { serverKey, serverCert, caCert });
+    servers.push(primary.server, observer.server);
+    const adapter = path.join(root, 'adapter.json');
+    const connection = (port) => ({
+      transport: 'tls-jsonl',
+      host: '127.0.0.1',
+      port,
+      tls: { certFile: clientCert, keyFile: clientKey, caFile: caCert, serverName: 'localhost' },
+    });
+    await writeFile(adapter, JSON.stringify({
+      ...connection(primary.port),
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 1000,
+      reconciliationObserver: {
+        ...connection(observer.port),
+        adapterId: 'idempotent-reconciliation-observer-v1',
+        worldId: 'idempotent-transition',
+        timeoutMs: 1000,
+      },
+    }));
+
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'remote-observer-outage-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const lost = await invoke([
+      'agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent',
+      '--adapter', adapter, '--kernel-only', '--goal', '在观察者失联后保持恢复未决', '--json',
+    ]);
+    assert.notEqual(lost.code, 0, 'the remote primary must lose the first transition response');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, JSON.stringify(lost));
+
+    const observerExit = waitForExit(observer.server);
+    observer.server.kill();
+    await observerExit;
+    const blocked = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.notEqual(blocked.code, 0, 'recovery must not complete while the observer is unavailable');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, JSON.stringify(blocked));
+    assert.equal(await countSteps(lab, 'run-2'), 0, 'observer outage must not append a STEP');
+
+    const restartedObserver = await startRemoteServer(root, 'observer-restarted', [
+      '--effect-file', effectFile, '--reconciliation-observer',
+    ], { serverKey, serverCert, caCert }, { port: observer.port });
+    servers[1] = restartedObserver.server;
+    const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-3', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.json.data.status, 'COMPLETED');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, 'observer outage recovery must not execute the effect again');
+    assert.equal(await countSteps(lab, 'run-3'), 1, 'observer recovery must append exactly one STEP');
+
+    await stopServers(servers);
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-3', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.json.data.verdict, 'CONSISTENT');
+  } finally {
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function invoke(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });
@@ -685,6 +765,16 @@ async function waitForFile(filePath) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`timed out waiting for ${filePath}`);
+}
+
+async function countSteps(lab, runId) {
+  try {
+    const ledger = await readFile(path.join(lab, 'runs', runId, 'events.jsonl'), 'utf8');
+    return ledger.trim() === '' ? 0 : ledger.trim().split(/\r?\n/u).filter((line) => JSON.parse(line).kind === 'STEP').length;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return 0;
+    throw error;
+  }
 }
 
 function waitForExit(child) {

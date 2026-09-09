@@ -380,6 +380,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-192 把 mTLS 撤销回归补到远程 WorldPort 服务端：测试服务加载由同一 CA 签发的客户端 CRL，已撤销的 client certificate 在 `hello` 前被拒绝，CLI 不创建有效 manifest。远程 E2E 全组提升为 `7/7`；这只证明服务端按已提供 CRL 执行 peer 拒绝，不证明 CRL 发布、分发时效、私钥保护或远程主机可信。
 - F-193 把两个远程 WorldPort 的恢复放进同一条实验：primary 首次非幂等效果已产生但丢失回执，primary 与 reconciliation observer 随后分别重启并轮换服务端叶子证书；原 Lab、execution nonce 和客户端身份不变，第二次 Run 只通过对账完成，效果计数仍为 1，停止两个服务后的 Replay 为 `CONSISTENT`。远程 E2E 全组提升为 `8/8`；这仍只覆盖同一 CA、本机测试服务和配置级的跨端点一致性。
 - F-194 验证远程角色可以拥有不同的服务端信任根：primary 使用自己的 CA，observer 使用另一套 CA，并让 observer 的客户端 trust bundle 预授权下一根 CA；客户端证书由独立的 client CA 签发。两个服务同时重启后，observer 换根、primary 换叶子证书，原 nonce 仍能完成对账且效果不重复，Replay 为 `CONSISTENT`。远程 E2E 全组提升为 `9/9`；这仍不等于跨机器权限或真实执行来源。
+- F-195 验证 observer 失联不会被当成恢复完成：primary 已产生效果但丢失回执后，observer 暂时不可达，恢复请求失败且不追加 STEP；observer 在原端口恢复后，同一未决链继续完成，效果计数仍为 1，离线 Replay 为 `CONSISTENT`。远程 E2E 全组提升为 `10/10`；这仍只覆盖受控测试服务，不代表真实网络分区已有自动处置能力。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

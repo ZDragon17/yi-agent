@@ -1490,3 +1490,10 @@
 - 实现：测试夹具支持把“服务端验证客户端证书的 CA”和“客户端验证服务端证书的 CA”分开传递。primary 使用 primary CA，observer 使用独立 observer CA；客户端证书由第三套 client CA 签发。observer 客户端 trust bundle 在初始化前同时包含旧 observer CA 和预授权的轮换 CA。
 - 验证：新增“preserves recovery across independently trusted remote roles”回归；远程 WorldPort E2E 全组 `9/9`。恢复时 primary 换用同根新叶子、observer 换用新根证书，原 execution nonce、效果计数和离线 Replay 均保持一致。
 - 边界：这只验证角色级证书/信任根配置和本机测试服务中的恢复一致性，不证明不同机器身份、低权限 OS、密钥托管、网络分区人工处置、远程主机诚实或真实设备效果。下一步仍需进入真实部署权限和可审计执行来源边界。
+
+## F-195 observer 失联时保持未决恢复
+
+- 反证/缺口：F-193/F-194 证明 primary 与 observer 可以共同重启并恢复，但 observer 在恢复窗口不可达时，尚未验证宿主是否会错误地把 primary 的 `APPLIED` 当成完整恢复，或是否还能保留未决链等待 observer 回来。
+- 实现：远程 primary 在非幂等效果产生后丢失 transition 回执；恢复前停止 reconciliation observer，使用同一 Lab 和 nonce 发起恢复。primary 对账成功但 observer TLS 连接失败，随后在不改变 observer endpoint 的情况下重启 observer。
+- 验证：新增“keeps recovery pending when the observer is unavailable”回归；远程 WorldPort E2E 全组 `10/10`。observer 不可达时恢复命令失败、效果计数保持 1 且不追加完成 STEP；observer 恢复后再次运行闭合未决链，Replay 返回 `CONSISTENT`。
+- 边界：这只验证本机测试服务、同用户权限和受控连接故障下的 fail-closed/可继续性；不证明真实网络分区检测、重试策略、服务健康、人工对账或真实设备效果。下一步应把网络分区处置与不同权限/机器交给外部部署实验。
