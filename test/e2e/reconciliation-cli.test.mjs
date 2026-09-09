@@ -89,7 +89,8 @@ test('a signed descriptor rejects an unsigned reconciliation response', async ()
 test('an independent reconciliation observer corroborates an applied recovery claim and survives Replay', async () => {
   await withTemporaryLab(async ({ root, lab }) => {
     const effectFile = path.join(root, 'observed-applied-effect.json');
-    const adapter = await writeAdapterWithObserver(root, effectFile, ['--two-actions', '--reconciliation-attested']);
+    const observerCallFile = path.join(root, 'reconciliation-observer-calls.log');
+    const adapter = await writeAdapterWithObserver(root, effectFile, ['--two-actions', '--reconciliation-attested', '--observer-call-file', observerCallFile]);
     const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'observed-reconcile', '--adapter', adapter, '--json']);
     assert.equal(init.code, 0, JSON.stringify(init));
 
@@ -102,9 +103,11 @@ test('an independent reconciliation observer corroborates an applied recovery cl
       .trim().split(/\r?\n/u).map((line) => decodeStoredEvent(JSON.parse(line)));
     const step = events.find((event) => event.kind === 'STEP');
     assert.equal(step?.payload?.boundary?.reconciliationObservation?.status, 'OBSERVED');
+    assert.equal((await readFile(observerCallFile, 'utf8')).trim().split(/\r?\n/u).length, 1);
     const replay = await invoke(['replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json']);
     assert.equal(replay.code, 0, JSON.stringify(replay));
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal((await readFile(observerCallFile, 'utf8')).trim().split(/\r?\n/u).length, 1, 'Replay must not call the reconciliation observer');
   });
 });
 
@@ -323,6 +326,7 @@ async function writeAdapterWithObserver(root, effectFile, fixtureArgs = []) {
       FIXTURE,
       ...(fixtureArgs.includes('--two-actions') ? ['--two-actions'] : []),
       ...(fixtureArgs.includes('--observer-mismatch') ? ['--observer-mismatch'] : []),
+      ...(fixtureArgs.includes('--observer-call-file') ? ['--observer-call-file', fixtureArgs[fixtureArgs.indexOf('--observer-call-file') + 1]] : []),
       '--effect-file', effectFile,
     ],
     adapterId: 'idempotent-reconciliation-observer-v1',

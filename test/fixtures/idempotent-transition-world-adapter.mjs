@@ -22,6 +22,8 @@ const reconciliationObserver = process.argv.includes('--reconciliation-observer'
 const executionAuthority = process.argv.includes('--execution-authority');
 const executionObserver = process.argv.includes('--execution-observer');
 const observerMismatch = process.argv.includes('--observer-mismatch');
+const observerCallFileIndex = process.argv.indexOf('--observer-call-file');
+const observerCallFile = observerCallFileIndex === -1 ? null : process.argv[observerCallFileIndex + 1] ?? null;
 const osEffect = process.argv.includes('--os-effect');
 const skipOsEffect = process.argv.includes('--skip-os-effect');
 const twoActions = process.argv.includes('--two-actions');
@@ -301,6 +303,7 @@ function reconcile(prior, request) {
 }
 
 function observeReconciliation(request) {
+  if (observerCallFile !== null) appendFileSync(observerCallFile, `${request.executionNonce}\n`, 'utf8');
   const stored = readEffect();
   const observedStatus = stored === null
     ? 'ABSENT'
