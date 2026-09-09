@@ -375,6 +375,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-187 把远程边界放进恢复路径：主 WorldPort 首次产生非幂等效果后丢失回执，服务端重启，再由同一 endpoint 的 `reconcile` 和独立远程 observer 恢复；效果计数保持 1，两个服务停止后 Replay 仍为 `CONSISTENT`。本机远程恢复 E2E 为 `3/3`，它验证的是 nonce、重启和离线账本的一致性，不是远程主机诚实或物理效果证明。
 - F-188 修正 `tls-jsonl` 的响应收尾：客户端不再在第一行合法 envelope 到达后立即销毁连接，而是等远端结束并检查后续字节；延迟到达的第二个 envelope、未结束的响应和超时都会失败关闭。新增协议污染回归后，远程 WorldPort E2E 为 `4/4`。
 - F-189 在远程恢复路径加入同一 CA 下的服务端证书轮换：primary 重启时更换服务端密钥和证书，旧 manifest、同一 nonce、独立 observer 与离线 Replay 仍保持一致。该场景包含在远程 E2E `4/4` 中；它不等于 CA 轮换、撤销审计或远程主机可信。
+- F-190 为远程 WorldPort 的 `crlFile` 增加负向回归：客户端在 `hello` 前拒绝已被 CRL 撤销的服务端证书。远程 E2E 全组提升为 `5/5`；CRL 只覆盖 TLS 层撤销，不代表部署系统已经完成证书发布、吊销传播或人工审计。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式

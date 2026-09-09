@@ -4,7 +4,11 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { createCertificateAuthority, makeCertificateSignedByAuthority } from '../fixtures/mutual-tls-certificate.mjs';
+import {
+  createCertificateAuthority,
+  makeCertificateRevocationList,
+  makeCertificateSignedByAuthority,
+} from '../fixtures/mutual-tls-certificate.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const ADAPTER = path.resolve('test/fixtures/idempotent-transition-world-adapter.mjs');
@@ -115,6 +119,52 @@ test('TLS JSONL rejects a delayed second response envelope', async () => {
     }));
 
     const init = await invoke(['init', '--lab', path.join(root, 'lab'), '--world', 'idempotent-transition', '--seed', 'remote-protocol-seed', '--adapter', adapter, '--json']);
+    assert.notEqual(init.code, 0, JSON.stringify(init));
+    assert.equal(init.json.error.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(init));
+  } finally {
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('TLS JSONL rejects a revoked remote server certificate before hello', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-revocation-'));
+  const servers = [];
+  try {
+    const caKey = path.join(root, 'ca.key.pem');
+    const caCert = path.join(root, 'ca.crt.pem');
+    const serverKey = path.join(root, 'server.key.pem');
+    const serverCert = path.join(root, 'server.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const crlFile = path.join(root, 'server.crl.pem');
+    const effectFile = path.join(root, 'effect.json');
+    const adapter = path.join(root, 'adapter.json');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-remote-revocation-ca');
+    await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 2);
+    await makeCertificateRevocationList(authority, crlFile, [1]);
+    const server = await startRemoteServer(root, 'revoked-server', ['--effect-file', effectFile], {
+      serverKey, serverCert, caCert,
+    });
+    servers.push(server.server);
+    await writeFile(adapter, JSON.stringify({
+      transport: 'tls-jsonl',
+      host: '127.0.0.1',
+      port: server.port,
+      tls: {
+        certFile: clientCert,
+        keyFile: clientKey,
+        caFile: caCert,
+        crlFile,
+        serverName: 'localhost',
+      },
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 5000,
+    }));
+
+    const init = await invoke(['init', '--lab', path.join(root, 'lab'), '--world', 'idempotent-transition', '--seed', 'remote-revocation-seed', '--adapter', adapter, '--json']);
     assert.notEqual(init.code, 0, JSON.stringify(init));
     assert.equal(init.json.error.code, 'WORLD_ADAPTER_PROTOCOL', JSON.stringify(init));
   } finally {
