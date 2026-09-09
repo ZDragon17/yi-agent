@@ -101,6 +101,8 @@ F-148 为外部 adapter 增加显式的 `transport: "persistent-jsonl"` 选项�
 
 F-186 增加异步 `transport: "tls-jsonl"`。远程 adapter/observer 不再启动本地 executable，而是使用 host/port 与绝对路径 TLS 材料建立一次一请求的 mTLS JSONL 连接；客户端强制校验 CA、server name 和服务端证书，服务端强制校验客户端证书。TLS 材料摘要、endpoint 和 transport 进入 launch digest，继续运行时由 manifest 比较，响应超时、证书失败、额外 JSONL 行和超限内容均在 `hello`/请求边界 fail-closed。Replay 与 inspect 只使用 identity-only registry，不触碰远端；本地 E2E 已验证远程主 WorldPort、远程 reconciliation observer、错误 CA 拒绝和远端停止后的离线 Replay。这闭合的是可审计的网络/身份传输边界，不是远端主机诚实、低权限 OS、可信硬件或物理效果证明。
 
+F-187 将 `tls-jsonl` 接入非幂等恢复实验。主远程 WorldPort 在第一次 transition 已写入效果后丢失响应，宿主保存未决 Run；服务端退出并在相同 endpoint 重启，下一次 CLI 使用同一 execution nonce 发送 `reconcile`，再由独立远程 reconciliation observer 校验结果。效果文件的计数保持为 1，两个远程服务停止后 Replay 只读本地账本并返回 `CONSISTENT`。这补上了远程服务重启与跨 WorldPort 恢复的一条可验证路径，仍不证明远程代码诚实、私钥隔离或物理设备已经执行。
+
 F-149 将同一 transport 规则用于 witness、executionAuthority 和 executionObserver。辅助角色的 `transport` 选择写入各自 manifest metadata，并由 identity-only registry、LabStore 和 Replay 校验；旧配置不带字段时仍保持一次请求一进程。独立 witness 请求现在显式等待异步响应，transition、reconcile 和 observe 不会把未完成的 Promise 放进证据对象。测试覆盖多次 witness evidence 请求，以及 authority/observer 对同一 execution nonce 的幂等重试；会话关闭仍由 registry 统一负责，Replay 不启动这些角色。
 
 F-150 把持久辅助会话放进响应丢失恢复实验：authority 或 observer 先完成各自的 nonce 绑定工作，再在回执发出前退出；第一次 Run 只留下未决 external transition，下一次独立 CLI 重新加载同一 manifest，主 adapter 的幂等 `transition`、authority 的 nonce 记录和 observer 的执行观测依次闭合，最终 STEP 才能落账。恢复过程不把新 nonce 当作补偿，也不让 Replay重新访问任何角色。该实验只覆盖本机同用户权限下的进程故障，不覆盖跨机器身份、断网重连或可信硬件。

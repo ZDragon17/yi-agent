@@ -39,7 +39,7 @@ const server = createServer({
   });
 });
 
-server.listen(0, '127.0.0.1', () => {
+server.listen(Number(options.port ?? 0), '127.0.0.1', () => {
   writeFileSync(options['port-file'], `${server.address().port}\n`, 'utf8');
 });
 

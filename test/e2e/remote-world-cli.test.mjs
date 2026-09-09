@@ -9,6 +9,7 @@ import { createCertificateAuthority, makeCertificateSignedByAuthority } from '..
 const CLI = path.resolve('bin/yi-agent.mjs');
 const ADAPTER = path.resolve('test/fixtures/idempotent-transition-world-adapter.mjs');
 const SERVER = path.resolve('test/fixtures/tls-world-server.mjs');
+const exitedChildren = new WeakSet();
 
 test('TLS JSONL WorldPort runs across a remote process and Replay does not reconnect', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-world-'));
@@ -126,10 +127,80 @@ test('TLS JSONL supports a remote reconciliation observer as a separate endpoint
     assert.equal(init.code, 0, JSON.stringify(init));
     assert.equal(init.json.data.adapter.reconciliationObserver.transport, 'tls-jsonl');
   } finally {
-    for (const server of servers) {
-      if (server.exitCode === null) server.kill();
-    }
-    await Promise.all(servers.map(waitForExit));
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('TLS JSONL recovers a non-idempotent effect after the remote WorldPort restarts', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-recovery-'));
+  const servers = [];
+  try {
+    const lab = path.join(root, 'lab');
+    const effectFile = path.join(root, 'effect.json');
+    const caKey = path.join(root, 'ca.key.pem');
+    const caCert = path.join(root, 'ca.crt.pem');
+    const serverKey = path.join(root, 'server.key.pem');
+    const serverCert = path.join(root, 'server.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-remote-recovery-ca');
+    await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 2);
+    const primaryArgs = ['--effect-file', effectFile, '--non-idempotent', '--reconcilable', '--drop-response'];
+    const observerArgs = ['--effect-file', effectFile, '--reconciliation-observer'];
+    const tlsFiles = { serverKey, serverCert, caCert };
+    const primary = await startRemoteServer(root, 'primary', primaryArgs, tlsFiles);
+    const observer = await startRemoteServer(root, 'observer', observerArgs, tlsFiles);
+    servers.push(primary.server, observer.server);
+    const adapter = path.join(root, 'adapter.json');
+    const connection = (port) => ({
+      transport: 'tls-jsonl',
+      host: '127.0.0.1',
+      port,
+      tls: { certFile: clientCert, keyFile: clientKey, caFile: caCert, serverName: 'localhost' },
+    });
+    await writeFile(adapter, JSON.stringify({
+      ...connection(primary.port),
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 5000,
+      reconciliationObserver: {
+        ...connection(observer.port),
+        adapterId: 'idempotent-reconciliation-observer-v1',
+        worldId: 'idempotent-transition',
+        timeoutMs: 5000,
+      },
+    }));
+
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'remote-recovery-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const lost = await invoke([
+      'agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent',
+      '--adapter', adapter, '--kernel-only', '--goal', '完成一个可恢复远程目标', '--json',
+    ]);
+    assert.notEqual(lost.code, 0, 'the remote primary must lose the first transition response');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, JSON.stringify(lost));
+
+    const primaryExit = waitForExit(primary.server);
+    primary.server.kill();
+    await primaryExit;
+    const restartedPrimary = await startRemoteServer(root, 'primary-restarted', [
+      '--effect-file', effectFile, '--non-idempotent', '--reconcilable',
+    ], tlsFiles, { port: primary.port });
+    servers[0] = restartedPrimary.server;
+
+    const resumed = await invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']);
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.json.data.status, 'COMPLETED');
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, 'remote recovery must not execute the non-idempotent effect again');
+
+    await stopServers(servers);
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.json.data.verdict, 'CONSISTENT');
+  } finally {
+    await stopServers(servers);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -165,14 +236,32 @@ async function waitForFile(filePath) {
 }
 
 function waitForExit(child) {
-  if (child.exitCode !== null) return Promise.resolve();
+  if (exitedChildren.has(child) || child.exitCode !== null || child.signalCode !== null) {
+    exitedChildren.add(child);
+    return Promise.resolve();
+  }
   return new Promise((resolve, reject) => {
     child.once('error', reject);
-    child.once('close', () => resolve());
+    child.once('close', () => {
+      exitedChildren.add(child);
+      resolve();
+    });
   });
 }
 
-async function startRemoteServer(root, name, adapterArgs, tlsFiles) {
+async function stopServers(servers) {
+  const exits = servers.map(waitForExit);
+  for (const server of servers) {
+    if (server.exitCode === null) server.kill();
+  }
+  await Promise.all(exits);
+}
+
+async function startRemoteServer(root, name, adapterArgs, tlsFiles, options = {}) {
+  return startRemoteServerWithOptions(root, name, adapterArgs, tlsFiles, options);
+}
+
+async function startRemoteServerWithOptions(root, name, adapterArgs, tlsFiles, { port = 0 } = {}) {
   const portFile = path.join(root, `${name}-port.txt`);
   const server = spawn(process.execPath, [
     SERVER,
@@ -182,6 +271,7 @@ async function startRemoteServer(root, name, adapterArgs, tlsFiles) {
     '--tls-key-file', tlsFiles.serverKey,
     '--tls-cert-file', tlsFiles.serverCert,
     '--tls-client-ca-file', tlsFiles.caCert,
+    '--port', String(port),
   ], { windowsHide: true });
   await waitForFile(portFile);
   return { server, port: Number(await readFile(portFile, 'utf8')) };

@@ -1432,5 +1432,12 @@
 
 - 反证/缺口：F-184 只排除了本机配置的表面来源分离；现有网络能力只服务于 execution signer，WorldPort 本身仍要求本地 executable，无法把远程主机/网络身份纳入同一 manifest、Run 和 Replay 契约。
 - 实现：将外部 registry 加载改为异步；新增 `transport:"tls-jsonl"`，远程主 WorldPort、witness、execution authority/observer 和 reconciliation observer 使用 host/port、客户端证书、私钥、CA 与 server name。每个请求建立一次 mTLS 连接，强制响应上限、单请求超时、单 JSONL envelope 和服务端证书校验；TLS 材料摘要与 endpoint 进入 launch digest。identity-only registry 和 Replay 不连接远端。
-- 验证：本机独立 TLS WorldPort 服务完成 init→run→Replay，错误 CA 在 `hello` 前返回 `WORLD_ADAPTER_PROTOCOL`；远程 reconciliation observer 独立 endpoint 的 descriptor probe 通过；远程服务停止后 Replay 仍为 `CONSISTENT`，远程 E2E `2/2`。受影响组合门首跑为 `85/89`，其中 4 个长时 CLI 用例在资源竞争下超时；这 4 个用例随后单独重跑为 `4/4`，完整线上门禁仍以 push 后三矩阵结果为准。
+- 验证：本机独立 TLS WorldPort 服务完成 init→run→Replay，错误 CA 在 `hello` 前返回 `WORLD_ADAPTER_PROTOCOL`；远程 reconciliation observer 独立 endpoint 的 descriptor probe 通过；远程服务停止后 Replay 仍为 `CONSISTENT`，远程 E2E `2/2`。受影响组合门首跑为 `85/89`，其中 4 个长时 CLI 用例在资源竞争下超时；这 4 个用例随后单独重跑为 `4/4`。提交 `b20e1e7` 的 GitHub Actions run `34325252052` 三矩阵均为 `success`。
 - 边界：mTLS 证明的是本次连接的证书链和 endpoint 配置，不证明远端主机代码诚实、证书私钥未被同权限读取、网络另一端观察到真实物理效果，也不自动形成低权限 OS 或可信硬件根。远程断网后的非幂等效果仍必须依赖 nonce 对账或人工确认。
+
+## F-187 远程 WorldPort 重启后的非幂等恢复
+
+- 反证/缺口：F-186 证明了远程连接、observer 探针和离线 Replay，但还没有把“效果已产生、响应丢失、远程服务重启、同一 nonce 对账”放进同一条路径；没有这条实验，远程 transport 仍只覆盖正常请求。
+- 实现：扩展 TLS WorldPort 测试夹具，支持固定端口重启；新增远程 primary 的非幂等 `transition` 丢响应实验，并配置独立远程 `reconciliationObserver`。重启 primary 后继续同一 Lab 的第二个 Run，校验对账结果、observer 观察和效果计数，再停止所有远程服务后执行 Replay。
+- 验证：本机远程恢复 E2E `3/3`；新增用例单独通过，覆盖正常远程请求、远程 observer、错误 CA、服务重启恢复和离线 Replay。线上三矩阵由 `b20e1e7` / run `34325252052` 全部通过。
+- 边界：固定端口和同一证书材料只模拟 endpoint 重启，不证明远程进程由不同权限运行，也不证明远程私钥未被窃取、效果文件等于物理状态或网络分区下的人工处置已经完成。下一步应把真实部署权限、证书轮换和人工对账作为外部环境实验。
