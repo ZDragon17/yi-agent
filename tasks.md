@@ -1378,3 +1378,10 @@
 - 实现：改用 DOM `textContent`/文本节点渲染动态值，并为 HTML、JSON 响应统一增加最小安全头：CSP、`X-Content-Type-Options`、`X-Frame-Options` 和 `Referrer-Policy`。
 - 验证：先让 UI E2E 按安全约束失败，再修复为 `2/2`；与 repo WorldPort 组合门禁为 `11/11`；`npm audit --omit=dev --audit-level=high` 报告 `0 vulnerabilities`。
 - 边界：页面仍使用内联脚本并只绑定回环地址；这些响应头和文本渲染降低本地 UI 的注入面，不等于操作系统权限隔离或生产网络部署安全。
+
+## F-179 外置 late-bound Oracle 复验
+
+- 反证/缺口：F-178 改动了应用层 UI，但仍需要确认它没有通过共享模块或打包路径意外改变 Kernel 的跨域契约。
+- 实现：不修改运行时代码；使用仓库外的 `late-bound-oracle-2026-08-31-r1`，重新生成未知维度、未知不透明 Token 和随机有限模型，并把候选源码摘要绑定到本次验证。
+- 验证：当前候选摘要为 `sha256:eb437c067b2fa49968996c33367a3f69cf62ee4f091f529fc13dafcbd9314035`，`generatedWorldCount=48`、`caseCount=48`、`verdict=PASS`；不带摘要绑定和带 `--expected-candidate-digest` 两次运行均通过。
+- 边界：Oracle 只证明这 48 组未知输入没有证伪公共 Kernel 关系，不证明通用智能、真实世界因果、外部模型诚实或操作系统权限安全。
