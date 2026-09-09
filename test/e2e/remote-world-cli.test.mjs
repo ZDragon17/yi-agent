@@ -492,6 +492,79 @@ test('persistent TLS JSONL recovers after a blackholed response without endpoint
   }
 });
 
+test('persistent TLS JSONL serializes concurrent recovery of one unresolved Run', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-remote-concurrent-'));
+  const servers = [];
+  try {
+    const lab = path.join(root, 'lab');
+    const effectFile = path.join(root, 'effect.json');
+    const caKey = path.join(root, 'ca.key.pem');
+    const caCert = path.join(root, 'ca.crt.pem');
+    const serverKey = path.join(root, 'server.key.pem');
+    const serverCert = path.join(root, 'server.crt.pem');
+    const clientKey = path.join(root, 'client.key.pem');
+    const clientCert = path.join(root, 'client.crt.pem');
+    const authority = await createCertificateAuthority(caKey, caCert, 'yi-persistent-remote-concurrent-ca');
+    await makeCertificateSignedByAuthority(authority, serverKey, serverCert, 'localhost', 1);
+    await makeCertificateSignedByAuthority(authority, clientKey, clientCert, 'yi-agent-cli', 2);
+    const primary = await startRemoteServer(root, 'persistent-concurrent-primary', [
+      '--effect-file', effectFile, '--non-idempotent', '--reconcilable',
+    ], { serverKey, serverCert, caCert }, {
+      keepAlive: true,
+      blackholeResponseOp: 'transition',
+    });
+    const observer = await startRemoteServer(root, 'persistent-concurrent-observer', [
+      '--effect-file', effectFile, '--reconciliation-observer',
+    ], { serverKey, serverCert, caCert }, { keepAlive: true });
+    servers.push(primary.server, observer.server);
+    const adapter = path.join(root, 'adapter.json');
+    const connection = (port) => ({
+      transport: 'persistent-tls-jsonl',
+      host: '127.0.0.1',
+      port,
+      tls: { certFile: clientCert, keyFile: clientKey, caFile: caCert, serverName: 'localhost' },
+    });
+    await writeFile(adapter, JSON.stringify({
+      ...connection(primary.port),
+      adapterId: 'idempotent-transition-adapter-v1',
+      worldId: 'idempotent-transition',
+      timeoutMs: 500,
+      reconciliationObserver: {
+        ...connection(observer.port),
+        adapterId: 'idempotent-reconciliation-observer-v1',
+        worldId: 'idempotent-transition',
+        timeoutMs: 500,
+      },
+    }));
+
+    const init = await invoke(['init', '--lab', lab, '--world', 'idempotent-transition', '--seed', 'persistent-remote-concurrent-seed', '--adapter', adapter, '--json']);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const lost = await invoke([
+      'agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '1', '--scenario', 'idempotent',
+      '--adapter', adapter, '--kernel-only', '--goal', '建立一个并发恢复未决点', '--json',
+    ]);
+    assert.notEqual(lost.code, 0, JSON.stringify(lost));
+    assert.match(lost.json?.error?.message ?? '', /timed out/iu, JSON.stringify(lost));
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, JSON.stringify(lost));
+
+    const resumes = await Promise.all([
+      invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']),
+      invoke(['run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent', '--adapter', adapter, '--json']),
+    ]);
+    assert.equal(resumes.filter((result) => result.code === 0 && result.json?.data?.status === 'COMPLETED').length, 1, JSON.stringify(resumes));
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1, 'concurrent recovery must not execute the effect twice');
+    assert.equal(await countSteps(lab, 'run-2'), 1, JSON.stringify(resumes));
+
+    await stopServers(servers);
+    const replay = await invoke(['replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json']);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.json.data.verdict, 'CONSISTENT');
+  } finally {
+    await stopServers(servers);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('TLS JSONL rejects a delayed second response envelope', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-remote-protocol-'));
   const servers = [];

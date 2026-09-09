@@ -387,6 +387,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-199 把服务端叶子证书轮换放进持久 TLS 恢复：primary 与 reconciliation observer 在非幂等效果回执丢失后同时重启，并在原端口使用同一 CA 签发的新证书；客户端配置、trust bundle、nonce 和 Lab manifest 不变，恢复仍只执行一次且 Replay 为 `CONSISTENT`。本机远程 E2E `14/14` 通过。这只验证 mTLS 会话重建与既有恢复契约相容，不等于 CA 发布、密钥保护、跨机器身份或真实效果证明。
 - F-200 把持久 TLS 的请求超时放进非幂等恢复窗口：远端已写入效果但延迟发送 `transition` 回执，客户端在固定超时后关闭会话并返回 `WORLD_ADAPTER_PROTOCOL`；下一次 CLI 通过同一 nonce 的对账和 observer 完成恢复，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `15/15` 通过。这只证明受控延迟下的未知回执不会触发盲重放，不等于网络分区检测、重试时限或远程效果真实性。
 - F-201 把持久 TLS 的响应黑洞放进恢复窗口：primary 在写入非幂等效果后保持 endpoint 在线，却永远不发送这次 `transition` 回执；客户端超时并销毁当前会话，下一次 CLI 通过新会话和 observer 完成同一 nonce 的对账，效果计数仍为 1，Replay 为 `CONSISTENT`。本机远程 E2E `16/16` 通过。这比迟到响应更接近连接黑洞，但仍不等于真实网络设备、路由状态或跨机器故障证据。
+- F-202 把并发恢复接入远程持久会话：两个 CLI 同时争抢同一个未决 `run-2`，单 writer 锁只允许一个恢复路径完成；primary 与 observer 仍经 `persistent-tls-jsonl` 对账，效果计数为 1、STEP 只有 1 条，Replay 为 `CONSISTENT`。本机远程 E2E `17/17` 通过。这只证明同一实验空间的并发排他，不证明分布式锁、跨机器时钟或真实设备的原子执行。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 
 ## 与 Codex / Claude 的协作方式
