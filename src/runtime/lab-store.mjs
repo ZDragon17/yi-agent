@@ -723,6 +723,10 @@ class ActiveRun {
     this.expectedStateDigest = canonicalDigest(this.expectedState);
     this.committedSteps = new Map();
     this.knownExecutionNonces = new Set();
+    // Application-internal states keep large immutable subtrees (for example,
+    // a multi-stage plan) across STEP boundaries. Reuse their serialization
+    // results without changing the public append path's mutable-input rules.
+    this.internalSerializationCache = new WeakMap();
     this.needsLedgerReconcile = false;
     this.ledgerHandle = null;
     this.ledgerBytes = null;
@@ -747,7 +751,9 @@ class ActiveRun {
       ? source.payload
       : cloneInputJson(source.payload ?? {}, 'event.payload');
     if (kind !== 'STEP') conflict('Unsupported event kind.', { kind });
-    const serializationCache = new WeakMap();
+    const serializationCache = internalAppend
+      ? this.internalSerializationCache
+      : new WeakMap();
     let precomputedAfterStateDigest = null;
     if (
       internalAppend &&

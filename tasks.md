@@ -1672,3 +1672,10 @@
 - 实现：先通过 `runContinuous` 提交 3 个 Run 中的第 1 个，主动关闭 registry；随后启动新的 CLI 进程执行 `agent loop --resume` 完成剩余 2 个 Run，并对所有结果做 Replay。
 - 验证：Windows 本机最终 `kernelStep=3`，current 的 `coordinates` 仍为 6 项，三个 Run 均返回 `CONSISTENT`。
 - 边界：该节点只证明受控外部 adapter 的 continuation 跨进程恢复；未决真实副作用仍受 recovery contract、对账和外部人工/权限边界约束。
+
+## F-221 长计划连续账本的重复序列化优化
+
+- 反证/缺口：长计划压力用例中，同一个未变更的阶段计划会在每个内部 STEP 边界重复规范化；Replay 还会对已经由 LabStore 解析和校验的完整事件再次深拷贝，造成不必要的 CPU 与内存峰值。
+- 实现：应用层内部追加路径在 `ActiveRun` 内复用基于对象身份的 `WeakMap` 序列化缓存；公开追加路径仍使用一次性缓存，避免改变可变输入语义。Replay 改为只读已解析事件，并继续执行完整的账本、边界和确定性校验。
+- 验证：大计划压力用例通过；同一用例的 Replay 子进程观测峰值内存由约 1.84 GiB 降至约 0.99 GiB，耗时由约 265 秒降至约 261 秒。LabStore + Replay 回归 78/78，陌生外部 WorldPort CLI 回归 4/4，三平台 CI 全部通过。
+- 边界：该优化只减少重复复制和序列化，不改变每个 STEP 的完整证据格式，也不提供分页、无限历史或现实副作用可信度。缓存只用于宿主内部不变的状态子树；需要承载更大的历史，仍应设计快照、引用或流式 Replay 契约。

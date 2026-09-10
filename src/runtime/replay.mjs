@@ -48,7 +48,10 @@ function replayRunInternal(input) {
   const source = requireRecord(input, 'replay input');
   const manifest = cloneReplayValue(source.manifest, 'manifest');
   const start = cloneReplayValue(source.start, 'run start');
-  const events = cloneReplayEvents(source.events);
+  // Replay only reads the already parsed event ledger. A second deep clone of
+  // every event needlessly doubles memory for long histories with large,
+  // repeated continuity plans; validation below still checks every boundary.
+  const events = source.events;
   const end = cloneReplayValue(source.end, 'run end');
   const worldFactories = source.worldFactories;
   const kernel = source.kernel ?? { step, stepWithPreference, verify, learn };
@@ -917,15 +920,6 @@ function cloneReplayValue(value, label) {
     return cloneJson(value);
   } catch (error) {
     corrupt(`${label} is not canonical JSON.`, { cause: errorName(error) });
-  }
-}
-
-function cloneReplayEvents(value) {
-  if (!Array.isArray(value)) return cloneReplayValue(value, 'events');
-  try {
-    return value.map((event) => cloneJson(event));
-  } catch (error) {
-    corrupt('events is not canonical JSON.', { cause: errorName(error) });
   }
 }
 

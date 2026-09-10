@@ -461,6 +461,10 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 
 先让 6 维外部 WorldPort 完成一个 Run，再关闭 adapter registry，最后用新的 CLI 进程执行 `agent loop --resume` 完成剩余两个 Run。Windows 本机最终 `kernelStep=3`，状态仍为 6 维，三个 Run 均能离线 Replay 为 `CONSISTENT`。这证明维度和能力形状会随 continuation 一起跨进程恢复；恢复链仍依赖 adapter 自身提供的协议状态，不代表现实副作用可自动恢复。
 
+## F-221 长计划历史的内存优化
+
+长计划连续运行时，内部 STEP 会反复处理同一个未变更的计划对象。现在 `ActiveRun` 只在宿主内部复用该对象的序列化结果，公开追加接口仍保持一次性缓存；Replay 则直接读取 LabStore 已解析和校验的事件，不再对完整事件数组做第二次深拷贝。Windows 本机压力用例的 Replay 子进程观测峰值内存从约 1.84 GiB 降至约 0.99 GiB，耗时从约 265 秒降至约 261 秒，相关回归和三平台 CI 均通过。每个 STEP 仍保存完整证据，更大历史仍需要分页、引用或流式 Replay 设计。
+
 ## 与 Codex / Claude 的协作方式
 
 这几个工具可以互补：

@@ -465,3 +465,7 @@ F-218 用一个陌生的进程内 WorldPort 检查共同底座是否偷偷依赖
 F-219 把 F-218 的陌生形状移到独立 JSONL adapter 子进程，并从公开 CLI 走完 `init → run(4) → inspect → replay`。adapter descriptor 声明 6 维 ValueSpec 和 4 个不透明能力，宿主不增加领域分支；Windows 本机结果为 `COMPLETED`、4 步、终态向量 6 维、Replay `CONSISTENT`。这验证的是 CLI 外部 WorldPort 协议对不同维度和动作数量的互操作，不覆盖 adapter 诚实性、真实设备权限、跨机器身份或现实状态观测。
 
 F-220 在同一陌生外部 WorldPort 上先用应用服务完成一个有限 continuation Run，关闭持久 registry，再由新的 CLI 进程执行 `agent loop --resume` 完成剩余两个 Run。最终 current 的 `kernelStep` 为 3、WorldPort 状态仍为 6 维，三个 immutable Run 均可离线 Replay 为 `CONSISTENT`。该实验验证的是 continuation、WorldPort descriptor 和向量状态在进程重启后的共同恢复路径；不覆盖未决真实副作用、adapter 诚实性或跨机器权限。
+
+F-221 处理长计划历史的重复工作。应用层内部生成的连续状态会跨 STEP 保留同一个未变更计划对象，因此 `ActiveRun` 复用一份按对象身份索引的 `WeakMap` 序列化缓存；公开追加接口仍为每次调用建立独立缓存，外部可变输入不会获得跨调用缓存。Replay 接收的事件已经由 `LabStore.readLedger` 逐条解析、解压和校验，Replay 本身只读这批事件，不再把完整事件数组深拷贝一遍，后续校验和确定性重演保持不变。
+
+在 Windows 本机的大计划压力用例中，Replay 子进程的观测峰值内存从约 1.84 GiB 降至约 0.99 GiB，耗时从约 265 秒降至约 261 秒；压力用例、LabStore/Replay 78 项回归和陌生外部 WorldPort CLI 4 项回归均通过。这个结果说明重复复制是实际开销，但长历史仍会逐条解压、校验和重演。账本格式、单 STEP 大小限制和现实执行信任边界没有改变。
