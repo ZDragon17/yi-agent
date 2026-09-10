@@ -1658,3 +1658,10 @@
 - 实现：在应用层测试中加入 6 维向量状态、4 个不透明能力标识、独立 ValueSpec 和纯 transition，复用同一 `createWorldPort` 适配边界。
 - 验证：真实执行 `init → 4 步 run → inspect → replay`；结果为 `COMPLETED`，accepted 为 4，终态向量维度为 6，Replay 为 `CONSISTENT`。
 - 边界：该节点只证明共同 Kernel/Application 契约不依赖五个内置世界的固定形状；它不证明向量可以无损表达现实语义，也不覆盖外部副作用、隐藏状态和权限真实性。
+
+## F-219 CLI 外部陌生 WorldPort 回归
+
+- 反证/缺口：F-218 只在宿主进程内注入 registry；用户实际通过 CLI 配置独立 adapter 时，还需要证明同一维度和能力契约能穿过 JSONL 子进程边界。
+- 实现：增加独立 `opaque-vector-world-adapter.mjs` 夹具，descriptor 声明 6 维 ValueSpec 和 4 个不透明能力，transition 对选中 token 只更新对应向量位置；新增 CLI E2E 配置并运行该 adapter。
+- 验证：Windows 本机真实执行 `init → run(4) → inspect → replay`；结果为 `COMPLETED`，4 步均接受，终态向量为 6 维，Replay 为 `CONSISTENT`。
+- 边界：该节点证明 CLI 外部协议不依赖内置世界的固定形状，不证明 adapter 的现实状态、权限、身份或副作用可信；夹具仍是受控模拟子进程。

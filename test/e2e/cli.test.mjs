@@ -18,6 +18,7 @@ import { ED25519_PUBLIC_KEY, verifyAttestation } from '../fixtures/ed25519-proof
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const ADAPTER_FIXTURE = path.resolve('test/fixtures/generated-world-adapter.mjs');
+const OPAQUE_VECTOR_ADAPTER_FIXTURE = path.resolve('test/fixtures/opaque-vector-world-adapter.mjs');
 const STATEFUL_ADAPTER_FIXTURE = path.resolve('test/fixtures/stateful-capabilities-world-adapter.mjs');
 const IDEMPOTENT_ADAPTER_FIXTURE = path.resolve('test/fixtures/idempotent-transition-world-adapter.mjs');
 const DELAYED_FEEDBACK_ADAPTER_FIXTURE = path.resolve('test/fixtures/delayed-feedback-world-adapter.mjs');
@@ -556,6 +557,28 @@ test('CLI runs and replays an unknown generated world through an external adapte
 
     const steps = await countLedgerSteps(lab, 'run-1');
     assert.equal(steps, 2);
+  });
+});
+
+test('CLI runs and replays an opaque six-dimensional external WorldPort', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'opaque-vector-lab');
+    const adapter = await writeOpaqueVectorAdapterConfig(root);
+    const init = await invoke('init', '--lab', lab, '--world', 'opaque-vector', '--seed', 'opaque-vector-seed', '--lab-id', 'opaque-vector-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const run = await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '4', '--scenario', 'steady', '--adapter', adapter, '--json');
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+
+    const inspect = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
+    assert.equal(inspect.code, 0, JSON.stringify(inspect));
+    assert.equal(inspect.stdout[0].data.current.worldState.coordinates.length, 6);
+    assert.equal(inspect.stdout[0].data.current.kernelStep, 4);
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
   });
 });
 
@@ -2354,6 +2377,18 @@ async function writeAdapterConfig(root, args = []) {
     args: [ADAPTER_FIXTURE, ...args],
     adapterId: 'generated-adapter-v1',
     worldId: 'generated',
+    timeoutMs: 5000,
+  }));
+  return config;
+}
+
+async function writeOpaqueVectorAdapterConfig(root) {
+  const config = path.join(root, 'opaque-vector-adapter.json');
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [OPAQUE_VECTOR_ADAPTER_FIXTURE],
+    adapterId: 'opaque-vector-adapter-v1',
+    worldId: 'opaque-vector',
     timeoutMs: 5000,
   }));
   return config;

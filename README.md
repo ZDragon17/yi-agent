@@ -453,6 +453,10 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 
 新增一个不带业务语义的第三方 WorldPort：状态是 6 维向量，能力是 4 个不透明标识，权重和目标也与五个内置世界不同。它经过 `init → 4 步 run → inspect → replay`，结果为 `COMPLETED`、4 次 accepted，向量维度保持 6，Replay 为 `CONSISTENT`。这说明 Kernel/Application 的共同路径没有依赖温度、桌面、库存、网格或队列的领域名称和固定维度；它仍只是进程内纯模拟证据，不代表真实外部世界已经被统一建模。
 
+## F-219 CLI 外部陌生 WorldPort 回归
+
+把同样的 6 维向量和 4 个不透明能力放进独立 JSONL adapter 子进程，通过公开 CLI 完成 `init → run(4) → inspect → replay`。Windows 本机真实结果为 `COMPLETED`、4 步、终态向量 6 维、Replay `CONSISTENT`。这证明用户不需要修改 Kernel 就能从 CLI 接入不同形状的外部 WorldPort；它仍是受控子进程和模拟状态，不等于真实设备或现实语义已经可信。
+
 ## 与 Codex / Claude 的协作方式
 
 这几个工具可以互补：

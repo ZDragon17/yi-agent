@@ -461,3 +461,5 @@ F-216 修正了 CLI 到应用服务的参数传递遗漏。解析器原本会在
 F-217 收紧恢复策略的单调性。active legacy continuation 没有 `requireRecovery` 时，`agent loop --resume --require-recovery` 不再只检查当前调用后继续运行，而是返回 `CONFLICT`；因为历史 Run start 不可变，宿主无法把一次调用的要求伪装成已经持久化的 loop contract。新建且带要求的 loop、已有要求的 loop，以及旧 loop 不带该选项的兼容读取均保持原语义。
 
 F-218 用一个陌生的进程内 WorldPort 检查共同底座是否偷偷依赖内置领域形状。该 Port 的状态为 6 维非负向量，能力集合只有 4 个不透明标识，ValueSpec 使用独立的权重和目标；Application 通过同一 `init → run → inspect → replay` 路径完成 4 次 transition，终态维度保持 6，Replay 返回 `CONSISTENT`。实验支持“领域差异由 WorldPort 投影、Kernel 只处理共同契约”的局部判断，但不证明任意现实世界都能被这组向量充分表达，也不覆盖外部副作用、隐藏状态或真实权限。
+
+F-219 把 F-218 的陌生形状移到独立 JSONL adapter 子进程，并从公开 CLI 走完 `init → run(4) → inspect → replay`。adapter descriptor 声明 6 维 ValueSpec 和 4 个不透明能力，宿主不增加领域分支；Windows 本机结果为 `COMPLETED`、4 步、终态向量 6 维、Replay `CONSISTENT`。这验证的是 CLI 外部 WorldPort 协议对不同维度和动作数量的互操作，不覆盖 adapter 诚实性、真实设备权限、跨机器身份或现实状态观测。
