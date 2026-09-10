@@ -2094,6 +2094,42 @@ test('CLI binds external adapter identity and preserves the completed ledger', a
   });
 });
 
+test('external WorldPort keeps continuity across terminal goal epochs', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'goal-epoch-lab');
+    const adapter = await writeAdapterConfig(root);
+    const firstPlan = path.join(root, 'first-plan.json');
+    const secondPlan = path.join(root, 'second-plan.json');
+    await writeFile(firstPlan, JSON.stringify({
+      schemaVersion: 1,
+      rootGoal: '完成第一目标',
+      stages: [{ id: 'first', goal: '推进到二', objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [2] } }],
+    }));
+    await writeFile(secondPlan, JSON.stringify({
+      schemaVersion: 1,
+      rootGoal: '完成第二目标',
+      stages: [{ id: 'second', goal: '推进到四', objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [4] } }],
+    }));
+
+    assert.equal((await invoke('init', '--lab', lab, '--world', 'generated', '--seed', 'external-goal-epoch-seed', '--lab-id', 'external-goal-epoch-lab', '--adapter', adapter, '--json')).code, 0);
+    const first = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '4', '--scenario', 'generated', '--goal-plan', firstPlan, '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(first.code, 0, JSON.stringify(first));
+    assert.equal(first.stdout[0].data.stopReason, 'OBJECTIVE_REACHED');
+    const second = await invoke('agent', 'run', '--lab', lab, '--run-id', 'run-2', '--steps', '4', '--scenario', 'generated', '--goal-plan', secondPlan, '--kernel-only', '--adapter', adapter, '--json');
+    assert.equal(second.code, 0, JSON.stringify(second));
+    assert.equal(second.stdout[0].data.stopReason, 'OBJECTIVE_REACHED');
+    const inspection = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
+    assert.equal(inspection.code, 0, JSON.stringify(inspection));
+    assert.equal(inspection.stdout[0].data.current.worldState.value, 4);
+    assert.equal(inspection.stdout[0].data.current.kernelStep, 4);
+    const secondRun = await (await LabStore.open({ labPath: lab })).readRun('run-2');
+    assert.equal(secondRun.start.goalEpoch.schemaVersion, 1);
+    assert.equal(secondRun.events.find((event) => event.kind === 'STEP').payload.boundary.goalActivation.goal, '完成第二目标');
+    assert.equal((await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json')).stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal((await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json')).stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
 test('replay rejects recomputed external evidence and does not start the adapter', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'generated-lab');
