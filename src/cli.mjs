@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { inspectLab, initLab, replayLab, recoverLab, runContinuous, runLab } from './application/agent-service.mjs';
 import { createUiServer } from './application/ui-service.mjs';
 import { challenge } from './application/challenge-service.mjs';
-import { loadExternalWorldRegistry } from './application/external-world-registry.mjs';
+import { assertRecoveryRequired, loadExternalWorldRegistry } from './application/external-world-registry.mjs';
 import { restoreEffectBroker } from './effects/effect-broker.mjs';
 import { EffectJournal } from './effects/effect-journal.mjs';
 import { assertSandboxRoot, createSandboxFileExecutor } from './effects/sandbox-file-executor.mjs';
@@ -573,16 +573,6 @@ async function loadRegistry(options, probe = true) {
 
 async function closeRegistry(registry) {
   if (typeof registry?.close === 'function') await registry.close();
-}
-
-function assertRecoveryRequired(adapter) {
-  if (adapter.recoveryMode !== 'blocked') return;
-  throw cliError(
-    'CONFLICT',
-    'The adapter does not declare idempotent transitions or reconciliation; automatic recovery is blocked.',
-    { field: 'adapter', recoveryMode: adapter.recoveryMode },
-    65,
-  );
 }
 
 function canResumeWithoutModel(options, error) {

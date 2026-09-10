@@ -10,7 +10,7 @@ import { replayRun } from '../runtime/replay.mjs';
 import {
   builtInWorldRegistry,
 } from './world-registry.mjs';
-import { createReplayWorld } from './external-world-registry.mjs';
+import { assertRecoveryRequired, createReplayWorld } from './external-world-registry.mjs';
 import { buildInspectView } from './inspect-view.mjs';
 import { projectModelObservation } from '../agent/observation-context.mjs';
 
@@ -799,6 +799,9 @@ export async function runContinuous(input) {
   if (source.autoRecover === true && source.resume !== true) {
     throw new LabStoreError('INVALID_INPUT', 'autoRecover requires resume.', { field: 'autoRecover' });
   }
+  if (source.requireRecovery !== undefined && typeof source.requireRecovery !== 'boolean') {
+    throw new LabStoreError('INVALID_INPUT', 'requireRecovery must be a boolean.', { field: 'requireRecovery' });
+  }
   if (source.resume === true && (
     source.runs !== undefined || source.forever !== undefined || source.stepsPerRun !== undefined || source.steps !== undefined ||
     source.runId !== undefined || source.scenario !== undefined || source.goal !== undefined || source.goalPlan !== undefined ||
@@ -817,11 +820,15 @@ export async function runContinuous(input) {
     throw new LabStoreError('INVALID_INPUT', 'forever and runs are mutually exclusive.', { fields: ['forever', 'runs'] });
   }
   const requestedRuns = requireBoundedOptional(source.runs, 1, 10_000, 'runs') ?? 1;
+  const labPath = requireText(source.labPath, 'labPath');
+  const registry = resolveRegistry(source.registry);
+  let manifest;
   let continuation;
+  let requireRecovery = source.requireRecovery === true;
   let randomizedTrial = null;
   if (source.resume === true) {
-    const labPath = requireText(source.labPath, 'labPath');
     const store = await LabStore.open({ labPath });
+    manifest = store.manifest;
     const expectedLock = source.autoRecover === true ? await store.readWriterLock() : null;
     if (source.autoRecover === true && (await store.inspect()).current.status === 'RUNNING') {
       await LabStore.recover({
@@ -843,9 +850,11 @@ export async function runContinuous(input) {
       };
     }
     randomizedTrial = continuation.randomizedTrial ?? null;
+    requireRecovery = requireRecovery || continuation.requireRecovery === true;
   } else {
     const stepsPerRun = requireSteps(source.stepsPerRun ?? source.steps);
-    const store = await LabStore.open({ labPath: requireText(source.labPath, 'labPath') });
+    const store = await LabStore.open({ labPath });
+    manifest = store.manifest;
     randomizedTrial = normalizeRandomizedTrial(source.randomizedTrial, store.manifest);
     const persistedRandomizedTrial = randomizedTrial === null
       ? null
@@ -873,9 +882,20 @@ export async function runContinuous(input) {
       mode: forever ? 'forever' : 'finite',
       planningHorizon: requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon') ?? 1,
       planningBranchingMode: source.planningBranchingMode ?? 'tree-v1',
+      ...(requireRecovery ? { requireRecovery: true } : {}),
       ...(persistedRandomizedTrial === null ? {} : { randomizedTrial: persistedRandomizedTrial }),
       ...(forever ? {} : { maxRuns: requestedRuns }),
     };
+  }
+  if (requireRecovery && manifest.adapter !== undefined) {
+    if (typeof registry.describe !== 'function') {
+      throw new LabStoreError(
+        'CONFLICT',
+        'The external adapter recovery contract cannot be verified by this registry.',
+        { field: 'adapter', recoveryMode: 'unknown' },
+      );
+    }
+    assertRecoveryRequired(registry.describe());
   }
   let candidateHistory = [];
   if (source.advisor !== undefined) {
@@ -912,6 +932,7 @@ export async function runContinuous(input) {
       : `${requireText(source.runId, 'runId')}-${index + 1}-${randomUUID()}`;
     const result = await runLab({
       ...source,
+      registry,
       runId,
       scenario,
       continuation: { ...continuation, runIndex: index },

@@ -1623,3 +1623,10 @@
 - 实现：`agent loop` 接受 `--require-recovery`，外部 adapter 探针完成后、`runContinuous` 创建第一个 Run 前调用同一 `recoveryMode` 检查；`agent run` 明确拒绝该选项，内置 WorldPort 不受影响。
 - 验证：无恢复契约的外部 adapter 在 loop 首个 Run 前返回退出码 65 和 `CONFLICT`；仅对账的外部 adapter 在相同选项下完成 1 个 Run；新增 CLI E2E 通过，完整门禁随后复核。
 - 边界：该门只检查 descriptor 声明，不证明幂等实现、对账结果、权限隔离或现实效果；默认不改变旧 loop 行为。
+
+## F-214 持久化连续 Runner 的恢复要求
+
+- 反证/缺口：F-213 只在当前 CLI 调用进入第一个 Run 前检查 `recoveryMode`。如果该调用以 `--require-recovery` 启动后进程中断，后续操作者用 `--resume` 忘记再次传参，宿主就无法从 continuation 本身知道原来的安全要求。
+- 实现：`runContinuous` 接受布尔 `requireRecovery`；新 continuation 在 `Run start` 中保存 `requireRecovery:true`，`LabStore` 对其做类型校验并把它纳入 `loopContract`。恢复时从已验证的 continuation 合并该要求；外部 adapter 在第一个恢复 Run 前再次调用共享恢复检查。旧 continuation 没有该字段时继续按 legacy 语义读取。
+- 验证：新增跨中断/恢复的外部 WorldPort E2E，确认 continuation 保存该字段、恢复调用不传参数仍重新调用 adapter 描述，并完成剩余 Run；相关 CLI 门禁 `70/70` 通过。
+- 边界：这是宿主策略的持久化和防降级，不证明 adapter 的幂等实现、对账结果、权限隔离、跨机器锁或现实副作用；显式 `--require-recovery` 仍只对新 continuation 写入要求，旧账本不会被迁移。

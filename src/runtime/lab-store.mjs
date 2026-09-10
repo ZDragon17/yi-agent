@@ -1816,6 +1816,7 @@ function validateLoopContinuation(value, field, corruptOnFailure = false) {
       !Number.isSafeInteger(value.stepsPerRun) || value.stepsPerRun < 1 || value.stepsPerRun > 10_000 ||
       (value.planningHorizon !== undefined && (!Number.isSafeInteger(value.planningHorizon) || value.planningHorizon < 1 || value.planningHorizon > MAX_PLANNING_HORIZON)) ||
       (value.planningBranchingMode !== undefined && !PLANNING_BRANCHING_MODES.includes(value.planningBranchingMode)) ||
+      (value.requireRecovery !== undefined && typeof value.requireRecovery !== 'boolean') ||
       (value.randomizedTrial !== undefined && !isValidRandomizedTrialContinuation(value.randomizedTrial)) ||
       (value.mode !== 'finite' && value.mode !== 'forever') ||
       (value.mode === 'finite' && (!Number.isSafeInteger(value.maxRuns) || value.maxRuns < 1 || value.maxRuns > 10_000 || value.runIndex >= value.maxRuns)) ||
@@ -1830,6 +1831,7 @@ function validateLoopContinuation(value, field, corruptOnFailure = false) {
     stepsPerRun: value.stepsPerRun,
     ...(value.planningHorizon === undefined ? {} : { planningHorizon: value.planningHorizon }),
     ...(value.planningBranchingMode === undefined ? {} : { planningBranchingMode: value.planningBranchingMode }),
+    ...(value.requireRecovery === undefined ? {} : { requireRecovery: value.requireRecovery }),
     ...(value.randomizedTrial === undefined ? {} : { randomizedTrial: cloneJson(value.randomizedTrial) }),
     mode: value.mode,
     ...(value.maxRuns === undefined ? {} : { maxRuns: value.maxRuns }),
@@ -1895,6 +1897,7 @@ function loopContract(continuation, fallbackPlanningBranchingMode = 'legacy-v1')
     stepsPerRun: continuation.stepsPerRun,
     ...(continuation.planningHorizon === undefined ? {} : { planningHorizon: continuation.planningHorizon }),
     planningBranchingMode: continuation.planningBranchingMode ?? fallbackPlanningBranchingMode,
+    ...(continuation.requireRecovery === undefined ? {} : { requireRecovery: continuation.requireRecovery }),
     ...(continuation.randomizedTrial === undefined ? {} : { randomizedTrial: cloneJson(continuation.randomizedTrial) }),
     mode: continuation.mode,
     ...(continuation.maxRuns === undefined ? {} : { maxRuns: continuation.maxRuns }),

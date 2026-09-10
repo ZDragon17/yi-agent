@@ -157,6 +157,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 监督器证据对齐：`kernelLearningVersion: 9` 的新 STEP 当本步先结算了新的延迟 feedback 时，变化监督器不会把合并观测中的旧动作进步记成当前动作的确认进步；已结算收据仍按 nonce 学习，当前动作和目标监督各自保守处理；旧版本 Replay 保持原监督语义；
 - 变化监督器：用同一套目标距离、确认进步、停滞、重规划和停止判定约束不同世界；状态随 STEP、快照、终态和恢复账本连续保存，跨进程 CLI 可继续运行；
 - 连续 Runner：`agent loop` 把有限 STEP 批次串成多个已提交 Run；每个边界都可独立 Replay，进程重启后从同一个 current 继续；每个子 Run 的 `loopId/runIndex/scenario/budget/planningBranchingMode` 都写入 immutable start，使用 `--resume` 时从账本重建剩余预算和规划语义，不重复已提交 Run；旧 v17/v16 continuation 缺少该字段时从已提交 STEP 或终态 `externalTransition` 证据推断，无法推断则保守使用 legacy；
+- 恢复要求持久化：以 `agent loop --require-recovery` 启动的 continuation 会把要求写入每个 Run 的 immutable start 和 loop contract；后续 `--resume` 即使省略参数，也会在第一个恢复 Run 前重新检查外部 adapter，避免恢复策略因换进程或漏传参数而降级；旧 continuation 没有该字段时保持兼容，不自动补写；
 - `forever` 长运行边界：新 Run 在唯一 writer lock 内从 verified current 指向的最近 terminal Run 重建 continuation，不重复扫描全部历史；显式恢复和审计仍保留全量扫描，1000 个单步 Run 的连续运行回归已覆盖该边界；
 - 显式自动恢复：`agent loop --resume --auto-recover` 只在 current 明确处于 `RUNNING` 且既有 writer owner 已被系统 liveness probe 判定死亡时执行恢复；活跃 owner 仍返回 `LIVE_OWNER`，READY/HALTED 或无法证明死亡的状态不会被自动接管，保留人工 recover 作为安全路径；两个独立 CLI 同时竞争同一未决非幂等 loop 时，恢复 writer lock、对账结果和后续 Run 仍保持单次提交与 Replay 一致；
 - 进程级恢复回归：E2E 真实启动 CLI 子进程，在第二个模型请求挂起期间强制终止进程，显式回收死亡 owner 后继续下一 Run，验证 current 和 execution 链不回退；
@@ -434,6 +435,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-212 增加 `adapter test --require-recovery`，在创建 Lab 前拒绝 `recoveryMode=blocked` 的 adapter；无恢复契约返回 `CONFLICT`，仅支持对账的配置可以通过。它把连续运行的安全前置条件变成显式命令选项，不改变默认兼容行为。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
 - F-213 把 `--require-recovery` 接入 `agent loop`：连续 Runner 在启动第一个 Run 前复用同一恢复姿态检查，`blocked` 外部 adapter 直接返回 `CONFLICT`，仅对账 adapter 可以继续；普通 `agent run` 使用该选项会返回参数错误，避免语义含混。
+- F-214 将连续 Runner 的恢复要求写进 continuation contract。新 loop 在启用 `--require-recovery` 时把布尔值固化到每个 Run 的 immutable start；后续 `--resume` 从已验证账本读取该要求，即使调用方没有再次传参，也会在第一个恢复 Run 前检查 adapter。旧账本没有该字段时仍按历史语义运行；定向回归与完整 CLI 门禁为 `70/70`。该字段防止策略降级，不会把 adapter 的能力声明变成幂等性或现实效果证明。
 
 ## 与 Codex / Claude 的协作方式
 
@@ -522,7 +524,7 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 
 `--kernel-only` 显式关闭 Advisor/Planner，只运行共同的 Kernel—WorldPort—verify—learn 闭环，不需要 API Key；它用于证明模型是可替换工具，而不是 Agent 的启动前提。若需要 `--auto-plan`，仍应提供模型配置，或接受 Planner 不可用并回退为根目标阶段。
 
-`agent loop` 是连续运行的 CLI 入口：`--steps` 表示每个可恢复 Run 的步数，`--runs` 表示最多串联多少个 Run；需要长期守护时使用 `--forever`，它与 `--runs` 互斥。每个 Run 都先完成自己的账本提交，再开始下一个 Run；收到 SIGINT/SIGTERM 时只在当前 Run 提交后停止，返回 `INTERRUPTED`。loop 的 `loopId/runIndex/scenario/budget/planningBranchingMode` 会固化到每个 immutable `start.json`，进程重启并完成恢复卡点后，可以用 `yi-agent agent loop --lab PATH --resume --json` 从 current 指向的已校验终态 Run 重建剩余 Run 和规划语义，不必重新输入也不会重复已提交 Run；旧 continuation 缺少模式字段时，Runtime 从已提交 STEP 或终态 `externalTransition` 证据推断历史模式，不能推断则保守降级为 legacy。同一 lab 中，一条未完成 continuation 对实验空间拥有唯一调度权；新的 loop 或普通 run 会被拒绝，必须先用 `--resume` 接续，已完成或已停止的历史 loop 不阻塞新实验。发生执行拒绝、无安全动作或显式目标达成时，循环会停止并返回原因。`--forever` 的内存结果摘要只保留最近一个 Run，累计 `runs/metrics` 持续统计，完整历史以 lab 账本和独立 Replay 为准，因此不会随运行时间积累结果对象。进程在一个 Run 内被终止或崩溃时，仍须先用 `recover --confirm-lock-owner-dead` 完成明确的恢复卡点，再使用 `--resume` 继续；若未决外部 transition 已保存原始策略证据，恢复进程暂时没有 API 时也能复用该证据并由 Kernel 继续安全选择；`readLoopContinuation()` 仍提供全量 continuation 审计，`test/e2e/crash-restart-cli.test.mjs` 已用真实子进程强制终止覆盖该路径。
+`agent loop` 是连续运行的 CLI 入口：`--steps` 表示每个可恢复 Run 的步数，`--runs` 表示最多串联多少个 Run；需要长期守护时使用 `--forever`，它与 `--runs` 互斥。每个 Run 都先完成自己的账本提交，再开始下一个 Run；收到 SIGINT/SIGTERM 时只在当前 Run 提交后停止，返回 `INTERRUPTED`。loop 的 `loopId/runIndex/scenario/budget/planningBranchingMode` 会固化到每个 immutable `start.json`，进程重启并完成恢复卡点后，可以用 `yi-agent agent loop --lab PATH --resume --json` 从 current 指向的已校验终态 Run 重建剩余 Run 和规划语义，不必重新输入也不会重复已提交 Run；启用 `--require-recovery` 时，恢复要求也会固化到 continuation，后续 `--resume` 不传该参数仍会在新 Run 前检查外部 adapter。旧 continuation 缺少模式字段时，Runtime 从已提交 STEP 或终态 `externalTransition` 证据推断历史模式，不能推断则保守降级为 legacy。同一 lab 中，一条未完成 continuation 对实验空间拥有唯一调度权；新的 loop 或普通 run 会被拒绝，必须先用 `--resume` 接续，已完成或已停止的历史 loop 不阻塞新实验。发生执行拒绝、无安全动作或显式目标达成时，循环会停止并返回原因。`--forever` 的内存结果摘要只保留最近一个 Run，累计 `runs/metrics` 持续统计，完整历史以 lab 账本和独立 Replay 为准，因此不会随运行时间积累结果对象。进程在一个 Run 内被终止或崩溃时，仍须先用 `recover --confirm-lock-owner-dead` 完成明确的恢复卡点，再使用 `--resume` 继续；若未决外部 transition 已保存原始策略证据，恢复进程暂时没有 API 时也能复用该证据并由 Kernel 继续安全选择；`readLoopContinuation()` 仍提供全量 continuation 审计，`test/e2e/crash-restart-cli.test.mjs` 已用真实子进程强制终止覆盖该路径。
 对外部 adapter 使用 `--require-recovery`，可以在 loop 第一个 Run 开始前拒绝没有幂等 transition 或对账契约的配置；普通 `agent run` 不接受该选项。
 
 如果明确选择自动路径，可使用 `yi-agent agent loop --lab PATH --resume --auto-recover --json`；它只自动处理 current 为 `RUNNING` 且 liveness probe 证明旧 owner 已死亡的本地恢复，不会绕过活跃进程保护，也不把无法确认的锁当作安全可接管。

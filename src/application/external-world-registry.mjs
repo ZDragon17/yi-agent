@@ -61,6 +61,15 @@ export class ExternalWorldProtocolError extends Error {
   }
 }
 
+export function assertRecoveryRequired(adapter) {
+  if (adapter?.recoveryMode !== 'blocked') return;
+  throw new LabStoreError(
+    'CONFLICT',
+    'The adapter does not declare idempotent transitions or reconciliation; automatic recovery is blocked.',
+    { field: 'adapter', recoveryMode: adapter.recoveryMode },
+  );
+}
+
 export async function loadExternalWorldRegistry(configPath, { probe = true } = {}) {
   const resolvedConfigPath = resolveConfigPath(configPath);
   const configBytes = readBoundedFile(resolvedConfigPath, 'adapter config');

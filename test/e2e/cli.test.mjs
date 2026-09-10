@@ -11,6 +11,8 @@ import { canonicalDigest, canonicalJson, withSelfDigest } from '../../src/runtim
 import { advanceChangeSupervisor } from '../../src/agent/change-supervisor.mjs';
 import { projectModelObservation } from '../../src/agent/observation-context.mjs';
 import { builtInWorldRegistry } from '../../src/application/world-registry.mjs';
+import { loadExternalWorldRegistry } from '../../src/application/external-world-registry.mjs';
+import { runContinuous } from '../../src/application/agent-service.mjs';
 import { LabStore } from '../../src/runtime/lab-store.mjs';
 import { ED25519_PUBLIC_KEY, verifyAttestation } from '../fixtures/ed25519-proof.mjs';
 
@@ -153,6 +155,57 @@ test('agent loop can require an automatic recovery path before starting a run', 
     );
     assert.equal(recoverable.code, 0);
     assert.equal(recoverable.stdout[0].data.status, 'COMPLETED');
+  });
+});
+
+test('agent loop persists its recovery requirement across resume', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'lab');
+    const adapter = await writeTransitionAdapterConfig(
+      root,
+      path.join(root, 'effects.json'),
+      ['--non-idempotent', '--reconcilable', '--two-actions', '--both-safe'],
+      false,
+    );
+    const initialized = await invoke(
+      'init', '--lab', lab, '--world', 'idempotent-transition', '--adapter', adapter, '--json',
+    );
+    assert.equal(initialized.code, 0);
+
+    const registry = await loadExternalWorldRegistry(adapter);
+    let stopChecks = 0;
+    const first = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      runs: 2,
+      scenario: 'idempotent',
+      registry,
+      requireRecovery: true,
+      shouldStop: () => stopChecks++ > 0,
+    });
+    assert.equal(first.stopReason, 'INTERRUPTED');
+
+    const store = await LabStore.open({ labPath: lab });
+    const continuation = await store.readLoopContinuation();
+    assert.equal(continuation.requireRecovery, true);
+
+    let describeCalls = 0;
+    const resumeRegistry = {
+      ...registry,
+      describe() {
+        describeCalls += 1;
+        return registry.describe();
+      },
+    };
+    const resumed = await runContinuous({
+      labPath: lab,
+      resume: true,
+      registry: resumeRegistry,
+    });
+    assert.equal(resumed.status, 'COMPLETED');
+    assert.equal(resumed.runs, 1);
+    assert.ok(describeCalls >= 1);
+    await registry.close();
   });
 });
 
