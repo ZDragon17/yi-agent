@@ -225,6 +225,38 @@ test('CLI persists the recovery requirement when starting a loop', async () => {
   });
 });
 
+test('resume cannot retrofit recovery requirement onto a legacy loop', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'legacy-loop-lab');
+    const initialized = await invoke(
+      'init', '--lab', lab, '--world', 'temperature', '--json',
+    );
+    assert.equal(initialized.code, 0, JSON.stringify(initialized));
+
+    let stopChecks = 0;
+    const initial = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      forever: true,
+      shouldStop: () => stopChecks++ > 0,
+    });
+    assert.equal(initial.stopReason, 'INTERRUPTED');
+
+    const rejected = await invoke(
+      'agent', 'loop', '--lab', lab, '--resume', '--require-recovery', '--kernel-only', '--json',
+    );
+    assert.equal(rejected.code, 65, JSON.stringify(rejected));
+    assert.equal(rejected.stdout[0].ok, false);
+    assert.equal(rejected.stdout[0].error.code, 'CONFLICT');
+    assert.match(rejected.stdout[0].error.message, /legacy|immutable|new loop|recovery/iu);
+
+    const store = await LabStore.open({ labPath: lab });
+    const continuation = await store.readLoopContinuation();
+    assert.equal(continuation.requireRecovery, undefined);
+    assert.equal(continuation.nextRunIndex, 1);
+  });
+});
+
 test('recovery preflight cannot prove a dishonest idempotent adapter safe', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'dishonest-idempotency-lab');

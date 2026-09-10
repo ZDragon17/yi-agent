@@ -1644,3 +1644,10 @@
 - 实现：CLI `dispatchAgent` 调用 `runContinuous` 时显式传入 `requireRecovery: options['require-recovery'] === true`；新增真实 CLI E2E，创建一个可对账的外部 loop，完成后从 LabStore 读取 continuation 并确认要求仍为 `true`。
 - 验证：F-214 的跨恢复测试、F-215 的负向测试和新增 CLI 启动测试均通过；新增测试未改变旧 continuation 的兼容读取规则。
 - 边界：该节点修复的是宿主参数到持久账本的传递，不证明外部 adapter 真正幂等或可以在现实环境中恰好执行一次。
+
+## F-217 不允许给 legacy loop 临时加恢复要求
+
+- 反证/缺口：F-214 允许旧 continuation 缺少 `requireRecovery` 字段并按历史语义读取；但 active legacy loop 仍接受 `resume + requireRecovery`，只在当前调用检查，后续 Run start 和 continuation 继续缺字段，安全要求因此可以在下一次恢复时消失。
+- 实现：`runContinuous` 在读取 active continuation 后，如果调用方显式要求恢复而持久 continuation 没有该要求，立即返回 `CONFLICT`，提示从新 loop 建立要求；不修改 immutable 历史 Run，也不启动新的 Run。已有要求的 loop 继续按原 contract 恢复，旧 loop 不带该选项仍保持兼容。
+- 验证：真实 CLI 从 legacy loop 执行 `agent loop --resume --require-recovery` 返回 `CONFLICT`，`nextRunIndex` 不变；F-214/F-215/F-216 相关回归继续通过。
+- 边界：这是持久策略的 fail-closed 规则，不提供旧 loop 的自动迁移；要升级旧 loop，需先完成或另建 loop，并从创建时写入要求。它仍不证明 adapter 自报的幂等能力或现实效果可信。

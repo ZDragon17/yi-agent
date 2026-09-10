@@ -445,6 +445,10 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 
 修正 CLI 到应用服务的参数传递遗漏：`agent loop --require-recovery` 现在会把要求传给 `runContinuous`，真实 CLI 创建的 continuation 也会在每个 Run start 中保存该字段。此前只有直接调用应用服务的测试覆盖到了这条语义，新增 E2E 已补齐 CLI 启动边界。
 
+## F-217 不允许给 legacy loop 临时加恢复要求
+
+发现 `agent loop --resume --require-recovery` 可以检查本次调用，却无法修改此前已经写入的 immutable Run start；如果继续执行，下一次不带参数的恢复仍可能回到旧策略。现在 active continuation 缺少该字段时直接返回 `CONFLICT`，不启动新的 Run；已有 `requireRecovery:true` 的 loop 和新建 loop 的行为不变。这样要求要么从 loop 创建时落盘，要么明确失败，不把一次性检查说成持久化升级。
+
 ## 与 Codex / Claude 的协作方式
 
 这几个工具可以互补：

@@ -849,6 +849,13 @@ export async function runContinuous(input) {
         results: [],
       };
     }
+    if (source.requireRecovery === true && continuation.requireRecovery !== true) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'Cannot add requireRecovery to an existing loop continuation; start a new loop with this requirement.',
+        { field: 'requireRecovery', continuationId: continuation.loopId },
+      );
+    }
     randomizedTrial = continuation.randomizedTrial ?? null;
     requireRecovery = requireRecovery || continuation.requireRecovery === true;
   } else {
