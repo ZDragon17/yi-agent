@@ -1684,5 +1684,5 @@
 
 - 反证/缺口：已有目标会跨 Run 持久化，但一旦激活就不能更换。这样可以保护活跃目标不被静默改写，却也把一个 Lab 限制在单一目标周期内，无法验证“完成目标后保留世界与记忆，再进入下一目标”。
 - 实现：新增受限的 goal epoch。只有前一监督器已经 `COMPLETED` 或 `HALTED` 时，`agent run` 才能用新的 goal/goal plan 开启下一周期；WorldPort 状态、Memory、RNG 和 kernelStep 必须保持不变，监督器重新建立目标局部的 cycle、stagnation、bestDistance 和计划进度。Run start 保存前后连续性摘要，首个 STEP 记录新的 goal activation；活跃目标仍 fail-closed 拒绝替换。
-- 验证：生成型陌生 WorldPort 完成目标 `[2]` 后切换到目标 `[4]`，跨两个 Run 执行 4 步，世界值和 kernelStep 均连续，两个 Run 均可 Replay 为 `CONSISTENT`；另有回归确认 ACTIVE 目标不能被抢占。当前本机定向应用回归 `4/4` 通过。
+- 验证：生成型陌生 WorldPort 完成目标 `[2]` 后切换到目标 `[4]`，跨两个 Run 执行 4 步，世界值和 kernelStep 均连续，两个 Run 均可 Replay 为 `CONSISTENT`；另有回归确认 ACTIVE 目标不能被抢占。当前本机定向应用回归 `4/4` 通过，PowerShell-facing CLI E2E 为 `1/1`。
 - 边界：目标切换只重建监督器，不证明目标文本本身具有统一语义，也不提供活跃目标的强制中断、跨 Lab 目标合并或现实世界的权限升级。未决外部 transition 仍必须先按原恢复契约闭合，不能借目标 epoch 绕过对账。

@@ -506,6 +506,60 @@ test('agent run loads and persists a multi-stage goal plan from PowerShell-facin
   }
 });
 
+test('agent CLI starts a second goal epoch from the completed first epoch', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-goal-epoch-e2e-'));
+  const config = path.join(root, 'model-adapter.json');
+  const firstPlan = path.join(root, 'first-plan.json');
+  const secondPlan = path.join(root, 'second-plan.json');
+  const lab = path.join(root, 'lab');
+  try {
+    await writeFile(config, JSON.stringify({
+      executable: process.execPath,
+      args: [MODEL_ADAPTER],
+      model: 'fixture-process-model',
+      timeoutMs: 5000,
+    }));
+    await writeFile(firstPlan, JSON.stringify({
+      schemaVersion: 1,
+      rootGoal: '完成第一目标',
+      stages: [{ id: 'first', goal: '到达 23 度', objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [23] } }],
+    }));
+    await writeFile(secondPlan, JSON.stringify({
+      schemaVersion: 1,
+      rootGoal: '完成第二目标',
+      stages: [{ id: 'second', goal: '到达 24 度', objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [24] } }],
+    }));
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'goal-epoch-cli-seed', '--json'], process.env)).code, 0);
+
+    const first = await invoke([
+      'agent', 'run', '--lab', lab, '--run-id', 'run-1', '--steps', '4',
+      '--goal-plan', firstPlan, '--model-adapter', config, '--json',
+    ], process.env);
+    assert.equal(first.code, 0, JSON.stringify(first));
+    assert.equal(first.stdout[0].data.stopReason, 'OBJECTIVE_REACHED');
+
+    const second = await invoke([
+      'agent', 'run', '--lab', lab, '--run-id', 'run-2', '--steps', '4',
+      '--goal-plan', secondPlan, '--model-adapter', config, '--json',
+    ], process.env);
+    assert.equal(second.code, 0, JSON.stringify(second));
+    assert.equal(second.stdout[0].data.stopReason, 'OBJECTIVE_REACHED');
+
+    const inspection = await invoke(['inspect', '--lab', lab, '--json'], process.env);
+    assert.equal(inspection.code, 0);
+    assert.equal(inspection.stdout[0].data.current.worldState.temperatureC, 24);
+    assert.equal(inspection.stdout[0].data.current.kernelStep, 4);
+    const store = await LabStore.open({ labPath: lab });
+    const secondRun = await store.readRun('run-2');
+    assert.equal(secondRun.start.goalEpoch.schemaVersion, 1);
+    assert.equal(secondRun.events.find((event) => event.kind === 'STEP').payload.boundary.goalActivation.goal, '完成第二目标');
+    assert.equal((await invoke(['replay', '--lab', lab, '--run', 'run-1', '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal((await invoke(['replay', '--lab', lab, '--run', 'run-2', '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent run uses the bounded automatic planner through the PowerShell-facing CLI', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-auto-plan-e2e-'));
   const requests = [];
