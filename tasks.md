@@ -1616,3 +1616,10 @@
 - 实现：`adapter test` 支持 `--require-recovery`。探测结果为 `blocked` 时返回 `CONFLICT`，探针仍只执行 `hello`，不创建 Lab、锁或账本；`idempotent` 和 `reconciliation` 保持通过。
 - 验证：无恢复契约的 generated adapter 在预检阶段返回退出码 65 和 `CONFLICT`；关闭幂等但开启对账的 adapter 返回 `READY`；两条路径均确认没有创建 Lab，定向 CLI 回归 `3/3` 通过。
 - 边界：这是宿主对声明契约的前置检查，不证明 adapter 的幂等实现或对账结果真实；默认不强制该选项，旧调用者仍可选择兼容模式。
+
+## F-213 连续 Runner 强制恢复契约
+
+- 反证/缺口：F-212 只保护显式预检；用户仍可跳过它，直接让 `agent loop` 启动一个长时间 continuation，直到未知外部回执出现后才发现无法自动恢复。
+- 实现：`agent loop` 接受 `--require-recovery`，外部 adapter 探针完成后、`runContinuous` 创建第一个 Run 前调用同一 `recoveryMode` 检查；`agent run` 明确拒绝该选项，内置 WorldPort 不受影响。
+- 验证：无恢复契约的外部 adapter 在 loop 首个 Run 前返回退出码 65 和 `CONFLICT`；仅对账的外部 adapter 在相同选项下完成 1 个 Run；新增 CLI E2E 通过，完整门禁随后复核。
+- 边界：该门只检查 descriptor 声明，不证明幂等实现、对账结果、权限隔离或现实效果；默认不改变旧 loop 行为。

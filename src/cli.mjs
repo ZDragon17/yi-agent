@@ -174,6 +174,9 @@ async function dispatch(command, options) {
 }
 
 async function dispatchAgent(options) {
+  if (options['require-recovery'] === true && options.agentOperation !== 'loop') {
+    throw cliError('INVALID_INPUT', '--require-recovery is only supported by agent loop.', { field: 'require-recovery' }, 64);
+  }
   if (options['auto-recover'] === true && (options.agentOperation !== 'loop' || options.resume !== true)) {
     throw cliError('INVALID_INPUT', '--auto-recover requires agent loop --resume.', { field: 'auto-recover' }, 64);
   }
@@ -233,6 +236,9 @@ async function dispatchAgent(options) {
     process.once('SIGINT', onSignal);
     process.once('SIGTERM', onSignal);
     try {
+      if (options['require-recovery'] === true && options.adapter !== undefined) {
+        assertRecoveryRequired(registry.describe());
+      }
       return await runContinuous({
         labPath: required(options, 'lab'),
         ...(options.steps === undefined ? {} : { stepsPerRun: parseSteps(options.steps) }),
@@ -306,14 +312,7 @@ async function dispatchAdapter(options) {
   const registry = await loadExternalWorldRegistry(requiredAbsolute(options, 'adapter'));
   try {
     const adapter = registry.describe();
-    if (options['require-recovery'] === true && adapter.recoveryMode === 'blocked') {
-      throw cliError(
-        'CONFLICT',
-        'The adapter does not declare idempotent transitions or reconciliation; automatic recovery is blocked.',
-        { field: 'adapter', recoveryMode: adapter.recoveryMode },
-        65,
-      );
-    }
+    if (options['require-recovery'] === true) assertRecoveryRequired(adapter);
     return { status: 'READY', adapter };
   } finally {
     await closeRegistry(registry);
@@ -412,7 +411,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'goal', 'goal-plan', 'randomized-trial', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'require-recovery', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'goal', 'goal-plan', 'randomized-trial', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     api: ['apiOperation'],
     adapter: ['adapterOperation', 'adapter', 'require-recovery'],
     ask: ['prompt', 'prompt-file'],
@@ -576,6 +575,16 @@ async function closeRegistry(registry) {
   if (typeof registry?.close === 'function') await registry.close();
 }
 
+function assertRecoveryRequired(adapter) {
+  if (adapter.recoveryMode !== 'blocked') return;
+  throw cliError(
+    'CONFLICT',
+    'The adapter does not declare idempotent transitions or reconciliation; automatic recovery is blocked.',
+    { field: 'adapter', recoveryMode: adapter.recoveryMode },
+    65,
+  );
+}
+
 function canResumeWithoutModel(options, error) {
   if (options.agentOperation !== 'loop' || options.resume !== true) return false;
   if (error?.code !== 'INVALID_INPUT') return false;
@@ -668,7 +677,7 @@ function helpText() {
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
     '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--planning-horizon N] [--kernel-only] [--model-adapter CONFIG] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--randomized-trial PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
-    '  yi-agent agent loop --lab PATH --resume [--auto-recover] [--kernel-only] [--adapter CONFIG] [--json]',
+    '  yi-agent agent loop --lab PATH --resume [--auto-recover] [--require-recovery] [--kernel-only] [--adapter CONFIG] [--json]',
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',

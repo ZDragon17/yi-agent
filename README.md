@@ -433,6 +433,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-211 让 `adapter test` 根据主 descriptor 直接给出 `recoveryMode`：幂等优先为 `idempotent`，仅支持对账为 `reconciliation`，两者都没有则为 `blocked`；正反配置回归均通过。它把未知回执的处理边界变成可读结果，但不把 adapter 声明变成现实效果证明。
 - F-212 增加 `adapter test --require-recovery`，在创建 Lab 前拒绝 `recoveryMode=blocked` 的 adapter；无恢复契约返回 `CONFLICT`，仅支持对账的配置可以通过。它把连续运行的安全前置条件变成显式命令选项，不改变默认兼容行为。
 - 在人工确认后，逐步扩展到真实副作用和桌面端。
+- F-213 把 `--require-recovery` 接入 `agent loop`：连续 Runner 在启动第一个 Run 前复用同一恢复姿态检查，`blocked` 外部 adapter 直接返回 `CONFLICT`，仅对账 adapter 可以继续；普通 `agent run` 使用该选项会返回参数错误，避免语义含混。
 
 ## 与 Codex / Claude 的协作方式
 
@@ -522,6 +523,8 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 `--kernel-only` 显式关闭 Advisor/Planner，只运行共同的 Kernel—WorldPort—verify—learn 闭环，不需要 API Key；它用于证明模型是可替换工具，而不是 Agent 的启动前提。若需要 `--auto-plan`，仍应提供模型配置，或接受 Planner 不可用并回退为根目标阶段。
 
 `agent loop` 是连续运行的 CLI 入口：`--steps` 表示每个可恢复 Run 的步数，`--runs` 表示最多串联多少个 Run；需要长期守护时使用 `--forever`，它与 `--runs` 互斥。每个 Run 都先完成自己的账本提交，再开始下一个 Run；收到 SIGINT/SIGTERM 时只在当前 Run 提交后停止，返回 `INTERRUPTED`。loop 的 `loopId/runIndex/scenario/budget/planningBranchingMode` 会固化到每个 immutable `start.json`，进程重启并完成恢复卡点后，可以用 `yi-agent agent loop --lab PATH --resume --json` 从 current 指向的已校验终态 Run 重建剩余 Run 和规划语义，不必重新输入也不会重复已提交 Run；旧 continuation 缺少模式字段时，Runtime 从已提交 STEP 或终态 `externalTransition` 证据推断历史模式，不能推断则保守降级为 legacy。同一 lab 中，一条未完成 continuation 对实验空间拥有唯一调度权；新的 loop 或普通 run 会被拒绝，必须先用 `--resume` 接续，已完成或已停止的历史 loop 不阻塞新实验。发生执行拒绝、无安全动作或显式目标达成时，循环会停止并返回原因。`--forever` 的内存结果摘要只保留最近一个 Run，累计 `runs/metrics` 持续统计，完整历史以 lab 账本和独立 Replay 为准，因此不会随运行时间积累结果对象。进程在一个 Run 内被终止或崩溃时，仍须先用 `recover --confirm-lock-owner-dead` 完成明确的恢复卡点，再使用 `--resume` 继续；若未决外部 transition 已保存原始策略证据，恢复进程暂时没有 API 时也能复用该证据并由 Kernel 继续安全选择；`readLoopContinuation()` 仍提供全量 continuation 审计，`test/e2e/crash-restart-cli.test.mjs` 已用真实子进程强制终止覆盖该路径。
+对外部 adapter 使用 `--require-recovery`，可以在 loop 第一个 Run 开始前拒绝没有幂等 transition 或对账契约的配置；普通 `agent run` 不接受该选项。
+
 如果明确选择自动路径，可使用 `yi-agent agent loop --lab PATH --resume --auto-recover --json`；它只自动处理 current 为 `RUNNING` 且 liveness probe 证明旧 owner 已死亡的本地恢复，不会绕过活跃进程保护，也不把无法确认的锁当作安全可接管。
 
 连续 Runner 默认使用 `checkpoint` 持久化：STEP 仍逐条写入完整证据账本，在每 128 步及终态前执行 data-sync；需要每一步都完成物理同步时，应用层可传 `durability: 'strict'`。CLI 的普通 `run` 保持 strict 语义，`agent loop` 采用 checkpoint 语义。

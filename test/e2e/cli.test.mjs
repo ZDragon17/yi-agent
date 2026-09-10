@@ -119,6 +119,43 @@ test('adapter test can require an automatic recovery path before creating a lab'
   });
 });
 
+test('agent loop can require an automatic recovery path before starting a run', async () => {
+  await withTemp(async (root) => {
+    const blockedLab = path.join(root, 'blocked-lab');
+    const blockedAdapter = await writeAdapterConfig(root, ['--mode', 'valid']);
+    const blockedInit = await invoke('init', '--lab', blockedLab, '--world', 'generated', '--adapter', blockedAdapter, '--json');
+    assert.equal(blockedInit.code, 0);
+
+    const blocked = await invoke(
+      'agent', 'loop', '--lab', blockedLab, '--steps', '1', '--runs', '1', '--kernel-only',
+      '--adapter', blockedAdapter, '--require-recovery', '--scenario', 'generated', '--json',
+    );
+    assert.equal(blocked.code, 65);
+    assert.equal(blocked.stdout[0].ok, false);
+    assert.equal(blocked.stdout[0].error.code, 'CONFLICT');
+
+    const recoverableLab = path.join(root, 'recoverable-lab');
+    const effectFile = path.join(root, 'effects.json');
+    const recoverableAdapter = await writeTransitionAdapterConfig(
+      root,
+      effectFile,
+      ['--non-idempotent', '--reconcilable'],
+      false,
+    );
+    const recoverableInit = await invoke(
+      'init', '--lab', recoverableLab, '--world', 'idempotent-transition',
+      '--adapter', recoverableAdapter, '--json',
+    );
+    assert.equal(recoverableInit.code, 0);
+    const recoverable = await invoke(
+      'agent', 'loop', '--lab', recoverableLab, '--steps', '1', '--runs', '1', '--kernel-only',
+      '--adapter', recoverableAdapter, '--require-recovery', '--scenario', 'idempotent', '--json',
+    );
+    assert.equal(recoverable.code, 0);
+    assert.equal(recoverable.stdout[0].data.status, 'COMPLETED');
+  });
+});
+
 test('CLI executes init, run, inspect, and replay as one JSON-envelope chain', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'lab');
