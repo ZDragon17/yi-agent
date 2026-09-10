@@ -305,7 +305,16 @@ async function dispatchApi(options) {
 async function dispatchAdapter(options) {
   const registry = await loadExternalWorldRegistry(requiredAbsolute(options, 'adapter'));
   try {
-    return { status: 'READY', adapter: registry.describe() };
+    const adapter = registry.describe();
+    if (options['require-recovery'] === true && adapter.recoveryMode === 'blocked') {
+      throw cliError(
+        'CONFLICT',
+        'The adapter does not declare idempotent transitions or reconciliation; automatic recovery is blocked.',
+        { field: 'adapter', recoveryMode: adapter.recoveryMode },
+        65,
+      );
+    }
+    return { status: 'READY', adapter };
   } finally {
     await closeRegistry(registry);
   }
@@ -391,7 +400,7 @@ function parseArguments(argv) {
     if (argument === '--json') continue;
     if (!argument.startsWith('--')) throw cliError('INVALID_INPUT', `Unexpected argument: ${argument}`, {}, 64);
     const name = argument.slice(2);
-    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan' || name === 'kernel-only' || name === 'resume' || name === 'auto-recover') {
+    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan' || name === 'kernel-only' || name === 'resume' || name === 'auto-recover' || name === 'require-recovery') {
       options[name] = true;
       continue;
     }
@@ -405,7 +414,7 @@ function parseArguments(argv) {
   const allowed = {
     agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'goal', 'goal-plan', 'randomized-trial', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     api: ['apiOperation'],
-    adapter: ['adapterOperation', 'adapter'],
+    adapter: ['adapterOperation', 'adapter', 'require-recovery'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
     run: ['lab', 'run-id', 'steps', 'scenario', 'adapter', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
@@ -654,7 +663,7 @@ function helpText() {
     '',
     'API:',
     '  yi-agent api test [--json]',
-    '  yi-agent adapter test --adapter CONFIG [--json]     只探针外部 WorldPort，不创建实验室',
+    '  yi-agent adapter test --adapter CONFIG [--require-recovery] [--json]     只探针外部 WorldPort，不创建实验室',
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',

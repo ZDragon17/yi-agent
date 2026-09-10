@@ -1609,3 +1609,10 @@
 - 实现：`ExternalWorldRegistry.describe()` 增加 `recoveryMode`；幂等声明优先映射为 `idempotent`，否则对账声明映射为 `reconciliation`，两者都没有映射为 `blocked`。该字段只由已验证的 `hello` descriptor 派生，不执行 transition。
 - 验证：生成 adapter 预检返回 `blocked`；同时声明幂等/对账的配置返回 `idempotent`；仅声明对账且关闭幂等的配置返回 `reconciliation`。两条预检均不创建 Lab，定向 CLI 回归 `2/2` 通过。
 - 边界：`recoveryMode` 是宿主协议分支的摘要，不证明 adapter 真的幂等、真的能对账或拥有现实副作用权限；`blocked` 仍可能需要人工处理外部未决效果。
+
+## F-212 连续运行恢复前置门
+
+- 反证/缺口：F-211 只展示了 `blocked`，默认命令仍会返回 `READY`；接入者如果忽略摘要，可能在没有自动恢复契约的 adapter 上启动长时间运行。
+- 实现：`adapter test` 支持 `--require-recovery`。探测结果为 `blocked` 时返回 `CONFLICT`，探针仍只执行 `hello`，不创建 Lab、锁或账本；`idempotent` 和 `reconciliation` 保持通过。
+- 验证：无恢复契约的 generated adapter 在预检阶段返回退出码 65 和 `CONFLICT`；关闭幂等但开启对账的 adapter 返回 `READY`；两条路径均确认没有创建 Lab，定向 CLI 回归 `3/3` 通过。
+- 边界：这是宿主对声明契约的前置检查，不证明 adapter 的幂等实现或对账结果真实；默认不强制该选项，旧调用者仍可选择兼容模式。

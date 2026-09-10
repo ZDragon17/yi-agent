@@ -93,6 +93,32 @@ test('adapter test reports recovery semantics and configured role identities', a
   });
 });
 
+test('adapter test can require an automatic recovery path before creating a lab', async () => {
+  await withTemp(async (root) => {
+    const adapter = await writeAdapterConfig(root);
+    const blocked = await invoke('adapter', 'test', '--adapter', adapter, '--require-recovery', '--json');
+
+    assert.equal(blocked.code, 65);
+    assert.equal(blocked.stdout.length, 1);
+    assert.equal(blocked.stdout[0].ok, false);
+    assert.equal(blocked.stdout[0].error.code, 'CONFLICT');
+    assert.match(blocked.stdout[0].error.message, /recovery|idempotent|reconciliation/iu);
+    assert.equal(await pathExists(path.join(root, 'lab')), false);
+
+    const effectFile = path.join(root, 'effects.json');
+    const reconcilable = await writeTransitionAdapterConfig(
+      root,
+      effectFile,
+      ['--non-idempotent', '--reconcilable'],
+      false,
+    );
+    const ready = await invoke('adapter', 'test', '--adapter', reconcilable, '--require-recovery', '--json');
+    assert.equal(ready.code, 0);
+    assert.equal(ready.stdout[0].data.adapter.recoveryMode, 'reconciliation');
+    assert.equal(await pathExists(path.join(root, 'lab')), false);
+  });
+});
+
 test('CLI executes init, run, inspect, and replay as one JSON-envelope chain', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'lab');
