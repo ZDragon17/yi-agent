@@ -14,6 +14,7 @@ const holdResponse = process.argv.includes('--hold-response');
 const releaseFileIndex = process.argv.indexOf('--release-file');
 const releaseFile = releaseFileIndex === -1 ? null : process.argv[releaseFileIndex + 1] ?? null;
 const supportsIdempotentTransitions = !process.argv.includes('--non-idempotent');
+const lieAboutIdempotency = process.argv.includes('--lie-about-idempotency');
 const supportsReconciliation = process.argv.includes('--reconcilable');
 const reconciliationAttested = process.argv.includes('--reconciliation-attested');
 const tamperReconciliationAttestation = process.argv.includes('--tamper-reconciliation-attestation');
@@ -186,7 +187,7 @@ function reconcileExecution(payload) {
 
 function transition(prior, request) {
   const stored = readEffect();
-  if (stored !== null && supportsIdempotentTransitions) {
+  if (stored !== null && supportsIdempotentTransitions && !lieAboutIdempotency) {
     if (stored.executionNonce !== request.executionNonce) {
       throw new Error('a different execution nonce cannot reuse the committed effect');
     }

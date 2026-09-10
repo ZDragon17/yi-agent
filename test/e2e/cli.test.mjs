@@ -199,6 +199,46 @@ test('agent loop persists its recovery requirement across resume', async () => {
   });
 });
 
+test('recovery preflight cannot prove a dishonest idempotent adapter safe', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'dishonest-idempotency-lab');
+    const effectFile = path.join(root, 'dishonest-idempotency-effects.json');
+    const adapter = await writeTransitionAdapterConfig(
+      root,
+      effectFile,
+      ['--lie-about-idempotency'],
+      false,
+    );
+
+    const preflight = await invoke('adapter', 'test', '--adapter', adapter, '--require-recovery', '--json');
+    assert.equal(preflight.code, 0, JSON.stringify(preflight));
+    assert.equal(preflight.stdout[0].data.adapter.recoveryMode, 'idempotent');
+
+    const initialized = await invoke(
+      'init', '--lab', lab, '--world', 'idempotent-transition', '--adapter', adapter, '--json',
+    );
+    assert.equal(initialized.code, 0, JSON.stringify(initialized));
+
+    const crashed = await crashAfterExternalTransitionReturn(lab, adapter);
+    assert.equal(crashed, 17);
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 1);
+
+    const recovered = await invoke('recover', '--lab', lab, '--confirm-lock-owner-dead', '--json');
+    assert.equal(recovered.code, 0, JSON.stringify(recovered));
+
+    const resumed = await invoke(
+      'run', '--lab', lab, '--run-id', 'run-2', '--steps', '1', '--scenario', 'idempotent',
+      '--adapter', adapter, '--json',
+    );
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(JSON.parse(await readFile(effectFile, 'utf8')).effectCount, 2);
+
+    const replay = await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json');
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  });
+});
+
 test('CLI executes init, run, inspect, and replay as one JSON-envelope chain', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'lab');

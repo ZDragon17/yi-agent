@@ -1630,3 +1630,10 @@
 - 实现：`runContinuous` 接受布尔 `requireRecovery`；新 continuation 在 `Run start` 中保存 `requireRecovery:true`，`LabStore` 对其做类型校验并把它纳入 `loopContract`。恢复时从已验证的 continuation 合并该要求；外部 adapter 在第一个恢复 Run 前再次调用共享恢复检查。旧 continuation 没有该字段时继续按 legacy 语义读取。
 - 验证：新增跨中断/恢复的外部 WorldPort E2E，确认 continuation 保存该字段、恢复调用不传参数仍重新调用 adapter 描述，并完成剩余 Run；相关 CLI 门禁 `70/70` 通过。
 - 边界：这是宿主策略的持久化和防降级，不证明 adapter 的幂等实现、对账结果、权限隔离、跨机器锁或现实副作用；显式 `--require-recovery` 仍只对新 continuation 写入要求，旧账本不会被迁移。
+
+## F-215 恢复声明的不可自证边界
+
+- 反证/缺口：F-211 至 F-214 把恢复姿态公开、前置检查并持久化，但检查对象仍是 adapter 自己的 `hello` 声明。若 adapter 声明支持幂等、实际却在同一 execution nonce 上再次产生效果，宿主可能只能看到一份结构合法的新回执，无法从单一来源证明现实副作用没有重复。
+- 实现：测试夹具增加故意违反幂等声明的模式：descriptor 继续声明 `supportsIdempotentTransitions:true`，第一次效果后宿主进程在外部 transition 返回边界退出，恢复请求复用原 nonce 时夹具再次递增受控效果计数。新增 CLI E2E 先运行 `adapter test --require-recovery`，再完成崩溃、人工 recover、resume 和离线 replay。
+- 验证：预检返回 `recoveryMode=idempotent`，两次外部效果都发生，宿主仍形成结构合法 STEP，Replay 返回 `CONSISTENT`；定向回归通过。该负结果把“恢复契约存在”和“现实执行事实可信”区分开。
+- 边界：这不是生产 adapter 的默认行为，也不是允许重复执行的实现；它证明宿主不能仅凭自报 descriptor 消除信任问题。独立 execution observer、独立 authority、可信效果日志、受保护执行器或人工对账仍是后续可验证边界。

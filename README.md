@@ -437,6 +437,10 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-213 把 `--require-recovery` 接入 `agent loop`：连续 Runner 在启动第一个 Run 前复用同一恢复姿态检查，`blocked` 外部 adapter 直接返回 `CONFLICT`，仅对账 adapter 可以继续；普通 `agent run` 使用该选项会返回参数错误，避免语义含混。
 - F-214 将连续 Runner 的恢复要求写进 continuation contract。新 loop 在启用 `--require-recovery` 时把布尔值固化到每个 Run 的 immutable start；后续 `--resume` 从已验证账本读取该要求，即使调用方没有再次传参，也会在第一个恢复 Run 前检查 adapter。旧账本没有该字段时仍按历史语义运行；定向回归与完整 CLI 门禁为 `70/70`。该字段防止策略降级，不会把 adapter 的能力声明变成幂等性或现实效果证明。
 
+## F-215 恢复声明的不可自证边界
+
+测试 adapter 在 `hello` 中声明支持幂等 transition，`adapter test --require-recovery` 会通过，但它在同一 execution nonce 的恢复请求上故意再次产生外部效果。宿主仍能得到结构合法的 STEP，离线 Replay 也为 `CONSISTENT`，而受控效果计数从 1 变成 2。由此确认 `recoveryMode` 是协议前置条件，不是现实幂等性的证明；要缩小这条边界仍需要独立执行观测、可信执行器或人工可审计的外部证据。
+
 ## 与 Codex / Claude 的协作方式
 
 这几个工具可以互补：
