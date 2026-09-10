@@ -199,6 +199,32 @@ test('agent loop persists its recovery requirement across resume', async () => {
   });
 });
 
+test('CLI persists the recovery requirement when starting a loop', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'cli-loop-recovery-lab');
+    const adapter = await writeTransitionAdapterConfig(
+      root,
+      path.join(root, 'cli-loop-recovery-effects.json'),
+      ['--non-idempotent', '--reconcilable'],
+      false,
+    );
+    const initialized = await invoke(
+      'init', '--lab', lab, '--world', 'idempotent-transition', '--adapter', adapter, '--json',
+    );
+    assert.equal(initialized.code, 0, JSON.stringify(initialized));
+
+    const loop = await invoke(
+      'agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '1', '--kernel-only',
+      '--adapter', adapter, '--require-recovery', '--scenario', 'idempotent', '--json',
+    );
+    assert.equal(loop.code, 0, JSON.stringify(loop));
+
+    const store = await LabStore.open({ labPath: lab });
+    const continuation = await store.readLoopContinuation();
+    assert.equal(continuation.requireRecovery, true);
+  });
+});
+
 test('recovery preflight cannot prove a dishonest idempotent adapter safe', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'dishonest-idempotency-lab');

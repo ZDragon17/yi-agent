@@ -254,6 +254,7 @@ async function dispatchAgent(options) {
         planner,
         autoPlan: options['auto-plan'] === true,
         autoRecover: options['auto-recover'] === true,
+        requireRecovery: options['require-recovery'] === true,
         goal: options.goal,
         goalPlan,
         randomizedTrial,

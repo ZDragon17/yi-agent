@@ -455,3 +455,5 @@ F-213 将同一前置门接入 `agent loop`。在外部 adapter 已加载但第�
 F-214 将连续 Runner 的恢复要求纳入 continuation contract。`--require-recovery` 启动的新 continuation 会在每个 Run 的 immutable start 中保存 `requireRecovery:true`，`--resume` 从已验证的 current/Run 账本恢复该值，并在第一个新 Run 前再次检查外部 adapter。loop contract 也比较该字段，防止同一 loop 的不同 Run 使用不同恢复策略。没有该字段的旧 continuation 继续按兼容语义读取，不自动改变历史行为。该机制只防止宿主策略降级，仍不证明 adapter 自报的幂等或对账能力真实。
 
 F-215 用一个故意违反幂等声明的 adapter 做负向实验：它的 `hello` 仍返回 `supportsIdempotentTransitions:true`，因此 `--require-recovery` 预检通过；第一次效果产生后宿主进程崩溃，恢复请求复用原 execution nonce，但夹具再次修改外部效果计数。宿主收到的状态投影仍可形成合法 STEP，离线 Replay 仍为 `CONSISTENT`，所以当前协议不能从单一 adapter 的声明和回执中发现这类现实重复。该结果不是放宽安全边界的理由，而是明确了恢复声明、执行事实和独立观测之间的信任断层。
+
+F-216 修正了 CLI 到应用服务的参数传递遗漏。解析器原本会在外部 adapter 预检阶段执行 `--require-recovery` 检查，但没有把布尔值传入 `runContinuous`，因此直接从 CLI 新建的 loop 不会持久化要求。现在 CLI 与应用服务路径使用同一字段，真实 CLI E2E 读取完成 continuation 确认 `requireRecovery:true`；这只修复宿主策略落盘，不改变 F-215 所记录的外部声明不可自证边界。

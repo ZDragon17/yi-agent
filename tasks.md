@@ -1637,3 +1637,10 @@
 - 实现：测试夹具增加故意违反幂等声明的模式：descriptor 继续声明 `supportsIdempotentTransitions:true`，第一次效果后宿主进程在外部 transition 返回边界退出，恢复请求复用原 nonce 时夹具再次递增受控效果计数。新增 CLI E2E 先运行 `adapter test --require-recovery`，再完成崩溃、人工 recover、resume 和离线 replay。
 - 验证：预检返回 `recoveryMode=idempotent`，两次外部效果都发生，宿主仍形成结构合法 STEP，Replay 返回 `CONSISTENT`；定向回归通过。该负结果把“恢复契约存在”和“现实执行事实可信”区分开。
 - 边界：这不是生产 adapter 的默认行为，也不是允许重复执行的实现；它证明宿主不能仅凭自报 descriptor 消除信任问题。独立 execution observer、独立 authority、可信效果日志、受保护执行器或人工对账仍是后续可验证边界。
+
+## F-216 CLI 启动路径的恢复要求落盘
+
+- 反证/缺口：应用服务已经支持把 `requireRecovery` 写进 continuation，但 CLI 只在启动前检查了 adapter，未把 `--require-recovery` 传入 `runContinuous`。因此命令行表面上通过了安全前置门，实际新建 loop 却丢失了持久化要求。
+- 实现：CLI `dispatchAgent` 调用 `runContinuous` 时显式传入 `requireRecovery: options['require-recovery'] === true`；新增真实 CLI E2E，创建一个可对账的外部 loop，完成后从 LabStore 读取 continuation 并确认要求仍为 `true`。
+- 验证：F-214 的跨恢复测试、F-215 的负向测试和新增 CLI 启动测试均通过；新增测试未改变旧 continuation 的兼容读取规则。
+- 边界：该节点修复的是宿主参数到持久账本的传递，不证明外部 adapter 真正幂等或可以在现实环境中恰好执行一次。

@@ -441,6 +441,10 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 
 测试 adapter 在 `hello` 中声明支持幂等 transition，`adapter test --require-recovery` 会通过，但它在同一 execution nonce 的恢复请求上故意再次产生外部效果。宿主仍能得到结构合法的 STEP，离线 Replay 也为 `CONSISTENT`，而受控效果计数从 1 变成 2。由此确认 `recoveryMode` 是协议前置条件，不是现实幂等性的证明；要缩小这条边界仍需要独立执行观测、可信执行器或人工可审计的外部证据。
 
+## F-216 CLI 启动路径的恢复要求落盘
+
+修正 CLI 到应用服务的参数传递遗漏：`agent loop --require-recovery` 现在会把要求传给 `runContinuous`，真实 CLI 创建的 continuation 也会在每个 Run start 中保存该字段。此前只有直接调用应用服务的测试覆盖到了这条语义，新增 E2E 已补齐 CLI 启动边界。
+
 ## 与 Codex / Claude 的协作方式
 
 这几个工具可以互补：
