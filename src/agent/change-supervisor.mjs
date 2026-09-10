@@ -317,6 +317,28 @@ export function enableGoal(state, goal, plan, plannerEnabled = undefined) {
   };
 }
 
+// 终态目标已经关闭一个控制周期。新周期只重置目标局部计数，世界、记忆和
+// 随机数连续性仍由外层 Runtime 负责保持。
+export function startGoalEpoch(
+  state,
+  { goal, plan, valueSpec, plannerEnabled = false, maxCycles, stagnationLimit } = {},
+) {
+  const current = normalizeState(state);
+  if (!['COMPLETED', 'HALTED'].includes(current.status)) {
+    throw new Error('ChangeSupervisor can start a new goal epoch only after a terminal goal.');
+  }
+  const normalizedPlannerEnabled = requireBoolean(plannerEnabled, 'plannerEnabled');
+  return createChangeSupervisor({
+    goal,
+    enabled: !normalizedPlannerEnabled,
+    plannerEnabled: normalizedPlannerEnabled,
+    plan,
+    valueSpec: valueSpec ?? current.objective,
+    maxCycles: maxCycles ?? current.maxCycles,
+    stagnationLimit: stagnationLimit ?? current.stagnationLimit,
+  });
+}
+
 export function goalPlanForActivation(state) {
   const current = normalizeState(state);
   return current.plan === undefined ? undefined : current.plan;

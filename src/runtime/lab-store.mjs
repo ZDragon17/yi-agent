@@ -48,6 +48,12 @@ const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
 const MAX_PLANNING_HORIZON = 8;
 const PLANNING_CONTEXT_MODES = ['context-v1', 'legacy-v1'];
+const GOAL_EPOCH_KEYS = [
+  'schemaVersion',
+  'previousStateDigest',
+  'previousSupervisorDigest',
+  'nextSupervisorDigest',
+];
 const PLANNING_BRANCHING_MODES = ['tree-v1', 'recursive-v1', 'legacy-v1'];
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -555,6 +561,9 @@ export class LabStore {
     const continuation = source.continuation === undefined
       ? undefined
       : validateLoopContinuation(source.continuation, 'continuation');
+    const goalEpoch = source.goalEpoch === undefined
+      ? undefined
+      : validateGoalEpoch(source.goalEpoch, 'goalEpoch');
     const failpoint = typeof source.failpoint === 'function' ? source.failpoint : undefined;
     const durability = source.durability ?? 'strict';
     if (!DURABILITY_MODES.has(durability)) {
@@ -630,11 +639,20 @@ export class LabStore {
           status: existingContinuation.status,
         });
       }
-      if (
-        previousCurrent.lastRunId !== null &&
-        !sameContinuityState(stateProjection(previousCurrent, previousCurrent), initialState)
-      ) {
-        conflict('Run initialState differs from current continuity state.', { runId });
+      if (previousCurrent.lastRunId !== null) {
+        const previousState = stateProjection(previousCurrent, previousCurrent);
+        const continuityMatches = sameContinuityState(previousState, initialState);
+        if (continuityMatches && goalEpoch !== undefined) {
+          conflict('A goal epoch must change the supervisor continuity state.', { field: 'goalEpoch' });
+        }
+        if (!continuityMatches) {
+          if (goalEpoch === undefined) {
+            conflict('Run initialState differs from current continuity state.', { runId });
+          }
+          validateGoalEpochTransition(goalEpoch, previousState, initialState);
+        }
+      } else if (goalEpoch !== undefined) {
+        conflict('A goal epoch requires an existing continuity state.', { runId });
       }
 
       await ensurePlainDirectory(this.root, 'runs');
@@ -656,6 +674,7 @@ export class LabStore {
         manifestDigest: this.manifest.selfDigest,
         initialState,
         ...(continuation === undefined ? {} : { continuation }),
+        ...(goalEpoch === undefined ? {} : { goalEpoch }),
         startedAt: now(),
       });
       if (start.continuation !== undefined && start.continuation.scenario !== scenario) {
@@ -1806,6 +1825,7 @@ function validateStart(start, manifest, runId) {
     corrupt('Immutable run start is invalid.', { runId });
   }
   if (start.continuation !== undefined) validateLoopContinuation(start.continuation, 'run continuation', true);
+  if (start.goalEpoch !== undefined) validateGoalEpoch(start.goalEpoch, 'run goalEpoch', true);
   validateContinuityState(start.initialState, 'run start initialState', true);
 }
 
@@ -2481,6 +2501,66 @@ function sameContinuityState(previous, next) {
     return canonicalJson(previous) === canonicalJson(withoutSupervisor);
   }
   return false;
+}
+
+function validateGoalEpoch(value, field, corruptOnFailure = false) {
+  const fail = (message) => {
+    if (corruptOnFailure) corrupt(message, { field });
+    throw new LabStoreError('INVALID_INPUT', message, { field });
+  };
+  if (
+    value === null || typeof value !== 'object' || Array.isArray(value) ||
+    Object.keys(value).some((key) => !GOAL_EPOCH_KEYS.includes(key)) ||
+    value.schemaVersion !== SCHEMA_VERSION ||
+    ![value.previousStateDigest, value.previousSupervisorDigest, value.nextSupervisorDigest]
+      .every((digest) => typeof digest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(digest))
+  ) {
+    fail('Goal epoch metadata is invalid.');
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    previousStateDigest: value.previousStateDigest,
+    previousSupervisorDigest: value.previousSupervisorDigest,
+    nextSupervisorDigest: value.nextSupervisorDigest,
+  };
+}
+
+function validateGoalEpochTransition(epoch, previous, next) {
+  const previousSupervisor = previous.changeSupervisor;
+  const nextSupervisor = next.changeSupervisor;
+  if (
+    previousSupervisor === undefined || nextSupervisor === undefined ||
+    canonicalDigest(previous) !== epoch.previousStateDigest ||
+    canonicalDigest(previousSupervisor) !== epoch.previousSupervisorDigest ||
+    canonicalDigest(nextSupervisor) !== epoch.nextSupervisorDigest ||
+    !sameContinuityStateWithoutSupervisor(previous, next)
+  ) {
+    conflict('Goal epoch does not preserve the prior continuity state.', { field: 'goalEpoch' });
+  }
+  if (!['COMPLETED', 'HALTED'].includes(previousSupervisor.status) ||
+      nextSupervisor.status !== 'ACTIVE' ||
+      previousSupervisor.goal === nextSupervisor.goal ||
+      nextSupervisor.cycle !== 0 ||
+      nextSupervisor.bestDistance !== null ||
+      nextSupervisor.stagnation !== 0 ||
+      nextSupervisor.replanCount !== 0 ||
+      nextSupervisor.lastChange !== null ||
+      nextSupervisor.exploration !== undefined ||
+      nextSupervisor.plan === undefined ||
+      nextSupervisor.plan.revision !== 0 ||
+      nextSupervisor.plan.stages.some((stage, index) => (
+        stage.status !== (index === 0 ? 'ACTIVE' : 'PENDING') || stage.attempts !== 0
+      ))) {
+    conflict('Goal epoch must move from a terminal supervisor to an active supervisor.', { field: 'goalEpoch' });
+  }
+}
+
+function sameContinuityStateWithoutSupervisor(previous, next) {
+  const left = { ...previous };
+  const right = { ...next };
+  delete left.changeSupervisor;
+  delete right.changeSupervisor;
+  return canonicalJson(left) === canonicalJson(right);
 }
 
 function recoveryStateProjection(current, start, events) {

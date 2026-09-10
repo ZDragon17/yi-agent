@@ -633,6 +633,104 @@ test('a previously untracked lab can acquire a persistent explicit goal on a lat
   });
 });
 
+test('a completed goal can start a new goal epoch without resetting world or memory', async () => {
+  await withLab(async (root) => {
+    const lab = path.join(root, 'goal-epoch-lab');
+    const registry = createGeneratedRegistry();
+    const firstPlan = {
+      schemaVersion: 1,
+      rootGoal: '完成第一目标',
+      stages: [{
+        id: 'first',
+        goal: '推进到二',
+        objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [2] },
+      }],
+    };
+    const secondPlan = {
+      schemaVersion: 1,
+      rootGoal: '完成第二目标',
+      stages: [{
+        id: 'second',
+        goal: '推进到四',
+        objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [4] },
+      }],
+    };
+
+    await initLab({ labPath: lab, labId: 'goal-epoch-lab', worldId: 'generated', seed: 'goal-epoch-seed', registry });
+    const first = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 5,
+      scenario: 'generated',
+      goalPlan: firstPlan,
+      registry,
+    });
+    assert.equal(first.stopReason, 'OBJECTIVE_REACHED');
+    assert.equal(first.metrics.executed, 2);
+
+    const second = await runLab({
+      labPath: lab,
+      runId: 'run-2',
+      steps: 5,
+      scenario: 'generated',
+      goalPlan: secondPlan,
+      registry,
+    });
+    assert.equal(second.stopReason, 'OBJECTIVE_REACHED');
+    assert.equal(second.metrics.executed, 2);
+
+    const store = await LabStore.open({ labPath: lab });
+    const current = (await inspectLab({ labPath: lab, registry })).current;
+    assert.equal(current.worldState.value, 4);
+    assert.equal(current.kernelStep, 4);
+    assert.equal(current.changeSupervisor.goal, secondPlan.rootGoal);
+    assert.deepEqual(current.changeSupervisor.objective.target, [4]);
+    const firstRun = await store.readRun('run-1');
+    const secondRun = await store.readRun('run-2');
+    const secondStep = secondRun.events.find((event) => event.kind === 'STEP');
+    assert.equal(secondStep.payload.boundary.goalActivation.goal, secondPlan.rootGoal);
+    assert.equal(
+      secondRun.start.goalEpoch.previousStateDigest,
+      canonicalDigest(firstRun.events.at(-1).payload.finalState),
+    );
+    assert.equal(
+      secondRun.start.goalEpoch.previousSupervisorDigest,
+      canonicalDigest(firstRun.events.at(-1).payload.finalState.changeSupervisor),
+    );
+    assert.equal(
+      secondRun.start.goalEpoch.nextSupervisorDigest,
+      canonicalDigest(secondRun.start.initialState.changeSupervisor),
+    );
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-2', registry })).verdict, 'CONSISTENT');
+  });
+});
+
+test('an active goal cannot be replaced before its terminal supervisor state', async () => {
+  await withLab(async (root) => {
+    const lab = path.join(root, 'active-goal-epoch-lab');
+    const registry = createGeneratedRegistry({ target: 100 });
+    const firstPlan = {
+      schemaVersion: 1,
+      rootGoal: '持续推进第一目标',
+      stages: [{ id: 'first', goal: '还未到达', objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [100] } }],
+    };
+    const secondPlan = {
+      schemaVersion: 1,
+      rootGoal: '抢占第二目标',
+      stages: [{ id: 'second', goal: '不应启动', objective: { schemaVersion: 1, observationDimensions: 1, weights: [1], target: [2] } }],
+    };
+
+    await initLab({ labPath: lab, labId: 'active-goal-epoch-lab', worldId: 'generated', seed: 'active-goal-epoch-seed', registry });
+    await runLab({ labPath: lab, runId: 'run-1', steps: 1, scenario: 'generated', goalPlan: firstPlan, registry });
+    await assert.rejects(
+      () => runLab({ labPath: lab, runId: 'run-2', steps: 1, scenario: 'generated', goalPlan: secondPlan, registry }),
+      (error) => error.code === 'CONFLICT' && error.context.field === 'goal',
+    );
+    assert.equal((await inspectLab({ labPath: lab, registry })).current.kernelStep, 1);
+  });
+});
+
 test('application persists and replays a multi-stage goal plan on an opaque WorldPort', async () => {
   await withLab(async (root) => {
     const lab = path.join(root, 'planned-goal-lab');

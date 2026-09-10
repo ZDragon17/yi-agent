@@ -5,7 +5,7 @@ import { buildCandidateOutcome } from '../runtime/candidate-evidence.mjs';
 import { annotateCandidateHistory } from '../runtime/candidate-history.mjs';
 import { acceptedSupersessionDigest } from '../runtime/candidate-lineage.mjs';
 import { KERNEL_LEARNING_VERSIONS, learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
-import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
+import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan, startGoalEpoch } from '../agent/change-supervisor.mjs';
 import { replayRun } from '../runtime/replay.mjs';
 import {
   builtInWorldRegistry,
@@ -282,8 +282,27 @@ export async function runLab(input) {
     (source.goal ?? source.goalPlan?.rootGoal ?? existingSupervisor?.goal ?? '逼近 ValueSpec 目标');
   const plannerRequested = recoveredDecisionBoundary === null && source.goalPlan === undefined &&
     (planningExplicitlyRequested || existingSupervisor?.plannerEnabled === true);
-  if (current.lastRunId !== null && existingSupervisor?.enabled === true && goalRequested && existingSupervisor.goal !== requestedGoal) {
-    throw new LabStoreError('CONFLICT', 'An enabled goal cannot be replaced in an existing lab.', { field: 'goal' });
+  const goalEpochStarted = current.lastRunId !== null && existingSupervisor?.enabled === true &&
+    goalRequested && existingSupervisor.goal !== requestedGoal;
+  if (goalEpochStarted && !['COMPLETED', 'HALTED'].includes(existingSupervisor.status)) {
+    throw new LabStoreError('CONFLICT', 'An active goal cannot be replaced before it reaches a terminal state.', { field: 'goal' });
+  }
+  if (goalEpochStarted) {
+    try {
+      initialState = {
+        ...initialState,
+        changeSupervisor: startGoalEpoch(existingSupervisor, {
+          goal: requestedGoal,
+          plan: source.goalPlan,
+          valueSpec: spec,
+          plannerEnabled: planningExplicitlyRequested,
+          maxCycles: supervisorMaxCycles,
+          stagnationLimit: supervisorStagnationLimit,
+        }),
+      };
+    } catch (error) {
+      throw new LabStoreError('CONFLICT', error instanceof Error ? error.message : 'A new goal epoch is invalid.', { field: 'goal' });
+    }
   }
   if (current.lastRunId !== null && existingSupervisor?.enabled === true && source.goalPlan !== undefined) {
     try {
@@ -295,12 +314,21 @@ export async function runLab(input) {
       throw new LabStoreError('CONFLICT', error instanceof Error ? error.message : 'An enabled goal plan cannot be replaced in an existing lab.', { field: 'goalPlan' });
     }
   }
+  const goalEpoch = goalEpochStarted
+    ? {
+        schemaVersion: SCHEMA_VERSION,
+        previousStateDigest: canonicalDigest(projectCurrent(current)),
+        previousSupervisorDigest: canonicalDigest(existingSupervisor),
+        nextSupervisorDigest: canonicalDigest(initialState.changeSupervisor),
+      }
+    : undefined;
   const run = await store.startRun({
     runId,
     worldId: manifest.worldId,
     scenario,
     initialState,
     ...(source.continuation === undefined ? {} : { continuation: source.continuation }),
+    ...(goalEpoch === undefined ? {} : { goalEpoch }),
     reuseLedgerHandle: true,
     durability,
     ...(failpoint === undefined ? {} : { failpoint }),
@@ -397,7 +425,8 @@ export async function runLab(input) {
       : baseSupervisor === null || !goalRequested
       ? baseSupervisor
       : enableGoal(baseSupervisor, requestedGoal, activationPlan, plannerRequested ? true : undefined);
-    const goalActivates = !recoveringDecisionBoundary && supervisor?.enabled === true && previousSupervisor?.enabled !== true;
+    const goalActivates = !recoveringDecisionBoundary && supervisor?.enabled === true &&
+      (previousSupervisor?.enabled !== true || (goalEpochStarted && index === 0));
     const activatedPlan = goalActivates ? goalPlanForActivation(supervisor) : undefined;
     const goalActivation = recoveringDecisionBoundary
       ? recoveredGoalActivation
