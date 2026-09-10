@@ -189,23 +189,13 @@ test('agent loop persists its recovery requirement across resume', async () => {
     const continuation = await store.readLoopContinuation();
     assert.equal(continuation.requireRecovery, true);
 
-    let describeCalls = 0;
-    const resumeRegistry = {
-      ...registry,
-      describe() {
-        describeCalls += 1;
-        return registry.describe();
-      },
-    };
-    const resumed = await runContinuous({
-      labPath: lab,
-      resume: true,
-      registry: resumeRegistry,
-    });
-    assert.equal(resumed.status, 'COMPLETED');
-    assert.equal(resumed.runs, 1);
-    assert.ok(describeCalls >= 1);
     await registry.close();
+    const resumed = await invoke(
+      'agent', 'loop', '--lab', lab, '--resume', '--kernel-only', '--adapter', adapter, '--json',
+    );
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.stdout[0].data.status, 'COMPLETED');
+    assert.equal(resumed.stdout[0].data.runs, 1);
   });
 });
 
