@@ -1665,3 +1665,10 @@
 - 实现：增加独立 `opaque-vector-world-adapter.mjs` 夹具，descriptor 声明 6 维 ValueSpec 和 4 个不透明能力，transition 对选中 token 只更新对应向量位置；新增 CLI E2E 配置并运行该 adapter。
 - 验证：Windows 本机真实执行 `init → run(4) → inspect → replay`；结果为 `COMPLETED`，4 步均接受，终态向量为 6 维，Replay 为 `CONSISTENT`。
 - 边界：该节点证明 CLI 外部协议不依赖内置世界的固定形状，不证明 adapter 的现实状态、权限、身份或副作用可信；夹具仍是受控模拟子进程。
+
+## F-220 外部陌生 WorldPort 的连续恢复
+
+- 反证/缺口：F-219 只验证单个 CLI Run；还需要确认不同维度和能力数量写入 continuation 后，关闭 registry、重新启动 CLI 的 `--resume` 不会丢失状态形状或重复已提交 Run。
+- 实现：先通过 `runContinuous` 提交 3 个 Run 中的第 1 个，主动关闭 registry；随后启动新的 CLI 进程执行 `agent loop --resume` 完成剩余 2 个 Run，并对所有结果做 Replay。
+- 验证：Windows 本机最终 `kernelStep=3`，current 的 `coordinates` 仍为 6 项，三个 Run 均返回 `CONSISTENT`。
+- 边界：该节点只证明受控外部 adapter 的 continuation 跨进程恢复；未决真实副作用仍受 recovery contract、对账和外部人工/权限边界约束。

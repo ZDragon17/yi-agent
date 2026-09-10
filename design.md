@@ -463,3 +463,5 @@ F-217 收紧恢复策略的单调性。active legacy continuation 没有 `requir
 F-218 用一个陌生的进程内 WorldPort 检查共同底座是否偷偷依赖内置领域形状。该 Port 的状态为 6 维非负向量，能力集合只有 4 个不透明标识，ValueSpec 使用独立的权重和目标；Application 通过同一 `init → run → inspect → replay` 路径完成 4 次 transition，终态维度保持 6，Replay 返回 `CONSISTENT`。实验支持“领域差异由 WorldPort 投影、Kernel 只处理共同契约”的局部判断，但不证明任意现实世界都能被这组向量充分表达，也不覆盖外部副作用、隐藏状态或真实权限。
 
 F-219 把 F-218 的陌生形状移到独立 JSONL adapter 子进程，并从公开 CLI 走完 `init → run(4) → inspect → replay`。adapter descriptor 声明 6 维 ValueSpec 和 4 个不透明能力，宿主不增加领域分支；Windows 本机结果为 `COMPLETED`、4 步、终态向量 6 维、Replay `CONSISTENT`。这验证的是 CLI 外部 WorldPort 协议对不同维度和动作数量的互操作，不覆盖 adapter 诚实性、真实设备权限、跨机器身份或现实状态观测。
+
+F-220 在同一陌生外部 WorldPort 上先用应用服务完成一个有限 continuation Run，关闭持久 registry，再由新的 CLI 进程执行 `agent loop --resume` 完成剩余两个 Run。最终 current 的 `kernelStep` 为 3、WorldPort 状态仍为 6 维，三个 immutable Run 均可离线 Replay 为 `CONSISTENT`。该实验验证的是 continuation、WorldPort descriptor 和向量状态在进程重启后的共同恢复路径；不覆盖未决真实副作用、adapter 诚实性或跨机器权限。

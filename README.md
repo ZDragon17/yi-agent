@@ -457,6 +457,10 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 
 把同样的 6 维向量和 4 个不透明能力放进独立 JSONL adapter 子进程，通过公开 CLI 完成 `init → run(4) → inspect → replay`。Windows 本机真实结果为 `COMPLETED`、4 步、终态向量 6 维、Replay `CONSISTENT`。这证明用户不需要修改 Kernel 就能从 CLI 接入不同形状的外部 WorldPort；它仍是受控子进程和模拟状态，不等于真实设备或现实语义已经可信。
 
+## F-220 外部陌生 WorldPort 的连续恢复
+
+先让 6 维外部 WorldPort 完成一个 Run，再关闭 adapter registry，最后用新的 CLI 进程执行 `agent loop --resume` 完成剩余两个 Run。Windows 本机最终 `kernelStep=3`，状态仍为 6 维，三个 Run 均能离线 Replay 为 `CONSISTENT`。这证明维度和能力形状会随 continuation 一起跨进程恢复；恢复链仍依赖 adapter 自身提供的协议状态，不代表现实副作用可自动恢复。
+
 ## 与 Codex / Claude 的协作方式
 
 这几个工具可以互补：

@@ -582,6 +582,77 @@ test('CLI runs and replays an opaque six-dimensional external WorldPort', async 
   });
 });
 
+test('CLI preserves an opaque external WorldPort across continuous Run boundaries', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'opaque-vector-loop-lab');
+    const adapter = await writeOpaqueVectorAdapterConfig(root);
+    const init = await invoke('init', '--lab', lab, '--world', 'opaque-vector', '--seed', 'opaque-vector-loop-seed', '--lab-id', 'opaque-vector-loop-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const loop = await invoke(
+      'agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '3', '--kernel-only',
+      '--scenario', 'steady', '--adapter', adapter, '--json',
+    );
+    assert.equal(loop.code, 0, JSON.stringify(loop));
+    assert.equal(loop.stdout[0].data.status, 'COMPLETED');
+    assert.equal(loop.stdout[0].data.runs, 3);
+    assert.equal(loop.stdout[0].data.results.length, 3);
+
+    const inspect = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
+    assert.equal(inspect.code, 0, JSON.stringify(inspect));
+    assert.equal(inspect.stdout[0].data.current.worldState.coordinates.length, 6);
+    assert.equal(inspect.stdout[0].data.current.kernelStep, 3);
+
+    for (const result of loop.stdout[0].data.results) {
+      const replay = await invoke('replay', '--lab', lab, '--run', result.runId, '--adapter', adapter, '--json');
+      assert.equal(replay.code, 0, JSON.stringify(replay));
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT', result.runId);
+    }
+  });
+});
+
+test('CLI resumes an opaque external WorldPort after the registry process is restarted', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'opaque-vector-restart-lab');
+    const adapter = await writeOpaqueVectorAdapterConfig(root);
+    const init = await invoke('init', '--lab', lab, '--world', 'opaque-vector', '--seed', 'opaque-vector-restart-seed', '--lab-id', 'opaque-vector-restart-lab', '--adapter', adapter, '--json');
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const registry = await loadExternalWorldRegistry(adapter);
+    let stopChecks = 0;
+    const first = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      runs: 3,
+      scenario: 'steady',
+      registry,
+      shouldStop: () => stopChecks++ > 0,
+    });
+    assert.equal(first.status, 'COMPLETED');
+    assert.equal(first.stopReason, 'INTERRUPTED');
+    assert.equal(first.runs, 1);
+    await registry.close();
+
+    const resumed = await invoke(
+      'agent', 'loop', '--lab', lab, '--resume', '--kernel-only', '--adapter', adapter, '--json',
+    );
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    assert.equal(resumed.stdout[0].data.status, 'COMPLETED');
+    assert.equal(resumed.stdout[0].data.runs, 2);
+
+    const inspect = await invoke('inspect', '--lab', lab, '--adapter', adapter, '--json');
+    assert.equal(inspect.code, 0, JSON.stringify(inspect));
+    assert.equal(inspect.stdout[0].data.current.worldState.coordinates.length, 6);
+    assert.equal(inspect.stdout[0].data.current.kernelStep, 3);
+
+    for (const result of [...first.results, ...resumed.stdout[0].data.results]) {
+      const replay = await invoke('replay', '--lab', lab, '--run', result.runId, '--adapter', adapter, '--json');
+      assert.equal(replay.code, 0, JSON.stringify(replay));
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT', result.runId);
+    }
+  });
+});
+
 test('CLI carries delayed and repeated feedback across WorldPort processes and run restarts', async () => {
   await withTemp(async (root) => {
     const lab = path.join(root, 'delayed-feedback-lab');
