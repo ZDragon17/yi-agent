@@ -162,6 +162,34 @@ test('application service runs and replays two steps through a third-party gener
   });
 });
 
+test('application service keeps the kernel generic for an opaque six-dimensional WorldPort', async () => {
+  await withLab(async (lab) => {
+    const registry = createOpaqueVectorRegistry();
+    await initLab({
+      labPath: lab,
+      labId: 'opaque-vector-lab',
+      worldId: 'opaque-vector',
+      seed: 'opaque-vector-seed',
+      registry,
+    });
+
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 4,
+      scenario: 'steady',
+      registry,
+    });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(result.metrics.accepted, 4);
+
+    const current = (await inspectLab({ labPath: lab, registry })).current;
+    assert.equal(current.worldState.coordinates.length, 6);
+    assert.equal(current.kernelStep, 4);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
+  });
+});
+
 test('application preserves an explicit utility value mode from a WorldPort', async () => {
   await withLab(async (lab) => {
     const registry = createGeneratedRegistry({ valueMode: 'signed-v1' });
@@ -1459,6 +1487,95 @@ function createGeneratedRegistry({ adaptive = false, evidenceCount = 0, stepDelt
       const payload = { generated: true, stepVersion: stateVersion };
       const input = { schemaVersion: 1, source: 'scenario', kind: scenario, payload, appliedBeforeVersion: stateVersion };
       return [{ ...input, digest: canonicalDigest(input) }];
+    },
+  };
+}
+
+function createOpaqueVectorRegistry() {
+  const worldId = 'opaque-vector';
+  const scenarioIds = ['steady'];
+  const capabilityIds = ['c0', 'c1', 'c2', 'c3'];
+  const observationDimensions = 6;
+  const valueSpec = {
+    observationDimensions,
+    weights: [1, 2, 3, 5, 7, 11],
+    target: [3, 3, 3, 3, 3, 3],
+  };
+
+  function createWorld(manifest, scenario = 'steady') {
+    const options = normalizeWorldFactoryOptions({ manifest, scenario }, worldId, scenarioIds);
+    return createWorldPort({
+      worldId,
+      manifest: {
+        schemaVersion: options.manifest.schemaVersion,
+        tokenMap: options.manifest.tokenMap,
+        authorityPolicy: options.manifest.authorityPolicy,
+      },
+      scenario: options.scenario,
+      capabilityIds,
+      makeInitialDomainState: () => ({ coordinates: [0, 0, 0, 0, 0, 0] }),
+      normalizeState: (value) => {
+        const state = assertExactKeys(
+          value,
+          ['schemaVersion', 'stateVersion', 'revision', 'coordinates', 'usedExecutionNonces'],
+          `${worldId}.state`,
+        );
+        if (!Array.isArray(state.coordinates) || state.coordinates.length !== observationDimensions) {
+          throw new Error(`${worldId}.state.coordinates must have six entries`);
+        }
+        return {
+          schemaVersion: assertSchemaVersion(state.schemaVersion, `${worldId}.state.schemaVersion`),
+          stateVersion: assertNonEmptyString(state.stateVersion, `${worldId}.state.stateVersion`),
+          revision: assertNonNegativeSafeInteger(state.revision, `${worldId}.state.revision`),
+          coordinates: state.coordinates.map((coordinate, index) => assertNonNegativeSafeInteger(coordinate, `${worldId}.state.coordinates[${index}]`)),
+          usedExecutionNonces: [...state.usedExecutionNonces],
+        };
+      },
+      observeVector: (state) => [...state.coordinates],
+      scenarioEvidence: () => [],
+      projectCapability: ({ authority }) => ({ allowed: authority.allowed, safe: authority.safe }),
+      applyEffect: ({ state, capabilityId }) => {
+        const coordinates = [...state.coordinates];
+        coordinates[capabilityIds.indexOf(capabilityId)] += 1;
+        return { accepted: true, patch: { coordinates } };
+      },
+    });
+  }
+
+  return {
+    worldDefinition(requestedWorldId) {
+      if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
+      return { scenarioIds: [...scenarioIds] };
+    },
+    createWorld,
+    createManifestParts({ labId, seed, worldId: requestedWorldId }) {
+      if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
+      const entries = capabilityIds.map((capabilityId, index) => ({
+        token: `tok_OPAQUE${index.toString().padStart(3, '0')}`,
+        capabilityId,
+      }));
+      const tokenMap = {
+        schemaVersion: 1,
+        entries,
+        digest: `sha256:${createHash('sha256').update(JSON.stringify(entries)).digest('hex')}`,
+      };
+      return {
+        scenarioIds: [...scenarioIds],
+        tokenMap,
+        authorityPolicy: {
+          schemaVersion: 1,
+          policyVersion: `policy:${worldId}:1`,
+          constraintsDigest: `sha256:${createHash('sha256').update(`${labId}|${seed}|${worldId}|constraints`).digest('hex')}`,
+          capabilities: Object.fromEntries(capabilityIds.map((capabilityId) => [capabilityId, { allowed: true, safe: true, cost: 1 }])),
+        },
+      };
+    },
+    valueSpec(requestedWorldId) {
+      if (requestedWorldId !== worldId) throw new Error(`Unsupported world: ${requestedWorldId}`);
+      return { schemaVersion: 1, ...valueSpec };
+    },
+    scenarioExternalInputs() {
+      return [];
     },
   };
 }

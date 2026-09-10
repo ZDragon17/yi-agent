@@ -1651,3 +1651,10 @@
 - 实现：`runContinuous` 在读取 active continuation 后，如果调用方显式要求恢复而持久 continuation 没有该要求，立即返回 `CONFLICT`，提示从新 loop 建立要求；不修改 immutable 历史 Run，也不启动新的 Run。已有要求的 loop 继续按原 contract 恢复，旧 loop 不带该选项仍保持兼容。
 - 验证：真实 CLI 从 legacy loop 执行 `agent loop --resume --require-recovery` 返回 `CONFLICT`，`nextRunIndex` 不变；F-214/F-215/F-216 相关回归继续通过。
 - 边界：这是持久策略的 fail-closed 规则，不提供旧 loop 的自动迁移；要升级旧 loop，需先完成或另建 loop，并从创建时写入要求。它仍不证明 adapter 自报的幂等能力或现实效果可信。
+
+## F-218 陌生 WorldPort 的维度与能力形状回归
+
+- 反证/缺口：已有第三方 WorldPort 测试只使用 1 维状态和 1 个能力，内置世界的多维测试也可能与 Kernel 的隐含假设重合；还需要一个没有领域名称、维度和动作数量都不同的 Port。
+- 实现：在应用层测试中加入 6 维向量状态、4 个不透明能力标识、独立 ValueSpec 和纯 transition，复用同一 `createWorldPort` 适配边界。
+- 验证：真实执行 `init → 4 步 run → inspect → replay`；结果为 `COMPLETED`，accepted 为 4，终态向量维度为 6，Replay 为 `CONSISTENT`。
+- 边界：该节点只证明共同 Kernel/Application 契约不依赖五个内置世界的固定形状；它不证明向量可以无损表达现实语义，也不覆盖外部副作用、隐藏状态和权限真实性。

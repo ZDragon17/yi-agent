@@ -449,6 +449,10 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 
 发现 `agent loop --resume --require-recovery` 可以检查本次调用，却无法修改此前已经写入的 immutable Run start；如果继续执行，下一次不带参数的恢复仍可能回到旧策略。现在 active continuation 缺少该字段时直接返回 `CONFLICT`，不启动新的 Run；已有 `requireRecovery:true` 的 loop 和新建 loop 的行为不变。这样要求要么从 loop 创建时落盘，要么明确失败，不把一次性检查说成持久化升级。
 
+## F-218 陌生 WorldPort 的维度与能力形状回归
+
+新增一个不带业务语义的第三方 WorldPort：状态是 6 维向量，能力是 4 个不透明标识，权重和目标也与五个内置世界不同。它经过 `init → 4 步 run → inspect → replay`，结果为 `COMPLETED`、4 次 accepted，向量维度保持 6，Replay 为 `CONSISTENT`。这说明 Kernel/Application 的共同路径没有依赖温度、桌面、库存、网格或队列的领域名称和固定维度；它仍只是进程内纯模拟证据，不代表真实外部世界已经被统一建模。
+
 ## 与 Codex / Claude 的协作方式
 
 这几个工具可以互补：
