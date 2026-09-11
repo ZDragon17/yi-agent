@@ -1910,3 +1910,10 @@
 - 实现：增加显式 `retainEvents` 策略。关闭时，Broker 只保留 intent、phase、receipt、eventCount 和 lastEvent 摘要，并提供 `getSummary()`、`listSummaries()` 与按 execution nonce 流式读取的 `readHistory()`；CLI 的 Journal 恢复、效果操作、inspect 和独立 EffectBroker authority 进程使用关闭模式，默认创建和恢复仍保持事件数组兼容接口。追加、冲突重试和无 Journal 的内存 Broker 改用 eventCount，不把摘要当成权威历史。
 - 验证：EffectJournal、EffectBroker、authority、sandbox executor 和 dry-run 回归 `30/30`；真实 authority/sandbox CLI 回归 `9/9`；关闭事件保留后，跨初始化、追加、重启恢复和按 nonce 审计读取仍得到完整事件序列。
 - 边界：`readHistory()` 仍需扫描 Journal，不能替代持久索引；默认同步 `get()`/`list()` 兼容接口仍可能物化事件数组。该节点减少 Broker 运行态的重复事件驻留，不提供无限历史、跨文件事务快照、跨机器对账或现实效果真实性。
+
+## F-255 禁止无 Journal 的低驻留效果 Broker
+
+- 反证/缺口：`retainEvents:false` 在没有 Journal 的内存 Broker 上仍会被接受，但 `readHistory()` 没有可回读来源，只能返回空数组；调用方无法区分“没有事件”和“审计历史被丢弃”。
+- 实现：`createEffectBroker()` 在关闭事件保留且未提供 Journal 时返回 `INVALID_INPUT`；默认 `retainEvents:true` 的内存 Broker，以及绑定 Journal 的低驻留 Broker保持不变。
+- 验证：新增公开配置边界回归；EffectBroker 与 EffectJournal 定向回归 `24/24` 通过。
+- 边界：该约束只保证低驻留模式仍有权威回读来源，不提供持久索引或降低 `readHistory()` 的 Journal 扫描成本。

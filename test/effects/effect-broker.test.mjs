@@ -3,6 +3,17 @@ import { test } from 'node:test';
 import { createEffectBroker } from '../../src/effects/effect-broker.mjs';
 import { canonicalDigest } from '../../src/runtime/schema.mjs';
 
+test('runtime history cannot be disabled without a journal source', () => {
+  assert.throws(
+    () => createEffectBroker({
+      executor: executorFor([]),
+      now: clock(),
+      retainEvents: false,
+    }),
+    (error) => error.code === 'INVALID_INPUT' && /journal/i.test(error.message),
+  );
+});
+
 test('EffectBroker requires confirmation before a risky effect and records the applied receipt', async () => {
   const calls = [];
   const broker = createEffectBroker({

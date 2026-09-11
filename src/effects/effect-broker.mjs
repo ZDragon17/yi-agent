@@ -56,6 +56,9 @@ export function createEffectBroker({
   if (typeof retainEvents !== 'boolean') {
     throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker retainEvents must be a boolean.');
   }
+  if (!retainEvents && journal === null) {
+    throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker retainEvents=false requires a Journal.');
+  }
   if (journal !== null && (typeof journal.append !== 'function' ||
       (typeof journal.read !== 'function' && typeof journal.readStream !== 'function'))) {
     throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker journal does not expose append/read.');
