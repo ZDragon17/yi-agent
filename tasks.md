@@ -1889,3 +1889,10 @@
 - 实现：用固定 256 KiB、4 个 SHA-256 位位置的过滤器替代该预筛选集合。过滤器只回答“可能见过”：命中后仍完整扫描权威账本并比较原始 STEP 证据，误报只增加一次扫描，不能把过滤器命中当作提交事实；账本流内部的精确 nonce 集合和 40 MiB 单 Run 上限保持不变。
 - 验证：Runtime `74/74`；新增 40 STEP 回归跨过 32 条最近提交缓存后重试首个 nonce，仍返回原始 sequence `2`，且活动 Run 只保留固定大小过滤器。
 - 边界：这是活动写入路径的内存预筛选，不是持久 nonce 索引；若内存位图本身被破坏，仍需依靠账本读取、Replay 和恢复校验发现问题。完整账本校验仍使用精确集合，不能把整个系统描述为常量内存或无限历史。
+
+## F-252 EffectJournal 重启解析的流式化
+
+- 反证/缺口：活动 Run 的 nonce 提示已固定，但 `EffectJournal.open()` 仍先把最多 16 MiB 文件读成 Buffer，再复制为字符串、行数组和事件数组；副作用恢复的短暂内存峰值因此高于账本本身。
+- 实现：按 immutable `lstat` 文件范围创建 `createReadStream`，逐块寻找换行、逐行解析和校验 digest 链，只保留既有事件兼容数组；CRLF、超长行、JSON 错误和无换行尾部继续按原错误码处理。锁元数据仍使用原有小文件读取路径。
+- 验证：EffectJournal、EffectBroker、authority、sandbox executor 和 dry-run 回归 `28/28`；新增 CRLF 流式账本回归确认 sequence `[1,2]` 可恢复。
+- 边界：`EffectJournal.read()` 与 Broker 的事件结果仍是显式数组，16 MiB journal 上限不变；本节点消除的是打开时的原始文件/行数组临时副本，不是持久索引、无限效果历史或跨文件事务快照。

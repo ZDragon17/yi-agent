@@ -703,3 +703,5 @@ F-249 将配对候选分支恢复校验也改为完整消费 `readRunStream()`�
 F-250 补齐 `readRunStream()` 的终态绑定：完整消费流时会校验 `end.json` 与终态事件的 sequence、digest、状态和 final-state digest。篡改 end evidence 后的 Runtime 回归会返回 `CORRUPT`，全量定向回归 `73/73`；inspect、配对恢复和 trace 继续共享这条校验边界。
 
 F-251 收紧活动 Run 的 nonce 预筛选：`ActiveRun` 不再为所有已提交 STEP 保留无限增长的 `knownExecutionNonces` 集合，改用固定 256 KiB 位过滤器。过滤器只用于判断“可能已经见过”；命中后仍完整扫描权威账本并比较 STEP evidence，误报只带来额外扫描，不会直接接受重复证据。完整账本读取仍维护精确 nonce 集合，单个 ledger 的 40 MiB 上限也保持不变。40 STEP 跨最近 32 条缓存后重试首个 nonce 的 Runtime 回归为 `74/74`，说明活动写路径的内存提示已固定，同时保留 nonce 幂等和冲突检查。
+
+F-252 将 `EffectJournal.open()` 改为按固定文件范围逐块读取和逐行校验，去掉打开时的原始 Buffer、整本字符串和行数组临时副本；`EffectJournal.read()` 的兼容数组接口、16 MiB journal 上限、摘要链和跨进程锁不变。CRLF 账本与 EffectBroker、authority、sandbox executor 回归共 `28/28` 通过。该变化只降低 Journal 重启解析峰值，不把副作用历史变成无限内存、持久索引或跨文件事务快照。
