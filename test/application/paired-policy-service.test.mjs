@@ -21,14 +21,25 @@ test('paired policy re-observes each step and resumes with the same policy evide
     const world = builtInWorldRegistry.createWorld(parentStore.manifest, 'steady');
     const contextDigest = projectModelObservation(world.observe(parentInspection.current.worldState)).digest;
 
-    const result = await runPairedPolicies({
-      labPath: parent,
-      outputPath: output,
-      steps: 2,
-      leftPolicy: { schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[0], rules: [{ observationDigest: contextDigest, token: tokens[1] }] },
-      rightPolicy: { schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[1], rules: [{ observationDigest: contextDigest, token: tokens[0] }] },
-      scenario: 'steady',
-    });
+    const originalReadRun = LabStore.prototype.readRun;
+    LabStore.prototype.readRun = async () => {
+      throw new Error('array Run materialization must not be used by paired policy trace');
+    };
+    let result;
+    let resumed;
+    try {
+      result = await runPairedPolicies({
+        labPath: parent,
+        outputPath: output,
+        steps: 2,
+        leftPolicy: { schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[0], rules: [{ observationDigest: contextDigest, token: tokens[1] }] },
+        rightPolicy: { schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[1], rules: [{ observationDigest: contextDigest, token: tokens[0] }] },
+        scenario: 'steady',
+      });
+      resumed = await runPairedPolicies({ labPath: parent, outputPath: output, resume: true });
+    } finally {
+      LabStore.prototype.readRun = originalReadRun;
+    }
 
     assert.equal(result.verdict, 'PASS');
     assert.equal(result.comparison.pair, 'same-initial-state-policy-v1');
@@ -37,7 +48,6 @@ test('paired policy re-observes each step and resumes with the same policy evide
     assert.deepEqual(result.replayVerdicts.left, ['CONSISTENT', 'CONSISTENT']);
     assert.deepEqual(result.replayVerdicts.right, ['CONSISTENT', 'CONSISTENT']);
 
-    const resumed = await runPairedPolicies({ labPath: parent, outputPath: output, resume: true });
     assert.deepEqual(resumed, result);
   });
 });

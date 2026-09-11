@@ -262,8 +262,8 @@ async function readPolicyTrace(store) {
   const runIds = await listRunIds(store.root);
   const trace = [];
   for (const runId of runIds) {
-    const run = await store.readRun(runId);
-    for (const event of run.events) {
+    const run = await store.readRunStream(runId);
+    for await (const event of run.events) {
       if (event.kind !== 'STEP') continue;
       const token = event.payload.policyEvidence?.token;
       if (!TOKEN_PATTERN.test(token ?? '')) throw new LabStoreError('CORRUPT', 'Policy trace contains no valid selected token.', { runId, sequence: event.sequence });
