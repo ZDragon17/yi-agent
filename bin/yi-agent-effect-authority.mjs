@@ -66,9 +66,9 @@ async function handleLine(line) {
 async function loadAuthority() {
   authorityPromise ??= (async () => {
     await assertSandboxRoot(sandboxRoot);
-    const journal = await EffectJournal.open(journalPath);
+    const journal = await EffectJournal.open(journalPath, { lazy: true });
     const executor = createSandboxFileExecutor({ sandboxRoot });
-    const broker = await restoreEffectBroker({ journal, executor });
+    const broker = await restoreEffectBroker({ journal, executor, retainEvents: false });
     return createEffectBrokerAuthority({ broker, effectPlan, descriptor, signingKey, signer });
   })();
   return authorityPromise;
