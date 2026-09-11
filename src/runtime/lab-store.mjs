@@ -387,10 +387,33 @@ export class LabStore {
   }
 
   async readAllRuns() {
-    return (await this.readChainSnapshot()).runs;
+    const snapshot = await this.readChainSnapshot();
+    const runs = [];
+    for (const { runId } of snapshot.runIds) runs.push(await this.readRun(runId));
+    assertChainCurrentStable(snapshot.current, await this.readChainCurrent());
+    return runs;
   }
 
   async readChainSnapshot() {
+    const current = await this.readChainCurrent();
+    const runIds = [];
+    for (const runId of await listRunIds(this.root)) {
+      const safeRunId = requireSafeSegment(runId, 'runId');
+      const start = await readVerifiedObject(childPath(this.root, 'runs', safeRunId, 'start.json'), 'run start');
+      validateStart(start, this.manifest, safeRunId);
+      runIds.push({ runId: safeRunId, kernelStep: start.initialState.kernelStep });
+    }
+    assertChainCurrentStable(current, await this.readChainCurrent());
+    return {
+      current,
+      runIds: runIds.sort((left, right) => (
+        left.kernelStep - right.kernelStep ||
+        left.runId.localeCompare(right.runId)
+      )),
+    };
+  }
+
+  async readChainCurrent() {
     const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
     validateCurrentShape(current);
     if (current.status === 'RUNNING') {
@@ -398,24 +421,7 @@ export class LabStore {
         runId: current.lastRunId,
       });
     }
-    const runs = [];
-    for (const runId of await listRunIds(this.root)) runs.push(await this.readRun(runId));
-    const finalCurrent = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
-    validateCurrentShape(finalCurrent);
-    if (current.status === 'RUNNING' || finalCurrent.status === 'RUNNING' || canonicalJson(current) !== canonicalJson(finalCurrent)) {
-      throw new LabStoreError('BUSY', 'Lab current changed during the chain snapshot.', {
-        phase: 'chain-replay',
-        initialRunId: current.lastRunId,
-        finalRunId: finalCurrent.lastRunId,
-      });
-    }
-    return {
-      current: cloneJson(finalCurrent),
-      runs: runs.sort((left, right) => (
-        left.start.initialState.kernelStep - right.start.initialState.kernelStep ||
-        left.start.runId.localeCompare(right.start.runId)
-      )),
-    };
+    return cloneJson(current);
   }
 
   async readCandidateOutcomes(limit = MAX_CANDIDATE_HISTORY) {
@@ -3080,6 +3086,16 @@ async function listRunIds(root) {
     runIds.push(requireSafeSegment(entry.name, 'runId'));
   }
   return runIds.sort();
+}
+
+function assertChainCurrentStable(initial, final) {
+  if (initial.status === 'RUNNING' || final.status === 'RUNNING' || canonicalJson(initial) !== canonicalJson(final)) {
+    throw new LabStoreError('BUSY', 'Lab current changed during the chain snapshot.', {
+      phase: 'chain-replay',
+      initialRunId: initial.lastRunId,
+      finalRunId: final.lastRunId,
+    });
+  }
 }
 
 async function publishImmutableJson(root, target, value, label) {

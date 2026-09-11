@@ -1168,13 +1168,12 @@ test('chain snapshot rejects a current watermark that moves during the read', as
   await run.commitSnapshot(snapshotFor(step));
   await run.finish({ terminalStatus: 'COMPLETED', finalState: finalState() });
 
-  const originalReadRun = store.readRun.bind(store);
+  const originalReadChainCurrent = store.readChainCurrent.bind(store);
   let moved = false;
-  store.readRun = async (runId) => {
-    const result = await originalReadRun(runId);
+  store.readChainCurrent = async () => {
+    const current = await originalReadChainCurrent();
     if (!moved) {
       moved = true;
-      const current = await readJson(path.join(lab, 'state/current.json'));
       const changed = { ...current, kernelStep: current.kernelStep + 1 };
       delete changed.selfDigest;
       await writeFile(
@@ -1182,7 +1181,7 @@ test('chain snapshot rejects a current watermark that moves during the read', as
         `${canonicalJson({ ...changed, selfDigest: canonicalDigest(changed) })}\n`,
       );
     }
-    return result;
+    return current;
   };
 
   await assert.rejects(

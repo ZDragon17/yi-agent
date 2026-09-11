@@ -1401,15 +1401,17 @@ export async function replayLab(input) {
 }
 
 async function replayLabChain({ store, registry }) {
-  const { current, runs } = await store.readChainSnapshot();
-  if (runs.length === 0) {
+  const { current, runIds } = await store.readChainSnapshot();
+  if (runIds.length === 0) {
     throw new LabStoreError('NOT_FOUND', 'No terminal runs exist for chain replay.', {});
   }
   const summaries = [];
   let previous = null;
+  let lastRun = null;
   let checkedSequences = 0;
   let goalEpochs = 0;
-  for (const run of runs) {
+  for (const { runId } of runIds) {
+    const run = await store.readRun(runId);
     registry.assertManifest(run.manifest);
     const result = replayStoredRun(run, registry);
     checkedSequences += result.checkedSequences ?? 0;
@@ -1447,8 +1449,17 @@ async function replayLabChain({ store, registry }) {
       if (run.start.goalEpoch !== undefined) goalEpochs += 1;
     }
     previous = { runId: run.start.runId, finalState: result.finalState };
+    lastRun = { start: { runId: run.start.runId }, end: run.end };
   }
-  const currentDifference = chainCurrentContinuityDifference(current, runs.at(-1), previous);
+  const finalCurrent = await store.readChainCurrent();
+  if (canonicalJson(current) !== canonicalJson(finalCurrent)) {
+    throw new LabStoreError('BUSY', 'Lab current changed during chain replay.', {
+      phase: 'chain-replay',
+      initialRunId: current.lastRunId,
+      finalRunId: finalCurrent.lastRunId,
+    });
+  }
+  const currentDifference = chainCurrentContinuityDifference(finalCurrent, lastRun, previous);
   if (currentDifference !== null) {
     return {
       schemaVersion: SCHEMA_VERSION,

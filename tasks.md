@@ -1707,3 +1707,10 @@
 - 实现：`LabStore.readChainSnapshot()` 在读取全部终态 Run 后再次读取并校验 current；若前后 canonical 内容不同，或末次 current 已进入 `RUNNING`，返回 `BUSY` 并带 `chain-replay` 阶段信息。`replay --chain` 只接收稳定快照，已有链尾与相邻 Run 校验保持不变。
 - 验证：新增 Runtime 反例，在读取 Run 期间模拟 current 水位移动，确认快照拒绝；F-224 的旧 Run 回退反例、目标 epoch 链和外部 JSONL 链回归继续通过。
 - 边界：这是无锁读路径的变化检测，不是跨文件事务快照、分布式锁或主动攻击防护；发生移动时调用方应在 writer 完成后重试。
+
+## F-226 连续 Replay 的流式 Run 读取
+
+- 反证/缺口：F-225 虽然拒绝了读取期间的水位变化，但 `readChainSnapshot()` 仍把所有 Run 的完整事件装入数组；长期 Runner 的历史增长会让 Replay 的峰值内存随全部账本增长，抵消 F-221 的序列化优化。
+- 实现：Runtime 只读取每个 Run 的 immutable start 头部并按初始 `kernelStep` 排序，返回 `runIds`；Application 按序逐个 `readRun`、Replay 并只保留前一终态、链尾信息和摘要。全部 Run 完成后重新读取 current，内容变化或进入 `RUNNING` 都返回 `BUSY`。
+- 验证：Runtime 移动水位反例改为覆盖头部快照路径；目标 epoch、内置 CLI、外部 JSONL CLI 链回放继续通过，语法与 Runtime 回归随后复核。
+- 边界：这是宿主内存上界和读期间水位检测，不是磁盘分页、跨文件事务快照、分布式锁或主动攻击防护；超大单个 Run 仍需要后续事件流式 Replay。

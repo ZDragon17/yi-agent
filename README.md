@@ -656,3 +656,5 @@ F-223 增加 Lab 级连续账本 Replay。单个 `replay --run` 只重算一个�
 F-224 把 `replay --chain` 的检查延伸到 current 水位。全部 Run 重放完成后，命令还会确认 `current.lastRunId`、READY/HALTED 状态、终态事件序号、事件摘要和状态投影都对应链尾 Run。即使有人重算了一个格式正确的 `current.json` 并把它指回旧 Run，也会返回 `CURRENT_CONTINUITY` 差异，而不会把历史回退误报为一致。该检查仍是账本和持久状态的一致性证据，不是签名信任或现实效果证明。
 
 F-225 增加移动水位检测。`replay --chain` 读取全部 Run 后会重新检查 `current.json`；如果读取前后 current 发生变化，或者读取结束时已有 writer 进入 `RUNNING`，命令返回 `BUSY`，要求在写入完成后重试。这样无锁读路径不会把两个时刻的账本拼成一次结果。它仍不是跨文件事务快照或分布式读写锁。
+
+F-226 将连续 Replay 改为按 Run 流式读取。Runtime 先读取各 Run 的 immutable start 头部完成排序，随后 Application 一次只加载一个完整 Run，Replay 完成后释放它，只保留链连续性所需的前一终态和摘要；全部 Run 完成后还会重新检查 current。这样历史 Run 数量增长不会把所有事件同时堆在内存中。单个 Run 内部仍是完整读取，真正超大的单 Run 还需要事件流式处理。
