@@ -516,23 +516,11 @@ export class LabStore {
     }
     const groups = new Map();
     for (const runId of await listRunIds(this.root)) {
-      const run = await this.readRunStream(runId);
-      const planningBranchingModes = new Set();
-      let terminal = null;
-      for await (const event of run.events) {
-        const planningMode = event.kind === 'STEP'
-          ? planningBranchingModeForStep(event)
-          : event.kind === 'RUN_HALTED' || event.kind === 'RUN_COMPLETED'
-            ? planningBranchingModeForTerminal(event)
-            : null;
-        if (planningMode !== null) planningBranchingModes.add(planningMode);
-        if (TERMINAL_KINDS.has(event.kind)) terminal = event;
-      }
-      validateEndAgainstTerminal(run.end, run.start.runId, terminal);
+      const run = await readLoopRunSummary(this, runId);
       if (run.start.continuation === undefined) continue;
       const continuation = validateLoopContinuation(run.start.continuation, 'run continuation', true);
       const group = groups.get(continuation.loopId) ?? { continuation, runs: [] };
-      group.runs.push({ start: run.start, terminal, planningBranchingModes: [...planningBranchingModes] });
+      group.runs.push(run);
       groups.set(continuation.loopId, group);
     }
     for (const group of groups.values()) {
@@ -570,7 +558,7 @@ export class LabStore {
     if (current.lastRunId === null) {
       throw new LabStoreError('NOT_FOUND', 'No persisted loop continuation exists.', {});
     }
-    const run = await this.readRun(current.lastRunId);
+    const run = await readLoopRunSummary(this, current.lastRunId);
     if (run.start.continuation === undefined) {
       throw new LabStoreError('NOT_FOUND', 'No persisted loop continuation exists.', {});
     }
@@ -2064,6 +2052,27 @@ function isValidRandomizedTrialContinuation(value) {
     value.candidateCapabilityIds.every((capabilityId) => (
       typeof capabilityId === 'string' && capabilityId.length > 0 && capabilityId.length <= 4096
     )) && new Set(value.candidateCapabilityIds).size === value.candidateCapabilityIds.length;
+}
+
+async function readLoopRunSummary(store, runId) {
+  const run = await store.readRunStream(runId);
+  const planningBranchingModes = new Set();
+  let terminal = null;
+  for await (const event of run.events) {
+    const planningMode = event.kind === 'STEP'
+      ? planningBranchingModeForStep(event)
+      : event.kind === 'RUN_HALTED' || event.kind === 'RUN_COMPLETED'
+        ? planningBranchingModeForTerminal(event)
+        : null;
+    if (planningMode !== null) planningBranchingModes.add(planningMode);
+    if (TERMINAL_KINDS.has(event.kind)) terminal = event;
+  }
+  validateEndAgainstTerminal(run.end, run.start.runId, terminal);
+  return {
+    start: run.start,
+    terminal,
+    planningBranchingModes: [...planningBranchingModes],
+  };
 }
 
 function inferLoopPlanningBranchingMode(group) {

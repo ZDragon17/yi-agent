@@ -1749,3 +1749,10 @@
 - 实现：完整消费 `readRunStream()` 以保留逐事件校验，只为带 continuation 的 Run 保存 immutable start、terminal 和规划模式摘要；规划模式推断、runIndex 连续性、可恢复终态、active 冲突和 contract 比较复用原语义。流式消费者完成后统一核对 `end.json` 与终态事件。
 - 验证：legacy continuation、规划模式推断、Application continuous/resume、CLI crash/continuation 相关回归共 20/20 通过；外部事务和 repo WorldPort 回归继续通过。新提交仍需等待远端三平台 CI。
 - 边界：loop group 仍保留轻量 Run 摘要，现代 `readCurrentLoopContinuation()` 的单 Run 兼容路径仍可能读取数组；该节点不提供无限历史、磁盘分页或跨文件事务快照。
+
+## F-232 当前 loop continuation 恢复的流式读取
+
+- 反证/缺口：F-231 已压缩 legacy 历史扫描，但现代 `readCurrentLoopContinuation()` 仍调用数组版 `readRun()`；长 Run 在已经知道 `current.lastRunId` 时仍会一次性物化全部事件。
+- 实现：当前 Run 与历史 loop 扫描共用 `readLoopRunSummary()`，逐事件消费并验证 `readRunStream()`，只保留 immutable start、terminal 和规划模式集合；`end.json` 仍在流消费完成后与终态事件核对。缺失规划模式的旧 continuation 继续回退到历史摘要推断。
+- 验证：Runtime `68/68`、continuous/resume `9/9`、CLI crash/continuation `7/7`；新增反例让数组版 `readRun()` 不可用，现代 current 恢复仍成功。
+- 边界：legacy 推断仍需保留必要的轻量历史摘要，数组版兼容 API 仍存在；该节点不提供无限历史、磁盘分页、跨文件事务快照或现实执行真实性。

@@ -499,3 +499,7 @@ F-230 处理另一条启动恢复热路径。旧的 `findUnresolvedExternalTrans
 F-231 收拢 legacy loop continuation 的全量扫描。旧路径为寻找可恢复的 loop，把每个 Run 的全部事件数组放进 group；新路径使用 `readRunStream()` 完整验证事件，却只留下有 continuation 的 Run 的 immutable start、terminal 和规划模式集合。`inferLoopPlanningBranchingMode()` 改为读取这份轻量摘要，`summarizeLoopContinuation()` 与 `summarizeLatestLoopRun()` 同时兼容流式摘要和旧数组对象，故 runIndex 连续性、可恢复终态、目标停止原因、active loop 冲突和 contract 漂移规则不变。
 
 流式恢复消费者在事件流耗尽后都会校验 `end.json` 的终态 sequence、digest、status 和 finalStateDigest，避免“只筛选感兴趣事件”削弱旧 `readRun()` 的账本边界。测试覆盖 legacy continuation、历史规划模式推断、continuous/resume、CLI crash continuation 以及外部恢复路径。内存仍会保存各 loop 的轻量 run 摘要，且现代 `readCurrentLoopContinuation()` 对单个旧数组 Run 的兼容路径尚未改写；这不是无限历史或事务快照。
+
+F-232 收拢现代 loop continuation 的当前 Run 读取。旧的 `readCurrentLoopContinuation()` 仍调用数组版 `readRun()`，导致已经拥有 `current.lastRunId` 的现代 `--resume` 也会一次性物化整条 Run。现在当前 Run 与历史扫描共用 `readLoopRunSummary()`：完整消费 `readRunStream()`，验证事件链和 `end.json`，只返回 start、终态和规划模式集合；现代 continuation 直接使用这一摘要，旧 continuation 在规划模式缺失时继续通过历史摘要完成推断。这样重启恢复的热路径不再依赖完整事件数组，同时保留旧版本账本兼容和终态一致性边界。
+
+该节点的 Runtime、continuous/resume 和 CLI crash/continuation 定向回归分别为 `68/68`、`9/9` 和 `7/7`。当前仍会为 legacy 推断保留必要的轻量历史摘要，`readAllRuns()` 等兼容接口也没有改变；这不是无限历史、磁盘分页、跨文件事务快照或现实执行真实性。
