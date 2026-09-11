@@ -49,6 +49,10 @@ test('10,000-step runs stay within the ledger bound and preserve complete eviden
 
     const ledger = await stat(path.join(lab, 'runs', 'nfr-run', 'events.jsonl'));
     assert.ok(ledger.size < 40 * 1024 * 1024, `ledger is ${ledger.size} bytes`);
+
+    const replay = await runLowHeapReplay(lab);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
   });
 });
 
@@ -105,6 +109,39 @@ function runLongRunChild(labPath) {
       } catch (error) {
         reject(new Error(`long-run child returned invalid JSON: ${error.message}`));
       }
+    });
+  });
+}
+
+function runLowHeapReplay(labPath) {
+  const cli = path.resolve('bin/yi-agent.mjs');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      '--max-old-space-size=128',
+      cli,
+      'replay',
+      '--lab',
+      labPath,
+      '--run',
+      'nfr-run',
+      '--json',
+    ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code, signal) => {
+      let parsed = [];
+      try {
+        parsed = stdout.trim() === '' ? [] : stdout.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+      } catch (error) {
+        reject(new Error(`low-heap replay returned invalid JSON: ${error.message}; stderr=${stderr}`));
+        return;
+      }
+      resolve({ code, signal, stdout: parsed, stderr });
     });
   });
 }

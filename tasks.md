@@ -1719,5 +1719,5 @@
 
 - 反证/缺口：F-226 把内存上界降到单个 Run，但 `readRun` 和数组版 `replayRun` 仍会把该 Run 的所有事件同时保留；单个 Run 足够长时，历史总量仍能压垮宿主。
 - 实现：Runtime 新增 `LabStore.readRunStream()`，以异步生成器逐行读取 `events.jsonl`，在产出事件前完成行大小、JSON、压缩 payload、摘要链、STEP 状态连续性和终态校验。Replay 新增 `replayRunStream()`，逐事件执行确定性重演，只保留当前状态、前一摘要和终态；单 Run 与 chain Replay 都改走该路径，数组版 `replayRun` 保留给纯内存调用方。
-- 验证：Runtime 事件流和 Replay 异步账本回归通过；应用层既有单 Run、目标 epoch、内置 WorldPort、外部 JSONL WorldPort 和 chain Replay 继续复用同一入口并通过。下一轮需要增加长单 Run 的实际内存压力证据。
+- 验证：Runtime 事件流和 Replay 异步账本回归通过；应用层既有单 Run、目标 epoch、内置 WorldPort、外部 JSONL WorldPort 和 chain Replay 继续复用同一入口并通过。10,000 步账本在 `--max-old-space-size=128` 的独立 CLI 进程中 Replay 为 `CONSISTENT`。
 - 边界：这是文件内事件的有界流式读取，不是无限事件、磁盘分页、跨文件事务快照或现实执行真实性；每行和完整账本的现有大小上限、移动 current 的 `BUSY` 检测及离线 Replay 约束保持不变。
