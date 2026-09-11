@@ -47,22 +47,25 @@ export function createEffectBroker({
   now = () => new Date().toISOString(),
   journal = null,
   initialRecords = [],
+  retainEvents = true,
 }) {
   validateExecutor(executor);
   if (typeof now !== 'function') {
     throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker clock must be a function.');
   }
+  if (typeof retainEvents !== 'boolean') {
+    throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker retainEvents must be a boolean.');
+  }
   if (journal !== null && (typeof journal.append !== 'function' ||
       (typeof journal.read !== 'function' && typeof journal.readStream !== 'function'))) {
     throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker journal does not expose append/read.');
   }
-  let journalHeadDigest = journal === null ? null : journal.head !== undefined
-    ? journal.head().digest
-    : journal.read().at(-1)?.digest ?? null;
+  let journalHeadDigest = journal === null ? null : journalHead(journal).digest;
 
   const records = new Map();
   for (const source of initialRecords) {
     const record = restoreRecord(source);
+    if (!retainEvents) record.events = null;
     if (records.has(record.intent.executionNonce)) {
       throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker restore contains duplicate execution nonces.');
     }
@@ -87,7 +90,9 @@ export function createEffectBroker({
           intent,
           phase: intent.requiresConfirmation ? 'AWAITING_CONFIRMATION' : 'CONFIRMED',
           receipt: null,
-          events: [],
+          events: retainEvents ? [] : null,
+          eventCount: 0,
+          lastEvent: null,
         };
         await transition(record, record.phase, null, 'INTENT_PLANNED', {
           planDigest: intent.planDigest,
@@ -271,6 +276,25 @@ export function createEffectBroker({
     list() {
       return [...records.values()].map((record) => snapshot(record));
     },
+
+    getSummary(executionNonce) {
+      return summary(requireRecord(records, executionNonce));
+    },
+
+    listSummaries() {
+      return [...records.values()].map((record) => summary(record));
+    },
+
+    async readHistory(executionNonce) {
+      const record = requireRecord(records, executionNonce);
+      if (journal === null) return cloneJson(record.events ?? []);
+      const history = [];
+      const events = typeof journal.readStream === 'function' ? journal.readStream() : journal.read();
+      for await (const event of events) {
+        if (event.executionNonce === record.intent.executionNonce) history.push(event);
+      }
+      return cloneJson(history);
+    },
   });
 
   function enqueue(operation) {
@@ -290,7 +314,9 @@ export function createEffectBroker({
     const event = await appendEvent(record, type, { phase, receipt, detail });
     record.phase = phase;
     record.receipt = receipt === null ? null : cloneJson(receipt);
-    record.events.push(event);
+    record.eventCount += 1;
+    record.lastEvent = cloneJson(event);
+    if (record.events !== null) record.events.push(event);
   }
 
   async function appendOnly(record, type, detail) {
@@ -299,7 +325,9 @@ export function createEffectBroker({
       receipt: record.receipt,
       detail,
     });
-    record.events.push(event);
+    record.eventCount += 1;
+    record.lastEvent = cloneJson(event);
+    if (record.events !== null) record.events.push(event);
   }
 
   async function appendEvent(record, type, state) {
@@ -323,19 +351,17 @@ export function createEffectBroker({
         } catch (error) {
           const sameNonceEventCount = typeof journal.countEventsByNonce === 'function'
             ? await journal.countEventsByNonce(record.intent.executionNonce)
-            : journal.read().filter((event) => event.executionNonce === record.intent.executionNonce).length;
-          if (error?.code !== 'CONFLICT' || attempt !== 0 || sameNonceEventCount > record.events.length) {
+            : await countJournalEvents(journal, record.intent.executionNonce);
+          if (error?.code !== 'CONFLICT' || attempt !== 0 || sameNonceEventCount > record.eventCount) {
             throw error;
           }
-          journalHeadDigest = journal.head !== undefined
-            ? journal.head().digest
-            : journal.read().at(-1)?.digest ?? null;
+          journalHeadDigest = journalHead(journal).digest;
         }
       }
     }
     return {
       schemaVersion: SCHEMA_VERSION,
-      sequence: record.events.length + 1,
+      sequence: record.eventCount + 1,
       recordedAt: now(),
       type,
       executionNonce: record.intent.executionNonce,
@@ -370,9 +396,12 @@ export function createEffectBroker({
   }
 }
 
-export async function restoreEffectBroker({ journal, executor, now = () => new Date().toISOString() }) {
+export async function restoreEffectBroker({ journal, executor, now = () => new Date().toISOString(), retainEvents = true }) {
   if (!journal || (typeof journal.read !== 'function' && typeof journal.readStream !== 'function')) {
     throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker restore requires a readable journal.');
+  }
+  if (typeof retainEvents !== 'boolean') {
+    throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker retainEvents must be a boolean.');
   }
   const grouped = new Map();
   const events = typeof journal.readStream === 'function' ? journal.readStream() : journal.read();
@@ -417,11 +446,15 @@ export async function restoreEffectBroker({ journal, executor, now = () => new D
       intent: normalized,
       phase,
       receipt: receipt === null ? null : cloneJson(receipt),
-      events: [],
+      events: retainEvents ? [] : null,
+      eventCount: 0,
+      lastEvent: null,
     };
     record.phase = phase;
     record.receipt = receipt === null ? null : cloneJson(receipt);
-    record.events.push(cloneJson(event));
+    record.eventCount += 1;
+    record.lastEvent = cloneJson(event);
+    if (record.events !== null) record.events.push(cloneJson(event));
     grouped.set(normalized.executionNonce, record);
   }
 
@@ -433,7 +466,7 @@ export async function restoreEffectBroker({ journal, executor, now = () => new D
       record.receipt = null;
     }
   }
-  return createEffectBroker({ executor, now, journal, initialRecords: [...grouped.values()] });
+  return createEffectBroker({ executor, now, journal, initialRecords: [...grouped.values()], retainEvents });
 }
 
 function validateExecutor(executor) {
@@ -491,14 +524,18 @@ function normalizeIntent(value) {
 
 function restoreRecord(source) {
   if (!isRecord(source) || !isRecord(source.intent) || !PHASES.has(source.phase) ||
-      (source.receipt !== null && !isData(source.receipt)) || !Array.isArray(source.events)) {
+      (source.receipt !== null && !isData(source.receipt)) ||
+      (source.events !== null && !Array.isArray(source.events))) {
     throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker restore record is invalid.');
   }
+  const events = source.events === null ? null : cloneJson(source.events);
   return {
     intent: normalizeIntent(source.intent),
     phase: source.phase,
     receipt: source.receipt === null ? null : cloneJson(source.receipt),
-    events: cloneJson(source.events),
+    events,
+    eventCount: source.eventCount ?? events?.length ?? 0,
+    lastEvent: source.lastEvent === undefined ? events?.at(-1) ?? null : cloneJson(source.lastEvent),
   };
 }
 
@@ -517,13 +554,50 @@ function invalidPhase(record, operation) {
 }
 
 function snapshot(record) {
-  return cloneJson({
+  const result = {
     schemaVersion: SCHEMA_VERSION,
     phase: record.phase,
     intent: record.intent,
     receipt: record.receipt,
     events: record.events,
+  };
+  if (record.events === null) {
+    result.eventHistory = {
+      retained: false,
+      eventCount: record.eventCount,
+      lastEventDigest: record.lastEvent?.digest ?? null,
+    };
+  }
+  return cloneJson(result);
+}
+
+function summary(record) {
+  return cloneJson({
+    schemaVersion: SCHEMA_VERSION,
+    phase: record.phase,
+    intent: record.intent,
+    receipt: record.receipt,
+    eventHistory: {
+      retained: record.events !== null,
+      eventCount: record.eventCount,
+      lastEventDigest: record.lastEvent?.digest ?? null,
+    },
   });
+}
+
+function journalHead(journal) {
+  if (typeof journal.head === 'function') return journal.head();
+  if (typeof journal.read === 'function') return journal.read().at(-1) ?? { digest: null };
+  return { digest: null };
+}
+
+async function countJournalEvents(journal, executionNonce) {
+  const events = typeof journal.readStream === 'function' ? journal.readStream() : journal.read();
+  let count = 0;
+  for await (const event of events) {
+    if (event.executionNonce === executionNonce) count += 1;
+  }
+  return count;
 }
 
 function errorDescriptor(error) {

@@ -2066,6 +2066,8 @@ test('CLI drives a marked sandbox file effect across separate processes', async 
     const inspect = await invoke('effect', 'inspect', '--journal', journal, '--json');
     assert.equal(inspect.code, 0);
     assert.equal(inspect.stdout[0].data.effects[0].phase, 'APPLIED');
+    assert.deepEqual(inspect.stdout[0].data.effects[0].eventHistory.retained, false);
+    assert.equal(inspect.stdout[0].data.effects[0].eventHistory.eventCount, 4);
     const compensate = await invoke('effect', 'compensate', '--journal', journal, '--sandbox-root', sandbox, '--nonce', unsigned.executionNonce, '--json');
     assert.equal(compensate.code, 0);
     assert.equal(compensate.stdout[0].data.phase, 'REVERSED');

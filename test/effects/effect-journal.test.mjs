@@ -145,6 +145,46 @@ test('lazy EffectJournal restores and appends without exposing a synchronous eve
   }
 });
 
+test('journal-backed broker can drop runtime event histories and reread them by nonce', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'yi-agent-effect-broker-history-'));
+  const filePath = path.join(directory, 'effects.jsonl');
+  try {
+    const intent = makeIntent({ requiresConfirmation: false, executionNonce: 'nonce:history:bounded' });
+    const broker = await restoreEffectBroker({
+      executor: executorWith(),
+      journal: await EffectJournal.open(filePath, { lazy: true }),
+      now: clock(),
+      retainEvents: false,
+    });
+
+    const planned = await broker.plan(intent);
+    assert.equal(planned.events, null);
+    assert.equal(planned.eventHistory.retained, false);
+    assert.equal(planned.eventHistory.eventCount, 2);
+    assert.match(planned.eventHistory.lastEventDigest, /^sha256:[0-9a-f]{64}$/u);
+    assert.equal(broker.getSummary(intent.executionNonce).eventHistory.eventCount, 2);
+    assert.equal(broker.listSummaries().length, 1);
+
+    const history = await broker.readHistory(intent.executionNonce);
+    assert.deepEqual(history.map((event) => event.type), ['INTENT_PLANNED', 'AUTO_AUTHORIZED']);
+    assert.equal((await broker.execute(intent.executionNonce)).phase, 'APPLIED');
+
+    const restored = await restoreEffectBroker({
+      executor: executorWith(),
+      journal: await EffectJournal.open(filePath, { lazy: true }),
+      now: clock(),
+      retainEvents: false,
+    });
+    assert.equal(restored.get(intent.executionNonce).events, null);
+    assert.deepEqual(
+      (await restored.readHistory(intent.executionNonce)).map((event) => event.type),
+      ['INTENT_PLANNED', 'AUTO_AUTHORIZED', 'EXECUTION_STARTED', 'EFFECT_APPLIED'],
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('recovery converts a durable EXECUTING boundary into reconciliation', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'yi-agent-effect-recovery-'));
   const filePath = path.join(directory, 'effects.jsonl');

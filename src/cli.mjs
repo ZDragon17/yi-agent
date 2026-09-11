@@ -334,10 +334,10 @@ async function dispatchEffect(options) {
   const journalPath = requiredAbsolute(options, 'journal');
   const journal = await EffectJournal.open(journalPath, { lazy: true });
   if (operation === 'inspect') {
-    const broker = await restoreEffectBroker({ journal, executor: inertExecutor() });
+    const broker = await restoreEffectBroker({ journal, executor: inertExecutor(), retainEvents: false });
     return {
       journal: journalPath,
-      effects: broker.list(),
+      effects: broker.listSummaries(),
     };
   }
 
@@ -346,6 +346,7 @@ async function dispatchEffect(options) {
   const broker = await restoreEffectBroker({
     journal,
     executor: createSandboxFileExecutor({ sandboxRoot }),
+    retainEvents: false,
   });
   if (operation === 'plan') return broker.plan(await readIntentFile(requiredAbsolute(options, 'intent')));
 
