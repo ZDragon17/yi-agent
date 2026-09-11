@@ -215,7 +215,10 @@ async function ensureBranch({ outputPath, side, parent, initialState, scenario, 
       advisor: fixedAdvisor(token, side),
     });
   } else {
-    const run = await store.readRun(runId);
+    const run = await store.readRunStream(runId);
+    for await (const _event of run.events) {
+      // 必须消费完整流，确保恢复前执行既有 Run 完整性校验。
+    }
     if (canonicalDigest(run.start.initialState) !== canonicalDigest(initialState) || run.start.scenario !== scenario) {
       throw new LabStoreError('CONFLICT', `${side} branch does not continue the paired initial state.`, {
         field: `${side}.start`,

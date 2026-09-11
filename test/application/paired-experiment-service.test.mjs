@@ -25,13 +25,24 @@ test('paired experiment persists two isolated branches and is idempotent on resu
     const leftToken = parentManifest.tokenMap.entries[0].token;
     const rightToken = parentManifest.tokenMap.entries[1].token;
 
-    const result = await runPairedCandidates({
-      labPath: parent,
-      outputPath: output,
-      leftToken,
-      rightToken,
-      scenario: 'regime-shift',
-    });
+    const originalReadRun = LabStore.prototype.readRun;
+    LabStore.prototype.readRun = async () => {
+      throw new Error('array Run materialization must not be used by paired candidate branch validation');
+    };
+    let result;
+    let resumed;
+    try {
+      result = await runPairedCandidates({
+        labPath: parent,
+        outputPath: output,
+        leftToken,
+        rightToken,
+        scenario: 'regime-shift',
+      });
+      resumed = await runPairedCandidates({ labPath: parent, outputPath: output, resume: true });
+    } finally {
+      LabStore.prototype.readRun = originalReadRun;
+    }
 
     assert.equal(result.verdict, 'PASS');
     assert.equal(result.comparison.verdict, 'RIGHT_BETTER');
@@ -42,7 +53,6 @@ test('paired experiment persists two isolated branches and is idempotent on resu
     assert.equal(await readFile(path.join(output, 'pair.start.json'), 'utf8').then((value) => value.endsWith('\n')), true);
     assert.equal(await readFile(path.join(output, 'pair.end.json'), 'utf8').then((value) => value.endsWith('\n')), true);
 
-    const resumed = await runPairedCandidates({ labPath: parent, outputPath: output, resume: true });
     assert.deepEqual(resumed, result);
   });
 });
