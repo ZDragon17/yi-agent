@@ -1840,3 +1840,10 @@
 - 实现：`findCommittedStep()` 完整消费 `readLedgerStream()` 后只缓存匹配的 STEP；`reconcileLedger()` 逐事件验证内存水位，随后处理水位之后的 STEP，保留 nonce 证据冲突、终态 BUSY 和水位缺失为 CORRUPT 的规则。流继续消费到文件末尾，避免提前找到 nonce 或终态就跳过其余账本校验。
 - 验证：活动账本、写入后同步不确定、并发/锁接管、nonce、恢复与终态回归 `82/82`；连续运行、重启恢复、目标计划、opaque 六维 WorldPort、内置多 WorldPort 和跨 WorldPort 连续性回归 `35/35`。
 - 边界：活动流仍维护单个 ledger 内的精确 executionNonce 集合，并保留 `readLedger()`、`readRun()` 等数组兼容 API；本节点不改变外部副作用的幂等/对账信任边界，也不提供持久索引或无限历史承诺。
+
+## F-245 inspect 固定 watermark 的流式化
+
+- 反证/缺口：F-241 已让 `startRun()` 使用流式校验，但 `inspect()` 仍调用带 `maxSequence` 的 `readLedger()`；后者先读取整个事件文件字符串，再截取 current watermark 前缀，活动 Run 后续的大 ledger 仍会产生不必要驻留。
+- 实现：`readLedgerStream()` 增加按目标换行定位前缀的能力，使用固定大小块找到第 N 个换行后只读取该字节范围；`inspect()` 用流式摘要完成 current 引用和投影校验。活动 Run 后续的完整事件或 partial tail 不进入快照，watermark 缺失仍报 CORRUPT；终态 inspect 仍要求完整账本和终止事件。
+- 验证：inspect 固定水位、partial tail、watermark 不存在、损坏账本、恢复与链回归 `30/30`；Runtime 全量回归 `82/82`。
+- 边界：`readLedger()`、`readRun()` 等数组兼容接口保留；前缀读取仍受单行、账本大小和文件稳定性校验约束，本节点不提供跨文件事务快照、持久索引或无限历史保证。

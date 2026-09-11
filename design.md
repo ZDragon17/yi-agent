@@ -535,3 +535,5 @@ F-242 将 `findUnresolvedExternalTransition()` 的两次历史扫描改为异步
 F-243 将崩溃恢复的事件读取改为流式摘要。`recoverRun()` 复用 `readLedgerStream()` 逐行完成 JSON、摘要链、STEP 状态、executionNonce、终止事件和文件稳定性校验，只保留首事件、末事件、current 水位事件、最后一个 STEP 状态和事件计数。恢复需要追加 `CRASH_HALTED` 时，摘要会在追加后更新；撕裂尾部先通过反向固定块扫描定位最后一个换行，再只消费完整前缀，校验完成后才截断尾部。数组版 `readLedger()`、`readRun()` 等兼容接口不变；全历史 nonce 集合仍受单个 ledger 大小上限约束，不把该路径描述为无限历史或跨文件事务快照。
 
 F-244 将活动 Run 的不确定写入和账本 reconcile 也接到流式读取。`findCommittedStep()` 消费完整事件流后只保留匹配 nonce 的 STEP；`reconcileLedger()` 只校验并处理内存水位之后的 STEP，同时保留水位存在性、nonce 证据冲突、终态 BUSY 和文件稳定性规则。两条路径不再为查找一个提交或同步少量追加事件而创建整本事件数组。活动 ledger 的精确 nonce 集合仍由流式校验器维护，数组兼容读取和外部效果信任边界没有改变。
+
+F-245 将 `inspect()` 的固定 watermark 校验也接到流式摘要。活动 Run 先按 current 的序号定位第 N 个换行，只消费该完整前缀，因此 watermark 之后的追加事件或撕裂尾部不会被读入当前只读快照；前缀缺少目标行、摘要链损坏或状态投影不一致仍返回 `CORRUPT`。终态 Run 继续消费完整账本并要求终止事件，`readLedger()` 和其他数组兼容接口不变。该设计减少 inspect 的完整文件字符串驻留，不提供跨文件事务快照或无限历史一致性。
