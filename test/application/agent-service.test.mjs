@@ -708,6 +708,22 @@ test('a completed goal can start a new goal epoch without resetting world or mem
     assert.equal(chain.checkedRuns, 2);
     assert.equal(chain.goalEpochs, 1);
     assert.deepEqual(chain.runs.map((item) => item.runId), ['run-1', 'run-2']);
+
+    const staleCurrentBase = {
+      schemaVersion: 1,
+      ...firstRun.events.at(-1).payload.finalState,
+      status: 'READY',
+      lastRunId: 'run-1',
+      lastRunSequence: firstRun.end.finalSequence,
+      eventsDigest: firstRun.end.finalEventDigest,
+    };
+    await writeFile(
+      path.join(lab, 'state', 'current.json'),
+      `${canonicalJson({ ...staleCurrentBase, selfDigest: canonicalDigest(staleCurrentBase) })}\n`,
+    );
+    const staleChain = await replayLab({ labPath: lab, chain: true, registry });
+    assert.equal(staleChain.verdict, 'INCONSISTENT', JSON.stringify(staleChain));
+    assert.equal(staleChain.firstDifference.kind, 'CURRENT_CONTINUITY');
   });
 });
 

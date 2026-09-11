@@ -475,3 +475,5 @@ F-221 处理长计划历史的重复工作。应用层内部生成的连续状�
 F-222 把目标生命周期从“一个 Lab 只能有一个已激活目标”推进为连续的有限目标 epoch。目标完成或因预算停机后，下一次 `agent run` 可以提供新的 goal 或 goal plan；运行时只重建监督器，WorldPort 状态、Memory、RNG 和 kernelStep 必须与上一 current 一致。新的 immutable run start 记录前一连续性状态、前一监督器和新监督器的摘要，首个 STEP 的 `goalActivation` 记录新的控制周期。若前一监督器仍为 ACTIVE 或 REPLAN_REQUIRED，目标替换会被拒绝；这条限制保留了活跃控制边界的单调性。该能力让同一世界可以连续经历多个目标，而不是把“换目标”伪装成修改旧账本；它仍不解决自然语言目标的真实含义、目标之间的优先级或现实权限治理。
 
 F-223 把 Replay 从单个 Run 推进到 Lab 级连续账本。`replay --chain` 先读取全部终态 Run，按初始 `kernelStep` 排序并逐个执行原有确定性 Replay；再比较相邻 Run 的 WorldPort 状态、Memory、RNG 和 `kernelStep`。如果监督器状态发生切换，则继续验证前一终态与 `goalEpoch` 的前置摘要、后一 Run 的新监督器摘要，以及前后监督器分别处于终态和 ACTIVE。发现单 Run 差异、跨 Run 断裂或运行中的 current 时，命令返回首个可定位差异，不连接 adapter，也不改写账本。该入口把“本 Run 可重放”和“目标周期确实接续”分成两道可验证边界；它仍不提供对主动篡改者的签名证明，也不把跨 Lab 分支或现实世界因果纳入 Replay。
+
+F-224 把连续 Replay 的边界延伸到 Lab 的当前水位。链回放读取同一只读快照中的 `current.json` 和全部终态 Run；在每个 Run 可重算且相邻 Run 连续后，必须确认 `current.lastRunId`、终态状态、事件序号、事件摘要和状态投影都指向链尾。这样即使有人重算了自洽的 current 摘要并把水位回退到旧 Run，也会得到 `CURRENT_CONTINUITY` 差异；current 仍为 `RUNNING` 时继续 fail-closed 要求先恢复。该检查验证的是账本链尾与可继续状态的一致性，不取代文件系统原子发布、签名信任或现实执行对账。

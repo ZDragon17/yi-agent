@@ -387,6 +387,10 @@ export class LabStore {
   }
 
   async readAllRuns() {
+    return (await this.readChainSnapshot()).runs;
+  }
+
+  async readChainSnapshot() {
     const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
     validateCurrentShape(current);
     if (current.status === 'RUNNING') {
@@ -396,10 +400,13 @@ export class LabStore {
     }
     const runs = [];
     for (const runId of await listRunIds(this.root)) runs.push(await this.readRun(runId));
-    return runs.sort((left, right) => (
-      left.start.initialState.kernelStep - right.start.initialState.kernelStep ||
-      left.start.runId.localeCompare(right.start.runId)
-    ));
+    return {
+      current: cloneJson(current),
+      runs: runs.sort((left, right) => (
+        left.start.initialState.kernelStep - right.start.initialState.kernelStep ||
+        left.start.runId.localeCompare(right.start.runId)
+      )),
+    };
   }
 
   async readCandidateOutcomes(limit = MAX_CANDIDATE_HISTORY) {

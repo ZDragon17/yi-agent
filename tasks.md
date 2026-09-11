@@ -1693,3 +1693,10 @@
 - 实现：新增只读 `replay --lab PATH --chain`。Runtime 读取全部终态 Run 并按初始 `kernelStep` 排序；Application 逐个执行既有 Replay，再比较相邻 Run 的 WorldPort 状态、Memory、RNG 和 `kernelStep`。目标切换时额外校验 `goalEpoch` 的前一状态摘要、前一监督器摘要、后一监督器摘要，以及前后监督器状态；current 仍为 `RUNNING` 时拒绝链回放，避免把未决边界当成连续账本。
 - 验证：应用层目标 epoch + chain replay 定向回归通过；内置 WorldPort CLI E2E、外部 JSONL adapter CLI E2E 均覆盖 `replay --chain`。提交前再执行 Runtime 回归、CLI 定向回归和 `git diff --check`，提交后以新的 CI 结果为准。
 - 边界：该入口提高的是 Lab 内事件连续性的可验证性，不是签名或主动攻击防护；不处理跨 Lab/分支合并，不启动外部 adapter，也不证明目标文本或现实效果本身真实。
+
+## F-224 连续 Replay 绑定 current 水位
+
+- 反证/缺口：F-223 能验证所有终态 Run 以及 Run 之间的状态接续，但只读取 current 的外形；把 `current.json` 自洽地重算后回退到旧 Run，链回放仍可能给出 `CONSISTENT`，无法证明可继续状态已经走到链尾。
+- 实现：Runtime 新增同一只读快照的 `readChainSnapshot()`，返回已校验的 current 与按初始 `kernelStep` 排序的全部终态 Run；`replay --chain` 在逐 Run Replay 和跨 Run 连续性之后，校验 current 的 `lastRunId`、READY/HALTED 状态、终态水位 sequence/digest，以及 current 状态投影是否等于最后一个 Run 的重放终态。差异返回 `CURRENT_CONTINUITY`，运行中的 current 仍返回 BUSY。
+- 验证：新增“重算 current 摘要但指回旧 Run”的应用层反例；目标 epoch 正向链回放和该反例均通过。提交后继续以三平台 CI 和 Oracle 结果确认。
+- 边界：这是 Lab 链尾与当前投影的一致性检查，不是签名防篡改、跨进程原子快照或现实效果证明；不启动外部 adapter，不改变历史 Run。

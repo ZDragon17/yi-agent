@@ -1401,7 +1401,7 @@ export async function replayLab(input) {
 }
 
 async function replayLabChain({ store, registry }) {
-  const runs = await store.readAllRuns();
+  const { current, runs } = await store.readChainSnapshot();
   if (runs.length === 0) {
     throw new LabStoreError('NOT_FOUND', 'No terminal runs exist for chain replay.', {});
   }
@@ -1448,6 +1448,18 @@ async function replayLabChain({ store, registry }) {
     }
     previous = { runId: run.start.runId, finalState: result.finalState };
   }
+  const currentDifference = chainCurrentContinuityDifference(current, runs.at(-1), previous);
+  if (currentDifference !== null) {
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      verdict: 'INCONSISTENT',
+      checkedRuns: summaries.length,
+      checkedSequences,
+      goalEpochs,
+      runs: summaries,
+      firstDifference: currentDifference,
+    };
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
     verdict: 'CONSISTENT',
@@ -1457,6 +1469,52 @@ async function replayLabChain({ store, registry }) {
     runs: summaries,
     firstDifference: null,
   };
+}
+
+function chainCurrentContinuityDifference(current, lastRun, lastReplay) {
+  if (current.lastRunId !== lastRun.start.runId) {
+    return {
+      kind: 'CURRENT_CONTINUITY',
+      field: 'lastRunId',
+      expected: lastRun.start.runId,
+      actual: current.lastRunId,
+      message: 'Current does not point to the last terminal Run in the chain.',
+    };
+  }
+  const expectedStatus = lastRun.end.terminalStatus === 'COMPLETED' ? 'READY' : 'HALTED';
+  if (current.status !== expectedStatus) {
+    return {
+      kind: 'CURRENT_CONTINUITY',
+      field: 'status',
+      expected: expectedStatus,
+      actual: current.status,
+      message: 'Current status does not match the last terminal Run.',
+    };
+  }
+  if (current.lastRunSequence !== lastRun.end.finalSequence || current.eventsDigest !== lastRun.end.finalEventDigest) {
+    return {
+      kind: 'CURRENT_CONTINUITY',
+      field: 'watermark',
+      expected: { sequence: lastRun.end.finalSequence, eventsDigest: lastRun.end.finalEventDigest },
+      actual: { sequence: current.lastRunSequence, eventsDigest: current.eventsDigest },
+      message: 'Current watermark does not point to the last terminal Run.',
+    };
+  }
+  const currentState = {
+    worldState: current.worldState,
+    memory: current.memory,
+    rngState: current.rngState,
+    kernelStep: current.kernelStep,
+    ...(current.changeSupervisor === undefined ? {} : { changeSupervisor: current.changeSupervisor }),
+  };
+  if (canonicalJson(currentState) !== canonicalJson(lastReplay.finalState)) {
+    return {
+      kind: 'CURRENT_CONTINUITY',
+      field: 'state',
+      message: 'Current state does not match the replayed last terminal Run.',
+    };
+  }
+  return null;
 }
 
 function replayStoredRun(run, registry) {

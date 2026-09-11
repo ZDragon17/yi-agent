@@ -652,3 +652,5 @@ F-96 增加 `experiment policy`，用 `candidate-policy` 文件表达一个受�
 F-222 增加有限的目标 epoch：前一个目标只有在 `COMPLETED` 或 `HALTED` 后，才能由新的 `goal` 或 `goal-plan` 开启下一目标周期。新周期保留 WorldPort 状态、Memory、RNG 和 kernelStep，只重置监督器的目标局部进度；前后连续性摘要写入 immutable run start，首个 STEP 写入新的 `goalActivation`。如果旧目标仍为 `ACTIVE` 或 `REPLAN_REQUIRED`，CLI 会拒绝替换。这样同一 Lab 可以在完成一个目标后继续推进另一个目标，同时不修改已完成 Run 的历史。这个机制只解决目标生命周期和持久化边界，不把目标文本自动变成可验证的现实意图，也不绕过外部 transition 的恢复与人工对账要求。当前本机定向应用回归为 `4/4`，内置 WorldPort 的 PowerShell-facing CLI E2E 与独立 JSONL adapter CLI E2E 各为 `1/1`。
 
 F-223 增加 Lab 级连续账本 Replay。单个 `replay --run` 只重算一个终态 Run；`replay --chain` 会读取 Lab 中全部终态 Run，先逐个完成同样的确定性 Replay，再按初始 `kernelStep` 检查相邻 Run 的 WorldPort 状态、Memory、RNG 和时间步是否连续。遇到目标 epoch 切换时，它还会核对前一终态、前一监督器和后一监督器的摘要及状态，避免只验证单个 Run 而漏掉目标生命周期断点。该命令严格只读，不启动外部 adapter；如果 current 仍处于 `RUNNING`，会先要求完成恢复。它验证的是账本连续性，不是主动攻击防护、自然语言目标真实性或现实世界效果。
+
+F-224 把 `replay --chain` 的检查延伸到 current 水位。全部 Run 重放完成后，命令还会确认 `current.lastRunId`、READY/HALTED 状态、终态事件序号、事件摘要和状态投影都对应链尾 Run。即使有人重算了一个格式正确的 `current.json` 并把它指回旧 Run，也会返回 `CURRENT_CONTINUITY` 差异，而不会把历史回退误报为一致。该检查仍是账本和持久状态的一致性证据，不是签名信任或现实效果证明。
