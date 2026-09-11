@@ -43,6 +43,25 @@ test('application service runs a real closed loop and replays it without changin
   });
 });
 
+test('inspect uses the validated Run stream instead of array materialization', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'stream-inspect-lab', worldId: 'temperature', seed: 'stream-inspect-seed' });
+    await runLab({ labPath: lab, runId: 'run-1', steps: 2 });
+    const originalReadRun = LabStore.prototype.readRun;
+    LabStore.prototype.readRun = async () => {
+      throw new Error('array Run materialization must not be used by inspect');
+    };
+    try {
+      const inspection = await inspectLab({ labPath: lab });
+      assert.equal(inspection.inspectView.recent.sequence, 3);
+      const actionInspection = await inspectLab({ labPath: lab, action: 'run-1:2' });
+      assert.equal(actionInspection.inspectView.selectedAction.sequence, 2);
+    } finally {
+      LabStore.prototype.readRun = originalReadRun;
+    }
+  });
+});
+
 test('application records host-randomized action arms and Replay reuses the recorded assignment', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'randomized-trial-lab', worldId: 'temperature', seed: 'randomized-trial-seed' });

@@ -1333,12 +1333,12 @@ export async function inspectLab(input) {
   let selectedAction = null;
   if (requestedRunId !== null && requestedRunId !== undefined) {
     try {
-      run = await store.readRun(requestedRunId);
+      run = await readRunInspection(store, requestedRunId, actionReference);
     } catch (error) {
       if (!(error instanceof LabStoreError) || error.code !== 'BUSY' || source.runId !== undefined || actionReference !== null) throw error;
     }
     if (actionReference !== null) {
-      selectedAction = run.events.find((event) => event.sequence === actionReference.sequence && event.kind === 'STEP') ?? null;
+      selectedAction = run?.selectedAction ?? null;
       if (selectedAction === null) {
         throw new LabStoreError('NOT_FOUND', 'Action sequence does not identify a STEP event.', { action: source.action });
       }
@@ -1347,7 +1347,7 @@ export async function inspectLab(input) {
   const manifest = inspection.manifest;
   const candidateHistory = await store.readCandidateOutcomes();
   registry.assertManifest(manifest);
-  const recordedBoundary = run?.events?.findLast((event) => event.kind === 'STEP')?.payload?.boundary;
+  const recordedBoundary = run?.latestStep?.payload?.boundary;
   const recordedCapabilities = recordedBoundary?.afterCapabilities ?? recordedBoundary?.capabilities;
   const actions = selectedAction?.payload?.boundary?.capabilities
     ?? (manifest.adapter
@@ -1357,7 +1357,7 @@ export async function inspectLab(input) {
           manifest,
           run?.start?.scenario ?? manifest.scenarioIds?.[0] ?? 'steady',
         );
-          const actionState = run?.events?.at(-1)?.payload?.finalState?.worldState
+          const actionState = run?.terminal?.payload?.finalState?.worldState
             ?? inspection.current.worldState
             ?? await world.initialState();
         return await world.actions(worldManifest(manifest), actionState);
@@ -1375,6 +1375,22 @@ export async function inspectLab(input) {
       valueSpec: registry.valueSpec(manifest.worldId),
     }),
   };
+}
+
+async function readRunInspection(store, runId, actionReference = null) {
+  const run = await store.readRunStream(runId);
+  let latestStep = null;
+  let terminal = null;
+  let selectedAction = null;
+  for await (const event of run.events) {
+    if (event.kind === 'STEP') {
+      latestStep = event;
+      if (actionReference !== null && event.sequence === actionReference.sequence) selectedAction = event;
+    } else if (event.kind === 'RUN_COMPLETED' || event.kind === 'RUN_HALTED') {
+      terminal = event;
+    }
+  }
+  return { ...run, latestStep, terminal, selectedAction };
 }
 
 function parseActionReference(value) {

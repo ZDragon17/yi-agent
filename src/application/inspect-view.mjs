@@ -1,8 +1,10 @@
 import { canonicalDigest, cloneJson, SCHEMA_VERSION } from '../runtime/schema.mjs';
 
 export function buildInspectView({ manifest, current, run = null, actions, valueSpec: goal, selectedAction = null }) {
-  const latestStep = selectedAction ?? run?.events?.findLast((event) => event.kind === 'STEP') ?? null;
-  const terminal = run?.events?.at(-1);
+  const latestStep = selectedAction ?? run?.latestStep ?? (
+    Array.isArray(run?.events) ? run.events.findLast((event) => event.kind === 'STEP') : null
+  );
+  const terminal = run?.terminal ?? (Array.isArray(run?.events) ? run.events.at(-1) : null);
   const viewState = terminal?.payload?.finalState ?? current;
   const actionModels = viewState.memory?.actionModels ?? {};
   const relationModels = viewState.memory?.relationModels ?? {};
