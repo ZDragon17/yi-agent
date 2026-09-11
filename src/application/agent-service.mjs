@@ -6,7 +6,7 @@ import { annotateCandidateHistory } from '../runtime/candidate-history.mjs';
 import { acceptedSupersessionDigest } from '../runtime/candidate-lineage.mjs';
 import { KERNEL_LEARNING_VERSIONS, learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan, startGoalEpoch } from '../agent/change-supervisor.mjs';
-import { replayRun } from '../runtime/replay.mjs';
+import { replayRunStream } from '../runtime/replay.mjs';
 import {
   builtInWorldRegistry,
 } from './world-registry.mjs';
@@ -1395,9 +1395,9 @@ export async function replayLab(input) {
   if (source.chain === true) {
     return replayLabChain({ store, registry });
   }
-  const run = await store.readRun(requireText(source.runId, 'runId'));
+  const run = await store.readRunStream(requireText(source.runId, 'runId'));
   registry.assertManifest(run.manifest);
-  return replayStoredRun(run, registry);
+  return replayStoredRunStream(run, registry);
 }
 
 async function replayLabChain({ store, registry }) {
@@ -1411,9 +1411,9 @@ async function replayLabChain({ store, registry }) {
   let checkedSequences = 0;
   let goalEpochs = 0;
   for (const { runId } of runIds) {
-    const run = await store.readRun(runId);
+    const run = await store.readRunStream(runId);
     registry.assertManifest(run.manifest);
-    const result = replayStoredRun(run, registry);
+    const result = await replayStoredRunStream(run, registry);
     checkedSequences += result.checkedSequences ?? 0;
     const summary = {
       runId: run.start.runId,
@@ -1528,8 +1528,8 @@ function chainCurrentContinuityDifference(current, lastRun, lastReplay) {
   return null;
 }
 
-function replayStoredRun(run, registry) {
-  return replayRun({
+async function replayStoredRunStream(run, registry) {
+  return replayRunStream({
     ...run,
     worldFactories: {
       [run.start.worldId]: run.manifest.adapter

@@ -105,6 +105,21 @@ test('events are run-local, flushed before append resolves, and form a prevDiges
   await run.finish({ terminalStatus: 'HALTED', finalState: finalState() });
 }));
 
+test('readRunStream exposes validated events as an async stream', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  await run.append(stepEvent());
+  await run.finish({ terminalStatus: 'COMPLETED', finalState: finalState() });
+
+  const streamed = await store.readRunStream('run-1');
+  assert.equal(Array.isArray(streamed.events), false);
+  const events = [];
+  for await (const event of streamed.events) events.push(event);
+  assert.deepEqual(events.map((event) => event.kind), ['RUN_STARTED', 'STEP', 'RUN_COMPLETED']);
+  assert.deepEqual(events.map((event) => event.sequence), [1, 2, 3]);
+}));
+
 test('terminal reasons are bounded before they reach the ledger', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

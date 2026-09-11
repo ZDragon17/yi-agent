@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import {
   lstat,
@@ -383,6 +385,27 @@ export class LabStore {
       // RangeError even though the ledger itself is within its byte budget.
       events,
       end: cloneJson(end),
+    };
+  }
+
+  async readRunStream(runId) {
+    const safeRunId = requireSafeSegment(runId, 'runId');
+    await assertDirectoryIsCanonical(this.root, this.root);
+    const start = await readVerifiedObject(
+      childPath(this.root, 'runs', safeRunId, 'start.json'),
+      'run start',
+    );
+    validateStart(start, this.manifest, safeRunId);
+    const end = await readOptionalVerifiedObject(
+      childPath(this.root, 'runs', safeRunId, 'end.json'),
+      'run end',
+    );
+    if (end === null) throw new LabStoreError('BUSY', 'Run is not terminal.', { runId: safeRunId });
+    return {
+      manifest: cloneJson(this.manifest),
+      start: cloneJson(start),
+      end: cloneJson(end),
+      events: readLedgerStream(this.root, safeRunId, start, this.manifest),
     };
   }
 
@@ -1447,6 +1470,107 @@ function decodeStoredLedgerEvent(event, runId, sequence) {
   }
   const decoded = { ...event, payload };
   return decoded;
+}
+
+async function* readLedgerStream(root, runId, start, manifest) {
+  const eventsPath = childPath(root, 'runs', runId, 'events.jsonl');
+  let status;
+  try {
+    status = await lstat(eventsPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (!status.isFile() || status.isSymbolicLink()) pathEscape('Ledger is not a plain file.');
+  if (status.size > MAX_LEDGER_BYTES) corrupt('Ledger exceeds the size limit.', { runId });
+  if (status.size === 0) return;
+  if (!(await hasTrailingNewline(eventsPath, status.size))) {
+    corrupt('Ledger has an incomplete trailing line.', { runId });
+  }
+
+  const input = createReadStream(eventsPath, { encoding: 'utf8' });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  let previousDigest = null;
+  let expectedState = cloneJson(start.initialState);
+  const executionNonces = new Set();
+  let sequence = 0;
+  let terminalSeen = false;
+  try {
+    for await (const line of lines) {
+      sequence += 1;
+      if (Buffer.byteLength(line, 'utf8') > MAX_EVENT_LINE_BYTES) {
+        corrupt('Ledger line exceeds the size limit.', { runId, line: sequence });
+      }
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch (cause) {
+        throw new LabStoreError('CORRUPT', 'Ledger contains malformed JSON.', { runId, line: sequence }, { cause });
+      }
+      event = decodeStoredLedgerEvent(event, runId, sequence);
+      try {
+        validateEvent(event, runId, sequence, previousDigest, start, manifest);
+      } catch (cause) {
+        if (cause instanceof TypeError) {
+          throw new LabStoreError('CORRUPT', 'Ledger event exceeds JSON structural limits.', { runId, line: sequence }, { cause });
+        }
+        throw cause;
+      }
+      if (sequence === 1 && (
+        event.kind !== 'RUN_STARTED' ||
+        event.payload?.startDigest !== start.selfDigest ||
+        event.payload?.worldId !== start.worldId ||
+        event.payload?.scenario !== start.scenario
+      )) {
+        corrupt('RUN_STARTED does not bind the immutable start.', { runId });
+      }
+      if (terminalSeen) corrupt('Ledger has an invalid terminal transition.', { runId, sequence });
+      if (event.kind === 'STEP') {
+        const nonce = event.payload.receipt.executionNonce;
+        if (
+          event.payload.beforeDigest !== canonicalDigest(expectedState) ||
+          canonicalJson(event.payload.rngBefore) !== canonicalJson(expectedState.rngState) ||
+          executionNonces.has(nonce)
+        ) corrupt('STEP does not continue the prior ledger state.', { runId, sequence });
+        executionNonces.add(nonce);
+        expectedState = cloneJson(event.payload.afterState);
+      } else if (TERMINAL_KINDS.has(event.kind)) {
+        validateTerminalEvent(event);
+        if (canonicalJson(event.payload.finalState) !== canonicalJson(expectedState)) {
+          corrupt('Terminal state differs from the prior ledger state.', { runId, sequence });
+        }
+        terminalSeen = true;
+      }
+      previousDigest = event.digest;
+      yield event;
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+  let finalStatus;
+  try {
+    finalStatus = await lstat(eventsPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') corrupt('Ledger disappeared during streaming read.', { runId });
+    throw error;
+  }
+  if (!finalStatus.isFile() || finalStatus.isSymbolicLink() || finalStatus.size !== status.size) {
+    corrupt('Ledger changed during streaming read.', { runId });
+  }
+  if (!terminalSeen) corrupt('Ledger has no terminal event.', { runId });
+}
+
+async function hasTrailingNewline(filePath, size) {
+  let handle;
+  try {
+    handle = await open(filePath, 'r');
+    const buffer = Buffer.alloc(1);
+    const result = await handle.read(buffer, 0, 1, size - 1);
+    return result.bytesRead === 1 && buffer[0] === 0x0a;
+  } finally {
+    await handle?.close();
+  }
 }
 
 async function readLedger(root, runId, start, options = {}, manifest = null) {

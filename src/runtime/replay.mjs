@@ -44,6 +44,15 @@ export function replayRun(input) {
   }
 }
 
+export async function replayRunStream(input) {
+  try {
+    return await replayRunStreamInternal(input);
+  } catch (error) {
+    if (error instanceof ReplayError) throw error;
+    throw new ReplayError('CORRUPT', 'Replay input or deterministic execution is invalid.', {}, { cause: error });
+  }
+}
+
 function replayRunInternal(input) {
   const source = requireRecord(input, 'replay input');
   const manifest = cloneReplayValue(source.manifest, 'manifest');
@@ -121,6 +130,80 @@ function replayRunInternal(input) {
     verdict: 'CONSISTENT',
     firstDifference: null,
     checkedSequences: events.length,
+    finalState: cloneJson(state),
+  };
+}
+
+async function replayRunStreamInternal(input) {
+  const source = requireRecord(input, 'replay input');
+  const manifest = cloneReplayValue(source.manifest, 'manifest');
+  const start = cloneReplayValue(source.start, 'run start');
+  const end = cloneReplayValue(source.end, 'run end');
+  const events = source.events;
+  const worldFactories = source.worldFactories;
+  const kernel = source.kernel ?? { step, stepWithPreference, verify, learn };
+
+  validateManifest(manifest);
+  validateStart(start, manifest);
+  if (events === null || events === undefined || typeof events[Symbol.asyncIterator] !== 'function') {
+    invalid('Replay stream events must be an async iterable.');
+  }
+  if (!isRecord(worldFactories) || typeof worldFactories[start.worldId] !== 'function') {
+    corrupt('Replay has no factory for the immutable run world.', { worldId: start.worldId });
+  }
+  if (!isRecord(kernel) || typeof kernel.step !== 'function' || typeof kernel.verify !== 'function' || typeof kernel.learn !== 'function') {
+    invalid('Replay kernel must expose step, verify, and learn functions.');
+  }
+
+  const worldManifest = {
+    schemaVersion: SCHEMA_VERSION,
+    tokenMap: manifest.tokenMap,
+    authorityPolicy: manifest.authorityPolicy,
+  };
+  let world;
+  try {
+    world = worldFactories[start.worldId]({ manifest: worldManifest, scenario: start.scenario });
+  } catch (error) {
+    corrupt('Immutable run world or scenario cannot be reconstructed.', {
+      worldId: start.worldId,
+      scenario: start.scenario,
+      cause: errorName(error),
+    });
+  }
+  if (!isRecord(world) || typeof world.initialState !== 'function' || typeof world.observe !== 'function' ||
+      typeof world.actions !== 'function' || typeof world.transition !== 'function') {
+    corrupt('Replay world factory did not return the WorldPort contract.', { worldId: start.worldId });
+  }
+
+  let state = cloneJson(start.initialState);
+  let previousDigest = null;
+  let sequence = 0;
+  let terminal = null;
+  for await (const event of events) {
+    sequence += 1;
+    if (terminal !== null) corrupt('Replay ledger contains events after its terminal event.', { runId: start.runId, sequence });
+    validateReplayEventEnvelope(event, start, sequence, previousDigest);
+    if (event.kind === 'STEP') {
+      world.bindReplayEvent?.(event);
+      const replay = replayStep({ event, state, manifest: worldManifest, adapter: manifest.adapter, world, kernel, worldId: start.worldId, scenario: start.scenario });
+      if (replay.difference) return inconsistent(start.runId, replay.difference, state);
+      state = cloneJson(replay.nextState);
+    } else if (TERMINAL_KINDS.has(event.kind)) {
+      const difference = compareValue(event.payload.finalState, state, 'payload.finalState', event.sequence);
+      if (difference) return inconsistent(start.runId, difference, state);
+      terminal = event;
+    }
+    previousDigest = event.digest;
+  }
+  if (sequence === 0 || terminal === null) corrupt('Replay requires a non-empty ledger ending in a terminal event.', { runId: start.runId });
+  const endDifference = validateEndValues(end, start, terminal);
+  if (endDifference) return inconsistent(start.runId, endDifference, state);
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    runId: start.runId,
+    verdict: 'CONSISTENT',
+    firstDifference: null,
+    checkedSequences: sequence,
     finalState: cloneJson(state),
   };
 }
@@ -729,24 +812,7 @@ function validateLedgerEnvelope(events, start) {
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
     const sequence = index + 1;
-    if (!isRecord(event) || event.schemaVersion !== SCHEMA_VERSION || event.runId !== start.runId ||
-        event.sequence !== sequence || event.prevDigest !== previousDigest || typeof event.digest !== 'string' ||
-        event.digest !== digestWithoutSelf(event)) {
-      corrupt('Replay ledger sequence or digest chain is invalid.', { runId: start.runId, sequence });
-    }
-    if (index === 0 && (event.kind !== 'RUN_STARTED' || event.payload?.startDigest !== start.selfDigest ||
-        event.payload?.worldId !== start.worldId || event.payload?.scenario !== start.scenario)) {
-      corrupt('RUN_STARTED does not bind immutable replay start.', { runId: start.runId });
-    }
-    if (TERMINAL_KINDS.has(event.kind)) {
-      const expectedStatus = event.kind === 'RUN_COMPLETED' ? 'COMPLETED' : 'HALTED';
-      if (event.payload?.terminalStatus !== expectedStatus) {
-        corrupt('Terminal event kind and status do not match.', { runId: start.runId, sequence });
-      }
-    }
-    if (index > 0 && event.kind !== 'STEP' && !TERMINAL_KINDS.has(event.kind)) {
-      corrupt('Replay ledger contains an unsupported event kind.', { runId: start.runId, sequence });
-    }
+    validateReplayEventEnvelope(event, start, sequence, previousDigest);
     previousDigest = event.digest;
   }
   const terminalIndexes = events
@@ -781,6 +847,27 @@ function isValidAdapterMetadata(value) {
     (value.executionAuthority === undefined || isValidExecutionAuthorityMetadata(value.executionAuthority)) &&
     (value.executionObserver === undefined || isValidExecutionObserverMetadata(value.executionObserver)) &&
     (value.reconciliationObserver === undefined || isValidExecutionObserverMetadata(value.reconciliationObserver));
+}
+
+function validateReplayEventEnvelope(event, start, sequence, previousDigest) {
+  if (!isRecord(event) || event.schemaVersion !== SCHEMA_VERSION || event.runId !== start.runId ||
+      event.sequence !== sequence || event.prevDigest !== previousDigest || typeof event.digest !== 'string' ||
+      event.digest !== digestWithoutSelf(event)) {
+    corrupt('Replay ledger sequence or digest chain is invalid.', { runId: start.runId, sequence });
+  }
+  if (sequence === 1 && (event.kind !== 'RUN_STARTED' || event.payload?.startDigest !== start.selfDigest ||
+      event.payload?.worldId !== start.worldId || event.payload?.scenario !== start.scenario)) {
+    corrupt('RUN_STARTED does not bind immutable replay start.', { runId: start.runId });
+  }
+  if (TERMINAL_KINDS.has(event.kind)) {
+    const expectedStatus = event.kind === 'RUN_COMPLETED' ? 'COMPLETED' : 'HALTED';
+    if (event.payload?.terminalStatus !== expectedStatus) {
+      corrupt('Terminal event kind and status do not match.', { runId: start.runId, sequence });
+    }
+  }
+  if (sequence > 1 && event.kind !== 'STEP' && !TERMINAL_KINDS.has(event.kind)) {
+    corrupt('Replay ledger contains an unsupported event kind.', { runId: start.runId, sequence });
+  }
 }
 
 function isValidWitnessMetadata(value) {
@@ -864,12 +951,16 @@ function validateRandomization(value, capabilities, sequence) {
 }
 
 function validateEndEnvelope(end, start, events) {
+  validateEndValues(end, start, events.at(-1));
+}
+
+function validateEndValues(end, start, terminal) {
   if (!isRecord(end) || end.schemaVersion !== SCHEMA_VERSION || !verifySelfDigestSafe(end) ||
-      end.runId !== start.runId || end.finalSequence !== events.at(-1).sequence ||
-      end.finalEventDigest !== events.at(-1).digest ||
+      end.runId !== start.runId || end.finalSequence !== terminal.sequence ||
+      end.finalEventDigest !== terminal.digest ||
       typeof end.finalStateDigest !== 'string' ||
-      end.finalStateDigest !== events.at(-1).payload?.finalStateDigest ||
-      end.finalStateDigest !== canonicalDigest(events.at(-1).payload?.finalState)) {
+      end.finalStateDigest !== terminal.payload?.finalStateDigest ||
+      end.finalStateDigest !== canonicalDigest(terminal.payload?.finalState)) {
     corrupt('Immutable run end does not bind the replay ledger.', { runId: start.runId });
   }
 }

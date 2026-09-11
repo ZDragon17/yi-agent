@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { learn, step, verify } from '../../src/kernel/index.mjs';
 import { candidateDigest, canonicalDigest, canonicalJson, SCHEMA_VERSION } from '../../src/runtime/schema.mjs';
 import { createTemperatureWorld } from '../../src/worlds/temperature.mjs';
-import { ReplayError, replayRun } from '../../src/runtime/replay.mjs';
+import { ReplayError, replayRun, replayRunStream } from '../../src/runtime/replay.mjs';
 
 test('replay re-executes the immutable start, world transition, kernel, and rng without writing', async () => {
   const fixture = await createRunFixture();
@@ -26,6 +26,51 @@ test('replay re-executes the immutable start, world transition, kernel, and rng 
     assert.equal(result.checkedSequences, 3);
     assert.deepEqual(result.finalState, fixture.finalState);
     assert.equal(await directoryDigest(fixture.lab), before, 'replay is read-only');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('stream replay re-executes an async event ledger without requiring an event array', async () => {
+  const fixture = await createRunFixture();
+  try {
+    async function* events() {
+      for (const event of fixture.events) yield event;
+    }
+
+    const result = await replayRunStream({
+      manifest: fixture.manifest,
+      start: fixture.start,
+      events: events(),
+      end: fixture.end,
+      worldFactories: { temperature: createTemperatureWorld },
+    });
+
+    assert.equal(result.verdict, 'CONSISTENT');
+    assert.equal(result.checkedSequences, fixture.events.length);
+    assert.deepEqual(result.finalState, fixture.finalState);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('stream replay rejects a ledger event that appears after the terminal event', async () => {
+  const fixture = await createRunFixture();
+  try {
+    async function* events() {
+      for (const event of [...fixture.events, fixture.events.at(-1)]) yield event;
+    }
+
+    await assert.rejects(
+      replayRunStream({
+        manifest: fixture.manifest,
+        start: fixture.start,
+        events: events(),
+        end: fixture.end,
+        worldFactories: { temperature: createTemperatureWorld },
+      }),
+      (error) => error instanceof ReplayError && error.code === 'CORRUPT',
+    );
   } finally {
     await fixture.cleanup();
   }

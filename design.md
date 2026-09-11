@@ -481,3 +481,5 @@ F-224 把连续 Replay 的边界延伸到 Lab 的当前水位。链回放读取�
 F-225 为连续 Replay 增加移动水位检测。`readChainSnapshot()` 在读取全部 Run 后重新读取并校验 `current.json`；若初始与末次 current 的内容不同，或任一时刻处于 `RUNNING`，则返回 `BUSY`，不把跨时刻的文件集合交给 Application。稳定快照仍由链回放继续校验链尾和 Run 连续性。该机制是无锁读路径的 fail-closed 边界，不能把它解释成跨文件系统的事务快照或分布式读写锁。
 
 F-226 让连续 Replay 按 Run 流式读取。链快照只读取并排序各 Run 的 immutable start 头部，Application 随后逐个读取、重放并释放完整事件，不再把整个 Lab 的所有账本同时保留在内存中；全部 Replay 完成后再读一次 current，若期间水位移动则返回 `BUSY`。这把长期历史的内存增长从“所有 Run 的事件总量”降到“当前 Run 加有限摘要”，同时保留移动检测和链尾校验。它仍不提供无限历史的磁盘分页、事务快照或现实执行真实性。
+
+F-227 把流式边界推进到单个 Run。`LabStore.readRunStream()` 以异步生成器逐行读取 `events.jsonl`，先校验行大小、JSON、压缩 payload、序号摘要链、STEP 状态连续性和唯一终态，再产出事件；`replayRunStream()` 随事件重演，只保留当前状态、前一摘要和终态。单 Run 与 chain Replay 都使用这条路径，原有数组版 `replayRun()` 继续作为纯内存兼容接口。这样宿主的 Replay 峰值不再随单个 Run 的事件数组聚合增长，但仍受单行和完整账本大小上限约束；它不是无限历史、磁盘分页、跨文件事务快照或现实执行真实性。

@@ -383,23 +383,29 @@ export function createReplayWorld(run) {
   const steps = Array.isArray(run?.events)
     ? run.events.filter((event) => event?.kind === 'STEP')
     : [];
+  const streaming = !Array.isArray(run?.events);
   let cursor = 0;
+  let currentReplayEvent = null;
+  let previousWorldState = structuredClone(start.initialState.worldState);
 
   function currentStep() {
-    const event = steps[cursor];
+    const event = streaming ? currentReplayEvent : steps[cursor];
     if (!event) throw new Error('Replay evidence tape has no STEP at the current cursor.');
     return event;
   }
 
   function expectedState() {
-    return cursor === 0
+    return streaming ? previousWorldState : (cursor === 0
       ? start.initialState.worldState
-      : steps[cursor - 1].payload.afterState.worldState;
+      : steps[cursor - 1].payload.afterState.worldState);
   }
 
   return {
     initialState() {
       return structuredClone(start.initialState.worldState);
+    },
+    bindReplayEvent(event) {
+      if (streaming) currentReplayEvent = structuredClone(event);
     },
     actions() {
       const capabilities = currentStep().payload.boundary?.capabilities;
@@ -425,6 +431,8 @@ export function createReplayWorld(run) {
         throw new Error('Replay evidence tape transition request does not match.');
       }
       cursor += 1;
+      previousWorldState = structuredClone(payload.afterState.worldState);
+      currentReplayEvent = null;
       return {
         nextWorldState: structuredClone(payload.afterState.worldState),
         receipt: structuredClone(payload.receipt),
