@@ -5,14 +5,18 @@ export function annotateCandidateHistory(history) {
   if (!Array.isArray(history)) return [];
   const attempts = new Map();
   const contextAttempts = new Map();
+  const supersededCandidates = new Map();
+  const pairedCandidates = new Map();
   let previousKernelStep = null;
-  return history.map((entry, index) => {
+  return history.map((entry) => {
     const scope = candidateScope(entry);
     const decisionContext = decisionContextDigest(entry);
     const quality = predictionQuality(entry.candidateOutcome, entry);
-    const supersededStepDistance = stepsSinceSupersededCandidate(history, index, entry);
-    const supersededQuality = compareSupersededQuality(history, index, entry, quality);
-    const pairedComparison = compareWithPreviousPairedCandidate(history, index, entry);
+    const previousSuperseded = findLatestSupersededCandidate(supersededCandidates, entry);
+    const supersededStepDistance = stepsSinceSupersededCandidate(previousSuperseded, entry);
+    const supersededQuality = compareSupersededQuality(previousSuperseded, quality);
+    const previousPaired = findPreviousPairedCandidate(pairedCandidates, entry);
+    const pairedComparison = compareWithPreviousPairedCandidate(previousPaired, entry);
     const { valueSpec: _valueSpec, beforeVector: _beforeVector, afterVector: _afterVector, ...publicEntry } = entry ?? {};
     const kernelStep = Number.isSafeInteger(entry?.kernelStep) && entry.kernelStep >= 0 ? entry.kernelStep : null;
     const stepGap = kernelStep !== null && previousKernelStep !== null && kernelStep >= previousKernelStep
@@ -35,19 +39,20 @@ export function annotateCandidateHistory(history) {
           attempt: (attempts.get(scope) ?? 0) + 1,
         };
     if (scope !== null) attempts.set(scope, annotated.attempt);
-    if (decisionContext === null) return annotated;
-    const contextAttempt = (contextAttempts.get(decisionContext) ?? 0) + 1;
-    contextAttempts.set(decisionContext, contextAttempt);
-    return { ...annotated, decisionContextDigest: decisionContext, contextAttempt };
+    const result = decisionContext === null
+      ? annotated
+      : (() => {
+          const contextAttempt = (contextAttempts.get(decisionContext) ?? 0) + 1;
+          contextAttempts.set(decisionContext, contextAttempt);
+          return { ...annotated, decisionContextDigest: decisionContext, contextAttempt };
+        })();
+    rememberCandidate(supersededCandidates, entry);
+    rememberPairedCandidate(pairedCandidates, entry);
+    return result;
   });
 }
 
-function compareWithPreviousPairedCandidate(history, index, entry) {
-  const previous = history.slice(0, index).findLast((candidate) =>
-    sameWorldPortScope(candidate, entry) &&
-    candidate.beforeStateDigest === entry?.beforeStateDigest &&
-    candidate?.candidateOutcome?.candidateDigest !== entry?.candidateOutcome?.candidateDigest,
-  );
+function compareWithPreviousPairedCandidate(previous, entry) {
   return previous === undefined ? null : comparePairedCandidates(previous, entry);
 }
 
@@ -82,18 +87,15 @@ function candidateScope(entry) {
   });
 }
 
-function stepsSinceSupersededCandidate(history, index, entry) {
+function stepsSinceSupersededCandidate(previous, entry) {
   const currentStep = kernelStep(entry);
-  if (currentStep === null) return null;
-  const previous = findSupersededCandidate(history, index, entry);
   const previousStep = kernelStep(previous);
   return previousStep !== null && currentStep >= previousStep ? currentStep - previousStep : null;
 }
 
-function compareSupersededQuality(history, index, entry, quality) {
+function compareSupersededQuality(previous, quality) {
   const currentDistance = quality?.goalDistanceAfter;
   if (!Number.isFinite(currentDistance)) return null;
-  const previous = findSupersededCandidate(history, index, entry);
   const previousQuality = predictionQuality(previous?.candidateOutcome, previous);
   const previousDistance = previousQuality?.goalDistanceAfter;
   if (!Number.isFinite(previousDistance)) return null;
@@ -105,20 +107,71 @@ function compareSupersededQuality(history, index, entry, quality) {
   };
 }
 
-function findSupersededCandidate(history, index, entry) {
+function findLatestSupersededCandidate(candidates, entry) {
   const requestedDigest = entry?.supersedesCandidateDigest;
-  if (typeof requestedDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(requestedDigest)) return null;
-  return history.slice(0, index).findLast((candidate) =>
-    sameWorldPortScope(candidate, entry) && candidate?.candidateOutcome?.candidateDigest === requestedDigest,
-  ) ?? null;
+  if (!isObjectRecord(entry) || typeof requestedDigest !== 'string' ||
+      !/^sha256:[0-9a-f]{64}$/u.test(requestedDigest)) return null;
+  return nestedMapGet(candidates, [...worldPortScopeKeys(entry), requestedDigest]) ?? null;
 }
 
-function sameWorldPortScope(left, right) {
-  return left !== null && typeof left === 'object' && !Array.isArray(left) &&
-    right !== null && typeof right === 'object' && !Array.isArray(right) &&
-    left.worldVersion === right.worldVersion &&
-    left.tokenMapDigest === right.tokenMapDigest &&
-    left.scenario === right.scenario;
+function findPreviousPairedCandidate(candidates, entry) {
+  if (!isObjectRecord(entry)) return null;
+  const state = nestedMapGet(candidates, [...worldPortScopeKeys(entry), entry.beforeStateDigest]);
+  if (state === undefined) return null;
+  const candidateDigest = entry?.candidateOutcome?.candidateDigest;
+  return state.latest?.candidateOutcome?.candidateDigest !== candidateDigest
+    ? state.latest
+    : state.previousDistinct;
+}
+
+function rememberCandidate(candidates, entry) {
+  if (!isObjectRecord(entry)) return;
+  nestedMapSet(candidates, [
+    ...worldPortScopeKeys(entry),
+    entry?.candidateOutcome?.candidateDigest,
+  ], entry);
+}
+
+function rememberPairedCandidate(candidates, entry) {
+  if (!isObjectRecord(entry)) return;
+  const keys = [...worldPortScopeKeys(entry), entry.beforeStateDigest];
+  const state = nestedMapGet(candidates, keys);
+  const candidateDigest = entry?.candidateOutcome?.candidateDigest;
+  if (state === undefined) {
+    nestedMapSet(candidates, keys, { latest: entry, previousDistinct: null });
+    return;
+  }
+  if (state.latest?.candidateOutcome?.candidateDigest === candidateDigest) {
+    state.latest = entry;
+    return;
+  }
+  nestedMapSet(candidates, keys, { latest: entry, previousDistinct: state.latest });
+}
+
+function nestedMapGet(root, keys) {
+  let current = root;
+  for (const key of keys) {
+    if (!current.has(key)) return undefined;
+    current = current.get(key);
+  }
+  return current;
+}
+
+function nestedMapSet(root, keys, value) {
+  let current = root;
+  for (const key of keys.slice(0, -1)) {
+    if (!current.has(key)) current.set(key, new Map());
+    current = current.get(key);
+  }
+  current.set(keys.at(-1), value);
+}
+
+function worldPortScopeKeys(entry) {
+  return [entry.worldVersion, entry.tokenMapDigest, entry.scenario];
+}
+
+function isObjectRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function kernelStep(entry) {

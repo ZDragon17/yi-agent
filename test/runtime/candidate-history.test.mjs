@@ -261,3 +261,22 @@ test('candidate history compares the nearest candidates sharing one initial stat
     verdict: 'RIGHT_BETTER',
   });
 });
+
+test('candidate history annotation stays bounded for a long repeated history', () => {
+  const history = Array.from({ length: 8_000 }, (_, index) => ({
+    worldVersion: 'world-v1',
+    tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+    scenario: 'steady',
+    beforeStateDigest: `sha256:${'e'.repeat(64)}`,
+    kernelStep: index,
+    candidateOutcome: { candidateDigest: CANDIDATE_DIGEST },
+  }));
+  const startedAt = performance.now();
+  const annotated = annotateCandidateHistory(history);
+  const elapsedMs = performance.now() - startedAt;
+
+  assert.ok(elapsedMs < 2_000, `annotation took ${elapsedMs.toFixed(1)}ms`);
+  assert.equal(annotated.length, history.length);
+  assert.equal(annotated.at(-1).attempt, history.length);
+  assert.equal(annotated.at(-1).pairedComparison, undefined);
+});

@@ -662,3 +662,5 @@ F-226 将连续 Replay 改为按 Run 流式读取。Runtime 先读取各 Run 的
 F-227 将事件流式处理推进到单个 Run。`LabStore.readRunStream()` 通过异步生成器逐行读取和验证 `events.jsonl`，`replayRunStream()` 逐事件重演，只保留当前状态、前一摘要和终态；单 Run 与 chain Replay 都使用这条路径，`replayRun()` 仍保留给纯内存数组调用。10,000 步账本在 `--max-old-space-size=128` 的独立 CLI 进程中 Replay 为 `CONSISTENT`。单行大小、完整账本大小、current 移动检测和离线 Replay 约束没有放宽；这一步也不等于无限历史、磁盘分页、跨文件事务快照或现实执行真实性。
 
 F-228 把同一流式边界用于候选历史恢复。`LabStore.readCandidateOutcomes()` 现在逐个消费每个终态 Run 的事件流，只提取候选结果和有限提案摘要，不再先创建完整事件数组；历史排序、候选注释、跨 Run 的 attempt 与 supersedes 关系保持原语义。Runtime 回归覆盖数组 Run 读取不可用时的候选历史读取，真实 CLI 的候选历史场景继续通过。候选摘要仍需按时间排序并完成历史注释，摘要数量和注释算法的长期上界仍是后续实验，不把这一步说成无限记忆或磁盘分页。
+
+F-229 将候选历史注释改为单次前向扫描。`annotateCandidateHistory()` 用增量索引保存每个作用域的最近 supersedes 候选，以及同一初始状态下最近的两个不同候选，保留 attempt、contextAttempt、步骤间隔、supersedes 质量和配对比较的原有结果。8,000 条重复候选的本机测试耗时从旧实现约 3.4 秒降到约 0.16 秒。该优化只降低计算成本，候选摘要仍可能因全局排序和历史引用而全部驻留；它不等于有界长期记忆或外部排序。
