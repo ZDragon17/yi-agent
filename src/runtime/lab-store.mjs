@@ -50,6 +50,7 @@ const MAX_LEDGER_BYTES = 40 * 1024 * 1024;
 const MAX_EVENT_LINE_BYTES = MAX_PERSISTED_EVENT_BYTES;
 const MAX_RECENT_COMMITTED_STEPS = 32;
 const MAX_CANDIDATE_SORT_CHUNK = 128;
+const MAX_LOOP_SORT_CHUNK = 128;
 const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
 const MAX_PLANNING_HORIZON = 8;
@@ -534,37 +535,72 @@ export class LabStore {
         runId: current.lastRunId,
       });
     }
-    const groups = new Map();
-    for (const runId of await listRunIds(this.root)) {
-      const run = await readLoopRunSummary(this, runId);
-      if (run.start.continuation === undefined) continue;
-      const continuation = validateLoopContinuation(run.start.continuation, 'run continuation', true);
-      const group = groups.get(continuation.loopId) ?? { continuation, runs: [] };
-      group.runs.push(run);
-      groups.set(continuation.loopId, group);
-    }
-    for (const group of groups.values()) {
-      group.planningBranchingMode = inferLoopPlanningBranchingMode(group);
-      for (const run of group.runs) {
-        if (canonicalJson(loopContract(group.continuation, group.planningBranchingMode)) !==
-            canonicalJson(loopContract(run.start.continuation, group.planningBranchingMode))) {
-          corrupt('Loop continuation contract differs across runs.', { loopId: group.continuation.loopId });
+    const chunk = [];
+    const chunkPaths = [];
+    let sortRoot = null;
+    const flushChunk = async () => {
+      if (chunk.length === 0) return;
+      sortRoot ??= await mkdtemp(path.join(tmpdir(), 'yi-agent-loop-sort-'));
+      const chunkPath = path.join(sortRoot, `chunk-${String(chunkPaths.length).padStart(8, '0')}.jsonl`);
+      chunk.sort(compareLoopContinuationRecords);
+      await writeFile(chunkPath, `${chunk.map((entry) => canonicalJson(entry)).join('\n')}\n`, 'utf8');
+      chunkPaths.push(chunkPath);
+      chunk.length = 0;
+    };
+    let group = null;
+    const activeCandidates = [];
+    let latest = null;
+    let found = false;
+    const consume = (record) => {
+      found = true;
+      if (group === null || group.continuation.loopId !== record.start.continuation.loopId) {
+        const candidate = finishLoopContinuationGroup(group);
+        if (candidate !== null) {
+          if (candidate.status === 'ACTIVE') {
+            activeCandidates.push(candidate);
+          } else if (latest === null || candidate.lastStartedAt.localeCompare(latest.lastStartedAt) > 0 ||
+              (candidate.lastStartedAt === latest.lastStartedAt && candidate.loopId.localeCompare(latest.loopId) > 0)) {
+            latest = candidate;
+          }
+        }
+        group = createLoopContinuationGroup(record);
+      }
+      absorbLoopContinuationRecord(group, record);
+    };
+    try {
+      for (const runId of await listRunIds(this.root)) {
+        const run = await readLoopRunSummary(this, runId);
+        if (run.start.continuation === undefined) continue;
+        const continuation = validateLoopContinuation(run.start.continuation, 'run continuation', true);
+        chunk.push(compactLoopRunSummary({ ...run, start: { ...run.start, continuation } }));
+        if (chunk.length >= MAX_LOOP_SORT_CHUNK) await flushChunk();
+      }
+      if (sortRoot === null) {
+        chunk.sort(compareLoopContinuationRecords);
+        for (const record of chunk) consume(record);
+      } else {
+        await flushChunk();
+        await forEachLoopContinuationInOrder(chunkPaths, consume);
+      }
+      const candidate = finishLoopContinuationGroup(group);
+      if (candidate !== null) {
+        if (candidate.status === 'ACTIVE') {
+          activeCandidates.push(candidate);
+        } else if (latest === null || candidate.lastStartedAt.localeCompare(latest.lastStartedAt) > 0 ||
+            (candidate.lastStartedAt === latest.lastStartedAt && candidate.loopId.localeCompare(latest.loopId) > 0)) {
+          latest = candidate;
         }
       }
+      if (!found) throw new LabStoreError('NOT_FOUND', 'No persisted loop continuation exists.', {});
+      if (activeCandidates.length > 1) {
+        throw new LabStoreError('CONFLICT', 'Multiple active loop continuations exist; they cannot be resumed implicitly.', {
+          loopIds: activeCandidates.map((candidate) => candidate.loopId),
+        });
+      }
+      return cloneJson(activeCandidates[0] ?? latest);
+    } finally {
+      if (sortRoot !== null) await rm(sortRoot, { recursive: true, force: true });
     }
-    if (groups.size === 0) {
-      throw new LabStoreError('NOT_FOUND', 'No persisted loop continuation exists.', {});
-    }
-    const candidates = [...groups.values()].map((group) => summarizeLoopContinuation(group));
-    const active = candidates.filter((candidate) => candidate.status === 'ACTIVE');
-    if (active.length > 1) {
-      throw new LabStoreError('CONFLICT', 'Multiple active loop continuations exist; they cannot be resumed implicitly.', {
-        loopIds: active.map((candidate) => candidate.loopId),
-      });
-    }
-    return cloneJson((active[0] ?? candidates.sort((left, right) => (
-      right.lastStartedAt.localeCompare(left.lastStartedAt) || right.loopId.localeCompare(left.loopId)
-    )).at(0)));
   }
 
   async readCurrentLoopContinuation() {
@@ -2114,6 +2150,130 @@ async function readLoopRunSummary(store, runId) {
   };
 }
 
+function compactLoopRunSummary(summary) {
+  return {
+    start: {
+      runId: summary.start.runId,
+      startedAt: summary.start.startedAt,
+      continuation: cloneJson(summary.start.continuation),
+    },
+    terminal: {
+      payload: {
+        terminalStatus: summary.terminal.payload.terminalStatus,
+        ...(summary.terminal.payload.reason === undefined ? {} : { reason: summary.terminal.payload.reason }),
+      },
+    },
+    planningBranchingModes: [...summary.planningBranchingModes],
+  };
+}
+
+function createLoopContinuationGroup(record) {
+  const continuation = record.start.continuation;
+  const contract = loopContract(continuation);
+  delete contract.planningBranchingMode;
+  return {
+    continuation,
+    contract: canonicalJson(contract),
+    declaredPlanningBranchingModes: new Set(),
+    observedPlanningBranchingModes: new Set(),
+    currentIndex: null,
+    latestRun: null,
+  };
+}
+
+function absorbLoopContinuationRecord(group, record) {
+  const continuation = record.start.continuation;
+  const contract = loopContract(continuation);
+  delete contract.planningBranchingMode;
+  if (canonicalJson(contract) !== group.contract) {
+    corrupt('Loop continuation contract differs across runs.', { loopId: group.continuation.loopId });
+  }
+  if (continuation.planningBranchingMode !== undefined) {
+    group.declaredPlanningBranchingModes.add(continuation.planningBranchingMode);
+  }
+  for (const mode of record.planningBranchingModes) group.observedPlanningBranchingModes.add(mode);
+
+  const index = continuation.runIndex;
+  if (group.currentIndex === null) {
+    if (index !== 0) {
+      corrupt('Loop continuation run indexes are not contiguous.', { loopId: group.continuation.loopId });
+    }
+    group.currentIndex = index;
+    group.latestRun = record;
+    return;
+  }
+  if (index === group.currentIndex) {
+    if (!isRecoverableLoopAttempt(group.latestRun)) {
+      corrupt('A loop run index was started again after a non-recoverable terminal state.', {
+        loopId: group.continuation.loopId,
+        runIndex: index,
+      });
+    }
+    group.latestRun = record;
+    return;
+  }
+  if (index !== group.currentIndex + 1) {
+    corrupt('Loop continuation run indexes are not contiguous.', { loopId: group.continuation.loopId });
+  }
+  group.currentIndex = index;
+  group.latestRun = record;
+}
+
+function finishLoopContinuationGroup(group) {
+  if (group === null) return null;
+  const declared = uniquePlanningBranchingModes([...group.declaredPlanningBranchingModes]);
+  const observed = uniquePlanningBranchingModes([...group.observedPlanningBranchingModes]);
+  if (declared.length > 1 || observed.length > 1 ||
+      (declared.length === 1 && observed.length === 1 && declared[0] !== observed[0])) {
+    corrupt('Loop continuation planning branching mode differs across runs.', {
+      loopId: group.continuation.loopId,
+    });
+  }
+  const planningBranchingMode = declared[0] ?? observed[0] ?? 'legacy-v1';
+  return summarizeLatestLoopRun(group.continuation, planningBranchingMode, group.latestRun);
+}
+
+function compareLoopContinuationRecords(left, right) {
+  return left.start.continuation.loopId.localeCompare(right.start.continuation.loopId) ||
+    left.start.continuation.runIndex - right.start.continuation.runIndex ||
+    left.start.startedAt.localeCompare(right.start.startedAt) ||
+    left.start.runId.localeCompare(right.start.runId);
+}
+
+async function forEachLoopContinuationInOrder(chunkPaths, consume) {
+  const readers = chunkPaths.map((chunkPath) => readLoopContinuationChunk(chunkPath));
+  try {
+    const heads = await Promise.all(readers.map((reader) => reader.next()));
+    while (true) {
+      let nextIndex = -1;
+      for (let index = 0; index < heads.length; index += 1) {
+        if (heads[index].done) continue;
+        if (nextIndex === -1 || compareLoopContinuationRecords(heads[index].value, heads[nextIndex].value) < 0) {
+          nextIndex = index;
+        }
+      }
+      if (nextIndex === -1) break;
+      await consume(heads[nextIndex].value);
+      heads[nextIndex] = await readers[nextIndex].next();
+    }
+  } finally {
+    await Promise.all(readers.map((reader) => reader.return()));
+  }
+}
+
+async function* readLoopContinuationChunk(chunkPath) {
+  const input = createReadStream(chunkPath, { encoding: 'utf8' });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (line.length > 0) yield JSON.parse(line);
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+}
+
 function inferLoopPlanningBranchingMode(group) {
   const declared = uniquePlanningBranchingModes(group.runs.map((run) =>
     run.start.continuation.planningBranchingMode,
@@ -2170,32 +2330,6 @@ function loopContract(continuation, fallbackPlanningBranchingMode = 'legacy-v1')
     mode: continuation.mode,
     ...(continuation.maxRuns === undefined ? {} : { maxRuns: continuation.maxRuns }),
   };
-}
-
-function summarizeLoopContinuation(group) {
-  const attempts = new Map();
-  const ordered = [...group.runs].sort((left, right) => (
-    left.start.continuation.runIndex - right.start.continuation.runIndex ||
-    left.start.startedAt.localeCompare(right.start.startedAt) ||
-    left.start.runId.localeCompare(right.start.runId)
-  ));
-  for (const run of ordered) {
-    const index = run.start.continuation.runIndex;
-    const previous = attempts.get(index)?.at(-1);
-    if (previous !== undefined && !isRecoverableLoopAttempt(previous)) {
-      corrupt('A loop run index was started again after a non-recoverable terminal state.', { loopId: group.continuation.loopId, runIndex: index });
-    }
-    attempts.set(index, [...(attempts.get(index) ?? []), run]);
-  }
-  const indexes = [...attempts.keys()].sort((left, right) => left - right);
-  for (let position = 0; position < indexes.length; position += 1) {
-    if (indexes[position] !== position) {
-      corrupt('Loop continuation run indexes are not contiguous.', { loopId: group.continuation.loopId });
-    }
-  }
-  const runs = indexes.map((index) => attempts.get(index).at(-1));
-  const last = runs.at(-1);
-  return summarizeLatestLoopRun(group.continuation, group.planningBranchingMode, last);
 }
 
 function summarizeLatestLoopRun(continuation, planningBranchingMode, last) {

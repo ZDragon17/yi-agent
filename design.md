@@ -515,3 +515,7 @@ F-234 把候选历史恢复的排序和输出改为有界流。F-228 已经只�
 F-235 进一步收紧候选尾部的谱系索引。F-234 的排序块归并已经给出最终窗口，第二遍不再需要为全历史建立候选关系；它先从窗口提取相关 scope、context、supersedes 和 paired before-state 键，再让增量注释器只为这些键维护计数和最小比较引用。尾部每条记录的远距 supersedes 与 paired comparison 仍能访问其历史前件，未被尾部引用的历史只推进全局 kernelStep，不进入关系 Map。
 
 这一步把 `readCandidateOutcomes(limit)` 的候选载荷、排序块、输出结果和谱系辅助状态都绑定到有界窗口；显式数组版注释仍保持原接口语义，调用方若主动提供无限数组仍由调用方承担其内存。该设计不引入持久候选索引，也不改变账本、模型证据或现实 WorldPort 的信任边界。
+
+F-236 处理 F-231 留下的 loop 摘要数组。`readLoopContinuation()` 扫描每个 Run 后只把压缩的 continuation 记录写入固定大小排序块，随后按 `loopId → runIndex → startedAt → runId` 归并。归并器一次只处理一个 loop 和一个逻辑索引：它用有限规划模式集合核对 contract，检查前一次尝试是否可恢复，确认 runIndex 从零连续，并留下该 loop 的最新终态候选。这样历史 Run 的轻量摘要不会再以 `group.runs` 的形式全部驻留。
+
+记录在进入排序块前已经由 `readLoopRunSummary()` 完整消费并校验事件流，临时记录只保留后续状态机需要的字段。129 个 Run 跨排序块的回归与旧 continuation、规划模式推断、应用层恢复和 CLI WorldPort 回归保持通过。临时排序块属于读路径辅助文件，路径列表和归并句柄仍受当前实现容量约束；数组版兼容 API、跨文件事务和现实执行信任边界没有改变。

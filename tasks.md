@@ -1777,3 +1777,10 @@
 - 实现：先归并得到最终尾部窗口，再从窗口提取需要的 scope/context、被引用的 supersedes 键和 paired before-state 键；第二遍归并只为这些键计数或保留最小比较引用，其他历史只推进全局 kernelStep。
 - 验证：候选注释 `10/10`，Runtime `70/70`，候选历史/Application/Advisor `30/30`，repo WorldPort 候选回归 `7/7`；尾部候选引用远距历史时，与完整数组注释结果逐字段一致。
 - 边界：该有界性只适用于 `readCandidateOutcomes()` 的流式恢复窗口；数组版 `annotateCandidateHistory()` 仍服务于显式内存输入，且本节点不提供持久候选索引、无限记忆、跨文件事务快照或现实执行真实性。
+
+## F-236 loop continuation 摘要的外部归并
+
+- 反证/缺口：F-231/F-232 已经让事件读取流式化，但 `readLoopContinuation()` 仍把每个 loop 的所有轻量 Run 摘要放入 `group.runs`；只缩小单条记录，不能消除长期 loop 的线性摘要数组。
+- 实现：扫描阶段按固定大小写入 continuation 排序块；排序键为 `loopId → runIndex → startedAt → runId`。归并阶段逐组、逐逻辑索引消费记录，只保留当前 contract、规划模式集合、当前索引的最新尝试和最终候选；终态原因与状态在写块前已完成完整账本校验。没有 continuation 的 Run 不进入排序块，临时目录在成功和异常路径清理。
+- 验证：Runtime loop continuation 回归 `71/71`，其中 129 个 Run 跨过 128 条排序块边界；应用层连续/恢复与 Advisor 回归 `40/40`，CLI 内置/外部 WorldPort 相关回归 `13/13`。规划模式兼容、重复索引、缺口和不可用数组读取的既有用例继续通过。
+- 边界：该实现消除了 loop Run 摘要数组的主要驻留，不改变 `readCurrentLoopContinuation()` 的单 Run 路径，也不改变 `readAllRuns()`、`replay --chain` 等返回全部历史的兼容接口。排序块的路径列表和归并句柄仍受当前实现的临时文件容量约束；本节点不是持久索引、无限历史、跨文件事务快照或现实执行真实性。

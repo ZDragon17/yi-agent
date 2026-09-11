@@ -671,3 +671,5 @@ F-229 将候选历史注释改为单次前向扫描。`annotateCandidateHistory(
 F-230 把未决外部事务恢复改为流式扫描。`findUnresolvedExternalTransition()` 逐个消费终态 Run 的事件流，只保留已提交 STEP 的身份键和未决 terminal evidence，不再同时保留完整 Run 与事件数组；跨 Run 的 nonce、Token、版本和 before 摘要匹配仍按原规则执行。Runtime 和 repo WorldPort 恢复回归通过。已提交身份键集合仍会随 STEP 数量增长，因此这一步只消除事件载荷驻留，不等于无限恢复历史或分布式事务。
 
 F-231 将 legacy loop continuation 的历史扫描也改为流式读取。恢复路径完整消费每个 Run 以验证账本，但只为带 continuation 的 Run 保留 start、terminal 和规划模式摘要；规划模式推断、重复 runIndex 检查、恢复状态和 loop contract 比较保持原语义。流式消费完成后还会把 `end.json` 与终态事件重新核对，维持旧数组读取的完整性边界。连续 Runner、进程恢复和 crash continuation 回归通过；该节点没有改变现代 `--resume` 的 current 优先路径。
+
+F-236 将 legacy loop continuation 的摘要归并移到临时排序块。扫描 Run 时只写 continuation、Run 身份、终态原因/状态和规划模式摘要；归并按 `loopId → runIndex → startedAt → runId` 逐条消费，每次只保留当前 loop、当前逻辑索引和最终候选，不再把整个 loop 的 `group.runs` 放在内存中。旧的 contract、规划模式推断、重复索引恢复规则和缺口检查保持不变。129 个 Run 跨过 128 条排序块边界的 Runtime 回归通过，连续 Runner、恢复和不同 WorldPort 的 CLI 回归继续通过。临时排序块是本机读路径的辅助文件，仍不是持久索引、跨文件事务快照或无限历史；排序块路径和文件句柄也受归并过程的实现容量约束。

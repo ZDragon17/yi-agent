@@ -333,6 +333,33 @@ test('current loop continuation recovery remains readable when array run materia
   assert.equal(recovered.status, 'ACTIVE');
 }));
 
+test('loop continuation recovery keeps only the active group across sorted run chunks', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const continuation = {
+    schemaVersion: SCHEMA_VERSION,
+    loopId: '00000000-0000-4000-8000-000000000009',
+    scenario: 'steady',
+    runIndex: 0,
+    stepsPerRun: 1,
+    planningBranchingMode: 'tree-v1',
+    mode: 'finite',
+    maxRuns: 130,
+  };
+  for (let index = 0; index < 129; index += 1) {
+    const run = await store.startRun(runInput({
+      runId: `loop-run-${String(index).padStart(3, '0')}`,
+      continuation: { ...continuation, runIndex: index },
+    }));
+    await run.finish({ terminalStatus: 'COMPLETED', finalState: runInput().initialState });
+  }
+
+  const recovered = await store.readLoopContinuation();
+  assert.equal(recovered.loopId, continuation.loopId);
+  assert.equal(recovered.nextRunIndex, 129);
+  assert.equal(recovered.status, 'ACTIVE');
+}));
+
 test('terminal reasons are bounded before they reach the ledger', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));
