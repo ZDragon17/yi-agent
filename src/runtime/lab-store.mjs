@@ -354,6 +354,7 @@ export class LabStore {
       const ledger = await readLedgerSummary(this.root, runId, start, this.manifest, {
         maxSequence: current.status === 'RUNNING' ? current.lastRunSequence : undefined,
         requireTerminal: current.status !== 'RUNNING',
+        allowGrowthAfterMaxSequence: current.status === 'RUNNING',
       }, current);
       validateCurrentReference(current, runId, ledger);
       validateCurrentProjection(current, start, ledger);
@@ -1767,7 +1768,11 @@ async function* readLedgerStream(root, runId, start, manifest, options = {}) {
     if (error?.code === 'ENOENT') corrupt('Ledger disappeared during streaming read.', { runId });
     throw error;
   }
-  if (!finalStatus.isFile() || finalStatus.isSymbolicLink() || finalStatus.size !== status.size) {
+  const fixedPrefixCanGrow = Number.isSafeInteger(maxSequence) && options.allowGrowthAfterMaxSequence === true;
+  if (
+    !finalStatus.isFile() || finalStatus.isSymbolicLink() ||
+    (fixedPrefixCanGrow ? finalStatus.size < readableByteLength : finalStatus.size !== status.size)
+  ) {
     corrupt('Ledger changed during streaming read.', { runId });
   }
   if (options.tornTail?.byteLength !== null && options.tornTail?.byteLength !== undefined && terminalSeen) {
