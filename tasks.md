@@ -1861,3 +1861,10 @@
 - 实现：新增应用层 Run inspection consumer，完整消费 `readRunStream()`，只保留最后 STEP、终态事件和 action 引用；`inspect-view` 对这些摘要字段建视图，并仅在收到真正数组时保留旧 fallback。无 STEP 的 `NO_SAFE_ACTION` 等终态也走同一摘要路径。
 - 验证：数组 `readRun()` 被强制禁用时，普通 inspect 与 action inspect 仍成功；相关应用/WorldPort 全量回归 `54/54`，Runtime 全量回归 `82/82`。
 - 边界：`readRun()` 及其他公开数组兼容接口不变；inspection 仍完整校验当前 Run 流和候选历史，未把展示摘要当成新的账本真相，也不提供无限历史或跨文件事务快照。
+
+## F-248 配对策略 trace 的流式化
+
+- 反证/缺口：F-247 已清理 CLI inspect 的 Run 数组读取，但 `paired-policy-service.readPolicyTrace()` 仍为提取少量 token trace 调用 `readRun()`，配对实验的事件载荷会随分支历史驻留。
+- 实现：`readPolicyTrace()` 改用 `readRunStream()`，完整消费并校验每个 Run，只把 STEP 的 policy token 写入既有 trace 数组；resume、trace digest、Replay 与 end evidence 契约保持不变。
+- 验证：禁用数组 `LabStore.readRun()` 后，配对策略初次运行和 resume 回归 `2/2`；F-247 的 Application/WorldPort 全量 `54/54` 与 Runtime 全量 `82/82` 仍为通过基线。
+- 边界：trace 数组是配对比较和持久化输出所需的结果，仍随实验步数增长；本节点只移除事件 payload 驻留，不提供无限 trace、持久索引或现实效果真实性。

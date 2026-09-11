@@ -695,3 +695,5 @@ F-245 把 `inspect()` 的活动 Run 校验改成固定 watermark 的流式读取
 F-246 收紧固定 watermark 的增长语义。活动 `inspect()` 在读取 current 前缀后，允许账本在该前缀之后继续增长，但前缀不能缩短或损坏；恢复和完整账本读取仍要求整文件稳定。这样活动只读快照不会把水位之后的追加误当成前缀变化，current 移动检测和数组兼容接口不变。相关 Runtime 回归 `28/28`，全量 `82/82` 通过。
 
 F-247 把应用层 `inspect` 的 Run 展示接到 `readRunStream()`。它在完整消费并校验 Run 后只保留最后 STEP、终态事件和可选的 action 引用，再生成最近事实、状态和假设视图；无安全动作的终态也不再触发数组 fallback。公开 `readRun()` 保留，普通 inspect 与 action inspect 的结果不变。数组读取被禁用的回归和应用/WorldPort 全量回归 `54/54`，Runtime 全量回归 `82/82` 通过。
+
+F-248 将配对策略实验的 `readPolicyTrace()` 改为完整消费 `readRunStream()`，只保留策略 token trace；配对比较、resume、trace digest 和 Replay 结果不变。数组 `readRun()` 被禁用时初次运行与 resume 仍通过，回归 `2/2`。trace 本身仍是实验输出数组，不宣称无限历史或现实效果真实性。
