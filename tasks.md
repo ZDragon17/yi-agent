@@ -1854,3 +1854,10 @@
 - 实现：活动 inspect 为固定 watermark 读取启用 `allowGrowthAfterMaxSequence`，最终只要求文件没有缩短到前缀范围；前缀仍由摘要链、STEP 状态、nonce 和 current 投影完整校验。恢复和完整账本读取不启用该选项，继续要求全文件 size 不变。
 - 验证：inspect、recovery、partial tail、watermark、链快照和损坏账本回归 `28/28`；Runtime 全量回归 `82/82`。
 - 边界：允许增长只适用于已确定序号的活动 inspect，不是跨文件事务快照，也不掩盖 current 水位移动、前缀截断或前缀内容损坏；公开数组接口保持原样。
+
+## F-247 CLI inspect Run 展示的流式化
+
+- 反证/缺口：F-245/F-246 已减少 `LabStore.inspect()` 的 ledger 驻留，但 `inspectLab()` 为生成最近事实、终态状态和 action 详情仍调用 `readRun()`，把完整 Run 数组重新装回应用层。
+- 实现：新增应用层 Run inspection consumer，完整消费 `readRunStream()`，只保留最后 STEP、终态事件和 action 引用；`inspect-view` 对这些摘要字段建视图，并仅在收到真正数组时保留旧 fallback。无 STEP 的 `NO_SAFE_ACTION` 等终态也走同一摘要路径。
+- 验证：数组 `readRun()` 被强制禁用时，普通 inspect 与 action inspect 仍成功；相关应用/WorldPort 全量回归 `54/54`，Runtime 全量回归 `82/82`。
+- 边界：`readRun()` 及其他公开数组兼容接口不变；inspection 仍完整校验当前 Run 流和候选历史，未把展示摘要当成新的账本真相，也不提供无限历史或跨文件事务快照。

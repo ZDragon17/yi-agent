@@ -539,3 +539,5 @@ F-244 将活动 Run 的不确定写入和账本 reconcile 也接到流式读取�
 F-245 将 `inspect()` 的固定 watermark 校验也接到流式摘要。活动 Run 先按 current 的序号定位第 N 个换行，只消费该完整前缀，因此 watermark 之后的追加事件或撕裂尾部不会被读入当前只读快照；前缀缺少目标行、摘要链损坏或状态投影不一致仍返回 `CORRUPT`。终态 Run 继续消费完整账本并要求终止事件，`readLedger()` 和其他数组兼容接口不变。该设计减少 inspect 的完整文件字符串驻留，不提供跨文件事务快照或无限历史一致性。
 
 F-246 修正固定 watermark 的文件稳定性边界。活动 `inspect()` 只读取 watermark 前缀，因此允许读取期间在前缀之后追加事件；前缀不得缩短，前缀内的摘要链和状态校验仍必须通过。恢复、完整 `readRunStream()` 和其他全账本消费者继续要求文件大小在读取期间不变。该差异把“固定水位快照”和“完整账本快照”分成两个明确策略，不改变 current 移动检测或持久化语义。
+
+F-247 把 CLI inspect 的 Run 展示从数组读取改为流式读取。`inspectLab()` 复用 `readRunStream()`，在消费完成后只保留最后 STEP、终态事件和可选的 action 引用；`inspect-view` 同时兼容旧数组输入，但当前应用路径不再把整本 ledger 放入内存。普通 inspect、无安全动作停机和 `runId:sequence` action 查询的展示结果保持不变。
