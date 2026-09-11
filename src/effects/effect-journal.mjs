@@ -1,3 +1,4 @@
+import { createReadStream } from 'node:fs';
 import { mkdir, open as openFile, readFile, lstat, link, rename, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -41,31 +42,50 @@ export class EffectJournal {
     if (!status.isFile() || status.isSymbolicLink()) {
       throw new EffectJournalError('CORRUPT', 'Effect journal must be a regular file.', { filePath: resolved });
     }
-    const bytes = await readFile(resolved);
-    if (bytes.length > MAX_JOURNAL_BYTES) {
+    if (status.size > MAX_JOURNAL_BYTES) {
       throw new EffectJournalError('CORRUPT', 'Effect journal exceeds the size limit.', { filePath: resolved });
     }
-    if (bytes.length === 0) return new EffectJournal(resolved, []);
-    const raw = bytes.toString('utf8');
-    if (!raw.endsWith('\n')) {
-      throw new EffectJournalError('CORRUPT', 'Effect journal has an incomplete final line.', { filePath: resolved });
-    }
-    const lines = raw.slice(0, -1).split(/\r?\n/u);
+    if (status.size === 0) return new EffectJournal(resolved, []);
     const events = [];
     let previousDigest = null;
-    for (let index = 0; index < lines.length; index += 1) {
-      if (Buffer.byteLength(lines[index], 'utf8') > MAX_LINE_BYTES) {
-        throw new EffectJournalError('CORRUPT', 'Effect journal line exceeds the size limit.', { sequence: index + 1 });
+    let sequence = 0;
+    let buffer = '';
+    const input = createReadStream(resolved, {
+      encoding: 'utf8',
+      start: 0,
+      end: status.size - 1,
+    });
+    const parseLine = (line) => {
+      sequence += 1;
+      if (Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES) {
+        throw new EffectJournalError('CORRUPT', 'Effect journal line exceeds the size limit.', { sequence });
       }
       let event;
       try {
-        event = JSON.parse(lines[index]);
+        event = JSON.parse(line);
       } catch (error) {
-        throw new EffectJournalError('CORRUPT', 'Effect journal contains malformed JSON.', { sequence: index + 1 }, { cause: error });
+        throw new EffectJournalError('CORRUPT', 'Effect journal contains malformed JSON.', { sequence }, { cause: error });
       }
-      validateEvent(event, index + 1, previousDigest);
+      validateEvent(event, sequence, previousDigest);
       events.push(event);
       previousDigest = event.digest;
+    };
+    for await (const chunk of input) {
+      buffer += chunk;
+      let newlineIndex = buffer.indexOf('\n');
+      while (newlineIndex !== -1) {
+        let line = buffer.slice(0, newlineIndex);
+        if (line.endsWith('\r')) line = line.slice(0, -1);
+        parseLine(line);
+        buffer = buffer.slice(newlineIndex + 1);
+        newlineIndex = buffer.indexOf('\n');
+      }
+      if (Buffer.byteLength(buffer, 'utf8') > MAX_LINE_BYTES) {
+        throw new EffectJournalError('CORRUPT', 'Effect journal line exceeds the size limit.', { sequence: sequence + 1 });
+      }
+    }
+    if (buffer.length !== 0) {
+      throw new EffectJournalError('CORRUPT', 'Effect journal has an incomplete final line.', { filePath: resolved });
     }
     return new EffectJournal(resolved, events);
   }

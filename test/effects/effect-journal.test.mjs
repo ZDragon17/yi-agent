@@ -45,6 +45,33 @@ test('EffectJournal flushes a hash-chained JSONL event and rejects tampering', a
   }
 });
 
+test('EffectJournal streaming parser accepts a CRLF ledger', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'yi-agent-effect-journal-stream-'));
+  const filePath = path.join(directory, 'effects.jsonl');
+  try {
+    const journal = await EffectJournal.open(filePath);
+    await journal.append({
+      type: 'INTENT_PLANNED',
+      executionNonce: 'nonce:stream',
+      recordedAt: '2026-01-01T00:00:00.000Z',
+      payload: { phase: 'AWAITING_CONFIRMATION' },
+    });
+    await journal.append({
+      type: 'HUMAN_CONFIRMED',
+      executionNonce: 'nonce:stream',
+      recordedAt: '2026-01-01T00:00:01.000Z',
+      payload: { phase: 'CONFIRMED' },
+    });
+    const raw = await readFile(filePath, 'utf8');
+    await writeFile(filePath, raw.replaceAll('\n', '\r\n'), 'utf8');
+
+    const restored = await EffectJournal.open(filePath);
+    assert.deepEqual(restored.read().map((event) => event.sequence), [1, 2]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('broker recovery rejects a journal with an impossible transition even when its digest is valid', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'yi-agent-effect-transition-'));
   const filePath = path.join(directory, 'effects.jsonl');
