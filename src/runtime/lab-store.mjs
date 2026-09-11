@@ -1412,36 +1412,35 @@ async function recoverRun(root, manifest) {
   const start = await readVerifiedObject(childPath(root, 'runs', runId, 'start.json'), 'run start');
   validateStart(start, manifest, runId);
   const tornTail = { byteLength: null };
-  const events = await readLedger(root, runId, start, {
+  const ledger = await readRecoveryLedgerSummary(root, runId, start, manifest, {
     allowTornTrailingLine: current.status === 'RUNNING' && current.lastRunId === runId,
     tornTail,
-  }, manifest);
-  validateLedgerIdentity(start, events);
-  validateCurrentReference(current, runId, events);
-  if (current.lastRunId === runId) validateCurrentProjection(current, start, events);
+  }, current);
+  validateCurrentReference(current, runId, ledger);
+  if (current.lastRunId === runId) validateCurrentProjection(current, start, ledger);
 
   const endPath = childPath(root, 'runs', runId, 'end.json');
   let end = await readOptionalVerifiedObject(endPath, 'run end');
-  if (end !== null) validateEnd(end, runId, events);
+  if (end !== null) validateEnd(end, runId, ledger);
 
-  let last = events.at(-1) ?? null;
+  let last = ledger.last;
   const markerPath = childPath(root, 'runs', runId, EXTERNAL_TRANSITION_MARKER);
   let externalMarker = await readOptionalVerifiedObject(markerPath, 'external transition marker');
   if (externalMarker !== null) {
-    validateExternalTransitionMarker(externalMarker, runId, start, events, current);
-    const committed = events.find((event) => (
-      event.kind === 'STEP' &&
-      event.sequence === externalMarker.sequence &&
-      event.payload.receipt.executionNonce === externalMarker.executionNonce
-    ));
-      if (committed !== undefined) {
-        if (committed.payload.receipt.token !== externalMarker.token ||
-            committed.payload.beforeDigest !== externalMarker.beforeDigest ||
-            committed.payload.receipt.basedOnVersion !== externalMarker.basedOnVersion ||
-            canonicalJson(normalizePlanningEvidence(committed.payload.boundary?.planning)) !==
-              canonicalJson(normalizePlanningEvidence(externalMarker.planning))) {
-          corrupt('External transition marker does not match its committed STEP.', { runId });
-        }
+    validateExternalTransitionMarker(externalMarker, runId, start, ledger, current);
+    const committed = ledger.last?.kind === 'STEP' &&
+      ledger.last.sequence === externalMarker.sequence &&
+      ledger.last.payload.receipt.executionNonce === externalMarker.executionNonce
+      ? ledger.last
+      : undefined;
+    if (committed !== undefined) {
+      if (committed.payload.receipt.token !== externalMarker.token ||
+          committed.payload.beforeDigest !== externalMarker.beforeDigest ||
+          committed.payload.receipt.basedOnVersion !== externalMarker.basedOnVersion ||
+          canonicalJson(normalizePlanningEvidence(committed.payload.boundary?.planning)) !==
+            canonicalJson(normalizePlanningEvidence(externalMarker.planning))) {
+        corrupt('External transition marker does not match its committed STEP.', { runId });
+      }
       await rm(markerPath);
       externalMarker = null;
     } else if (TERMINAL_KINDS.has(last?.kind)) {
@@ -1458,14 +1457,16 @@ async function recoverRun(root, manifest) {
   }
   let reason;
   if (end === null && !TERMINAL_KINDS.has(last?.kind)) {
-    if (events.length === 0) {
+    if (ledger.eventCount === 0) {
       last = await appendLedgerEvent(root, runId, 1, null, {
         kind: 'RUN_STARTED',
         payload: { startDigest: start.selfDigest, worldId: start.worldId, scenario: start.scenario },
       });
-      events.push(last);
+      ledger.eventCount = 1;
+      ledger.first = last;
+      ledger.last = last;
     }
-    const finalState = recoveryStateProjection(current, start, events);
+    const finalState = recoveryStateProjection(current, start, ledger);
     last = await appendLedgerEvent(root, runId, last.sequence + 1, last.digest, {
       kind: 'RUN_HALTED',
       payload: {
@@ -1476,12 +1477,13 @@ async function recoverRun(root, manifest) {
         finalStateDigest: canonicalDigest(finalState),
       },
     });
-    events.push(last);
+    ledger.eventCount += 1;
+    ledger.last = last;
     reason = externalMarker === null ? 'CRASH_HALTED' : 'EXTERNAL_TRANSITION_UNKNOWN';
   }
 
   if (end === null) {
-    const terminal = events.at(-1);
+    const terminal = ledger.last;
     validateTerminalEvent(terminal);
     end = withSelfDigest({
       schemaVersion: SCHEMA_VERSION,
@@ -1493,13 +1495,13 @@ async function recoverRun(root, manifest) {
       endedAt: now(),
     });
     await publishImmutableJson(root, endPath, end, 'run end');
-    reason ??= events.at(-1)?.payload?.reason === 'EXTERNAL_TRANSITION_UNKNOWN'
+    reason ??= ledger.last?.payload?.reason === 'EXTERNAL_TRANSITION_UNKNOWN'
       ? 'EXTERNAL_TRANSITION_UNKNOWN'
       : 'TERMINAL_COMPLETED';
   }
 
-  const terminal = events.at(-1);
-  validateEnd(end, runId, events);
+  const terminal = ledger.last;
+  validateEnd(end, runId, ledger);
   const finalCurrent = currentFromState(terminal.payload.finalState, {
     lastRunId: runId,
     lastRunSequence: terminal.sequence,
@@ -1641,69 +1643,83 @@ async function* readLedgerStream(root, runId, start, manifest, options = {}) {
   if (!status.isFile() || status.isSymbolicLink()) pathEscape('Ledger is not a plain file.');
   if (status.size > MAX_LEDGER_BYTES) corrupt('Ledger exceeds the size limit.', { runId });
   if (status.size === 0) return;
+  let readableByteLength = status.size;
   if (!(await hasTrailingNewline(eventsPath, status.size))) {
-    corrupt('Ledger has an incomplete trailing line.', { runId });
+    if (options.allowTornTrailingLine !== true) corrupt('Ledger has an incomplete trailing line.', { runId });
+    const lastNewline = await findLastNewline(eventsPath, status.size);
+    const tornTailByteLength = status.size - (lastNewline + 1);
+    if (tornTailByteLength > MAX_EVENT_LINE_BYTES) {
+      corrupt('Ledger torn trailing line exceeds the size limit.', { runId });
+    }
+    readableByteLength = lastNewline + 1;
+    if (options.tornTail !== undefined) options.tornTail.byteLength = readableByteLength;
   }
 
-  const input = createReadStream(eventsPath, { encoding: 'utf8' });
-  const lines = createInterface({ input, crlfDelay: Infinity });
+  const input = readableByteLength === 0 ? null : createReadStream(eventsPath, {
+    encoding: 'utf8',
+    start: 0,
+    end: readableByteLength - 1,
+  });
+  const lines = input === null ? null : createInterface({ input, crlfDelay: Infinity });
   let previousDigest = null;
   let expectedState = cloneJson(start.initialState);
   const executionNonces = new Set();
   let sequence = 0;
   let terminalSeen = false;
   try {
-    for await (const line of lines) {
-      sequence += 1;
-      if (Buffer.byteLength(line, 'utf8') > MAX_EVENT_LINE_BYTES) {
-        corrupt('Ledger line exceeds the size limit.', { runId, line: sequence });
-      }
-      let event;
-      try {
-        event = JSON.parse(line);
-      } catch (cause) {
-        throw new LabStoreError('CORRUPT', 'Ledger contains malformed JSON.', { runId, line: sequence }, { cause });
-      }
-      event = decodeStoredLedgerEvent(event, runId, sequence);
-      try {
-        validateEvent(event, runId, sequence, previousDigest, start, manifest);
-      } catch (cause) {
-        if (cause instanceof TypeError) {
-          throw new LabStoreError('CORRUPT', 'Ledger event exceeds JSON structural limits.', { runId, line: sequence }, { cause });
+    if (lines !== null) {
+      for await (const line of lines) {
+        sequence += 1;
+        if (Buffer.byteLength(line, 'utf8') > MAX_EVENT_LINE_BYTES) {
+          corrupt('Ledger line exceeds the size limit.', { runId, line: sequence });
         }
-        throw cause;
-      }
-      if (sequence === 1 && (
-        event.kind !== 'RUN_STARTED' ||
-        event.payload?.startDigest !== start.selfDigest ||
-        event.payload?.worldId !== start.worldId ||
-        event.payload?.scenario !== start.scenario
-      )) {
-        corrupt('RUN_STARTED does not bind the immutable start.', { runId });
-      }
-      if (terminalSeen) corrupt('Ledger has an invalid terminal transition.', { runId, sequence });
-      if (event.kind === 'STEP') {
-        const nonce = event.payload.receipt.executionNonce;
-        if (
-          event.payload.beforeDigest !== canonicalDigest(expectedState) ||
-          canonicalJson(event.payload.rngBefore) !== canonicalJson(expectedState.rngState) ||
-          executionNonces.has(nonce)
-        ) corrupt('STEP does not continue the prior ledger state.', { runId, sequence });
-        executionNonces.add(nonce);
-        expectedState = cloneJson(event.payload.afterState);
-      } else if (TERMINAL_KINDS.has(event.kind)) {
-        validateTerminalEvent(event);
-        if (canonicalJson(event.payload.finalState) !== canonicalJson(expectedState)) {
-          corrupt('Terminal state differs from the prior ledger state.', { runId, sequence });
+        let event;
+        try {
+          event = JSON.parse(line);
+        } catch (cause) {
+          throw new LabStoreError('CORRUPT', 'Ledger contains malformed JSON.', { runId, line: sequence }, { cause });
         }
-        terminalSeen = true;
+        event = decodeStoredLedgerEvent(event, runId, sequence);
+        try {
+          validateEvent(event, runId, sequence, previousDigest, start, manifest);
+        } catch (cause) {
+          if (cause instanceof TypeError) {
+            throw new LabStoreError('CORRUPT', 'Ledger event exceeds JSON structural limits.', { runId, line: sequence }, { cause });
+          }
+          throw cause;
+        }
+        if (sequence === 1 && (
+          event.kind !== 'RUN_STARTED' ||
+          event.payload?.startDigest !== start.selfDigest ||
+          event.payload?.worldId !== start.worldId ||
+          event.payload?.scenario !== start.scenario
+        )) {
+          corrupt('RUN_STARTED does not bind the immutable start.', { runId });
+        }
+        if (terminalSeen) corrupt('Ledger has an invalid terminal transition.', { runId, sequence });
+        if (event.kind === 'STEP') {
+          const nonce = event.payload.receipt.executionNonce;
+          if (
+            event.payload.beforeDigest !== canonicalDigest(expectedState) ||
+            canonicalJson(event.payload.rngBefore) !== canonicalJson(expectedState.rngState) ||
+            executionNonces.has(nonce)
+          ) corrupt('STEP does not continue the prior ledger state.', { runId, sequence });
+          executionNonces.add(nonce);
+          expectedState = cloneJson(event.payload.afterState);
+        } else if (TERMINAL_KINDS.has(event.kind)) {
+          validateTerminalEvent(event);
+          if (canonicalJson(event.payload.finalState) !== canonicalJson(expectedState)) {
+            corrupt('Terminal state differs from the prior ledger state.', { runId, sequence });
+          }
+          terminalSeen = true;
+        }
+        previousDigest = event.digest;
+        yield event;
       }
-      previousDigest = event.digest;
-      yield event;
     }
   } finally {
-    lines.close();
-    input.destroy();
+    lines?.close();
+    input?.destroy();
   }
   let finalStatus;
   try {
@@ -1715,7 +1731,31 @@ async function* readLedgerStream(root, runId, start, manifest, options = {}) {
   if (!finalStatus.isFile() || finalStatus.isSymbolicLink() || finalStatus.size !== status.size) {
     corrupt('Ledger changed during streaming read.', { runId });
   }
+  if (options.tornTail?.byteLength !== null && options.tornTail?.byteLength !== undefined && terminalSeen) {
+    corrupt('Ledger has a torn tail after a terminal event.', { runId });
+  }
   if (options.requireTerminal !== false && !terminalSeen) corrupt('Ledger has no terminal event.', { runId });
+}
+
+async function readRecoveryLedgerSummary(root, runId, start, manifest, options, current) {
+  const summary = {
+    eventCount: 0,
+    first: null,
+    last: null,
+    referenced: null,
+    lastStepState: null,
+  };
+  for await (const event of readLedgerStream(root, runId, start, manifest, {
+    ...options,
+    requireTerminal: false,
+  })) {
+    summary.eventCount += 1;
+    summary.first ??= event;
+    summary.last = event;
+    if (event.sequence === current.lastRunSequence) summary.referenced = event;
+    if (event.kind === 'STEP') summary.lastStepState = event.payload.afterState;
+  }
+  return summary;
 }
 
 async function validateRunContinuityStream(root, runId, start, manifest, current) {
@@ -1736,6 +1776,26 @@ async function hasTrailingNewline(filePath, size) {
     const buffer = Buffer.alloc(1);
     const result = await handle.read(buffer, 0, 1, size - 1);
     return result.bytesRead === 1 && buffer[0] === 0x0a;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function findLastNewline(filePath, size) {
+  let handle;
+  try {
+    handle = await open(filePath, 'r');
+    const chunkSize = 64 * 1024;
+    const buffer = Buffer.alloc(chunkSize);
+    for (let end = size; end > 0; end -= chunkSize) {
+      const length = Math.min(chunkSize, end);
+      const position = end - length;
+      const result = await handle.read(buffer, 0, length, position);
+      for (let index = result.bytesRead - 1; index >= 0; index -= 1) {
+        if (buffer[index] === 0x0a) return position + index;
+      }
+    }
+    return -1;
   } finally {
     await handle?.close();
   }
@@ -2130,6 +2190,9 @@ function externalTransitionCommitmentKey(scenario, value) {
 }
 
 function validateExternalTransitionMarker(marker, runId, start, events, current) {
+  const first = Array.isArray(events) ? events[0] : events.first;
+  const last = Array.isArray(events) ? events.at(-1) : events.last;
+  const eventCount = Array.isArray(events) ? events.length : events.eventCount;
   if (
     marker.runId !== runId ||
     !Number.isSafeInteger(marker.sequence) || marker.sequence < 2 ||
@@ -2140,11 +2203,13 @@ function validateExternalTransitionMarker(marker, runId, start, events, current)
     typeof marker.beforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(marker.beforeDigest) ||
     (marker.planning !== undefined && !isValidPlanningEvidence(marker.planning)) ||
     typeof marker.markedAt !== 'string' ||
-    !events.some((event) => event.kind === 'RUN_STARTED' && event.payload.startDigest === start.selfDigest)
+    eventCount === 0 ||
+    first.kind !== 'RUN_STARTED' ||
+    first.payload.startDigest !== start.selfDigest
   ) {
     corrupt('External transition marker is invalid.', { runId });
   }
-  const lastSequence = events.at(-1)?.sequence ?? 0;
+  const lastSequence = last?.sequence ?? 0;
   if (marker.sequence !== lastSequence && marker.sequence !== lastSequence + 1) {
     corrupt('External transition marker is not adjacent to the ledger watermark.', { runId });
   }
@@ -2460,7 +2525,7 @@ function isRecoverableLoopAttempt(run) {
 }
 
 function validateEnd(end, runId, events) {
-  const terminal = events.at(-1);
+  const terminal = Array.isArray(events) ? events.at(-1) : events.last;
   validateEndAgainstTerminal(end, runId, terminal);
 }
 
@@ -3061,8 +3126,12 @@ function sameContinuityStateWithoutSupervisor(previous, next) {
 }
 
 function recoveryStateProjection(current, start, events) {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    if (events[index].kind === 'STEP') return cloneJson(events[index].payload.afterState);
+  if (Array.isArray(events)) {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      if (events[index].kind === 'STEP') return cloneJson(events[index].payload.afterState);
+    }
+  } else if (events.lastStepState !== null) {
+    return cloneJson(events.lastStepState);
   }
   if (current.lastRunId === start.runId) return stateProjection(current, start.initialState);
   return cloneJson(start.initialState);
