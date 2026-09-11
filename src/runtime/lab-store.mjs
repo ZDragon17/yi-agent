@@ -6,6 +6,7 @@ import {
   lstat,
   link,
   mkdir,
+  mkdtemp,
   open,
   readFile,
   readdir,
@@ -13,7 +14,9 @@ import {
   rename,
   rmdir,
   rm,
+  writeFile,
 } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   SCHEMA_VERSION,
@@ -29,7 +32,7 @@ import {
   withSelfDigest,
 } from './schema.mjs';
 import { isValidCandidateOutcome } from './candidate-evidence.mjs';
-import { annotateCandidateHistory } from './candidate-history.mjs';
+import { createCandidateHistoryAnnotator } from './candidate-history.mjs';
 import {
   externalInputUnsigned,
   isValidEvidencePublicKey,
@@ -46,6 +49,7 @@ const MAX_JSON_BYTES = MAX_PERSISTED_EVENT_BYTES;
 const MAX_LEDGER_BYTES = 40 * 1024 * 1024;
 const MAX_EVENT_LINE_BYTES = MAX_PERSISTED_EVENT_BYTES;
 const MAX_RECENT_COMMITTED_STEPS = 32;
+const MAX_CANDIDATE_SORT_CHUNK = 128;
 const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
 const MAX_PLANNING_HORIZON = 8;
@@ -453,57 +457,73 @@ export class LabStore {
     }
     const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
     validateCurrentShape(current);
-    const outcomes = [];
-    for (const runId of await listRunIds(this.root)) {
-      if (current.status === 'RUNNING' && runId === current.lastRunId) continue;
-      let run;
-      try {
-        run = await this.readRunStream(runId);
-      } catch (error) {
-        if (error instanceof LabStoreError && error.code === 'BUSY' && runId === current.lastRunId) continue;
-        throw error;
-      }
-      let terminal = null;
-      for await (const event of run.events) {
-        if (TERMINAL_KINDS.has(event.kind)) terminal = event;
-        if (event.kind !== 'STEP' || event.payload.candidateOutcome === undefined) continue;
-        const proposal = event.payload.policyEvidence?.proposal;
-        let proposalSummary = {};
-        if (proposal !== undefined) {
-          const proposalJson = canonicalJson(proposal);
-          const proposalDigest = canonicalDigest(proposal);
-          proposalSummary = Buffer.byteLength(proposalJson, 'utf8') <= MAX_CANDIDATE_PROPOSAL_BYTES
-            ? { proposal: cloneJson(proposal), proposalDigest }
-            : { proposalDigest, proposalTruncated: true };
+    const chunk = [];
+    const chunkPaths = [];
+    let sortRoot = null;
+    const flushChunk = async () => {
+      if (chunk.length === 0) return;
+      sortRoot ??= await mkdtemp(path.join(tmpdir(), 'yi-agent-candidate-sort-'));
+      const chunkPath = path.join(sortRoot, `chunk-${String(chunkPaths.length).padStart(8, '0')}.jsonl`);
+      chunk.sort(compareCandidateOutcomes);
+      await writeFile(chunkPath, `${chunk.map((entry) => canonicalJson(entry)).join('\n')}\n`, 'utf8');
+      chunkPaths.push(chunkPath);
+      chunk.length = 0;
+    };
+    try {
+      for (const runId of await listRunIds(this.root)) {
+        if (current.status === 'RUNNING' && runId === current.lastRunId) continue;
+        let run;
+        try {
+          run = await this.readRunStream(runId);
+        } catch (error) {
+          if (error instanceof LabStoreError && error.code === 'BUSY' && runId === current.lastRunId) continue;
+          throw error;
         }
-        outcomes.push({
-          runId,
-          worldId: run.start.worldId,
-          scenario: run.start.scenario,
-          worldVersion: run.manifest.worldVersion,
-          tokenMapDigest: run.manifest.tokenMap.digest,
-          sequence: event.sequence,
-          recordedAt: event.payload.recordedAt,
-          kernelStep: event.payload.afterState.kernelStep,
-          beforeStateDigest: event.payload.beforeDigest,
-          candidateOutcome: cloneJson(event.payload.candidateOutcome),
-          valueSpec: cloneJson(event.payload.boundary.valueSpec),
-          beforeVector: [...event.payload.beforeObservation.vector],
-          afterVector: [...event.payload.postObservation.vector],
-          ...(event.payload.policyEvidence?.observationDigest === undefined
-            ? {}
-            : { observationDigest: event.payload.policyEvidence.observationDigest }),
-          ...(event.payload.policyEvidence?.supersedesCandidateDigest === undefined
-            ? {}
-            : { supersedesCandidateDigest: event.payload.policyEvidence.supersedesCandidateDigest }),
-          ...proposalSummary,
-        });
+        let terminal = null;
+        for await (const event of run.events) {
+          if (TERMINAL_KINDS.has(event.kind)) terminal = event;
+          if (event.kind !== 'STEP' || event.payload.candidateOutcome === undefined) continue;
+          const proposal = event.payload.policyEvidence?.proposal;
+          let proposalSummary = {};
+          if (proposal !== undefined) {
+            const proposalJson = canonicalJson(proposal);
+            const proposalDigest = canonicalDigest(proposal);
+            proposalSummary = Buffer.byteLength(proposalJson, 'utf8') <= MAX_CANDIDATE_PROPOSAL_BYTES
+              ? { proposal: cloneJson(proposal), proposalDigest }
+              : { proposalDigest, proposalTruncated: true };
+          }
+          chunk.push({
+            runId,
+            worldId: run.start.worldId,
+            scenario: run.start.scenario,
+            worldVersion: run.manifest.worldVersion,
+            tokenMapDigest: run.manifest.tokenMap.digest,
+            sequence: event.sequence,
+            recordedAt: event.payload.recordedAt,
+            kernelStep: event.payload.afterState.kernelStep,
+            beforeStateDigest: event.payload.beforeDigest,
+            candidateOutcome: cloneJson(event.payload.candidateOutcome),
+            valueSpec: cloneJson(event.payload.boundary.valueSpec),
+            beforeVector: [...event.payload.beforeObservation.vector],
+            afterVector: [...event.payload.postObservation.vector],
+            ...(event.payload.policyEvidence?.observationDigest === undefined
+              ? {}
+              : { observationDigest: event.payload.policyEvidence.observationDigest }),
+            ...(event.payload.policyEvidence?.supersedesCandidateDigest === undefined
+              ? {}
+              : { supersedesCandidateDigest: event.payload.policyEvidence.supersedesCandidateDigest }),
+            ...proposalSummary,
+          });
+          if (chunk.length >= MAX_CANDIDATE_SORT_CHUNK) await flushChunk();
+        }
+        validateEndAgainstTerminal(run.end, run.start.runId, terminal);
       }
-      validateEndAgainstTerminal(run.end, run.start.runId, terminal);
+      if (sortRoot === null) return cloneJson(annotateCandidateHistoryChunk(chunk, limit));
+      await flushChunk();
+      return cloneJson(await annotateCandidateChunks(chunkPaths, limit));
+    } finally {
+      if (sortRoot !== null) await rm(sortRoot, { recursive: true, force: true });
     }
-    outcomes.sort((left, right) => left.recordedAt.localeCompare(right.recordedAt) ||
-      left.runId.localeCompare(right.runId) || left.sequence - right.sequence);
-    return cloneJson(annotateCandidateHistory(outcomes).slice(-limit));
   }
 
   async readLoopContinuation() {
@@ -3258,6 +3278,60 @@ async function hasPendingRecovery(root, manifest) {
     corrupt('Recovery evidence has multiple branches.', {});
   }
   return records.pending.length === 1;
+}
+
+function compareCandidateOutcomes(left, right) {
+  return left.recordedAt.localeCompare(right.recordedAt) ||
+    left.runId.localeCompare(right.runId) || left.sequence - right.sequence;
+}
+
+function annotateCandidateHistoryChunk(chunk, limit) {
+  chunk.sort(compareCandidateOutcomes);
+  const annotator = createCandidateHistoryAnnotator();
+  const results = [];
+  for (const entry of chunk) {
+    results.push(annotator.push(entry));
+    if (results.length > limit) results.shift();
+  }
+  return results;
+}
+
+async function annotateCandidateChunks(chunkPaths, limit) {
+  const readers = chunkPaths.map((chunkPath) => readCandidateChunk(chunkPath));
+  try {
+    const heads = await Promise.all(readers.map((reader) => reader.next()));
+    const annotator = createCandidateHistoryAnnotator();
+    const results = [];
+    while (true) {
+      let nextIndex = -1;
+      for (let index = 0; index < heads.length; index += 1) {
+        if (heads[index].done) continue;
+        if (nextIndex === -1 || compareCandidateOutcomes(heads[index].value, heads[nextIndex].value) < 0) {
+          nextIndex = index;
+        }
+      }
+      if (nextIndex === -1) break;
+      results.push(annotator.push(heads[nextIndex].value));
+      if (results.length > limit) results.shift();
+      heads[nextIndex] = await readers[nextIndex].next();
+    }
+    return results;
+  } finally {
+    await Promise.all(readers.map((reader) => reader.return()));
+  }
+}
+
+async function* readCandidateChunk(chunkPath) {
+  const input = createReadStream(chunkPath, { encoding: 'utf8' });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (line.length > 0) yield JSON.parse(line);
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
 }
 
 async function listRunIds(root) {

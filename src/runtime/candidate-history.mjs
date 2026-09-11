@@ -3,53 +3,60 @@ import { comparePairedCandidates } from './candidate-comparison.mjs';
 
 export function annotateCandidateHistory(history) {
   if (!Array.isArray(history)) return [];
+  const annotator = createCandidateHistoryAnnotator();
+  return history.map((entry) => annotator.push(entry));
+}
+
+export function createCandidateHistoryAnnotator() {
   const attempts = new Map();
   const contextAttempts = new Map();
   const supersededCandidates = new Map();
   const pairedCandidates = new Map();
   let previousKernelStep = null;
-  return history.map((entry) => {
-    const scope = candidateScope(entry);
-    const decisionContext = decisionContextDigest(entry);
-    const quality = predictionQuality(entry.candidateOutcome, entry);
-    const previousSuperseded = findLatestSupersededCandidate(supersededCandidates, entry);
-    const supersededStepDistance = stepsSinceSupersededCandidate(previousSuperseded, entry);
-    const supersededQuality = compareSupersededQuality(previousSuperseded, quality);
-    const previousPaired = findPreviousPairedCandidate(pairedCandidates, entry);
-    const pairedComparison = compareWithPreviousPairedCandidate(previousPaired, entry);
-    const { valueSpec: _valueSpec, beforeVector: _beforeVector, afterVector: _afterVector, ...publicEntry } = entry ?? {};
-    const kernelStep = Number.isSafeInteger(entry?.kernelStep) && entry.kernelStep >= 0 ? entry.kernelStep : null;
-    const stepGap = kernelStep !== null && previousKernelStep !== null && kernelStep >= previousKernelStep
-      ? kernelStep - previousKernelStep
-      : null;
-    const enriched = {
-      ...publicEntry,
-      ...(quality === null ? {} : { quality }),
-      ...(stepGap === null ? {} : { stepsSincePreviousCandidate: stepGap }),
-      ...(supersededStepDistance === null ? {} : { stepsSinceSupersededCandidate: supersededStepDistance }),
-      ...(supersededQuality === null ? {} : supersededQuality),
-      ...(pairedComparison === null ? {} : { pairedComparison }),
-    };
-    if (kernelStep !== null) previousKernelStep = kernelStep;
-    const annotated = scope === null
-      ? enriched
-      : {
-          ...enriched,
-          candidateScopeDigest: scope,
-          attempt: (attempts.get(scope) ?? 0) + 1,
-        };
-    if (scope !== null) attempts.set(scope, annotated.attempt);
-    const result = decisionContext === null
-      ? annotated
-      : (() => {
-          const contextAttempt = (contextAttempts.get(decisionContext) ?? 0) + 1;
-          contextAttempts.set(decisionContext, contextAttempt);
-          return { ...annotated, decisionContextDigest: decisionContext, contextAttempt };
-        })();
-    rememberCandidate(supersededCandidates, entry);
-    rememberPairedCandidate(pairedCandidates, entry);
-    return result;
-  });
+  return {
+    push(entry) {
+      const scope = candidateScope(entry);
+      const decisionContext = decisionContextDigest(entry);
+      const quality = predictionQuality(entry?.candidateOutcome, entry);
+      const previousSuperseded = findLatestSupersededCandidate(supersededCandidates, entry);
+      const supersededStepDistance = stepsSinceSupersededCandidate(previousSuperseded, entry);
+      const supersededQuality = compareSupersededQuality(previousSuperseded, quality);
+      const previousPaired = findPreviousPairedCandidate(pairedCandidates, entry);
+      const pairedComparison = compareWithPreviousPairedCandidate(previousPaired, entry);
+      const { valueSpec: _valueSpec, beforeVector: _beforeVector, afterVector: _afterVector, ...publicEntry } = entry ?? {};
+      const kernelStep = Number.isSafeInteger(entry?.kernelStep) && entry.kernelStep >= 0 ? entry.kernelStep : null;
+      const stepGap = kernelStep !== null && previousKernelStep !== null && kernelStep >= previousKernelStep
+        ? kernelStep - previousKernelStep
+        : null;
+      const enriched = {
+        ...publicEntry,
+        ...(quality === null ? {} : { quality }),
+        ...(stepGap === null ? {} : { stepsSincePreviousCandidate: stepGap }),
+        ...(supersededStepDistance === null ? {} : { stepsSinceSupersededCandidate: supersededStepDistance }),
+        ...(supersededQuality === null ? {} : supersededQuality),
+        ...(pairedComparison === null ? {} : { pairedComparison }),
+      };
+      if (kernelStep !== null) previousKernelStep = kernelStep;
+      const annotated = scope === null
+        ? enriched
+        : {
+            ...enriched,
+            candidateScopeDigest: scope,
+            attempt: (attempts.get(scope) ?? 0) + 1,
+          };
+      if (scope !== null) attempts.set(scope, annotated.attempt);
+      const result = decisionContext === null
+        ? annotated
+        : (() => {
+            const contextAttempt = (contextAttempts.get(decisionContext) ?? 0) + 1;
+            contextAttempts.set(decisionContext, contextAttempt);
+            return { ...annotated, decisionContextDigest: decisionContext, contextAttempt };
+          })();
+      rememberCandidate(supersededCandidates, entry);
+      rememberPairedCandidate(pairedCandidates, entry);
+      return result;
+    },
+  };
 }
 
 function compareWithPreviousPairedCandidate(previous, entry) {

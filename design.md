@@ -507,3 +507,7 @@ F-232 收拢现代 loop continuation 的当前 Run 读取。旧的 `readCurrentL
 F-233 反转未决外部事务的恢复索引。F-230 虽然已经逐事件扫描，但仍为所有历史 STEP 建立 `committed` 集合；当历史中没有未决事务时，这个集合完全不会参与结果，却仍随长期 Run 增长。现在第一遍只完整消费和校验各个终态 Run，收集带 recovery evidence 的 `EXTERNAL_TRANSITION_UNKNOWN`；若没有这类项，直接返回 `null`。若存在，再以这些未决身份为筛选条件重读事件流，只建立可能匹配的 commitment，最后按原有 identity、legacy 和冲突规则决定是否仍需恢复。
 
 该变化把常态扫描的辅助状态从“全部历史 STEP”降为“未决事务集合”，代价是异常恢复路径会多读一遍账本；这是可接受的异常路径成本，并保留每遍的 `end.json` 终态一致性校验。Runtime `69/69`、repo WorldPort `8/8`、reconciliation/durability `10/10` 通过；新增回归覆盖未知事务随后以同 nonce 提交后不再被报告。该节点不提供磁盘索引、跨文件事务快照、分布式锁或现实效果真实性。
+
+F-234 把候选历史恢复的排序和输出改为有界流。F-228 已经只从事件流提取候选，但 `readCandidateOutcomes()` 仍把所有候选载荷收集到数组，排序后才做历史注释，最后才截取 32 条。现在候选按固定大小排序块排序并写入临时目录；所有 Run 消费完成后，多个块以原有 `{recordedAt, runId, sequence}` 顺序归并，增量注释器逐条处理，只保留最终请求窗口。单个块和结果窗口有明确上限，临时目录在成功和失败路径都会清理。
+
+增量注释器与数组版 `annotateCandidateHistory()` 共用同一状态转移，因此 attempt、contextAttempt、supersedes、质量和 paired comparison 的计算规则不变。候选谱系索引仍可能随全新 scope、context 或候选摘要增长，这是精确复现远距历史关系的剩余成本；本节点不把它包装成无限记忆或完全有界恢复。Runtime 跨排序块回归、候选历史/Application/Advisor 回归和 repo WorldPort 候选回归均通过。

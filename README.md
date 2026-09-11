@@ -161,6 +161,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - `forever` 长运行边界：新 Run 在唯一 writer lock 内从 verified current 指向的最近 terminal Run 重建 continuation，不重复扫描全部历史；显式恢复和审计仍保留全量扫描，1000 个单步 Run 的连续运行回归已覆盖该边界；
 - 当前 loop 恢复的流式边界：`--resume` 读取 current 指向的 Run 时也逐事件校验，只保留 immutable start、terminal 和规划模式摘要；现代 continuation 不再为恢复物化完整事件数组，旧 continuation 仍在需要历史推断时扫描全部轻量摘要，兼容 `end.json` 终态一致性检查；
 - 未决外部事务索引有界化：恢复扫描先完整校验并收集未决 terminal，只有确实存在带恢复证据的未决项时，第二遍才匹配相关 STEP 身份；正常历史不再为每个已提交 STEP 建立永久增长的 commitment 集合，非幂等恢复与后续同 nonce 提交的判断保持不变；
+- 候选历史外部排序：候选恢复按固定大小排序块写入临时目录，再归并为时间有序输入并增量生成历史注释，最终只保留请求的尾部窗口；长账本不再同时驻留全部候选载荷，谱系索引仍只承担 attempt、supersedes 和 paired comparison 所需的历史状态；
 - 显式自动恢复：`agent loop --resume --auto-recover` 只在 current 明确处于 `RUNNING` 且既有 writer owner 已被系统 liveness probe 判定死亡时执行恢复；活跃 owner 仍返回 `LIVE_OWNER`，READY/HALTED 或无法证明死亡的状态不会被自动接管，保留人工 recover 作为安全路径；两个独立 CLI 同时竞争同一未决非幂等 loop 时，恢复 writer lock、对账结果和后续 Run 仍保持单次提交与 Replay 一致；
 - 进程级恢复回归：E2E 真实启动 CLI 子进程，在第二个模型请求挂起期间强制终止进程，显式回收死亡 owner 后继续下一 Run，验证 current 和 execution 链不回退；
 - 多 WorldPort 耐久矩阵：`test/e2e/durability-matrix-cli.test.mjs` 用 `temperature`、`inventory`、`queue` 验证 kernel-only 连续多 Run、独立进程 inspect 和逐 Run Replay；用外部 `durable-counter` 验证效果已提交但响应丢失后的 recover、跨进程 resume、幂等效果计数和 Replay 不触发副作用；同一外部 loop 还连续经历四次独立 CLI 强杀、recover、resume，最终仍只提交四个效果；

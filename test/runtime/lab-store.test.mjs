@@ -167,6 +167,64 @@ test('candidate outcome history remains readable when array run materialization 
   assert.equal(history[0].candidateOutcome.candidateDigest, policyEvidence.candidateDigest);
 }));
 
+test('candidate outcome history keeps the bounded tail across sorted chunks', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const initialState = runInput().initialState;
+  const steps = [];
+  let beforeState = initialState;
+  for (let index = 1; index <= 129; index += 1) {
+    const afterState = {
+      worldState: { temperatureC: 20 + index, stateVersion: String(index + 1) },
+      memory: {},
+      rngState: { algorithm: 'xorshift32', state: index + 1 },
+      kernelStep: index,
+    };
+    const evidence = {
+      schemaVersion: SCHEMA_VERSION,
+      source: 'model',
+      model: 'candidate-history-chunk-test',
+      token: null,
+      responseDigest: canonicalDigest({ index }),
+      candidateDigest: candidateDigest({ token: null }),
+      applied: false,
+      reason: 'MODEL_UNAVAILABLE',
+    };
+    steps.push(stepEvent({
+      beforeState,
+      afterState,
+      boundary: {
+        valueSpec: {
+          schemaVersion: SCHEMA_VERSION,
+          observationDimensions: 1,
+          weights: [1],
+          target: [0],
+          tolerance: 0,
+          valueMode: 'distance-v2',
+        },
+      },
+      beforeObservation: { vector: [index - 1] },
+      postObservation: { vector: [index] },
+      policyEvidence: evidence,
+      candidateOutcome: {
+        schemaVersion: SCHEMA_VERSION,
+        candidateDigest: evidence.candidateDigest,
+        token: null,
+        status: 'NOT_APPLIED',
+        reason: 'MODEL_UNAVAILABLE',
+      },
+      receipt: { executionNonce: `nonce-${index}` },
+    }));
+    beforeState = afterState;
+  }
+  const run = await store.startRun(runInput());
+  await run.complete({ steps, terminalStatus: 'COMPLETED', finalState: beforeState });
+
+  const history = await store.readCandidateOutcomes(1);
+  assert.equal(history.length, 1);
+  assert.equal(history[0].kernelStep, 129);
+}));
+
 test('unresolved external transition recovery remains readable when array run materialization is unavailable', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));
