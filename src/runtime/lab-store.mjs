@@ -50,6 +50,8 @@ const MAX_JSON_BYTES = MAX_PERSISTED_EVENT_BYTES;
 const MAX_LEDGER_BYTES = 40 * 1024 * 1024;
 const MAX_EVENT_LINE_BYTES = MAX_PERSISTED_EVENT_BYTES;
 const MAX_RECENT_COMMITTED_STEPS = 32;
+const EXECUTION_NONCE_FILTER_BYTES = 256 * 1024;
+const EXECUTION_NONCE_FILTER_HASHES = 4;
 const MAX_CANDIDATE_SORT_CHUNK = 128;
 const MAX_LOOP_SORT_CHUNK = 128;
 const MAX_CHAIN_SORT_CHUNK = 128;
@@ -67,6 +69,35 @@ const GOAL_EPOCH_KEYS = [
 const PLANNING_BRANCHING_MODES = ['tree-v1', 'recursive-v1', 'legacy-v1'];
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+
+class ExecutionNonceFilter {
+  constructor(byteLength = EXECUTION_NONCE_FILTER_BYTES, hashCount = EXECUTION_NONCE_FILTER_HASHES) {
+    this.bits = Buffer.alloc(byteLength);
+    this.bitCount = byteLength * 8;
+    this.hashCount = hashCount;
+  }
+
+  positions(executionNonce) {
+    const digest = createHash('sha256').update(executionNonce, 'utf8').digest();
+    const positions = [];
+    for (let index = 0; index < this.hashCount; index += 1) {
+      positions.push(digest.readUInt32BE(index * 4) % this.bitCount);
+    }
+    return positions;
+  }
+
+  has(executionNonce) {
+    return this.positions(executionNonce).every((position) => (
+      (this.bits[position >> 3] & (1 << (position & 7))) !== 0
+    ));
+  }
+
+  add(executionNonce) {
+    for (const position of this.positions(executionNonce)) {
+      this.bits[position >> 3] |= 1 << (position & 7);
+    }
+  }
+}
 
 export const INTERNAL_RUN_APPEND = Symbol('yi-agent.internal-run-append');
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
@@ -955,7 +986,9 @@ class ActiveRun {
     this.expectedState = cloneJson(start.initialState);
     this.expectedStateDigest = canonicalDigest(this.expectedState);
     this.committedSteps = new Map();
-    this.knownExecutionNonces = new Set();
+    // This is only a conservative lookup hint. A possible hit is confirmed by
+    // scanning the authoritative ledger before duplicate evidence is accepted.
+    this.knownExecutionNonceFilter = new ExecutionNonceFilter();
     // Application-internal states keep large immutable subtrees (for example,
     // a multi-stage plan) across STEP boundaries. Reuse their serialization
     // results without changing the public append path's mutable-input rules.
@@ -1011,7 +1044,7 @@ class ActiveRun {
     if (this.needsLedgerReconcile) await this.reconcileLedger();
     const executionNonce = payload.receipt.executionNonce;
     let committed = this.committedSteps.get(executionNonce);
-    if (committed === undefined && this.knownExecutionNonces.has(executionNonce)) {
+    if (committed === undefined && this.knownExecutionNonceFilter.has(executionNonce)) {
       committed = await this.findCommittedStep(executionNonce);
     }
     if (committed !== undefined) {
@@ -1317,7 +1350,7 @@ class ActiveRun {
   }
 
   rememberCommittedStep(executionNonce, event, payload) {
-    this.knownExecutionNonces.add(executionNonce);
+    this.knownExecutionNonceFilter.add(executionNonce);
     this.committedSteps.set(executionNonce, { event, payload });
     while (this.committedSteps.size > MAX_RECENT_COMMITTED_STEPS) {
       this.committedSteps.delete(this.committedSteps.keys().next().value);

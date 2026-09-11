@@ -1429,6 +1429,33 @@ test('retrying an executionNonce after write-before-sync uncertainty returns the
   assert.deepEqual((await readJsonLines(path.join(lab, 'runs/run-1/events.jsonl'))).map((event) => event.sequence), [1, 2, 3]);
 }));
 
+test('active runs retain duplicate nonce detection beyond the recent step cache', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const initialState = genericState(0);
+  const run = await store.startRun(runInput({ initialState }));
+  const steps = [];
+  let beforeState = initialState;
+  for (let index = 0; index < 40; index += 1) {
+    const afterState = genericState(index + 1);
+    const step = stepEvent({
+      beforeState,
+      afterState,
+      receipt: { executionNonce: `nonce-${index}` },
+    });
+    if (index === 0) steps.push(step);
+    await run.append(step);
+    beforeState = afterState;
+  }
+
+  assert.equal(run.knownExecutionNonceFilter.bits.byteLength, 256 * 1024);
+  assert.equal('knownExecutionNonces' in run, false);
+  const retried = await run.append(steps[0]);
+  assert.equal(retried.sequence, 2);
+  await run.finish({ terminalStatus: 'COMPLETED', finalState: beforeState });
+  assert.equal((await readJsonLines(path.join(lab, 'runs/run-1/events.jsonl'))).length, 42);
+}));
+
 test('inspect reads only its fixed active watermark and ignores a concurrent partial tail', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));
