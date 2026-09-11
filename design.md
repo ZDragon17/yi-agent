@@ -555,3 +555,7 @@ F-251 收紧活动 Run 的 nonce 预筛选。原来的 `ActiveRun.knownExecution
 F-252 将 `EffectJournal.open()` 的解析过程改成固定文件范围的逐块读取。旧实现同时创建原始 Buffer、UTF-8 字符串和按换行分割的行数组，随后才进入事件数组；新实现只让当前 chunk、当前行和既有兼容事件数组驻留，逐行执行 JSON、事件 envelope 和 prevDigest/digest 校验。读取范围固定在初始 `lstat` 的文件大小内，文件增长不会被悄悄并入本次恢复；不完整尾行、超长行和损坏事件仍拒绝打开。CRLF 账本回归验证了换行规范化不改变 sequence 和摘要链。
 
 这一步降低的是副作用 Journal 重启时的瞬时解析峰值，`read()` 仍按旧接口返回事件数组，Broker 恢复仍需保存每个 effect 的可审计事件结果，16 MiB 文件上限和跨进程锁语义没有放宽。它不是持久索引、无限效果历史或跨文件事务快照。
+
+F-253 把懒加载 Journal 接到 EffectBroker 恢复路径。默认 `EffectJournal.open()` 仍验证并提供数组接口；内部 CLI 路径使用 `lazy:true`，由 `readStream()` 逐条交给 `restoreEffectBroker()`，并通过 `head()` 获取 CAS 所需的 sequence/digest。追加、独占操作和不确定写入恢复都会在锁内重新流式验证当前文件；发生陈旧日志头冲突时只统计目标 nonce，再更新日志头并重试。这样恢复时不再同时保留 Journal 自身的事件数组和 Broker 分组副本，Broker 的可审计事件快照仍保持原契约。
+
+懒加载对象不提供同步 `read()`，调用方若需要完整历史必须明确选择默认数组接口；EffectBroker 对旧的 `read()` Journal 和内存 fake 仍保留兼容分支。该节点不改变 16 MiB 上限，不提供持久索引、无限效果历史或跨文件事务快照。

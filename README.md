@@ -705,3 +705,5 @@ F-250 补齐 `readRunStream()` 的终态绑定：完整消费流时会校验 `en
 F-251 收紧活动 Run 的 nonce 预筛选：`ActiveRun` 不再为所有已提交 STEP 保留无限增长的 `knownExecutionNonces` 集合，改用固定 256 KiB 位过滤器。过滤器只用于判断“可能已经见过”；命中后仍完整扫描权威账本并比较 STEP evidence，误报只带来额外扫描，不会直接接受重复证据。完整账本读取仍维护精确 nonce 集合，单个 ledger 的 40 MiB 上限也保持不变。40 STEP 跨最近 32 条缓存后重试首个 nonce 的 Runtime 回归为 `74/74`，说明活动写路径的内存提示已固定，同时保留 nonce 幂等和冲突检查。
 
 F-252 将 `EffectJournal.open()` 改为按固定文件范围逐块读取和逐行校验，去掉打开时的原始 Buffer、整本字符串和行数组临时副本；`EffectJournal.read()` 的兼容数组接口、16 MiB journal 上限、摘要链和跨进程锁不变。CRLF 账本与 EffectBroker、authority、sandbox executor 回归共 `28/28` 通过。该变化只降低 Journal 重启解析峰值，不把副作用历史变成无限内存、持久索引或跨文件事务快照。
+
+F-253 将 CLI/EffectBroker 恢复切换到懒加载 Journal：恢复过程逐事件消费 `readStream()`，日志头通过 `head()` 获取，冲突重试只流式统计同 nonce；默认 `EffectJournal.open()` 和 `read()` 数组接口继续兼容。懒加载 Journal 跨初始化、追加、重启恢复的效果回归为 `29/29`，CLI 的真实 sandbox、authority 和 signer 路径继续复用同一契约。该变化减少恢复时的重复 Journal 数组，不承诺无限效果历史或持久索引。

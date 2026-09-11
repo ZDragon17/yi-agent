@@ -1896,3 +1896,10 @@
 - 实现：按 immutable `lstat` 文件范围创建 `createReadStream`，逐块寻找换行、逐行解析和校验 digest 链，只保留既有事件兼容数组；CRLF、超长行、JSON 错误和无换行尾部继续按原错误码处理。锁元数据仍使用原有小文件读取路径。
 - 验证：EffectJournal、EffectBroker、authority、sandbox executor 和 dry-run 回归 `28/28`；新增 CRLF 流式账本回归确认 sequence `[1,2]` 可恢复。
 - 边界：`EffectJournal.read()` 与 Broker 的事件结果仍是显式数组，16 MiB journal 上限不变；本节点消除的是打开时的原始文件/行数组临时副本，不是持久索引、无限效果历史或跨文件事务快照。
+
+## F-253 EffectBroker 恢复的懒加载 Journal
+
+- 反证/缺口：F-252 虽然让 Journal 逐行解析，但 CLI 仍先创建完整 `EffectJournal` 数组，再由 `restoreEffectBroker()` 复制到分组状态；长效果历史的恢复路径仍有第二份全量事件驻留。
+- 实现：`EffectJournal` 增加内部懒加载模式和 `readStream()`、`head()`、按 nonce 计数接口。CLI 以懒加载模式打开；Broker 恢复逐事件消费并校验，append 只依赖重新读取后的日志头，冲突重试只流式统计同 nonce。旧 `open()` 默认行为、`read()` 数组兼容接口和无 Journal 的内存 Broker 保持不变。
+- 验证：效果 Journal/Broker/authority/sandbox/dry-run 回归 `29/29`；懒加载 Journal 跨初始化、追加和重新恢复回归确认同步数组接口不可用时，nonce 状态仍可恢复。
+- 边界：Broker 的每个 effect 仍保留对外可审计事件结果，`read()` 仍可能物化全量历史；本节点减少的是 CLI/恢复路径的重复 Journal 副本，不是持久索引、无限效果历史或跨文件事务快照。
