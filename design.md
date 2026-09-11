@@ -527,3 +527,5 @@ F-238 将 chain Replay 的 Run 头部扫描改为异步目录迭代和外部排�
 F-239 将崩溃恢复的 Run 目录选择改为单遍异步扫描。`recoverRun()` 只保留 `runCount`、`currentRunPresent`、一个未完成 Run 身份和其计数；因此历史终态 Run 不再以目录名数组驻留。扫描期间仍按原规则清理只含受认可 staging 文件的预启动孤儿目录；扫描结束后继续使用 current 优先和“恰好一个未完成 Run”规则选择恢复对象，后续 start、ledger、terminal 和 current 投影校验不变。该优化只覆盖恢复选择阶段，不能把整个恢复过程说成不加载事件数组。
 
 F-240 将 `readCandidateOutcomes()` 与 `readLoopContinuation()` 的 Run 枚举从已排序数组改为异步目录迭代。两条路径随后都会按自己的稳定键消费或写入排序块，因此目录返回顺序不是语义输入；候选历史的 scope/lineage 注释和 continuation 的 contract、重复索引、缺口检查保持原规则。该变化只去掉目录名数组，未改变 `readAllRuns()`、nonce 精确唯一性或其他数组兼容接口。
+
+F-241 将 `startRun()` 的上一 Run 接续校验接到 `readLedgerStream()`。流式读取器逐事件执行 JSON、摘要链、STEP 状态、executionNonce 和 terminal 校验；接续层只保存首事件、`current.lastRunSequence` 对应事件和事件计数，用它们完成 current 引用及投影检查。对于仍处于 `RUNNING` 的 current，流式校验允许缺少终态，随后沿用原有 `BUSY` 返回；正常终态路径的连续性结果不变。该优化不改 `readRun()` 数组接口，也不把全历史 nonce 唯一性说成常量成本。

@@ -797,10 +797,13 @@ export class LabStore {
         const previousRunId = requireSafeSegment(previousCurrent.lastRunId, 'runId');
         const previousStart = await readVerifiedObject(childPath(this.root, 'runs', previousRunId, 'start.json'), 'run start');
         validateStart(previousStart, this.manifest, previousRunId);
-        const previousEvents = await readLedger(this.root, previousRunId, previousStart, {}, this.manifest);
-        validateLedgerIdentity(previousStart, previousEvents);
-        validateCurrentReference(previousCurrent, previousRunId, previousEvents);
-        validateCurrentProjection(previousCurrent, previousStart, previousEvents);
+        await validateRunContinuityStream(
+          this.root,
+          previousRunId,
+          previousStart,
+          this.manifest,
+          previousCurrent,
+        );
       }
       if (previousCurrent.status === 'RUNNING') {
         await removeOwnedLock(this.root, writerLock);
@@ -1626,7 +1629,7 @@ function decodeStoredLedgerEvent(event, runId, sequence) {
   return decoded;
 }
 
-async function* readLedgerStream(root, runId, start, manifest) {
+async function* readLedgerStream(root, runId, start, manifest, options = {}) {
   const eventsPath = childPath(root, 'runs', runId, 'events.jsonl');
   let status;
   try {
@@ -1712,7 +1715,18 @@ async function* readLedgerStream(root, runId, start, manifest) {
   if (!finalStatus.isFile() || finalStatus.isSymbolicLink() || finalStatus.size !== status.size) {
     corrupt('Ledger changed during streaming read.', { runId });
   }
-  if (!terminalSeen) corrupt('Ledger has no terminal event.', { runId });
+  if (options.requireTerminal !== false && !terminalSeen) corrupt('Ledger has no terminal event.', { runId });
+}
+
+async function validateRunContinuityStream(root, runId, start, manifest, current) {
+  const summary = { eventCount: 0, first: null, referenced: null };
+  for await (const event of readLedgerStream(root, runId, start, manifest, { requireTerminal: false })) {
+    summary.eventCount += 1;
+    summary.first ??= event;
+    if (event.sequence === current.lastRunSequence) summary.referenced = event;
+  }
+  validateCurrentReference(current, runId, summary);
+  validateCurrentProjection(current, start, summary);
 }
 
 async function hasTrailingNewline(filePath, size) {
@@ -2465,6 +2479,7 @@ function validateEndAgainstTerminal(end, runId, terminal) {
 }
 
 function validateCurrentReference(current, runId, events) {
+  const view = currentLedgerView(events, current);
   if (current.lastRunId === null) {
     if (current.lastRunSequence !== 0 || current.eventsDigest !== null) {
       corrupt('Current has an invalid empty watermark.', {});
@@ -2474,20 +2489,20 @@ function validateCurrentReference(current, runId, events) {
   if (current.lastRunId !== runId) {
     if (
       current.status !== 'RUNNING' &&
-      events.length <= 1 &&
-      (events.length === 0 || events[0].kind === 'RUN_STARTED')
+      view.eventCount <= 1 &&
+      (view.eventCount === 0 || view.first.kind === 'RUN_STARTED')
     ) return;
     corrupt('Current references another run.', { runId });
   }
   if (!Number.isInteger(current.lastRunSequence)) corrupt('Current run sequence is invalid.', { runId });
-  const referenced = events[current.lastRunSequence - 1];
+  const referenced = view.referenced;
   if (!referenced || referenced.digest !== current.eventsDigest) {
     corrupt('Current watermark does not reference a ledger event.', { runId, sequence: current.lastRunSequence });
   }
 }
 
 function validateCurrentProjection(current, start, events) {
-  const referenced = events[current.lastRunSequence - 1];
+  const referenced = currentLedgerView(events, current).referenced;
   if (!referenced) corrupt('Current has no referenced event state.', { runId: start.runId });
   let expectedState;
   let expectedStatus;
@@ -2507,6 +2522,17 @@ function validateCurrentProjection(current, start, events) {
     current.status !== expectedStatus ||
     canonicalJson(stateProjection(current, current)) !== canonicalJson(expectedState)
   ) corrupt('Current continuity projection differs from its ledger event.', { runId: start.runId });
+}
+
+function currentLedgerView(events, current) {
+  if (Array.isArray(events)) {
+    return {
+      eventCount: events.length,
+      first: events[0] ?? null,
+      referenced: events[current.lastRunSequence - 1] ?? null,
+    };
+  }
+  return events;
 }
 
 function validateCurrentShape(current) {

@@ -1812,3 +1812,10 @@
 - 实现：`readCandidateOutcomes()` 和 `readLoopContinuation()` 改用可重复消费的异步目录迭代器。候选记录继续按 `{recordedAt,runId,sequence}` 排序，continuation 继续按 `loopId → runIndex → startedAt → runId` 排序，因此不依赖目录枚举顺序；既有多轮归并和临时目录清理不变。
 - 验证：候选历史、跨块尾部注释、loop continuation 129 Run 跨块恢复、应用层连续/恢复与 CLI WorldPort 回归继续通过。
 - 边界：本节点只去掉两条读路径的 Run 名称数组；`readAllRuns()`、事件账本全历史 nonce 精确唯一性和兼容数组接口仍有各自的内存/索引成本，不能把该变化描述为持久索引或无限历史。
+
+## F-241 跨 Run 接续的上一账本流式校验
+
+- 反证/缺口：F-227 已让 Replay 使用事件流，但 `startRun()` 在验证 current 指向的上一 Run 时仍调用 `readLedger()`，再用完整事件数组检查摘要链、状态连续性和 current 投影；长 Run 的每次接续仍会产生整账本峰值。
+- 实现：`startRun()` 改用 `validateRunContinuityStream()`。它复用 `readLedgerStream()` 的逐事件完整校验，只保存首事件、current 水位对应事件和事件计数；共享的 current 引用/投影校验接受数组与流式摘要两种输入。流式路径对运行中 current 放宽的仅是“必须已有终态”这一读取条件，随后仍由原逻辑返回 `BUSY`。
+- 验证：跨 Run 连续性、目标/loop 接续、恢复边界、链回放与 Runtime 定向回归继续通过；语法检查通过。
+- 边界：该节点只减少 `startRun()` 接续阶段的事件载荷驻留；`readRun()`、`readAllRuns()` 和全历史 executionNonce 精确去重仍保留各自成本，不能把它描述为无限历史或持久索引。
