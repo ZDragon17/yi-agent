@@ -1742,3 +1742,10 @@
 - 实现：逐个消费 `readRunStream()`；STEP 只进入包含 scenario、executionNonce、token、basedOnVersion 和 beforeDigest 的 canonical 身份键集合，未决 terminal evidence 保持原顺序收集，匹配和冲突判定不变。
 - 验证：LabStore Runtime 回归 66/66 通过；repo WorldPort 的响应丢失恢复和进程重启恢复回归 2/2 通过。新提交仍需等待远端三平台 CI。
 - 边界：身份键集合仍可能随 STEP 数量增长，未决项也需保留到扫描完成；该节点不提供有界长期记忆、磁盘分页、跨文件事务快照或现实执行真实性。
+
+## F-231 legacy loop continuation 的流式扫描
+
+- 反证/缺口：F-230 之后，`readLoopContinuation()` 仍为所有历史 Run 调用 `readRun()`；legacy loop 恢复会把完整事件数组挂在每个 loop group 上，长期账本的恢复成本仍然偏高。
+- 实现：完整消费 `readRunStream()` 以保留逐事件校验，只为带 continuation 的 Run 保存 immutable start、terminal 和规划模式摘要；规划模式推断、runIndex 连续性、可恢复终态、active 冲突和 contract 比较复用原语义。流式消费者完成后统一核对 `end.json` 与终态事件。
+- 验证：legacy continuation、规划模式推断、Application continuous/resume、CLI crash/continuation 相关回归共 20/20 通过；外部事务和 repo WorldPort 回归继续通过。新提交仍需等待远端三平台 CI。
+- 边界：loop group 仍保留轻量 Run 摘要，现代 `readCurrentLoopContinuation()` 的单 Run 兼容路径仍可能读取数组；该节点不提供无限历史、磁盘分页或跨文件事务快照。

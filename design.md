@@ -495,3 +495,7 @@ F-229 处理 F-228 暴露的候选历史计算瓶颈。旧的 `annotateCandidate
 F-230 处理另一条启动恢复热路径。旧的 `findUnresolvedExternalTransition()` 先读取全部 Run，再从完整事件数组中建立 `committed` 列表和 `unknowns` 列表；长期外部 loop 的每一步都可能带来不参与恢复判断的完整状态、观测和学习证据。新实现逐个消费 `readRunStream()`，把每个 STEP 压缩为 `(scenario, executionNonce, token, basedOnVersion, beforeDigest)` 的 canonical 身份键，只把 `EXTERNAL_TRANSITION_UNKNOWN` 的 terminal evidence 留到冲突判断；流消费完成后仍按原有顺序检查未决项和 identity 冲突。
 
 该改动没有改变恢复可信度。身份键集合仍会随已提交 STEP 数量增加，未决项也仍需保留到全量扫描结束；它只减少与“是否已经提交同一外部动作”无关的事件载荷。Runtime 66 项回归和 repo WorldPort 的丢响应恢复、进程重启恢复回归通过，外部 adapter 仍不因单一回执而获得现实效果真实性。
+
+F-231 收拢 legacy loop continuation 的全量扫描。旧路径为寻找可恢复的 loop，把每个 Run 的全部事件数组放进 group；新路径使用 `readRunStream()` 完整验证事件，却只留下有 continuation 的 Run 的 immutable start、terminal 和规划模式集合。`inferLoopPlanningBranchingMode()` 改为读取这份轻量摘要，`summarizeLoopContinuation()` 与 `summarizeLatestLoopRun()` 同时兼容流式摘要和旧数组对象，故 runIndex 连续性、可恢复终态、目标停止原因、active loop 冲突和 contract 漂移规则不变。
+
+流式恢复消费者在事件流耗尽后都会校验 `end.json` 的终态 sequence、digest、status 和 finalStateDigest，避免“只筛选感兴趣事件”削弱旧 `readRun()` 的账本边界。测试覆盖 legacy continuation、历史规划模式推断、continuous/resume、CLI crash continuation 以及外部恢复路径。内存仍会保存各 loop 的轻量 run 摘要，且现代 `readCurrentLoopContinuation()` 对单个旧数组 Run 的兼容路径尚未改写；这不是无限历史或事务快照。

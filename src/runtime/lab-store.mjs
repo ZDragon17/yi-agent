@@ -463,7 +463,9 @@ export class LabStore {
         if (error instanceof LabStoreError && error.code === 'BUSY' && runId === current.lastRunId) continue;
         throw error;
       }
+      let terminal = null;
       for await (const event of run.events) {
+        if (TERMINAL_KINDS.has(event.kind)) terminal = event;
         if (event.kind !== 'STEP' || event.payload.candidateOutcome === undefined) continue;
         const proposal = event.payload.policyEvidence?.proposal;
         let proposalSummary = {};
@@ -497,6 +499,7 @@ export class LabStore {
           ...proposalSummary,
         });
       }
+      validateEndAgainstTerminal(run.end, run.start.runId, terminal);
     }
     outcomes.sort((left, right) => left.recordedAt.localeCompare(right.recordedAt) ||
       left.runId.localeCompare(right.runId) || left.sequence - right.sequence);
@@ -513,11 +516,23 @@ export class LabStore {
     }
     const groups = new Map();
     for (const runId of await listRunIds(this.root)) {
-      const run = await this.readRun(runId);
+      const run = await this.readRunStream(runId);
+      const planningBranchingModes = new Set();
+      let terminal = null;
+      for await (const event of run.events) {
+        const planningMode = event.kind === 'STEP'
+          ? planningBranchingModeForStep(event)
+          : event.kind === 'RUN_HALTED' || event.kind === 'RUN_COMPLETED'
+            ? planningBranchingModeForTerminal(event)
+            : null;
+        if (planningMode !== null) planningBranchingModes.add(planningMode);
+        if (TERMINAL_KINDS.has(event.kind)) terminal = event;
+      }
+      validateEndAgainstTerminal(run.end, run.start.runId, terminal);
       if (run.start.continuation === undefined) continue;
       const continuation = validateLoopContinuation(run.start.continuation, 'run continuation', true);
       const group = groups.get(continuation.loopId) ?? { continuation, runs: [] };
-      group.runs.push(run);
+      group.runs.push({ start: run.start, terminal, planningBranchingModes: [...planningBranchingModes] });
       groups.set(continuation.loopId, group);
     }
     for (const group of groups.values()) {
@@ -585,6 +600,7 @@ export class LabStore {
           terminal = event;
         }
       }
+      validateEndAgainstTerminal(run.end, run.start.runId, terminal);
       if (terminal?.payload?.reason !== 'EXTERNAL_TRANSITION_UNKNOWN') continue;
       const evidence = terminal.payload.externalTransition;
       if (evidence === undefined) {
@@ -2054,14 +2070,16 @@ function inferLoopPlanningBranchingMode(group) {
   const declared = uniquePlanningBranchingModes(group.runs.map((run) =>
     run.start.continuation.planningBranchingMode,
   ));
-  const observed = uniquePlanningBranchingModes(group.runs.flatMap((run) => [
-    ...run.events
-      .filter((event) => event.kind === 'STEP')
-      .map(planningBranchingModeForStep),
-    ...run.events
-      .filter((event) => event.kind === 'RUN_HALTED' || event.kind === 'RUN_COMPLETED')
-      .map(planningBranchingModeForTerminal),
-  ].filter((mode) => mode !== null)));
+  const observed = uniquePlanningBranchingModes(group.runs.flatMap((run) => (
+    run.planningBranchingModes ?? [
+      ...run.events
+        .filter((event) => event.kind === 'STEP')
+        .map(planningBranchingModeForStep),
+      ...run.events
+        .filter((event) => event.kind === 'RUN_HALTED' || event.kind === 'RUN_COMPLETED')
+        .map(planningBranchingModeForTerminal),
+    ].filter((mode) => mode !== null)
+  )));
   if (declared.length > 1 || observed.length > 1 ||
       (declared.length === 1 && observed.length === 1 && declared[0] !== observed[0])) {
     corrupt('Loop continuation planning branching mode differs across runs.', {
@@ -2133,7 +2151,7 @@ function summarizeLoopContinuation(group) {
 }
 
 function summarizeLatestLoopRun(continuation, planningBranchingMode, last) {
-  const terminal = last.events.at(-1);
+  const terminal = last.terminal ?? last.events.at(-1);
   const reason = terminal.payload.reason ?? null;
   const objectiveReached = reason === 'OBJECTIVE_REACHED';
   const recoverable = isRecoverableLoopAttempt(last);
@@ -2151,11 +2169,17 @@ function summarizeLatestLoopRun(continuation, planningBranchingMode, last) {
 }
 
 function isRecoverableLoopAttempt(run) {
-  return ['CRASH_HALTED', 'EXTERNAL_TRANSITION_UNKNOWN'].includes(run.events.at(-1)?.payload?.reason);
+  return ['CRASH_HALTED', 'EXTERNAL_TRANSITION_UNKNOWN'].includes(
+    (run.terminal ?? run.events.at(-1))?.payload?.reason,
+  );
 }
 
 function validateEnd(end, runId, events) {
   const terminal = events.at(-1);
+  validateEndAgainstTerminal(end, runId, terminal);
+}
+
+function validateEndAgainstTerminal(end, runId, terminal) {
   validateTerminalEvent(terminal);
   if (
     end.schemaVersion !== SCHEMA_VERSION ||

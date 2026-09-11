@@ -193,6 +193,35 @@ test('unresolved external transition recovery remains readable when array run ma
   assert.equal(unresolved.evidence.executionNonce, 'execution:step:1');
 }));
 
+test('legacy loop continuation recovery remains readable when array run materialization is unavailable', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const continuation = {
+    schemaVersion: SCHEMA_VERSION,
+    loopId: '00000000-0000-4000-8000-000000000007',
+    scenario: 'steady',
+    runIndex: 0,
+    stepsPerRun: 1,
+    mode: 'finite',
+    maxRuns: 2,
+  };
+  const run = await store.startRun(runInput({ continuation }));
+  await run.finish({
+    terminalStatus: 'HALTED',
+    reason: 'CRASH_HALTED',
+    finalState: runInput().initialState,
+  });
+
+  const streamOnlyStore = Object.create(store);
+  streamOnlyStore.readRun = async () => {
+    throw new Error('array run materialization must not be used');
+  };
+  const recovered = await streamOnlyStore.readLoopContinuation();
+  assert.equal(recovered.loopId, continuation.loopId);
+  assert.equal(recovered.nextRunIndex, 0);
+  assert.equal(recovered.status, 'ACTIVE');
+}));
+
 test('terminal reasons are bounded before they reach the ledger', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));
