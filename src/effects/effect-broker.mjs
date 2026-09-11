@@ -52,10 +52,13 @@ export function createEffectBroker({
   if (typeof now !== 'function') {
     throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker clock must be a function.');
   }
-  if (journal !== null && (typeof journal.append !== 'function' || typeof journal.read !== 'function')) {
+  if (journal !== null && (typeof journal.append !== 'function' ||
+      (typeof journal.read !== 'function' && typeof journal.readStream !== 'function'))) {
     throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker journal does not expose append/read.');
   }
-  let journalHeadDigest = journal === null ? null : journal.read().at(-1)?.digest ?? null;
+  let journalHeadDigest = journal === null ? null : journal.head !== undefined
+    ? journal.head().digest
+    : journal.read().at(-1)?.digest ?? null;
 
   const records = new Map();
   for (const source of initialRecords) {
@@ -264,6 +267,10 @@ export function createEffectBroker({
     get(executionNonce) {
       return snapshot(requireRecord(records, executionNonce));
     },
+
+    list() {
+      return [...records.values()].map((record) => snapshot(record));
+    },
   });
 
   function enqueue(operation) {
@@ -314,13 +321,15 @@ export function createEffectBroker({
           journalHeadDigest = event.digest ?? null;
           return event;
         } catch (error) {
-          const sameNonceEvents = journal.read().filter((event) => (
-            event.executionNonce === record.intent.executionNonce
-          ));
-          if (error?.code !== 'CONFLICT' || attempt !== 0 || sameNonceEvents.length > record.events.length) {
+          const sameNonceEventCount = typeof journal.countEventsByNonce === 'function'
+            ? await journal.countEventsByNonce(record.intent.executionNonce)
+            : journal.read().filter((event) => event.executionNonce === record.intent.executionNonce).length;
+          if (error?.code !== 'CONFLICT' || attempt !== 0 || sameNonceEventCount > record.events.length) {
             throw error;
           }
-          journalHeadDigest = journal.read().at(-1)?.digest ?? null;
+          journalHeadDigest = journal.head !== undefined
+            ? journal.head().digest
+            : journal.read().at(-1)?.digest ?? null;
         }
       }
     }
@@ -362,11 +371,12 @@ export function createEffectBroker({
 }
 
 export async function restoreEffectBroker({ journal, executor, now = () => new Date().toISOString() }) {
-  if (!journal || typeof journal.read !== 'function') {
+  if (!journal || (typeof journal.read !== 'function' && typeof journal.readStream !== 'function')) {
     throw new EffectBrokerError('INVALID_INPUT', 'EffectBroker restore requires a readable journal.');
   }
   const grouped = new Map();
-  for (const event of journal.read()) {
+  const events = typeof journal.readStream === 'function' ? journal.readStream() : journal.read();
+  for await (const event of events) {
     if (!isRecord(event) || !isRecord(event.payload)) {
       throw new EffectBrokerError('CORRUPT', 'Effect journal event payload cannot restore an effect broker.');
     }

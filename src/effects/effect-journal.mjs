@@ -21,15 +21,21 @@ export class EffectJournalError extends Error {
 }
 
 export class EffectJournal {
-  constructor(filePath, events) {
+  constructor(filePath, events, metadata = {}) {
     this.filePath = filePath;
-    this.events = events.map(cloneJson);
+    this.events = events === null ? null : events.map(cloneJson);
+    this.eventCount = metadata.eventCount ?? this.events?.length ?? null;
+    this.lastEvent = metadata.lastEvent ?? this.events?.at(-1) ?? null;
     this.operationTail = Promise.resolve();
   }
 
-  static async open(filePath) {
+  static async open(filePath, options = {}) {
     if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
       throw new EffectJournalError('INVALID_INPUT', 'Effect journal path must be absolute.', { field: 'filePath' });
+    }
+    if (options === null || typeof options !== 'object' || Array.isArray(options) ||
+        (options.lazy !== undefined && typeof options.lazy !== 'boolean')) {
+      throw new EffectJournalError('INVALID_INPUT', 'Effect journal open options are invalid.');
     }
     const resolved = path.normalize(filePath);
     let status;
@@ -37,7 +43,7 @@ export class EffectJournal {
       status = await lstat(resolved);
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
-      return new EffectJournal(resolved, []);
+      return new EffectJournal(resolved, options.lazy === true ? null : []);
     }
     if (!status.isFile() || status.isSymbolicLink()) {
       throw new EffectJournalError('CORRUPT', 'Effect journal must be a regular file.', { filePath: resolved });
@@ -45,49 +51,70 @@ export class EffectJournal {
     if (status.size > MAX_JOURNAL_BYTES) {
       throw new EffectJournalError('CORRUPT', 'Effect journal exceeds the size limit.', { filePath: resolved });
     }
+    if (options.lazy === true) return new EffectJournal(resolved, null);
     if (status.size === 0) return new EffectJournal(resolved, []);
     const events = [];
-    let previousDigest = null;
-    let sequence = 0;
-    let buffer = '';
-    const input = createReadStream(resolved, {
-      encoding: 'utf8',
-      start: 0,
-      end: status.size - 1,
-    });
-    const parseLine = (line) => {
-      sequence += 1;
-      if (Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES) {
-        throw new EffectJournalError('CORRUPT', 'Effect journal line exceeds the size limit.', { sequence });
-      }
-      let event;
-      try {
-        event = JSON.parse(line);
-      } catch (error) {
-        throw new EffectJournalError('CORRUPT', 'Effect journal contains malformed JSON.', { sequence }, { cause: error });
-      }
-      validateEvent(event, sequence, previousDigest);
-      events.push(event);
-      previousDigest = event.digest;
-    };
-    for await (const chunk of input) {
-      buffer += chunk;
-      let newlineIndex = buffer.indexOf('\n');
-      while (newlineIndex !== -1) {
-        let line = buffer.slice(0, newlineIndex);
-        if (line.endsWith('\r')) line = line.slice(0, -1);
-        parseLine(line);
-        buffer = buffer.slice(newlineIndex + 1);
-        newlineIndex = buffer.indexOf('\n');
-      }
-      if (Buffer.byteLength(buffer, 'utf8') > MAX_LINE_BYTES) {
-        throw new EffectJournalError('CORRUPT', 'Effect journal line exceeds the size limit.', { sequence: sequence + 1 });
-      }
-    }
-    if (buffer.length !== 0) {
-      throw new EffectJournalError('CORRUPT', 'Effect journal has an incomplete final line.', { filePath: resolved });
-    }
+    for await (const event of streamJournalEvents(resolved, status.size)) events.push(event);
     return new EffectJournal(resolved, events);
+  }
+
+  static async openLazy(filePath) {
+    return EffectJournal.open(filePath, { lazy: true });
+  }
+
+  head() {
+    if (!Number.isSafeInteger(this.eventCount) || this.eventCount < 0 ||
+        (this.eventCount === 0 ? this.lastEvent !== null : this.lastEvent === null)) {
+      throw new EffectJournalError('INVALID_STATE', 'Effect journal head has not been loaded.');
+    }
+    return {
+      sequence: this.eventCount,
+      digest: this.lastEvent?.digest ?? null,
+    };
+  }
+
+  async *readStream() {
+    let status;
+    try {
+      status = await lstat(this.filePath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        this.eventCount = 0;
+        this.lastEvent = null;
+        return;
+      }
+      throw error;
+    }
+    if (!status.isFile() || status.isSymbolicLink()) {
+      throw new EffectJournalError('CORRUPT', 'Effect journal must be a regular file.', { filePath: this.filePath });
+    }
+    if (status.size > MAX_JOURNAL_BYTES) {
+      throw new EffectJournalError('CORRUPT', 'Effect journal exceeds the size limit.', { filePath: this.filePath });
+    }
+    let count = 0;
+    let lastEvent = null;
+    for await (const event of streamJournalEvents(this.filePath, status.size)) {
+      count += 1;
+      lastEvent = event;
+      yield event;
+    }
+    this.eventCount = count;
+    this.lastEvent = lastEvent;
+  }
+
+  async refreshSummary() {
+    for await (const _event of this.readStream()) {
+      // Consume the complete stream so the parser verifies every event.
+    }
+    return this.head();
+  }
+
+  async countEventsByNonce(executionNonce) {
+    let count = 0;
+    for await (const event of this.readStream()) {
+      if (event.executionNonce === executionNonce) count += 1;
+    }
+    return count;
   }
 
   append(input) {
@@ -96,23 +123,26 @@ export class EffectJournal {
       const journalLock = await acquireJournalLock(this.filePath);
       try {
         await assertJournalLock(journalLock);
-        const observed = await EffectJournal.open(this.filePath);
-        this.events = observed.read();
-        const actualPrevDigest = this.events.at(-1)?.digest ?? null;
+        const observed = this.events === null
+          ? await EffectJournal.openLazy(this.filePath)
+          : await EffectJournal.open(this.filePath);
+        const observedHead = await observed.refreshSummary();
+        if (this.events !== null) this.events = observed.events;
+        const actualPrevDigest = observedHead.digest;
         if (source.expectedPrevDigest !== undefined && source.expectedPrevDigest !== actualPrevDigest) {
           throw new EffectJournalError('CONFLICT', 'Effect journal changed since the broker state was read.', {
             expectedPrevDigest: source.expectedPrevDigest,
             actualPrevDigest,
           });
         }
-        const sequence = this.events.length + 1;
+        const sequence = observedHead.sequence + 1;
         const unsigned = {
           schemaVersion: SCHEMA_VERSION,
           sequence,
           executionNonce: source.executionNonce,
           type: source.type,
           payload: cloneJson(source.payload),
-          prevDigest: this.events.at(-1)?.digest ?? null,
+          prevDigest: actualPrevDigest,
           recordedAt: source.recordedAt ?? new Date().toISOString(),
         };
         const event = { ...unsigned, digest: canonicalDigest(unsigned) };
@@ -133,7 +163,9 @@ export class EffectJournal {
         } finally {
           await handle?.close();
         }
-        this.events.push(event);
+        if (this.events !== null) this.events.push(event);
+        this.eventCount = sequence;
+        this.lastEvent = event;
         return cloneJson(event);
       } finally {
         await releaseJournalLock(journalLock);
@@ -149,8 +181,13 @@ export class EffectJournal {
     return (async () => {
       const journalLock = await acquireJournalLock(this.filePath, lockPath);
       try {
-        const observed = await EffectJournal.open(this.filePath);
-        this.events = observed.read();
+        const observed = this.events === null
+          ? await EffectJournal.openLazy(this.filePath)
+          : await EffectJournal.open(this.filePath);
+        await observed.refreshSummary();
+        if (this.events !== null) this.events = observed.events;
+        this.eventCount = observed.eventCount;
+        this.lastEvent = observed.lastEvent;
         return await operation();
       } finally {
         await releaseJournalLock(journalLock);
@@ -159,17 +196,24 @@ export class EffectJournal {
   }
 
   read() {
+    if (this.events === null) {
+      throw new EffectJournalError('INVALID_STATE', 'Lazy effect journal does not expose a synchronous event array.');
+    }
     return cloneJson(this.events);
   }
 
   async reconcileAppendUncertainty(event) {
     try {
-      const observed = await EffectJournal.open(this.filePath);
-      const events = observed.read();
-      const last = events.at(-1);
-      if (events.length === event.sequence && last?.digest === event.digest &&
+      const observed = this.events === null
+        ? await EffectJournal.openLazy(this.filePath)
+        : await EffectJournal.open(this.filePath);
+      const head = await observed.refreshSummary();
+      const last = observed.lastEvent;
+      if (head.sequence === event.sequence && last?.digest === event.digest &&
           canonicalJson(last) === canonicalJson(event)) {
-        this.events = events;
+        if (this.events !== null) this.events = observed.events;
+        this.eventCount = head.sequence;
+        this.lastEvent = last;
         return cloneJson(event);
       }
     } catch {
@@ -182,6 +226,51 @@ export class EffectJournal {
     const result = this.operationTail.then(operation, operation);
     this.operationTail = result.catch(() => undefined);
     return result;
+  }
+}
+
+async function* streamJournalEvents(filePath, size) {
+  if (size === 0) return;
+  const input = createReadStream(filePath, {
+    encoding: 'utf8',
+    start: 0,
+    end: size - 1,
+  });
+  let buffer = '';
+  let previousDigest = null;
+  let sequence = 0;
+  const parseLine = (line) => {
+    sequence += 1;
+    if (Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES) {
+      throw new EffectJournalError('CORRUPT', 'Effect journal line exceeds the size limit.', { sequence });
+    }
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch (error) {
+      throw new EffectJournalError('CORRUPT', 'Effect journal contains malformed JSON.', { sequence }, { cause: error });
+    }
+    validateEvent(event, sequence, previousDigest);
+    previousDigest = event.digest;
+    return event;
+  };
+
+  for await (const chunk of input) {
+    buffer += chunk;
+    let newlineIndex = buffer.indexOf('\n');
+    while (newlineIndex !== -1) {
+      let line = buffer.slice(0, newlineIndex);
+      if (line.endsWith('\r')) line = line.slice(0, -1);
+      yield parseLine(line);
+      buffer = buffer.slice(newlineIndex + 1);
+      newlineIndex = buffer.indexOf('\n');
+    }
+    if (Buffer.byteLength(buffer, 'utf8') > MAX_LINE_BYTES) {
+      throw new EffectJournalError('CORRUPT', 'Effect journal line exceeds the size limit.', { sequence: sequence + 1 });
+    }
+  }
+  if (buffer.length !== 0) {
+    throw new EffectJournalError('CORRUPT', 'Effect journal has an incomplete final line.', { filePath });
   }
 }
 

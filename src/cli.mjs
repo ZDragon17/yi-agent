@@ -332,13 +332,12 @@ async function askApi(options) {
 async function dispatchEffect(options) {
   const operation = options.effectOperation;
   const journalPath = requiredAbsolute(options, 'journal');
-  const journal = await EffectJournal.open(journalPath);
+  const journal = await EffectJournal.open(journalPath, { lazy: true });
   if (operation === 'inspect') {
-    const nonces = [...new Set(journal.read().map((event) => event.executionNonce))];
     const broker = await restoreEffectBroker({ journal, executor: inertExecutor() });
     return {
       journal: journalPath,
-      effects: nonces.map((executionNonce) => broker.get(executionNonce)),
+      effects: broker.list(),
     };
   }
 

@@ -125,6 +125,26 @@ test('durable broker restores an applied nonce without executing it twice', asyn
   }
 });
 
+test('lazy EffectJournal restores and appends without exposing a synchronous event array', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'yi-agent-effect-lazy-'));
+  const filePath = path.join(directory, 'effects.jsonl');
+  try {
+    const journal = await EffectJournal.open(filePath, { lazy: true });
+    assert.throws(() => journal.read(), (error) => error.code === 'INVALID_STATE');
+    const broker = await restoreEffectBroker({ executor: executorWith(), journal });
+    const intent = makeIntent({ requiresConfirmation: true });
+    assert.equal((await broker.plan(intent)).phase, 'AWAITING_CONFIRMATION');
+
+    const restored = await restoreEffectBroker({
+      executor: executorWith(),
+      journal: await EffectJournal.open(filePath, { lazy: true }),
+    });
+    assert.equal(restored.get(intent.executionNonce).phase, 'AWAITING_CONFIRMATION');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('recovery converts a durable EXECUTING boundary into reconciliation', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'yi-agent-effect-recovery-'));
   const filePath = path.join(directory, 'effects.jsonl');
