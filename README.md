@@ -687,3 +687,5 @@ F-241 收紧跨 Run 接续时的上一 Run 校验。`startRun()` 现在逐事件
 F-242 收紧未决外部事务的目录扫描。该恢复路径现在两遍使用异步目录迭代器；只有第一遍发现未决 terminal evidence 时才进行第二遍匹配相关 STEP，并按 `runId` 排序未决项以保持旧的首项和冲突语义。正常没有未决事务的历史不再额外保留全部 Run 名称或扫描身份集合。未决项本身和相关匹配集合仍只在异常恢复窗口存在，外部副作用仍遵守原有 nonce、对账和人工处理边界。
 
 F-243 收紧崩溃恢复的事件载荷驻留。`recoverRun()` 现在逐行消费 `readLedgerStream()`，只留下首事件、末事件、current 水位事件、最后 STEP 状态和计数，再完成 current、end、外部 marker 与终态处理；追加 `CRASH_HALTED` 后只更新摘要，不重新构造历史数组。活动 Run 的无换行尾部先用固定大小反向扫描定位完整前缀，完整校验通过后才截断并恢复。数组版 `readLedger()` 与 `readRun()` 仍保持兼容，单个 ledger 的大小限制和精确 nonce 校验也没有被放宽。Runtime 恢复矩阵 `82/82`、应用层连续/目标/重启/多 WorldPort 回归 `29/29` 通过。
+
+F-244 补齐活动 Run 的两个事件读取入口。发生写入不确定时，`findCommittedStep()` 会完整消费流并只保留目标 nonce 的 STEP；`reconcileLedger()` 会完整验证活动账本，只处理内存水位之后的 STEP，终态仍返回 `BUSY`，水位不在账本中仍返回 `CORRUPT`。这两处不再把整本 ledger 数组化，数组版 `readLedger()`、`readRun()` 和外部 transition 的信任边界不变。Runtime `82/82`、应用层连续/恢复/目标/多 WorldPort 回归 `35/35` 通过。

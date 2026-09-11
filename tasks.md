@@ -1833,3 +1833,10 @@
 - 实现：恢复改用 `readRecoveryLedgerSummary()` 消费 `readLedgerStream()`，只保留首事件、末事件、current 水位事件、最后 STEP 状态和计数。摘要支持现有 current 投影、end、external marker 和终态判断；追加恢复事件后同步更新末事件。读取活动 Run 的撕裂尾部时，先反向扫描固定大小块找到最后换行，再只校验完整前缀，语义校验完成后沿原路径截断并追加 `CRASH_HALTED`。
 - 验证：恢复与撕裂尾部、语义损坏前缀、终态后尾部、外部 transition、nonce、锁接管和幂等回归 `82/82`；连续运行、目标/规划、重启恢复和多 WorldPort 应用层回归 `29/29`。
 - 边界：`readLedger()`、`readRun()` 等数组兼容接口保留；stream 仍用精确 nonce 集合和当前 Run 的状态投影完成校验，单个 ledger 的 40 MiB 上限仍是资源边界。本节点不提供无限历史、持久索引、跨文件事务快照或现实外部效果真实性。
+
+## F-244 活动 Run 不确定写入与 reconcile 的流式化
+
+- 反证/缺口：F-243 已让显式崩溃恢复只保留 ledger 摘要，但活动 Run 在写入不确定后查找已提交 `executionNonce`、以及发现 ledger 可能外部追加时，`ActiveRun` 仍通过 `readLedger()` 创建完整事件数组。
+- 实现：`findCommittedStep()` 完整消费 `readLedgerStream()` 后只缓存匹配的 STEP；`reconcileLedger()` 逐事件验证内存水位，随后处理水位之后的 STEP，保留 nonce 证据冲突、终态 BUSY 和水位缺失为 CORRUPT 的规则。流继续消费到文件末尾，避免提前找到 nonce 或终态就跳过其余账本校验。
+- 验证：活动账本、写入后同步不确定、并发/锁接管、nonce、恢复与终态回归 `82/82`；连续运行、重启恢复、目标计划、opaque 六维 WorldPort、内置多 WorldPort 和跨 WorldPort 连续性回归 `35/35`。
+- 边界：活动流仍维护单个 ledger 内的精确 executionNonce 集合，并保留 `readLedger()`、`readRun()` 等数组兼容 API；本节点不改变外部副作用的幂等/对账信任边界，也不提供持久索引或无限历史承诺。
