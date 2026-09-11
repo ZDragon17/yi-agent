@@ -654,3 +654,5 @@ F-222 增加有限的目标 epoch：前一个目标只有在 `COMPLETED` 或 `HA
 F-223 增加 Lab 级连续账本 Replay。单个 `replay --run` 只重算一个终态 Run；`replay --chain` 会读取 Lab 中全部终态 Run，先逐个完成同样的确定性 Replay，再按初始 `kernelStep` 检查相邻 Run 的 WorldPort 状态、Memory、RNG 和时间步是否连续。遇到目标 epoch 切换时，它还会核对前一终态、前一监督器和后一监督器的摘要及状态，避免只验证单个 Run 而漏掉目标生命周期断点。该命令严格只读，不启动外部 adapter；如果 current 仍处于 `RUNNING`，会先要求完成恢复。它验证的是账本连续性，不是主动攻击防护、自然语言目标真实性或现实世界效果。
 
 F-224 把 `replay --chain` 的检查延伸到 current 水位。全部 Run 重放完成后，命令还会确认 `current.lastRunId`、READY/HALTED 状态、终态事件序号、事件摘要和状态投影都对应链尾 Run。即使有人重算了一个格式正确的 `current.json` 并把它指回旧 Run，也会返回 `CURRENT_CONTINUITY` 差异，而不会把历史回退误报为一致。该检查仍是账本和持久状态的一致性证据，不是签名信任或现实效果证明。
+
+F-225 增加移动水位检测。`replay --chain` 读取全部 Run 后会重新检查 `current.json`；如果读取前后 current 发生变化，或者读取结束时已有 writer 进入 `RUNNING`，命令返回 `BUSY`，要求在写入完成后重试。这样无锁读路径不会把两个时刻的账本拼成一次结果。它仍不是跨文件事务快照或分布式读写锁。

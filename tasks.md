@@ -1700,3 +1700,10 @@
 - 实现：Runtime 新增同一只读快照的 `readChainSnapshot()`，返回已校验的 current 与按初始 `kernelStep` 排序的全部终态 Run；`replay --chain` 在逐 Run Replay 和跨 Run 连续性之后，校验 current 的 `lastRunId`、READY/HALTED 状态、终态水位 sequence/digest，以及 current 状态投影是否等于最后一个 Run 的重放终态。差异返回 `CURRENT_CONTINUITY`，运行中的 current 仍返回 BUSY。
 - 验证：新增“重算 current 摘要但指回旧 Run”的应用层反例；目标 epoch 正向链回放和该反例均通过。提交后继续以三平台 CI 和 Oracle 结果确认。
 - 边界：这是 Lab 链尾与当前投影的一致性检查，不是签名防篡改、跨进程原子快照或现实效果证明；不启动外部 adapter，不改变历史 Run。
+
+## F-225 连续 Replay 的移动水位检测
+
+- 反证/缺口：连续 Replay 逐个读取多个 Run 文件时，另一个 writer 可能在读取期间提交新状态；如果只在开头读取 current，结果可能混合两个时间点，既不是旧快照也不是新快照。
+- 实现：`LabStore.readChainSnapshot()` 在读取全部终态 Run 后再次读取并校验 current；若前后 canonical 内容不同，或末次 current 已进入 `RUNNING`，返回 `BUSY` 并带 `chain-replay` 阶段信息。`replay --chain` 只接收稳定快照，已有链尾与相邻 Run 校验保持不变。
+- 验证：新增 Runtime 反例，在读取 Run 期间模拟 current 水位移动，确认快照拒绝；F-224 的旧 Run 回退反例、目标 epoch 链和外部 JSONL 链回归继续通过。
+- 边界：这是无锁读路径的变化检测，不是跨文件事务快照、分布式锁或主动攻击防护；发生移动时调用方应在 writer 完成后重试。

@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { canonicalDigest } from '../../src/runtime/schema.mjs';
+import { canonicalDigest, canonicalJson } from '../../src/runtime/schema.mjs';
 
 const RUNTIME_ENTRY = new URL('../../src/runtime/lab-store.mjs', import.meta.url);
 const SCHEMA_ENTRY = new URL('../../src/runtime/schema.mjs', import.meta.url);
@@ -1158,6 +1158,37 @@ test('inspect reads only its fixed active watermark and ignores a concurrent par
   const view = await (await LabStore.open({ labPath: lab })).inspect();
   assert.equal(view.current.lastRunSequence, 1);
   assert.equal(view.current.status, 'RUNNING');
+}));
+
+test('chain snapshot rejects a current watermark that moves during the read', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  const step = await run.append(stepEvent());
+  await run.commitSnapshot(snapshotFor(step));
+  await run.finish({ terminalStatus: 'COMPLETED', finalState: finalState() });
+
+  const originalReadRun = store.readRun.bind(store);
+  let moved = false;
+  store.readRun = async (runId) => {
+    const result = await originalReadRun(runId);
+    if (!moved) {
+      moved = true;
+      const current = await readJson(path.join(lab, 'state/current.json'));
+      const changed = { ...current, kernelStep: current.kernelStep + 1 };
+      delete changed.selfDigest;
+      await writeFile(
+        path.join(lab, 'state/current.json'),
+        `${canonicalJson({ ...changed, selfDigest: canonicalDigest(changed) })}\n`,
+      );
+    }
+    return result;
+  };
+
+  await assert.rejects(
+    () => store.readChainSnapshot(),
+    (error) => assertCode(error, 'BUSY'),
+  );
 }));
 
 test('recovery truncates a torn trailing ledger line after the last complete event', async () => withLab(async ({ lab }) => {

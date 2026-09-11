@@ -477,3 +477,5 @@ F-222 把目标生命周期从“一个 Lab 只能有一个已激活目标”推
 F-223 把 Replay 从单个 Run 推进到 Lab 级连续账本。`replay --chain` 先读取全部终态 Run，按初始 `kernelStep` 排序并逐个执行原有确定性 Replay；再比较相邻 Run 的 WorldPort 状态、Memory、RNG 和 `kernelStep`。如果监督器状态发生切换，则继续验证前一终态与 `goalEpoch` 的前置摘要、后一 Run 的新监督器摘要，以及前后监督器分别处于终态和 ACTIVE。发现单 Run 差异、跨 Run 断裂或运行中的 current 时，命令返回首个可定位差异，不连接 adapter，也不改写账本。该入口把“本 Run 可重放”和“目标周期确实接续”分成两道可验证边界；它仍不提供对主动篡改者的签名证明，也不把跨 Lab 分支或现实世界因果纳入 Replay。
 
 F-224 把连续 Replay 的边界延伸到 Lab 的当前水位。链回放读取同一只读快照中的 `current.json` 和全部终态 Run；在每个 Run 可重算且相邻 Run 连续后，必须确认 `current.lastRunId`、终态状态、事件序号、事件摘要和状态投影都指向链尾。这样即使有人重算了自洽的 current 摘要并把水位回退到旧 Run，也会得到 `CURRENT_CONTINUITY` 差异；current 仍为 `RUNNING` 时继续 fail-closed 要求先恢复。该检查验证的是账本链尾与可继续状态的一致性，不取代文件系统原子发布、签名信任或现实执行对账。
+
+F-225 为连续 Replay 增加移动水位检测。`readChainSnapshot()` 在读取全部 Run 后重新读取并校验 `current.json`；若初始与末次 current 的内容不同，或任一时刻处于 `RUNNING`，则返回 `BUSY`，不把跨时刻的文件集合交给 Application。稳定快照仍由链回放继续校验链尾和 Run 连续性。该机制是无锁读路径的 fail-closed 边界，不能把它解释成跨文件系统的事务快照或分布式读写锁。

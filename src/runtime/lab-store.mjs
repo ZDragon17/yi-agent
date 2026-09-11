@@ -400,8 +400,17 @@ export class LabStore {
     }
     const runs = [];
     for (const runId of await listRunIds(this.root)) runs.push(await this.readRun(runId));
+    const finalCurrent = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
+    validateCurrentShape(finalCurrent);
+    if (current.status === 'RUNNING' || finalCurrent.status === 'RUNNING' || canonicalJson(current) !== canonicalJson(finalCurrent)) {
+      throw new LabStoreError('BUSY', 'Lab current changed during the chain snapshot.', {
+        phase: 'chain-replay',
+        initialRunId: current.lastRunId,
+        finalRunId: finalCurrent.lastRunId,
+      });
+    }
     return {
-      current: cloneJson(current),
+      current: cloneJson(finalCurrent),
       runs: runs.sort((left, right) => (
         left.start.initialState.kernelStep - right.start.initialState.kernelStep ||
         left.start.runId.localeCompare(right.start.runId)
