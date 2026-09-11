@@ -1826,3 +1826,10 @@
 - 实现：两遍扫描都改用异步目录迭代器；第一遍保留未决 terminal evidence，第二遍只在 `retryKeys` 非空时重新枚举目录并匹配相关 STEP。未决项按 `runId` 排序，复原旧 `listRunIds()` 的确定顺序，legacy、同场景 identity 和冲突判定保持原规则。
 - 验证：未决外部事务、后续同 nonce 已提交、legacy continuation 推断、外部 transition 边界和相关应用层回归通过；语法检查通过。
 - 边界：未决项和候选 commitment 集合仍服务于异常恢复，可能随异常数量增长；本节点不提供持久索引、现实效果真实性或人工对账自动化。
+
+## F-243 崩溃恢复账本摘要的流式化
+
+- 反证/缺口：F-239 已去掉恢复选择阶段的 Run 目录名数组，但 `recoverRun()` 仍调用 `readLedger()`，把当前 Run 的全部事件保留到恢复完成；长 Run 的重启峰值仍由事件载荷决定。
+- 实现：恢复改用 `readRecoveryLedgerSummary()` 消费 `readLedgerStream()`，只保留首事件、末事件、current 水位事件、最后 STEP 状态和计数。摘要支持现有 current 投影、end、external marker 和终态判断；追加恢复事件后同步更新末事件。读取活动 Run 的撕裂尾部时，先反向扫描固定大小块找到最后换行，再只校验完整前缀，语义校验完成后沿原路径截断并追加 `CRASH_HALTED`。
+- 验证：恢复与撕裂尾部、语义损坏前缀、终态后尾部、外部 transition、nonce、锁接管和幂等回归 `82/82`；连续运行、目标/规划、重启恢复和多 WorldPort 应用层回归 `29/29`。
+- 边界：`readLedger()`、`readRun()` 等数组兼容接口保留；stream 仍用精确 nonce 集合和当前 Run 的状态投影完成校验，单个 ledger 的 40 MiB 上限仍是资源边界。本节点不提供无限历史、持久索引、跨文件事务快照或现实外部效果真实性。
