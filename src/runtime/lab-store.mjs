@@ -530,7 +530,7 @@ export class LabStore {
       chunk.length = 0;
     };
     try {
-      for (const runId of await listRunIds(this.root)) {
+      for await (const runId of iterateRunIds(this.root)) {
         if (current.status === 'RUNNING' && runId === current.lastRunId) continue;
         let run;
         try {
@@ -635,7 +635,7 @@ export class LabStore {
       absorbLoopContinuationRecord(group, record);
     };
     try {
-      for (const runId of await listRunIds(this.root)) {
+      for await (const runId of iterateRunIds(this.root)) {
         const run = await readLoopRunSummary(this, runId);
         if (run.start.continuation === undefined) continue;
         const continuation = validateLoopContinuation(run.start.continuation, 'run continuation', true);

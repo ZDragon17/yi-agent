@@ -679,3 +679,5 @@ F-237 把排序块归并改为多轮。候选历史和 loop continuation 在临�
 F-238 收紧 chain Replay 的 Run 头部快照。旧路径会先把所有 `{runId,kernelStep}` 放进数组；现在 `replay --chain` 通过异步目录迭代器读取 Run 目录，以固定大小块做外部排序，再逐条交给 Application。旧的链回放输出、初始 `kernelStep` 排序、current 移动检测和链尾校验保持不变；`readChainSnapshot()` 与 `readAllRuns()` 仍保留数组兼容接口。129 个 Run 跨过排序块边界的 Runtime 回归通过。这个节点减少的是 chain Replay 的 Run 头部驻留，不等于持久索引、跨文件事务快照或无限历史。
 
 F-239 收紧崩溃恢复的 Run 目录扫描。恢复只需要知道 Run 总数、current 指向的 Run 是否存在，以及未完成 Run 是否恰好一个；现在用同一异步目录迭代器和标量计数完成判断，不再把全部目录名和未完成列表放进内存。预启动孤儿目录清理、current 优先、冲突判定和恢复结果保持原规则。该节点减少的是重启恢复的目录元数据驻留，不改变恢复对账本的完整校验边界。
+
+F-240 把候选历史和 loop continuation 的 Run 目录枚举也改为异步迭代。它们后续本来按候选时间或 continuation 键做外部排序，所以不依赖 `readdir()` 返回的顺序；现在扫描阶段不再额外保留全部 Run 名称。跨块排序、历史注释、loop contract、恢复选择和多 WorldPort 读路径保持不变。这个节点补齐的是两条长期历史恢复入口的目录元数据边界，不代表事件账本的 nonce 唯一性或兼容数组接口已经变成有界。

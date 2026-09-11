@@ -1805,3 +1805,10 @@
 - 实现：`recoverRun()` 改用异步目录迭代器，只累计 Run 总数、current 引用是否出现、最后一个未完成 Run 身份和未完成计数。current 优先、唯一未完成 Run、预启动孤儿清理和错误上下文保持原语义，并继续复用 start、ledger、terminal、external marker 与 current projection 的完整校验。
 - 验证：Runtime 恢复、崩溃边界、锁接管、历史终态 Run、外部事务和目录安全回归继续通过；chain snapshot 的 129 Run 跨块流式扫描也覆盖同一目录迭代器。
 - 边界：本节点只减少恢复选择阶段的目录元数据驻留；后续恢复仍可能读取完整事件数组，不能把它描述为无限历史、持久索引或跨文件事务快照。
+
+## F-240 候选与 continuation 目录枚举的流式化
+
+- 反证/缺口：F-234/F-236 已把候选载荷和 continuation 摘要外部排序，但两条扫描仍先调用 `listRunIds()`；Run 名称数组会随长期账本增长，抵消部分目录级内存收益。
+- 实现：`readCandidateOutcomes()` 和 `readLoopContinuation()` 改用可重复消费的异步目录迭代器。候选记录继续按 `{recordedAt,runId,sequence}` 排序，continuation 继续按 `loopId → runIndex → startedAt → runId` 排序，因此不依赖目录枚举顺序；既有多轮归并和临时目录清理不变。
+- 验证：候选历史、跨块尾部注释、loop continuation 129 Run 跨块恢复、应用层连续/恢复与 CLI WorldPort 回归继续通过。
+- 边界：本节点只去掉两条读路径的 Run 名称数组；`readAllRuns()`、事件账本全历史 nonce 精确唯一性和兼容数组接口仍有各自的内存/索引成本，不能把该变化描述为持久索引或无限历史。
