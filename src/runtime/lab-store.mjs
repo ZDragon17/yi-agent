@@ -572,28 +572,31 @@ export class LabStore {
     const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
     validateCurrentShape(current);
     const runIds = await listRunIds(this.root);
-    const runs = [];
+    const committed = new Set();
+    const unknowns = [];
     for (const runId of runIds) {
       if (runId === current.lastRunId && current.status === 'RUNNING') continue;
-      runs.push(await this.readRun(runId));
-    }
-    const committed = runs.flatMap((run) => run.events
-      .filter((event) => event.kind === 'STEP')
-      .map((event) => ({ run, event })));
-    const unknowns = runs.flatMap((run) => {
-      const terminal = run.events.at(-1);
-      if (terminal?.payload?.reason !== 'EXTERNAL_TRANSITION_UNKNOWN') return [];
+      const run = await this.readRunStream(runId);
+      let terminal = null;
+      for await (const event of run.events) {
+        if (event.kind === 'STEP') {
+          committed.add(externalTransitionCommitmentKey(run.start.scenario, event.payload));
+        } else if (TERMINAL_KINDS.has(event.kind)) {
+          terminal = event;
+        }
+      }
+      if (terminal?.payload?.reason !== 'EXTERNAL_TRANSITION_UNKNOWN') continue;
       const evidence = terminal.payload.externalTransition;
-      if (evidence === undefined) return [{ legacy: true, runId: run.start.runId, scenario: run.start.scenario }];
+      if (evidence === undefined) {
+        unknowns.push({ legacy: true, runId: run.start.runId, scenario: run.start.scenario });
+        continue;
+      }
       validateExternalTransitionEvidence(evidence, run.start.runId, run.start.scenario);
-      return [{ legacy: false, runId: run.start.runId, scenario: run.start.scenario, evidence }];
-    });
-    const unresolved = unknowns.filter((candidate) => candidate.legacy || !committed.some(({ run, event }) =>
-      run.start.scenario === candidate.scenario && candidate.evidence !== undefined &&
-      event.payload.receipt.executionNonce === candidate.evidence.executionNonce &&
-      event.payload.receipt.token === candidate.evidence.token &&
-      event.payload.receipt.basedOnVersion === candidate.evidence.basedOnVersion &&
-      event.payload.beforeDigest === candidate.evidence.beforeDigest));
+      unknowns.push({ legacy: false, runId: run.start.runId, scenario: run.start.scenario, evidence });
+    }
+    const unresolved = unknowns.filter((candidate) => candidate.legacy || !committed.has(
+      externalTransitionCommitmentKey(candidate.scenario, candidate.evidence),
+    ));
     if (unresolved.length === 0) return null;
     const first = unresolved[0];
     if (unresolved.some((candidate) => (
@@ -1948,6 +1951,17 @@ function externalTransitionIdentity(value) {
     beforeDigest: value.beforeDigest,
     planning: normalizePlanningEvidence(value.planning),
   };
+}
+
+function externalTransitionCommitmentKey(scenario, value) {
+  const receipt = value.receipt ?? value;
+  return canonicalJson([
+    scenario,
+    receipt.executionNonce,
+    receipt.token,
+    receipt.basedOnVersion,
+    value.beforeDigest,
+  ]);
 }
 
 function validateExternalTransitionMarker(marker, runId, start, events, current) {

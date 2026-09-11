@@ -167,6 +167,32 @@ test('candidate outcome history remains readable when array run materialization 
   assert.equal(history[0].candidateOutcome.candidateDigest, policyEvidence.candidateDigest);
 }));
 
+test('unresolved external transition recovery remains readable when array run materialization is unavailable', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const initialState = finalState();
+  const run = await store.startRun(runInput({ initialState }));
+  await run.markExternalTransition({
+    executionNonce: 'execution:step:1',
+    token: 'tok_EXTERNAL01',
+    basedOnVersion: initialState.worldState.stateVersion,
+    beforeState: initialState,
+  });
+  await run.finish({
+    terminalStatus: 'HALTED',
+    reason: 'EXTERNAL_TRANSITION_UNKNOWN',
+    finalState: initialState,
+  });
+
+  const streamOnlyStore = Object.create(store);
+  streamOnlyStore.readRun = async () => {
+    throw new Error('array run materialization must not be used');
+  };
+  const unresolved = await streamOnlyStore.findUnresolvedExternalTransition();
+  assert.equal(unresolved.legacy, false);
+  assert.equal(unresolved.evidence.executionNonce, 'execution:step:1');
+}));
+
 test('terminal reasons are bounded before they reach the ledger', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

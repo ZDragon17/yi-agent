@@ -664,3 +664,5 @@ F-227 将事件流式处理推进到单个 Run。`LabStore.readRunStream()` 通�
 F-228 把同一流式边界用于候选历史恢复。`LabStore.readCandidateOutcomes()` 现在逐个消费每个终态 Run 的事件流，只提取候选结果和有限提案摘要，不再先创建完整事件数组；历史排序、候选注释、跨 Run 的 attempt 与 supersedes 关系保持原语义。Runtime 回归覆盖数组 Run 读取不可用时的候选历史读取，真实 CLI 的候选历史场景继续通过。候选摘要仍需按时间排序并完成历史注释，摘要数量和注释算法的长期上界仍是后续实验，不把这一步说成无限记忆或磁盘分页。
 
 F-229 将候选历史注释改为单次前向扫描。`annotateCandidateHistory()` 用增量索引保存每个作用域的最近 supersedes 候选，以及同一初始状态下最近的两个不同候选，保留 attempt、contextAttempt、步骤间隔、supersedes 质量和配对比较的原有结果。8,000 条重复候选的本机测试耗时从旧实现约 3.4 秒降到约 0.16 秒。该优化只降低计算成本，候选摘要仍可能因全局排序和历史引用而全部驻留；它不等于有界长期记忆或外部排序。
+
+F-230 把未决外部事务恢复改为流式扫描。`findUnresolvedExternalTransition()` 逐个消费终态 Run 的事件流，只保留已提交 STEP 的身份键和未决 terminal evidence，不再同时保留完整 Run 与事件数组；跨 Run 的 nonce、Token、版本和 before 摘要匹配仍按原规则执行。Runtime 和 repo WorldPort 恢复回归通过。已提交身份键集合仍会随 STEP 数量增长，因此这一步只消除事件载荷驻留，不等于无限恢复历史或分布式事务。

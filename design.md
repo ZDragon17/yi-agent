@@ -491,3 +491,7 @@ F-228 把流式读取从 Replay 延伸到候选历史恢复。此前 `readCandid
 F-229 处理 F-228 暴露的候选历史计算瓶颈。旧的 `annotateCandidateHistory()` 对每个候选分别执行前序切片和 `findLast()`：supersedes 需要寻找同作用域的最近候选，配对比较需要寻找同作用域、同 before 摘要且候选摘要不同的最近记录。新实现只向前遍历一次，使用嵌套 Map 保留同作用域/候选摘要的最新记录，并为配对键保留最近两个不同候选；重复相同候选时更新最新记录但不丢失最近的不同记录。候选结果仍在注释完成后按原调用方处理，质量计算、字段删除和摘要算法没有改动。
 
 这次反证用 8,000 条相同作用域、相同 before 摘要和相同候选的历史衡量旧实现与新实现。旧实现约 3.4 秒，新实现约 0.16 秒；既有候选历史语义回归、LabStore 流式恢复、Application 和 CLI 回归均通过。这个节点只解决前序搜索的 CPU 增长，所有历史摘要仍可能驻留内存，全局时间排序也没有变成外部排序；摘要上界和长期记忆仍是后续实验。
+
+F-230 处理另一条启动恢复热路径。旧的 `findUnresolvedExternalTransition()` 先读取全部 Run，再从完整事件数组中建立 `committed` 列表和 `unknowns` 列表；长期外部 loop 的每一步都可能带来不参与恢复判断的完整状态、观测和学习证据。新实现逐个消费 `readRunStream()`，把每个 STEP 压缩为 `(scenario, executionNonce, token, basedOnVersion, beforeDigest)` 的 canonical 身份键，只把 `EXTERNAL_TRANSITION_UNKNOWN` 的 terminal evidence 留到冲突判断；流消费完成后仍按原有顺序检查未决项和 identity 冲突。
+
+该改动没有改变恢复可信度。身份键集合仍会随已提交 STEP 数量增加，未决项也仍需保留到全量扫描结束；它只减少与“是否已经提交同一外部动作”无关的事件载荷。Runtime 66 项回归和 repo WorldPort 的丢响应恢复、进程重启恢复回归通过，外部 adapter 仍不因单一回执而获得现实效果真实性。

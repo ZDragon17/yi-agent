@@ -1735,3 +1735,10 @@
 - 实现：改为一次前向扫描。嵌套 Map 保存同作用域/候选摘要的最近 supersedes 记录；同作用域和 before 摘要的配对索引保存最近两个不同候选，重复摘要只更新最新位置；attempt、contextAttempt、步骤间隔、supersedes 质量和配对比较的输出语义保持不变。
 - 验证：8,000 条重复候选的本机测试耗时从旧实现约 3.4 秒降到约 0.16 秒；候选历史、LabStore、Application 和 CLI 受影响回归共 145/145 通过。新提交仍需等待远端三平台 CI。
 - 边界：候选摘要仍可能因全局排序而全部驻留，历史引用也仍可能增长；该节点不提供有界长期记忆、外部排序、磁盘分页或现实执行真实性。
+
+## F-230 未决外部事务恢复的流式扫描
+
+- 反证/缺口：`findUnresolvedExternalTransition()` 旧实现先用 `readRun()` 读取全部 Run，再保存所有 STEP 和终态事件；外部 loop 越长，恢复前的内存占用越接近完整账本大小。
+- 实现：逐个消费 `readRunStream()`；STEP 只进入包含 scenario、executionNonce、token、basedOnVersion 和 beforeDigest 的 canonical 身份键集合，未决 terminal evidence 保持原顺序收集，匹配和冲突判定不变。
+- 验证：LabStore Runtime 回归 66/66 通过；repo WorldPort 的响应丢失恢复和进程重启恢复回归 2/2 通过。新提交仍需等待远端三平台 CI。
+- 边界：身份键集合仍可能随 STEP 数量增长，未决项也需保留到扫描完成；该节点不提供有界长期记忆、磁盘分页、跨文件事务快照或现实执行真实性。
