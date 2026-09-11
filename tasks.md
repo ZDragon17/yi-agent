@@ -1819,3 +1819,10 @@
 - 实现：`startRun()` 改用 `validateRunContinuityStream()`。它复用 `readLedgerStream()` 的逐事件完整校验，只保存首事件、current 水位对应事件和事件计数；共享的 current 引用/投影校验接受数组与流式摘要两种输入。流式路径对运行中 current 放宽的仅是“必须已有终态”这一读取条件，随后仍由原逻辑返回 `BUSY`。
 - 验证：跨 Run 连续性、目标/loop 接续、恢复边界、链回放与 Runtime 定向回归继续通过；语法检查通过。
 - 边界：该节点只减少 `startRun()` 接续阶段的事件载荷驻留；`readRun()`、`readAllRuns()` 和全历史 executionNonce 精确去重仍保留各自成本，不能把它描述为无限历史或持久索引。
+
+## F-242 未决外部事务目录扫描的流式化
+
+- 反证/缺口：F-233 已把无关的 committed identity 扫描推迟到确有未决项时，但 `findUnresolvedExternalTransition()` 仍先把全部 Run 名称放入 `runIds` 数组，并用它驱动两遍扫描。
+- 实现：两遍扫描都改用异步目录迭代器；第一遍保留未决 terminal evidence，第二遍只在 `retryKeys` 非空时重新枚举目录并匹配相关 STEP。未决项按 `runId` 排序，复原旧 `listRunIds()` 的确定顺序，legacy、同场景 identity 和冲突判定保持原规则。
+- 验证：未决外部事务、后续同 nonce 已提交、legacy continuation 推断、外部 transition 边界和相关应用层回归通过；语法检查通过。
+- 边界：未决项和候选 commitment 集合仍服务于异常恢复，可能随异常数量增长；本节点不提供持久索引、现实效果真实性或人工对账自动化。

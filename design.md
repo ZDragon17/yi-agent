@@ -529,3 +529,5 @@ F-239 将崩溃恢复的 Run 目录选择改为单遍异步扫描。`recoverRun(
 F-240 将 `readCandidateOutcomes()` 与 `readLoopContinuation()` 的 Run 枚举从已排序数组改为异步目录迭代。两条路径随后都会按自己的稳定键消费或写入排序块，因此目录返回顺序不是语义输入；候选历史的 scope/lineage 注释和 continuation 的 contract、重复索引、缺口检查保持原规则。该变化只去掉目录名数组，未改变 `readAllRuns()`、nonce 精确唯一性或其他数组兼容接口。
 
 F-241 将 `startRun()` 的上一 Run 接续校验接到 `readLedgerStream()`。流式读取器逐事件执行 JSON、摘要链、STEP 状态、executionNonce 和 terminal 校验；接续层只保存首事件、`current.lastRunSequence` 对应事件和事件计数，用它们完成 current 引用及投影检查。对于仍处于 `RUNNING` 的 current，流式校验允许缺少终态，随后沿用原有 `BUSY` 返回；正常终态路径的连续性结果不变。该优化不改 `readRun()` 数组接口，也不把全历史 nonce 唯一性说成常量成本。
+
+F-242 将 `findUnresolvedExternalTransition()` 的两次历史扫描改为异步目录迭代。第一遍只消费并校验 Run 流，收集未决 terminal evidence；若存在带证据的未决项，第二遍重新打开目录并只匹配候选 commitment key。未决结果按 `runId` 排序，保持旧 `listRunIds()` 的确定首项和冲突判断；没有未决项时不再保留全部 Run 名称或进入第二遍。该节点只收紧目录元数据和正常路径的匹配集合，不改变外部效果的 nonce 对账信任边界。

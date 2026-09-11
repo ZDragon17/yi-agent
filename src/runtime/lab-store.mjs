@@ -540,7 +540,7 @@ export class LabStore {
           throw error;
         }
         let terminal = null;
-        for await (const event of run.events) {
+    for await (const event of run.events) {
           if (TERMINAL_KINDS.has(event.kind)) terminal = event;
           if (event.kind !== 'STEP' || event.payload.candidateOutcome === undefined) continue;
           const proposal = event.payload.policyEvidence?.proposal;
@@ -697,9 +697,8 @@ export class LabStore {
   async findUnresolvedExternalTransition() {
     const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
     validateCurrentShape(current);
-    const runIds = await listRunIds(this.root);
     const unknowns = [];
-    for (const runId of runIds) {
+    for await (const runId of iterateRunIds(this.root)) {
       if (runId === current.lastRunId && current.status === 'RUNNING') continue;
       const run = await this.readRunStream(runId);
       let terminal = null;
@@ -718,12 +717,13 @@ export class LabStore {
       validateExternalTransitionEvidence(evidence, run.start.runId, run.start.scenario);
       unknowns.push({ legacy: false, runId: run.start.runId, scenario: run.start.scenario, evidence });
     }
+    unknowns.sort((left, right) => left.runId.localeCompare(right.runId));
     const retryKeys = new Set(unknowns
       .filter((candidate) => !candidate.legacy)
       .map((candidate) => externalTransitionCommitmentKey(candidate.scenario, candidate.evidence)));
     const committed = new Set();
     if (retryKeys.size > 0) {
-      for (const runId of runIds) {
+      for await (const runId of iterateRunIds(this.root)) {
         if (runId === current.lastRunId && current.status === 'RUNNING') continue;
         const run = await this.readRunStream(runId);
         let terminal = null;
