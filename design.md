@@ -559,3 +559,5 @@ F-252 将 `EffectJournal.open()` 的解析过程改成固定文件范围的逐�
 F-253 把懒加载 Journal 接到 EffectBroker 恢复路径。默认 `EffectJournal.open()` 仍验证并提供数组接口；内部 CLI 路径使用 `lazy:true`，由 `readStream()` 逐条交给 `restoreEffectBroker()`，并通过 `head()` 获取 CAS 所需的 sequence/digest。追加、独占操作和不确定写入恢复都会在锁内重新流式验证当前文件；发生陈旧日志头冲突时只统计目标 nonce，再更新日志头并重试。这样恢复时不再同时保留 Journal 自身的事件数组和 Broker 分组副本，Broker 的可审计事件快照仍保持原契约。
 
 懒加载对象不提供同步 `read()`，调用方若需要完整历史必须明确选择默认数组接口；EffectBroker 对旧的 `read()` Journal 和内存 fake 仍保留兼容分支。该节点不改变 16 MiB 上限，不提供持久索引、无限效果历史或跨文件事务快照。
+
+F-254 把 EffectBroker 的可变状态缓存和 Journal 审计历史拆开。启用 `retainEvents:false` 时，Broker 只保留每个 effect 的 intent、phase、receipt、eventCount 和 lastEvent 摘要；同步 `get()`/操作结果会明确返回 `events:null` 与 `eventHistory` 元数据，`getSummary()`、`listSummaries()` 用于不需要事件载荷的展示，`readHistory(nonce)` 则从 Journal 的事件流中按 nonce 重读完整历史。CLI 的 EffectJournal 恢复、状态操作和 inspect 使用该策略，`retainEvents:true` 仍是默认兼容行为。该变化让长效果历史不会因 Broker 恢复而永久复制到运行时内存，但完整审计读取仍消耗 Journal 扫描成本，不提供持久索引、无限历史或跨文件事务快照。

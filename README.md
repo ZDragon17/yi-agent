@@ -707,3 +707,5 @@ F-251 收紧活动 Run 的 nonce 预筛选：`ActiveRun` 不再为所有已提�
 F-252 将 `EffectJournal.open()` 改为按固定文件范围逐块读取和逐行校验，去掉打开时的原始 Buffer、整本字符串和行数组临时副本；`EffectJournal.read()` 的兼容数组接口、16 MiB journal 上限、摘要链和跨进程锁不变。CRLF 账本与 EffectBroker、authority、sandbox executor 回归共 `28/28` 通过。该变化只降低 Journal 重启解析峰值，不把副作用历史变成无限内存、持久索引或跨文件事务快照。
 
 F-253 将 CLI/EffectBroker 恢复切换到懒加载 Journal：恢复过程逐事件消费 `readStream()`，日志头通过 `head()` 获取，冲突重试只流式统计同 nonce；默认 `EffectJournal.open()` 和 `read()` 数组接口继续兼容。懒加载 Journal 跨初始化、追加、重启恢复的效果回归为 `29/29`，CLI 的真实 sandbox、authority 和 signer 路径继续复用同一契约。该变化减少恢复时的重复 Journal 数组，不承诺无限效果历史或持久索引。
+
+F-254 将 EffectBroker 的运行状态与审计历史分开。`retainEvents:false` 的 Journal Broker 只在内存中保留 intent、phase、receipt、事件数量和最后事件摘要；`getSummary()`/`listSummaries()` 用于状态展示，`readHistory(executionNonce)` 需要时再从 Journal 流式读取完整审计事件。CLI 的效果操作和 inspect 使用该模式，默认 Broker 仍保留原有同步事件数组接口。效果层回归 `30/30`，真实 sandbox CLI 回归 `1/1`。这减少的是 Broker 恢复后的长期事件驻留，不是持久索引、无限历史或跨文件事务快照；需要完整审计时仍要重新扫描 Journal。

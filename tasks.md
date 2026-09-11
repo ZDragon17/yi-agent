@@ -1903,3 +1903,10 @@
 - 实现：`EffectJournal` 增加内部懒加载模式和 `readStream()`、`head()`、按 nonce 计数接口。CLI 以懒加载模式打开；Broker 恢复逐事件消费并校验，append 只依赖重新读取后的日志头，冲突重试只流式统计同 nonce。旧 `open()` 默认行为、`read()` 数组兼容接口和无 Journal 的内存 Broker 保持不变。
 - 验证：效果 Journal/Broker/authority/sandbox/dry-run 回归 `29/29`；懒加载 Journal 跨初始化、追加和重新恢复回归确认同步数组接口不可用时，nonce 状态仍可恢复。
 - 边界：Broker 的每个 effect 仍保留对外可审计事件结果，`read()` 仍可能物化全量历史；本节点减少的是 CLI/恢复路径的重复 Journal 副本，不是持久索引、无限效果历史或跨文件事务快照。
+
+## F-254 EffectBroker 运行状态与审计历史分离
+
+- 反证/缺口：F-253 消除了 Journal 数组与 Broker 分组状态之间的重复副本，但恢复后的 Broker 仍为每个 effect 长期保留完整事件数组；效果数量和单 effect 历史增长时，运行态缓存仍复制了可从 Journal 获取的审计事实。
+- 实现：增加显式 `retainEvents` 策略。关闭时，Broker 只保留 intent、phase、receipt、eventCount 和 lastEvent 摘要，并提供 `getSummary()`、`listSummaries()` 与按 execution nonce 流式读取的 `readHistory()`；CLI 的 Journal 恢复、效果操作和 inspect 使用关闭模式，默认创建和恢复仍保持事件数组兼容接口。追加、冲突重试和无 Journal 的内存 Broker 改用 eventCount，不把摘要当成权威历史。
+- 验证：EffectJournal、EffectBroker、authority、sandbox executor 和 dry-run 回归 `30/30`；真实 sandbox CLI 回归 `1/1`；关闭事件保留后，跨初始化、追加、重启恢复和按 nonce 审计读取仍得到完整事件序列。
+- 边界：`readHistory()` 仍需扫描 Journal，不能替代持久索引；默认同步 `get()`/`list()` 兼容接口仍可能物化事件数组。该节点减少 Broker 运行态的重复事件驻留，不提供无限历史、跨文件事务快照、跨机器对账或现实效果真实性。
