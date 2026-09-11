@@ -1868,3 +1868,10 @@
 - 实现：`readPolicyTrace()` 改用 `readRunStream()`，完整消费并校验每个 Run，只把 STEP 的 policy token 写入既有 trace 数组；resume、trace digest、Replay 与 end evidence 契约保持不变。
 - 验证：禁用数组 `LabStore.readRun()` 后，配对策略初次运行和 resume 回归 `2/2`；F-247 的 Application/WorldPort 全量 `54/54` 与 Runtime 全量 `82/82` 仍为通过基线。
 - 边界：trace 数组是配对比较和持久化输出所需的结果，仍随实验步数增长；本节点只移除事件 payload 驻留，不提供无限 trace、持久索引或现实效果真实性。
+
+## F-249 配对候选分支校验的流式化
+
+- 反证/缺口：F-247/F-248 已清理 inspect 和配对策略 trace 的数组 Run 读取，但 `paired-experiment-service.ensureBranch()` 在已有分支恢复时仍调用 `readRun()`，只为校验 start 的初始状态和 scenario 就物化整个事件数组。
+- 实现：`ensureBranch()` 改用 `readRunStream()` 并完整消费事件流，使 Run 的完整性校验在恢复前执行，同时只读取流式 Run 的 start 摘要完成分支连续性比较。
+- 验证：数组 `LabStore.readRun()` 被强制禁用时，配对候选初次运行、左分支完成后中断恢复、完成结果 resume 及其余回归共 `5/5` 通过。
+- 边界：本节点覆盖配对候选的单步分支校验，不改变公开 `readRun()` 兼容接口；配对候选历史、Replay 和证据仍按现有契约运行，不提供无限历史、持久索引或现实效果真实性。

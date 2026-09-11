@@ -543,3 +543,5 @@ F-246 修正固定 watermark 的文件稳定性边界。活动 `inspect()` 只�
 F-247 把 CLI inspect 的 Run 展示从数组读取改为流式读取。`inspectLab()` 复用 `readRunStream()`，在消费完成后只保留最后 STEP、终态事件和可选的 action 引用；`inspect-view` 同时兼容旧数组输入，但当前应用路径不再把整本 ledger 放入内存。普通 inspect、无安全动作停机和 `runId:sequence` action 查询的展示结果保持不变。
 
 F-248 将配对策略实验的 token trace 读取改为流式。`readPolicyTrace()` 完整消费 `readRunStream()` 并只保留每个 STEP 的 token；trace 数组仍作为配对比较和持久化 evidence 的输出，事件 payload 不再整本驻留。配对策略的 Replay、resume、trace digest 和分支一致性校验不变。
+
+F-249 将配对候选实验中已完成分支的恢复校验改为流式。`ensureBranch()` 完整消费 `readRunStream()` 后再比较 start 的初始状态和 scenario；分支事件不再通过数组 `readRun()` 进入应用层。分支初始化、中断恢复、Replay 和 pair evidence 的语义保持不变。
