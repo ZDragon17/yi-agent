@@ -386,6 +386,22 @@ export class LabStore {
     };
   }
 
+  async readAllRuns() {
+    const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
+    validateCurrentShape(current);
+    if (current.status === 'RUNNING') {
+      throw new LabStoreError('BUSY', 'The current run requires recovery before a chain replay.', {
+        runId: current.lastRunId,
+      });
+    }
+    const runs = [];
+    for (const runId of await listRunIds(this.root)) runs.push(await this.readRun(runId));
+    return runs.sort((left, right) => (
+      left.start.initialState.kernelStep - right.start.initialState.kernelStep ||
+      left.start.runId.localeCompare(right.start.runId)
+    ));
+  }
+
   async readCandidateOutcomes(limit = MAX_CANDIDATE_HISTORY) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_CANDIDATE_HISTORY) {
       throw new LabStoreError('INVALID_INPUT', 'candidate outcome history limit is invalid.', { field: 'limit' });

@@ -1686,3 +1686,10 @@
 - 实现：新增受限的 goal epoch。只有前一监督器已经 `COMPLETED` 或 `HALTED` 时，`agent run` 才能用新的 goal/goal plan 开启下一周期；WorldPort 状态、Memory、RNG 和 kernelStep 必须保持不变，监督器重新建立目标局部的 cycle、stagnation、bestDistance 和计划进度。Run start 保存前后连续性摘要，首个 STEP 记录新的 goal activation；活跃目标仍 fail-closed 拒绝替换。
 - 验证：生成型陌生 WorldPort 完成目标 `[2]` 后切换到目标 `[4]`，跨两个 Run 执行 4 步，世界值和 kernelStep 均连续，两个 Run 均可 Replay 为 `CONSISTENT`；另有回归确认 ACTIVE 目标不能被抢占。当前本机定向应用回归 `4/4` 通过，内置 WorldPort 的 PowerShell-facing CLI E2E 与独立 JSONL adapter CLI E2E 各为 `1/1`。
 - 边界：目标切换只重建监督器，不证明目标文本本身具有统一语义，也不提供活跃目标的强制中断、跨 Lab 目标合并或现实世界的权限升级。未决外部 transition 仍必须先按原恢复契约闭合，不能借目标 epoch 绕过对账。
+
+## F-223 Lab 级连续账本 Replay
+
+- 反证/缺口：单个 Run 的 Replay 能证明本 Run 的事件和状态可重算，却不能证明相邻终态 Run 之间确实从上一 Run 继续；尤其是 goal epoch 的摘要如果被重新计算，单 Run 仍可能看不出目标生命周期连接是否成立。
+- 实现：新增只读 `replay --lab PATH --chain`。Runtime 读取全部终态 Run 并按初始 `kernelStep` 排序；Application 逐个执行既有 Replay，再比较相邻 Run 的 WorldPort 状态、Memory、RNG 和 `kernelStep`。目标切换时额外校验 `goalEpoch` 的前一状态摘要、前一监督器摘要、后一监督器摘要，以及前后监督器状态；current 仍为 `RUNNING` 时拒绝链回放，避免把未决边界当成连续账本。
+- 验证：应用层目标 epoch + chain replay 定向回归通过；内置 WorldPort CLI E2E、外部 JSONL adapter CLI E2E 均覆盖 `replay --chain`。提交前再执行 Runtime 回归、CLI 定向回归和 `git diff --check`，提交后以新的 CI 结果为准。
+- 边界：该入口提高的是 Lab 内事件连续性的可验证性，不是签名或主动攻击防护；不处理跨 Lab/分支合并，不启动外部 adapter，也不证明目标文本或现实效果本身真实。

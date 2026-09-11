@@ -555,6 +555,11 @@ test('agent CLI starts a second goal epoch from the completed first epoch', asyn
     assert.equal(secondRun.events.find((event) => event.kind === 'STEP').payload.boundary.goalActivation.goal, '完成第二目标');
     assert.equal((await invoke(['replay', '--lab', lab, '--run', 'run-1', '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
     assert.equal((await invoke(['replay', '--lab', lab, '--run', 'run-2', '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+    const chain = await invoke(['replay', '--lab', lab, '--chain', '--json'], process.env);
+    assert.equal(chain.code, 0, JSON.stringify(chain));
+    assert.equal(chain.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal(chain.stdout[0].data.checkedRuns, 2);
+    assert.equal(chain.stdout[0].data.goalEpochs, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

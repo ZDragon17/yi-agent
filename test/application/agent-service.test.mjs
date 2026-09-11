@@ -703,6 +703,11 @@ test('a completed goal can start a new goal epoch without resetting world or mem
     );
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1', registry })).verdict, 'CONSISTENT');
     assert.equal((await replayLab({ labPath: lab, runId: 'run-2', registry })).verdict, 'CONSISTENT');
+    const chain = await replayLab({ labPath: lab, chain: true, registry });
+    assert.equal(chain.verdict, 'CONSISTENT', JSON.stringify(chain));
+    assert.equal(chain.checkedRuns, 2);
+    assert.equal(chain.goalEpochs, 1);
+    assert.deepEqual(chain.runs.map((item) => item.runId), ['run-1', 'run-2']);
   });
 });
 

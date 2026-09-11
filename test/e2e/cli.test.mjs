@@ -2127,6 +2127,11 @@ test('external WorldPort keeps continuity across terminal goal epochs', async ()
     assert.equal(secondRun.events.find((event) => event.kind === 'STEP').payload.boundary.goalActivation.goal, '完成第二目标');
     assert.equal((await invoke('replay', '--lab', lab, '--run', 'run-1', '--adapter', adapter, '--json')).stdout[0].data.verdict, 'CONSISTENT');
     assert.equal((await invoke('replay', '--lab', lab, '--run', 'run-2', '--adapter', adapter, '--json')).stdout[0].data.verdict, 'CONSISTENT');
+    const chain = await invoke('replay', '--lab', lab, '--chain', '--adapter', adapter, '--json');
+    assert.equal(chain.code, 0, JSON.stringify(chain));
+    assert.equal(chain.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal(chain.stdout[0].data.checkedRuns, 2);
+    assert.equal(chain.stdout[0].data.goalEpochs, 1);
   });
 });
 

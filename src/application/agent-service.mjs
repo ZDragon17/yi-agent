@@ -1392,8 +1392,74 @@ export async function replayLab(input) {
   const source = requireRecord(input, 'replay input');
   const registry = resolveRegistry(source.registry);
   const store = await LabStore.open({ labPath: requireText(source.labPath, 'labPath') });
+  if (source.chain === true) {
+    return replayLabChain({ store, registry });
+  }
   const run = await store.readRun(requireText(source.runId, 'runId'));
   registry.assertManifest(run.manifest);
+  return replayStoredRun(run, registry);
+}
+
+async function replayLabChain({ store, registry }) {
+  const runs = await store.readAllRuns();
+  if (runs.length === 0) {
+    throw new LabStoreError('NOT_FOUND', 'No terminal runs exist for chain replay.', {});
+  }
+  const summaries = [];
+  let previous = null;
+  let checkedSequences = 0;
+  let goalEpochs = 0;
+  for (const run of runs) {
+    registry.assertManifest(run.manifest);
+    const result = replayStoredRun(run, registry);
+    checkedSequences += result.checkedSequences ?? 0;
+    const summary = {
+      runId: run.start.runId,
+      verdict: result.verdict,
+      checkedSequences: result.checkedSequences ?? 0,
+      ...(run.start.goalEpoch === undefined ? {} : { goalEpoch: true }),
+    };
+    summaries.push(summary);
+    if (result.verdict !== 'CONSISTENT') {
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        verdict: 'INCONSISTENT',
+        checkedRuns: summaries.length,
+        checkedSequences,
+        goalEpochs,
+        runs: summaries,
+        firstDifference: { runId: run.start.runId, ...cloneJson(result.firstDifference) },
+      };
+    }
+    if (previous !== null) {
+      const difference = chainContinuityDifference(previous, run, run.start.initialState);
+      if (difference !== null) {
+        return {
+          schemaVersion: SCHEMA_VERSION,
+          verdict: 'INCONSISTENT',
+          checkedRuns: summaries.length,
+          checkedSequences,
+          goalEpochs,
+          runs: summaries,
+          firstDifference: difference,
+        };
+      }
+      if (run.start.goalEpoch !== undefined) goalEpochs += 1;
+    }
+    previous = { runId: run.start.runId, finalState: result.finalState };
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    verdict: 'CONSISTENT',
+    checkedRuns: summaries.length,
+    checkedSequences,
+    goalEpochs,
+    runs: summaries,
+    firstDifference: null,
+  };
+}
+
+function replayStoredRun(run, registry) {
   return replayRun({
     ...run,
     worldFactories: {
@@ -1402,6 +1468,63 @@ export async function replayLab(input) {
         : (options) => registry.createWorld(run.manifest, options.scenario),
     },
   });
+}
+
+function chainContinuityDifference(previous, run, nextInitialState) {
+  const previousState = previous.finalState;
+  const nextState = run.start.initialState;
+  if (sameContinuityWithoutSupervisor(previousState, nextState)) {
+    if (canonicalJson(previousState) === canonicalJson(nextState)) return null;
+    return validateGoalEpochLink(previous, run, nextInitialState);
+  }
+  return {
+    kind: 'RUN_CONTINUITY',
+    previousRunId: previous.runId,
+    runId: run.start.runId,
+    field: 'initialState',
+    message: 'A later Run does not continue the previous Run state.',
+  };
+}
+
+function validateGoalEpochLink(previous, run, nextInitialState) {
+  const epoch = run.start.goalEpoch;
+  const previousSupervisor = previous.finalState.changeSupervisor;
+  const nextSupervisor = nextInitialState.changeSupervisor;
+  const mismatch = epoch === undefined ? 'missing-epoch' :
+    previousSupervisor === undefined ? 'missing-previous-supervisor' :
+      nextSupervisor === undefined ? 'missing-next-supervisor' :
+        canonicalDigest(previous.finalState) !== epoch.previousStateDigest ? 'previous-state-digest' :
+          canonicalDigest(previousSupervisor) !== epoch.previousSupervisorDigest ? 'previous-supervisor-digest' :
+            canonicalDigest(nextSupervisor) !== epoch.nextSupervisorDigest ? 'next-supervisor-digest' :
+              !['COMPLETED', 'HALTED'].includes(previousSupervisor.status) ? 'previous-status' :
+                nextSupervisor.status !== 'ACTIVE' ? 'next-status' : null;
+  if (mismatch !== null) {
+    return {
+      kind: 'GOAL_EPOCH',
+      previousRunId: previous.runId,
+      runId: run.start.runId,
+      field: 'goalEpoch',
+      message: 'Goal epoch metadata does not bind the previous terminal state to the new supervisor.',
+      mismatch,
+    };
+  }
+  return null;
+}
+
+function sameContinuityWithoutSupervisor(left, right) {
+  const leftState = {
+    worldState: left.worldState,
+    memory: left.memory,
+    rngState: left.rngState,
+    kernelStep: left.kernelStep,
+  };
+  const rightState = {
+    worldState: right.worldState,
+    memory: right.memory,
+    rngState: right.rngState,
+    kernelStep: right.kernelStep,
+  };
+  return canonicalJson(leftState) === canonicalJson(rightState);
 }
 
 function resolveRegistry(value) {

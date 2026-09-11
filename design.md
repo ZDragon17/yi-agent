@@ -39,6 +39,7 @@
 | `inspect --lab PATH [--run ID|--action RUN:SEQ] [--adapter CONFIG] [--json]` | 实验空间 | 固定 snapshot watermark 的 InspectView | 损坏时部分诊断+3；参数 64；不存在 66；内部 70；I/O 74 | 原子快照只读；不创建锁 |
 | `ui --lab PATH [--port N] [--adapter CONFIG] [--json]` | 已初始化实验空间 | stdout 打印一次 listening 信封，长驻至 SIGINT/SIGTERM；页面每 2s 轮询 `/api/state`（inspect 同源只读信封）；非 GET 405 | 参数 64；不存在/路径逃逸 66/70；I/O 74 | 仅绑定 127.0.0.1；只读：不创建锁、不写文件、不消耗随机源；无 CORS 头 |
 | `replay --lab PATH --run ID [--adapter CONFIG] [--json]` | 终态 run | 一致或首个差异序号 | 不一致/损坏 3；参数 64；不存在 66；内部 70；I/O 74；未终态 75 | 终态文件不可变；严格只读 |
+| `replay --lab PATH --chain [--adapter CONFIG] [--json]` | Lab 内全部终态 Run | 每个 Run 的 Replay 与跨 Run 连续性 | 不一致/损坏 3；参数 64；不存在 66；内部 70；I/O 74；有运行中 Run 75 | 只读；按初始 kernelStep 排序；不启动 adapter |
 | `challenge --lab PATH [--suite foundational|--case ID] [--json]` | 主实验空间仅作证据归属 | 每个 case 的 PASS/FALSIFIED/INCONCLUSIVE | 任一 FALSIFIED 2；无证伪但有 INCONCLUSIVE 3 | 每 case 使用隔离子实验空间 |
 | `recover --lab PATH --confirm-lock-owner-dead [--json]` | 显式恢复请求 | stale lock 证据、恢复后的 current | 活进程/未确认 75；损坏 3；参数 64；I/O 74 | 唯一允许处理陈旧锁的命令 |
 | `effect plan|confirm|execute|reconcile|compensate|reconcile-compensation|inspect --journal PATH [--sandbox-root PATH] [--intent PATH] [--nonce N] [--json]` | EffectIntent、durable journal、显式标记 sandbox | EffectBroker 状态快照或全部 effect 状态 | 参数 64；损坏 3；不存在 66；I/O 74；状态错误 70 | 每次进程从 journal 恢复；execute/compensate 只允许标记 sandbox root |
@@ -69,6 +70,7 @@ JSON envelope 固定为成功 `{schemaVersion:1,ok:true,data:{...}}`，失败 `{
 | challenge 装置无效或证据不足 | 无 FALSIFIED 且至少一项 INCONCLUSIVE | 3 | 同上+invalidator |
 | inspect | 状态不变，InspectView schema 完整 | 0/损坏时3 | inspectView 或 partial+error |
 | replay 终态一致/不一致 | CONSISTENT / 首差异 | 0/3 | runId,verdict,firstDifference? |
+| replay --chain 连续/不连续 | CONSISTENT / 首个 Run 或跨 Run 差异 | 0/3 | checkedRuns,checkedSequences,goalEpochs,runs,firstDifference? |
 | recover | 仅死 owner 且显式确认后恢复 | 0/75/3 | previousLock,recoveryAction,status,evidence |
 
 退出码可重复装置：64 用非法 steps；65 用不同 seed 重复 init；66 用不存在 run；74 用“父路径是普通文件”的 lab 路径产生 ENOTDIR；75 由测试进程先持有 writer lock、recover 检测活 owner 或 replay 无 end run。2/3/70 分别用内置安全停机、tamper/INCONCLUSIVE、注入的测试 World 异常产生。
@@ -471,3 +473,5 @@ F-221 处理长计划历史的重复工作。应用层内部生成的连续状�
 在 Windows 本机的大计划压力用例中，Replay 子进程的观测峰值内存从约 1.84 GiB 降至约 0.99 GiB，耗时从约 265 秒降至约 261 秒；压力用例、LabStore/Replay 78 项回归和陌生外部 WorldPort CLI 4 项回归均通过。这个结果说明重复复制是实际开销，但长历史仍会逐条解压、校验和重演。账本格式、单 STEP 大小限制和现实执行信任边界没有改变。
 
 F-222 把目标生命周期从“一个 Lab 只能有一个已激活目标”推进为连续的有限目标 epoch。目标完成或因预算停机后，下一次 `agent run` 可以提供新的 goal 或 goal plan；运行时只重建监督器，WorldPort 状态、Memory、RNG 和 kernelStep 必须与上一 current 一致。新的 immutable run start 记录前一连续性状态、前一监督器和新监督器的摘要，首个 STEP 的 `goalActivation` 记录新的控制周期。若前一监督器仍为 ACTIVE 或 REPLAN_REQUIRED，目标替换会被拒绝；这条限制保留了活跃控制边界的单调性。该能力让同一世界可以连续经历多个目标，而不是把“换目标”伪装成修改旧账本；它仍不解决自然语言目标的真实含义、目标之间的优先级或现实权限治理。
+
+F-223 把 Replay 从单个 Run 推进到 Lab 级连续账本。`replay --chain` 先读取全部终态 Run，按初始 `kernelStep` 排序并逐个执行原有确定性 Replay；再比较相邻 Run 的 WorldPort 状态、Memory、RNG 和 `kernelStep`。如果监督器状态发生切换，则继续验证前一终态与 `goalEpoch` 的前置摘要、后一 Run 的新监督器摘要，以及前后监督器分别处于终态和 ACTIVE。发现单 Run 差异、跨 Run 断裂或运行中的 current 时，命令返回首个可定位差异，不连接 adapter，也不改写账本。该入口把“本 Run 可重放”和“目标周期确实接续”分成两道可验证边界；它仍不提供对主动篡改者的签名证明，也不把跨 Lab 分支或现实世界因果纳入 Replay。

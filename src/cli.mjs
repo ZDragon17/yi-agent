@@ -152,9 +152,12 @@ async function dispatch(command, options) {
     });
   }
   if (command === 'replay') {
+    if (options.chain === true && options.run !== undefined) {
+      throw cliError('INVALID_INPUT', '--chain and --run are mutually exclusive.', { fields: ['chain', 'run'] }, 64);
+    }
     return replayLab({
       labPath: required(options, 'lab'),
-      runId: required(options, 'run'),
+      ...(options.chain === true ? { chain: true } : { runId: required(options, 'run') }),
       registry: await loadRegistry(options, false),
     });
   }
@@ -400,7 +403,7 @@ function parseArguments(argv) {
     if (argument === '--json') continue;
     if (!argument.startsWith('--')) throw cliError('INVALID_INPUT', `Unexpected argument: ${argument}`, {}, 64);
     const name = argument.slice(2);
-    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan' || name === 'kernel-only' || name === 'resume' || name === 'auto-recover' || name === 'require-recovery') {
+    if (name === 'confirm-lock-owner-dead' || name === 'forever' || name === 'auto-plan' || name === 'kernel-only' || name === 'resume' || name === 'auto-recover' || name === 'require-recovery' || name === 'chain') {
       options[name] = true;
       continue;
     }
@@ -419,7 +422,7 @@ function parseArguments(argv) {
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
     run: ['lab', 'run-id', 'steps', 'scenario', 'adapter', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     inspect: ['lab', 'run', 'action', 'adapter'],
-    replay: ['lab', 'run', 'adapter'],
+    replay: ['lab', 'run', 'adapter', 'chain'],
     recover: ['lab', 'confirm-lock-owner-dead'],
     challenge: ['lab', 'case'],
     effect: ['effectOperation', 'journal', 'sandbox-root', 'intent', 'nonce'],
@@ -672,6 +675,7 @@ function helpText() {
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',
+    '  yi-agent replay --lab PATH --chain [--adapter CONFIG] [--json]   校验整个 Lab 的 Run 连续性',
     '  yi-agent ui --lab PATH [--port N] [--adapter CONFIG] [--json]   只读检查外壳（127.0.0.1）',
     '  yi-agent experiment pair --lab PATH --output PATH --left-token TOK --right-token TOK [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment trajectory --lab PATH --output PATH --left-trajectory PATH --right-trajectory PATH [--scenario ID] [--resume] [--json]',

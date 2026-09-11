@@ -262,6 +262,7 @@ yi-agent run `
 
 yi-agent inspect --lab E:\labs\counter --adapter $adapterConfig --json
 yi-agent replay --lab E:\labs\counter --run <runId> --adapter $adapterConfig --json
+yi-agent replay --lab E:\labs\counter --chain --adapter $adapterConfig --json
 ```
 
 如果已经配置了 API，还可以把同一个外部世界交给模型提议层：
@@ -649,3 +650,5 @@ F-96 增加 `experiment policy`，用 `candidate-policy` 文件表达一个受�
 该实验验证的是“同一底层观察边界下，策略能否根据新观测作出可审计、可重放的下一步选择”。它不是模型训练，也不是自动发现规则：规则仍由实验输入给出；如果两策略行为相同，结果仍会记录相同轨迹证据而不宣称能力差异。外部现实 WorldPort 仍禁止直接分叉。
 
 F-222 增加有限的目标 epoch：前一个目标只有在 `COMPLETED` 或 `HALTED` 后，才能由新的 `goal` 或 `goal-plan` 开启下一目标周期。新周期保留 WorldPort 状态、Memory、RNG 和 kernelStep，只重置监督器的目标局部进度；前后连续性摘要写入 immutable run start，首个 STEP 写入新的 `goalActivation`。如果旧目标仍为 `ACTIVE` 或 `REPLAN_REQUIRED`，CLI 会拒绝替换。这样同一 Lab 可以在完成一个目标后继续推进另一个目标，同时不修改已完成 Run 的历史。这个机制只解决目标生命周期和持久化边界，不把目标文本自动变成可验证的现实意图，也不绕过外部 transition 的恢复与人工对账要求。当前本机定向应用回归为 `4/4`，内置 WorldPort 的 PowerShell-facing CLI E2E 与独立 JSONL adapter CLI E2E 各为 `1/1`。
+
+F-223 增加 Lab 级连续账本 Replay。单个 `replay --run` 只重算一个终态 Run；`replay --chain` 会读取 Lab 中全部终态 Run，先逐个完成同样的确定性 Replay，再按初始 `kernelStep` 检查相邻 Run 的 WorldPort 状态、Memory、RNG 和时间步是否连续。遇到目标 epoch 切换时，它还会核对前一终态、前一监督器和后一监督器的摘要及状态，避免只验证单个 Run 而漏掉目标生命周期断点。该命令严格只读，不启动外部 adapter；如果 current 仍处于 `RUNNING`，会先要求完成恢复。它验证的是账本连续性，不是主动攻击防护、自然语言目标真实性或现实世界效果。
