@@ -510,4 +510,8 @@ F-233 反转未决外部事务的恢复索引。F-230 虽然已经逐事件扫�
 
 F-234 把候选历史恢复的排序和输出改为有界流。F-228 已经只从事件流提取候选，但 `readCandidateOutcomes()` 仍把所有候选载荷收集到数组，排序后才做历史注释，最后才截取 32 条。现在候选按固定大小排序块排序并写入临时目录；所有 Run 消费完成后，多个块以原有 `{recordedAt, runId, sequence}` 顺序归并，增量注释器逐条处理，只保留最终请求窗口。单个块和结果窗口有明确上限，临时目录在成功和失败路径都会清理。
 
-增量注释器与数组版 `annotateCandidateHistory()` 共用同一状态转移，因此 attempt、contextAttempt、supersedes、质量和 paired comparison 的计算规则不变。候选谱系索引仍可能随全新 scope、context 或候选摘要增长，这是精确复现远距历史关系的剩余成本；本节点不把它包装成无限记忆或完全有界恢复。Runtime 跨排序块回归、候选历史/Application/Advisor 回归和 repo WorldPort 候选回归均通过。
+增量注释器与数组版 `annotateCandidateHistory()` 共用同一状态转移，因此 attempt、contextAttempt、supersedes、质量和 paired comparison 的计算规则不变。流式恢复第二遍先从尾部窗口反推出相关 scope、context、supersedes 和 paired 键，只保留这些键对应的最小比较引用；数组版兼容接口仍按调用方输入数组处理，不把它的输入上界冒充为持久化恢复上界。Runtime 跨排序块回归、候选历史/Application/Advisor 回归和 repo WorldPort 候选回归均通过。
+
+F-235 进一步收紧候选尾部的谱系索引。F-234 的排序块归并已经给出最终窗口，第二遍不再需要为全历史建立候选关系；它先从窗口提取相关 scope、context、supersedes 和 paired before-state 键，再让增量注释器只为这些键维护计数和最小比较引用。尾部每条记录的远距 supersedes 与 paired comparison 仍能访问其历史前件，未被尾部引用的历史只推进全局 kernelStep，不进入关系 Map。
+
+这一步把 `readCandidateOutcomes(limit)` 的候选载荷、排序块、输出结果和谱系辅助状态都绑定到有界窗口；显式数组版注释仍保持原接口语义，调用方若主动提供无限数组仍由调用方承担其内存。该设计不引入持久候选索引，也不改变账本、模型证据或现实 WorldPort 的信任边界。

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { annotateCandidateHistory } from '../../src/runtime/candidate-history.mjs';
+import {
+  annotateCandidateHistory,
+  candidateHistoryRelevance,
+  createCandidateHistoryAnnotator,
+} from '../../src/runtime/candidate-history.mjs';
 
 const CANDIDATE_DIGEST = `sha256:${'a'.repeat(64)}`;
 const OTHER_CANDIDATE_DIGEST = `sha256:${'b'.repeat(64)}`;
@@ -279,4 +283,48 @@ test('candidate history annotation stays bounded for a long repeated history', (
   assert.equal(annotated.length, history.length);
   assert.equal(annotated.at(-1).attempt, history.length);
   assert.equal(annotated.at(-1).pairedComparison, undefined);
+});
+
+test('tail-only annotation preserves distant supersession and paired evidence', () => {
+  const beforeStateDigest = `sha256:${'e'.repeat(64)}`;
+  const history = [
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      beforeStateDigest,
+      kernelStep: 1,
+      quality: { errorMagnitude: 3, verified: true },
+      candidateOutcome: { candidateDigest: CANDIDATE_DIGEST },
+    },
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      beforeStateDigest,
+      kernelStep: 2,
+      quality: { errorMagnitude: 2, verified: true },
+      candidateOutcome: { candidateDigest: CANDIDATE_DIGEST },
+    },
+    {
+      worldVersion: 'world-v1',
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      beforeStateDigest,
+      kernelStep: 3,
+      supersedesCandidateDigest: CANDIDATE_DIGEST,
+      quality: { errorMagnitude: 1, verified: true },
+      candidateOutcome: { candidateDigest: OTHER_CANDIDATE_DIGEST },
+    },
+  ];
+  const expected = annotateCandidateHistory(history).at(-1);
+  const annotator = createCandidateHistoryAnnotator({
+    relevance: candidateHistoryRelevance([history.at(-1)]),
+  });
+  const actual = history.flatMap((entry, index) => {
+    const annotated = annotator.push(entry, { emit: index === history.length - 1 });
+    return annotated === undefined ? [] : [annotated];
+  });
+
+  assert.deepEqual(actual, [expected]);
 });

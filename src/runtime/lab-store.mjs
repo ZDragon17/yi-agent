@@ -32,7 +32,7 @@ import {
   withSelfDigest,
 } from './schema.mjs';
 import { isValidCandidateOutcome } from './candidate-evidence.mjs';
-import { createCandidateHistoryAnnotator } from './candidate-history.mjs';
+import { candidateHistoryRelevance, createCandidateHistoryAnnotator } from './candidate-history.mjs';
 import {
   externalInputUnsigned,
   isValidEvidencePublicKey,
@@ -3297,11 +3297,27 @@ function annotateCandidateHistoryChunk(chunk, limit) {
 }
 
 async function annotateCandidateChunks(chunkPaths, limit) {
+  const tail = [];
+  await forEachCandidateInOrder(chunkPaths, async (entry) => {
+    tail.push(entry);
+    if (tail.length > limit) tail.shift();
+  });
+  const tailKeys = new Set(tail.map(candidateOutcomeKey));
+  const annotator = createCandidateHistoryAnnotator({ relevance: candidateHistoryRelevance(tail) });
+  const results = [];
+  await forEachCandidateInOrder(chunkPaths, async (entry) => {
+    const annotated = annotator.push(entry, { emit: tailKeys.has(candidateOutcomeKey(entry)) });
+    if (annotated === undefined) return;
+    results.push(annotated);
+    if (results.length > limit) results.shift();
+  });
+  return results;
+}
+
+async function forEachCandidateInOrder(chunkPaths, consume) {
   const readers = chunkPaths.map((chunkPath) => readCandidateChunk(chunkPath));
   try {
     const heads = await Promise.all(readers.map((reader) => reader.next()));
-    const annotator = createCandidateHistoryAnnotator();
-    const results = [];
     while (true) {
       let nextIndex = -1;
       for (let index = 0; index < heads.length; index += 1) {
@@ -3311,14 +3327,16 @@ async function annotateCandidateChunks(chunkPaths, limit) {
         }
       }
       if (nextIndex === -1) break;
-      results.push(annotator.push(heads[nextIndex].value));
-      if (results.length > limit) results.shift();
+      await consume(heads[nextIndex].value);
       heads[nextIndex] = await readers[nextIndex].next();
     }
-    return results;
   } finally {
     await Promise.all(readers.map((reader) => reader.return()));
   }
+}
+
+function candidateOutcomeKey(entry) {
+  return JSON.stringify([entry.runId, entry.sequence]);
 }
 
 async function* readCandidateChunk(chunkPath) {
