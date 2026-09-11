@@ -1798,3 +1798,10 @@
 - 实现：新增 `readChainSnapshotStream()`。Runtime 用异步目录迭代器读取并校验 immutable start，以固定大小块按 `{kernelStep,runId}` 排序；跨块时复用 F-237 的多轮 JSONL 归并，Application 用异步迭代逐条 Replay。旧 `readChainSnapshot()` 和 `readAllRuns()` 数组接口保留，current 初末稳定性检查、链尾检查和回放结果结构不变。
 - 验证：Runtime 新增 129 个 Run 跨 128 条排序块边界的有序流测试；chain snapshot 移动水位、目标 epoch、连续 Runner、应用层链回放和相关回归继续通过。
 - 边界：该节点只收紧 `replay --chain` 的 Run 头部读路径，不能把 `readAllRuns()` 或 `replay` 返回的摘要数组说成无限有界；临时排序仍不是持久索引、跨文件事务快照或现实执行真实性。
+
+## F-239 崩溃恢复 Run 目录的有界选择扫描
+
+- 反证/缺口：恢复路径仍通过 `listRunIds()` 把所有 Run 目录名放进数组，再另建 `incompleteRunIds`；长期运行时，即使只有一个活动 Run，重启选择阶段仍会随历史目录数量增长。
+- 实现：`recoverRun()` 改用异步目录迭代器，只累计 Run 总数、current 引用是否出现、最后一个未完成 Run 身份和未完成计数。current 优先、唯一未完成 Run、预启动孤儿清理和错误上下文保持原语义，并继续复用 start、ledger、terminal、external marker 与 current projection 的完整校验。
+- 验证：Runtime 恢复、崩溃边界、锁接管、历史终态 Run、外部事务和目录安全回归继续通过；chain snapshot 的 129 Run 跨块流式扫描也覆盖同一目录迭代器。
+- 边界：本节点只减少恢复选择阶段的目录元数据驻留；后续恢复仍可能读取完整事件数组，不能把它描述为无限历史、持久索引或跨文件事务快照。

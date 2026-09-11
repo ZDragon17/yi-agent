@@ -1364,9 +1364,13 @@ async function recoverRun(root, manifest) {
   const currentPath = childPath(root, 'state', 'current.json');
   const current = await readVerifiedObject(currentPath, 'current');
   validateCurrentShape(current);
-  const runIds = await listRunIds(root);
-  const incompleteRunIds = [];
-  for (const candidate of runIds) {
+  let runCount = 0;
+  let currentRunPresent = false;
+  let incompleteRunId = null;
+  let incompleteRunCount = 0;
+  for await (const candidate of iterateRunIds(root)) {
+    runCount += 1;
+    if (candidate === current.lastRunId) currentRunPresent = true;
     if (!(await pathExists(childPath(root, 'runs', candidate, 'end.json')))) {
       const startPath = childPath(root, 'runs', candidate, 'start.json');
       if (!(await pathExists(startPath))) {
@@ -1382,23 +1386,24 @@ async function recoverRun(root, manifest) {
         await rmdir(orphanDirectory);
         continue;
       }
-      incompleteRunIds.push(candidate);
+      incompleteRunId = candidate;
+      incompleteRunCount += 1;
     }
   }
-  const runId = current.status === 'RUNNING' && runIds.includes(current.lastRunId)
+  const runId = current.status === 'RUNNING' && currentRunPresent
     ? current.lastRunId
-    : incompleteRunIds.length === 1
-      ? incompleteRunIds[0]
-      : incompleteRunIds.length === 0 && runIds.includes(current.lastRunId)
+    : incompleteRunCount === 1
+      ? incompleteRunId
+      : incompleteRunCount === 0 && currentRunPresent
         ? current.lastRunId
         : null;
   if (runId === null) {
-    if (current.status !== 'RUNNING' && incompleteRunIds.length === 0) {
+    if (current.status !== 'RUNNING' && incompleteRunCount === 0) {
       return { reason: 'PRESTART_ABORTED', current };
     }
     corrupt('Recovery cannot identify one active run.', {
-      runCount: runIds.length,
-      incompleteRunCount: incompleteRunIds.length,
+      runCount,
+      incompleteRunCount,
     });
   }
   const start = await readVerifiedObject(childPath(root, 'runs', runId, 'start.json'), 'run start');
