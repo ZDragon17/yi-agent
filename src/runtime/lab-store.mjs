@@ -1324,10 +1324,18 @@ class ActiveRun {
   }
 
   async findCommittedStep(executionNonce) {
-    const events = await readLedger(this.store.root, this.start.runId, this.start, {}, this.store.manifest);
-    const event = events.find((candidate) => (
-      candidate.kind === 'STEP' && candidate.payload.receipt.executionNonce === executionNonce
-    ));
+    let event;
+    for await (const candidate of readLedgerStream(
+      this.store.root,
+      this.start.runId,
+      this.start,
+      this.store.manifest,
+      { requireTerminal: false },
+    )) {
+      if (candidate.kind === 'STEP' && candidate.payload.receipt.executionNonce === executionNonce) {
+        event = candidate;
+      }
+    }
     if (event === undefined) return undefined;
     const committed = { event, payload: event.payload };
     this.committedSteps.set(executionNonce, committed);
@@ -1338,15 +1346,30 @@ class ActiveRun {
   }
 
   async reconcileLedger() {
-    const events = await readLedger(this.store.root, this.start.runId, this.start, {}, this.store.manifest);
-    const known = events[this.lastEvent.sequence - 1];
-    if (!known || known.digest !== this.lastEvent.digest) {
-      corrupt('In-memory run watermark is not a ledger prefix.', { runId: this.start.runId });
-    }
-    for (const event of events.slice(this.lastEvent.sequence)) {
+    const watermarkSequence = this.lastEvent.sequence;
+    const watermarkDigest = this.lastEvent.digest;
+    let watermarkFound = false;
+    let advancedTerminal = false;
+    for await (const event of readLedgerStream(
+      this.store.root,
+      this.start.runId,
+      this.start,
+      this.store.manifest,
+      { requireTerminal: false },
+    )) {
+      if (event.sequence <= watermarkSequence) {
+        if (event.sequence === watermarkSequence) {
+          if (event.digest !== watermarkDigest) {
+            corrupt('In-memory run watermark is not a ledger prefix.', { runId: this.start.runId });
+          }
+          watermarkFound = true;
+        }
+        continue;
+      }
       if (event.kind !== 'STEP') {
         this.terminalEvidence = TERMINAL_KINDS.has(event.kind);
-        throw new LabStoreError('BUSY', 'Ledger advanced to a non-STEP event.', { runId: this.start.runId });
+        advancedTerminal = true;
+        continue;
       }
       const nonce = event.payload.receipt.executionNonce;
       const prior = this.committedSteps.get(nonce);
@@ -1358,6 +1381,12 @@ class ActiveRun {
       this.lastStepState = event.payload.afterState;
       this.expectedState = event.payload.afterState;
       this.expectedStateDigest = event.payload.afterDigest;
+    }
+    if (!watermarkFound) {
+      corrupt('In-memory run watermark is not a ledger prefix.', { runId: this.start.runId });
+    }
+    if (advancedTerminal) {
+      throw new LabStoreError('BUSY', 'Ledger advanced to a non-STEP event.', { runId: this.start.runId });
     }
     this.needsLedgerReconcile = false;
   }
