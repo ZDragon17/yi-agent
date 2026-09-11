@@ -51,6 +51,7 @@ const MAX_EVENT_LINE_BYTES = MAX_PERSISTED_EVENT_BYTES;
 const MAX_RECENT_COMMITTED_STEPS = 32;
 const MAX_CANDIDATE_SORT_CHUNK = 128;
 const MAX_LOOP_SORT_CHUNK = 128;
+const MAX_SORT_MERGE_INPUTS = 32;
 const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
 const MAX_PLANNING_HORIZON = 8;
@@ -459,15 +460,23 @@ export class LabStore {
     const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
     validateCurrentShape(current);
     const chunk = [];
-    const chunkPaths = [];
+    let chunkPaths = [];
+    let chunkSequence = 0;
     let sortRoot = null;
     const flushChunk = async () => {
       if (chunk.length === 0) return;
       sortRoot ??= await mkdtemp(path.join(tmpdir(), 'yi-agent-candidate-sort-'));
-      const chunkPath = path.join(sortRoot, `chunk-${String(chunkPaths.length).padStart(8, '0')}.jsonl`);
+      const chunkPath = path.join(sortRoot, `chunk-${String(chunkSequence++).padStart(8, '0')}.jsonl`);
       chunk.sort(compareCandidateOutcomes);
       await writeFile(chunkPath, `${chunk.map((entry) => canonicalJson(entry)).join('\n')}\n`, 'utf8');
       chunkPaths.push(chunkPath);
+      chunkPaths = await compactSortedJsonlChunks(
+        chunkPaths,
+        sortRoot,
+        'candidate-merge',
+        compareCandidateOutcomes,
+        readCandidateChunk,
+      );
       chunk.length = 0;
     };
     try {
@@ -536,15 +545,23 @@ export class LabStore {
       });
     }
     const chunk = [];
-    const chunkPaths = [];
+    let chunkPaths = [];
+    let chunkSequence = 0;
     let sortRoot = null;
     const flushChunk = async () => {
       if (chunk.length === 0) return;
       sortRoot ??= await mkdtemp(path.join(tmpdir(), 'yi-agent-loop-sort-'));
-      const chunkPath = path.join(sortRoot, `chunk-${String(chunkPaths.length).padStart(8, '0')}.jsonl`);
+      const chunkPath = path.join(sortRoot, `chunk-${String(chunkSequence++).padStart(8, '0')}.jsonl`);
       chunk.sort(compareLoopContinuationRecords);
       await writeFile(chunkPath, `${chunk.map((entry) => canonicalJson(entry)).join('\n')}\n`, 'utf8');
       chunkPaths.push(chunkPath);
+      chunkPaths = await compactSortedJsonlChunks(
+        chunkPaths,
+        sortRoot,
+        'loop-merge',
+        compareLoopContinuationRecords,
+        readLoopContinuationChunk,
+      );
       chunk.length = 0;
     };
     let group = null;
@@ -3428,6 +3445,49 @@ function annotateCandidateHistoryChunk(chunk, limit) {
     if (results.length > limit) results.shift();
   }
   return results;
+}
+
+async function compactSortedJsonlChunks(chunkPaths, sortRoot, prefix, compare, createReader) {
+  let paths = chunkPaths;
+  while (paths.length > MAX_SORT_MERGE_INPUTS) {
+    const mergedPaths = [];
+    for (let offset = 0; offset < paths.length; offset += MAX_SORT_MERGE_INPUTS) {
+      const batch = paths.slice(offset, offset + MAX_SORT_MERGE_INPUTS);
+      if (batch.length === 1) {
+        mergedPaths.push(batch[0]);
+        continue;
+      }
+      const mergedPath = path.join(sortRoot, `${prefix}-${randomUUID()}.jsonl`);
+      await mergeSortedJsonlChunkBatch(batch, mergedPath, compare, createReader);
+      mergedPaths.push(mergedPath);
+      await Promise.all(batch.map((chunkPath) => rm(chunkPath, { force: true })));
+    }
+    paths = mergedPaths;
+  }
+  return paths;
+}
+
+async function mergeSortedJsonlChunkBatch(chunkPaths, outputPath, compare, createReader) {
+  const output = await open(outputPath, 'w');
+  const readers = chunkPaths.map((chunkPath) => createReader(chunkPath));
+  try {
+    const heads = await Promise.all(readers.map((reader) => reader.next()));
+    while (true) {
+      let nextIndex = -1;
+      for (let index = 0; index < heads.length; index += 1) {
+        if (heads[index].done) continue;
+        if (nextIndex === -1 || compare(heads[index].value, heads[nextIndex].value) < 0) {
+          nextIndex = index;
+        }
+      }
+      if (nextIndex === -1) break;
+      await output.write(`${canonicalJson(heads[nextIndex].value)}\n`);
+      heads[nextIndex] = await readers[nextIndex].next();
+    }
+  } finally {
+    await Promise.all(readers.map((reader) => reader.return()));
+    await output.close();
+  }
 }
 
 async function annotateCandidateChunks(chunkPaths, limit) {
