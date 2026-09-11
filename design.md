@@ -483,3 +483,7 @@ F-225 为连续 Replay 增加移动水位检测。`readChainSnapshot()` 在读�
 F-226 让连续 Replay 按 Run 流式读取。链快照只读取并排序各 Run 的 immutable start 头部，Application 随后逐个读取、重放并释放完整事件，不再把整个 Lab 的所有账本同时保留在内存中；全部 Replay 完成后再读一次 current，若期间水位移动则返回 `BUSY`。这把长期历史的内存增长从“所有 Run 的事件总量”降到“当前 Run 加有限摘要”，同时保留移动检测和链尾校验。它仍不提供无限历史的磁盘分页、事务快照或现实执行真实性。
 
 F-227 把流式边界推进到单个 Run。`LabStore.readRunStream()` 以异步生成器逐行读取 `events.jsonl`，先校验行大小、JSON、压缩 payload、序号摘要链、STEP 状态连续性和唯一终态，再产出事件；`replayRunStream()` 随事件重演，只保留当前状态、前一摘要和终态。单 Run 与 chain Replay 都使用这条路径，原有数组版 `replayRun()` 继续作为纯内存兼容接口。10,000 步账本在 `--max-old-space-size=128` 的独立 CLI 进程中 Replay 为 `CONSISTENT`。这样宿主的 Replay 峰值不再随单个 Run 的事件数组聚合增长，但仍受单行和完整账本大小上限约束；它不是无限历史、磁盘分页、跨文件事务快照或现实执行真实性。
+
+F-228 把流式读取从 Replay 延伸到候选历史恢复。此前 `readCandidateOutcomes()` 虽然只向 Advisor 返回最多 32 条结果，却先用 `readRun()` 把每个终态 Run 的全部事件装入数组；当模型在长期 Runner 中每步都留下候选证据时，恢复入口会重新承担与 Replay 相同的历史物化成本。现在它通过 `readRunStream()` 逐事件校验并筛选候选，提案仍按既有字节预算截断，随后继续使用原有时间排序和 `annotateCandidateHistory()`，所以 attempt、supersedes 和配对比较没有换语义。Runtime 测试让数组 Run 读取在该公开接口上不可用，候选历史仍能成功恢复；CLI 候选历史回归也覆盖了跨 Run 读取。
+
+这个节点只减少无关事件的驻留，不改变候选摘要的排序输入。所有候选摘要仍可能被收集后再排序，历史注释中的前序查找也仍可能随候选数量增长；下一步需要独立实验来确定是否能在保持旧账本结果的前提下建立有界摘要或外部排序。它没有引入无限记忆、磁盘分页、跨文件事务快照，也没有改变模型证据不自证和现实 WorldPort 的信任边界。

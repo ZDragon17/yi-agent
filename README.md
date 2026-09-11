@@ -660,3 +660,5 @@ F-225 增加移动水位检测。`replay --chain` 读取全部 Run 后会重新�
 F-226 将连续 Replay 改为按 Run 流式读取。Runtime 先读取各 Run 的 immutable start 头部完成排序，随后 Application 一次只加载一个完整 Run，Replay 完成后释放它，只保留链连续性所需的前一终态和摘要；全部 Run 完成后还会重新检查 current。这样历史 Run 数量增长不会把所有事件同时堆在内存中。单个 Run 内部仍是完整读取，真正超大的单 Run 还需要事件流式处理。
 
 F-227 将事件流式处理推进到单个 Run。`LabStore.readRunStream()` 通过异步生成器逐行读取和验证 `events.jsonl`，`replayRunStream()` 逐事件重演，只保留当前状态、前一摘要和终态；单 Run 与 chain Replay 都使用这条路径，`replayRun()` 仍保留给纯内存数组调用。10,000 步账本在 `--max-old-space-size=128` 的独立 CLI 进程中 Replay 为 `CONSISTENT`。单行大小、完整账本大小、current 移动检测和离线 Replay 约束没有放宽；这一步也不等于无限历史、磁盘分页、跨文件事务快照或现实执行真实性。
+
+F-228 把同一流式边界用于候选历史恢复。`LabStore.readCandidateOutcomes()` 现在逐个消费每个终态 Run 的事件流，只提取候选结果和有限提案摘要，不再先创建完整事件数组；历史排序、候选注释、跨 Run 的 attempt 与 supersedes 关系保持原语义。Runtime 回归覆盖数组 Run 读取不可用时的候选历史读取，真实 CLI 的候选历史场景继续通过。候选摘要仍需按时间排序并完成历史注释，摘要数量和注释算法的长期上界仍是后续实验，不把这一步说成无限记忆或磁盘分页。

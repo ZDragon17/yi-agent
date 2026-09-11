@@ -1721,3 +1721,10 @@
 - 实现：Runtime 新增 `LabStore.readRunStream()`，以异步生成器逐行读取 `events.jsonl`，在产出事件前完成行大小、JSON、压缩 payload、摘要链、STEP 状态连续性和终态校验。Replay 新增 `replayRunStream()`，逐事件执行确定性重演，只保留当前状态、前一摘要和终态；单 Run 与 chain Replay 都改走该路径，数组版 `replayRun` 保留给纯内存调用方。
 - 验证：Runtime 事件流和 Replay 异步账本回归通过；应用层既有单 Run、目标 epoch、内置 WorldPort、外部 JSONL WorldPort 和 chain Replay 继续复用同一入口并通过。10,000 步账本在 `--max-old-space-size=128` 的独立 CLI 进程中 Replay 为 `CONSISTENT`。
 - 边界：这是文件内事件的有界流式读取，不是无限事件、磁盘分页、跨文件事务快照或现实执行真实性；每行和完整账本的现有大小上限、移动 current 的 `BUSY` 检测及离线 Replay 约束保持不变。
+
+## F-228 候选历史恢复的流式读取
+
+- 反证/缺口：`readCandidateOutcomes()` 的返回窗口最多 32 条，但旧实现先调用 `readRun()` 读取每个终态 Run 的全部事件；长期模型调用会让启动恢复路径再次按完整账本占用内存，F-227 的单 Run 流式能力没有覆盖这里。
+- 实现：候选历史改为逐个消费 `readRunStream()` 的异步事件流，只保留候选结果、有限提案摘要和既有历史字段；时间排序、`annotateCandidateHistory()`、attempt、supersedes、配对比较及提案字节预算保持不变。
+- 验证：Runtime 回归以公开 `readCandidateOutcomes()` 为入口，在数组 Run 读取不可用时仍成功得到候选结果；LabStore 定向回归和真实 CLI 候选历史回归通过。远端 Windows 全量 CI 仍需完成后再作为发布证据。
+- 边界：候选摘要仍可能因排序和历史注释暂时全部驻留，注释中的前序查找仍可能随摘要数量增长；该节点不提供有界长期记忆、磁盘分页、跨文件事务快照或现实执行真实性。

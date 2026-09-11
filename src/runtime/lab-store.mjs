@@ -458,12 +458,12 @@ export class LabStore {
       if (current.status === 'RUNNING' && runId === current.lastRunId) continue;
       let run;
       try {
-        run = await this.readRun(runId);
+        run = await this.readRunStream(runId);
       } catch (error) {
         if (error instanceof LabStoreError && error.code === 'BUSY' && runId === current.lastRunId) continue;
         throw error;
       }
-      for (const event of run.events) {
+      for await (const event of run.events) {
         if (event.kind !== 'STEP' || event.payload.candidateOutcome === undefined) continue;
         const proposal = event.payload.policyEvidence?.proposal;
         let proposalSummary = {};

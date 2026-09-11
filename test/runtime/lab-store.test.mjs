@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { canonicalDigest, canonicalJson } from '../../src/runtime/schema.mjs';
+import { candidateDigest, canonicalDigest, canonicalJson } from '../../src/runtime/schema.mjs';
 
 const RUNTIME_ENTRY = new URL('../../src/runtime/lab-store.mjs', import.meta.url);
 const SCHEMA_ENTRY = new URL('../../src/runtime/schema.mjs', import.meta.url);
@@ -118,6 +118,53 @@ test('readRunStream exposes validated events as an async stream', async () => wi
   for await (const event of streamed.events) events.push(event);
   assert.deepEqual(events.map((event) => event.kind), ['RUN_STARTED', 'STEP', 'RUN_COMPLETED']);
   assert.deepEqual(events.map((event) => event.sequence), [1, 2, 3]);
+}));
+
+test('candidate outcome history remains readable when array run materialization is unavailable', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const policyEvidence = {
+    schemaVersion: SCHEMA_VERSION,
+    source: 'model',
+    model: 'candidate-history-stream-test',
+    token: null,
+    responseDigest: canonicalDigest({ response: 'candidate-history-stream-test' }),
+    candidateDigest: candidateDigest({ token: null }),
+    applied: false,
+    reason: 'MODEL_UNAVAILABLE',
+  };
+  const run = await store.startRun(runInput());
+  await run.append(stepEvent({
+    boundary: {
+      valueSpec: {
+        schemaVersion: SCHEMA_VERSION,
+        observationDimensions: 1,
+        weights: [1],
+        target: [21],
+        tolerance: 0,
+        valueMode: 'distance-v2',
+      },
+    },
+    beforeObservation: { vector: [20] },
+    postObservation: { vector: [21] },
+    policyEvidence,
+    candidateOutcome: {
+      schemaVersion: SCHEMA_VERSION,
+      candidateDigest: policyEvidence.candidateDigest,
+      token: null,
+      status: 'NOT_APPLIED',
+      reason: 'MODEL_UNAVAILABLE',
+    },
+  }));
+  await run.finish({ terminalStatus: 'COMPLETED', finalState: finalState() });
+
+  const streamOnlyStore = Object.create(store);
+  streamOnlyStore.readRun = async () => {
+    throw new Error('array run materialization must not be used');
+  };
+  const history = await streamOnlyStore.readCandidateOutcomes();
+  assert.equal(history.length, 1);
+  assert.equal(history[0].candidateOutcome.candidateDigest, policyEvidence.candidateDigest);
 }));
 
 test('terminal reasons are bounded before they reach the ledger', async () => withLab(async ({ lab }) => {
