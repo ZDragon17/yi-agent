@@ -1847,3 +1847,10 @@
 - 实现：`readLedgerStream()` 增加按目标换行定位前缀的能力，使用固定大小块找到第 N 个换行后只读取该字节范围；`inspect()` 用流式摘要完成 current 引用和投影校验。活动 Run 后续的完整事件或 partial tail 不进入快照，watermark 缺失仍报 CORRUPT；终态 inspect 仍要求完整账本和终止事件。
 - 验证：inspect 固定水位、partial tail、watermark 不存在、损坏账本、恢复与链回归 `30/30`；Runtime 全量回归 `82/82`。
 - 边界：`readLedger()`、`readRun()` 等数组兼容接口保留；前缀读取仍受单行、账本大小和文件稳定性校验约束，本节点不提供跨文件事务快照、持久索引或无限历史保证。
+
+## F-246 固定 watermark 的增长容忍边界
+
+- 反证/缺口：F-245 的活动 inspect 已经只读取 current watermark 前缀，但流读取器仍把整个文件的初始 size 当作稳定条件；watermark 之后的合法追加可能被误报为 ledger 改变。
+- 实现：活动 inspect 为固定 watermark 读取启用 `allowGrowthAfterMaxSequence`，最终只要求文件没有缩短到前缀范围；前缀仍由摘要链、STEP 状态、nonce 和 current 投影完整校验。恢复和完整账本读取不启用该选项，继续要求全文件 size 不变。
+- 验证：inspect、recovery、partial tail、watermark、链快照和损坏账本回归 `28/28`；Runtime 全量回归 `82/82`。
+- 边界：允许增长只适用于已确定序号的活动 inspect，不是跨文件事务快照，也不掩盖 current 水位移动、前缀截断或前缀内容损坏；公开数组接口保持原样。

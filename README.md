@@ -691,3 +691,5 @@ F-243 收紧崩溃恢复的事件载荷驻留。`recoverRun()` 现在逐行消�
 F-244 补齐活动 Run 的两个事件读取入口。发生写入不确定时，`findCommittedStep()` 会完整消费流并只保留目标 nonce 的 STEP；`reconcileLedger()` 会完整验证活动账本，只处理内存水位之后的 STEP，终态仍返回 `BUSY`，水位不在账本中仍返回 `CORRUPT`。这两处不再把整本 ledger 数组化，数组版 `readLedger()`、`readRun()` 和外部 transition 的信任边界不变。Runtime `82/82`、应用层连续/恢复/目标/多 WorldPort 回归 `35/35` 通过。
 
 F-245 把 `inspect()` 的活动 Run 校验改成固定 watermark 的流式读取。它先按 current 序号定位第 N 个换行，只读取并校验此前缀，所以 watermark 之后的事件和 partial tail 不会进入当前快照；缺少目标行、摘要链损坏或状态投影不一致仍返回 `CORRUPT`。终态 Run 仍完整验证并要求终止事件，数组版 `readLedger()`、`readRun()` 继续保留。Runtime 定向 `30/30`、全量 `82/82` 通过。
+
+F-246 收紧固定 watermark 的增长语义。活动 `inspect()` 在读取 current 前缀后，允许账本在该前缀之后继续增长，但前缀不能缩短或损坏；恢复和完整账本读取仍要求整文件稳定。这样活动只读快照不会把水位之后的追加误当成前缀变化，current 移动检测和数组兼容接口不变。相关 Runtime 回归 `28/28`，全量 `82/82` 通过。
