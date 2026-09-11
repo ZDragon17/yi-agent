@@ -351,12 +351,12 @@ export class LabStore {
       const runId = requireSafeSegment(current.lastRunId, 'runId');
       const start = await readVerifiedObject(childPath(this.root, 'runs', runId, 'start.json'), 'run start');
       validateStart(start, this.manifest, runId);
-      const events = await readLedger(this.root, runId, start, {
+      const ledger = await readLedgerSummary(this.root, runId, start, this.manifest, {
         maxSequence: current.status === 'RUNNING' ? current.lastRunSequence : undefined,
-      }, this.manifest);
-      validateLedgerIdentity(start, events);
-      validateCurrentReference(current, runId, events);
-      validateCurrentProjection(current, start, events);
+        requireTerminal: current.status !== 'RUNNING',
+      }, current);
+      validateCurrentReference(current, runId, ledger);
+      validateCurrentProjection(current, start, ledger);
     }
     return { manifest: cloneJson(this.manifest), current };
   }
@@ -1441,7 +1441,7 @@ async function recoverRun(root, manifest) {
   const start = await readVerifiedObject(childPath(root, 'runs', runId, 'start.json'), 'run start');
   validateStart(start, manifest, runId);
   const tornTail = { byteLength: null };
-  const ledger = await readRecoveryLedgerSummary(root, runId, start, manifest, {
+  const ledger = await readLedgerSummary(root, runId, start, manifest, {
     allowTornTrailingLine: current.status === 'RUNNING' && current.lastRunId === runId,
     tornTail,
   }, current);
@@ -1672,8 +1672,18 @@ async function* readLedgerStream(root, runId, start, manifest, options = {}) {
   if (!status.isFile() || status.isSymbolicLink()) pathEscape('Ledger is not a plain file.');
   if (status.size > MAX_LEDGER_BYTES) corrupt('Ledger exceeds the size limit.', { runId });
   if (status.size === 0) return;
+  const maxSequence = options.maxSequence;
+  if (maxSequence !== undefined && (!Number.isSafeInteger(maxSequence) || maxSequence < 0)) {
+    corrupt('Ledger watermark line is invalid.', { runId, maxSequence });
+  }
   let readableByteLength = status.size;
-  if (!(await hasTrailingNewline(eventsPath, status.size))) {
+  if (Number.isSafeInteger(maxSequence)) {
+    const watermarkOffset = await findNthNewline(eventsPath, status.size, maxSequence);
+    if (watermarkOffset === null) {
+      corrupt('Ledger watermark line is incomplete.', { runId, maxSequence });
+    }
+    readableByteLength = watermarkOffset + 1;
+  } else if (!(await hasTrailingNewline(eventsPath, status.size))) {
     if (options.allowTornTrailingLine !== true) corrupt('Ledger has an incomplete trailing line.', { runId });
     const lastNewline = await findLastNewline(eventsPath, status.size);
     const tornTailByteLength = status.size - (lastNewline + 1);
@@ -1763,10 +1773,13 @@ async function* readLedgerStream(root, runId, start, manifest, options = {}) {
   if (options.tornTail?.byteLength !== null && options.tornTail?.byteLength !== undefined && terminalSeen) {
     corrupt('Ledger has a torn tail after a terminal event.', { runId });
   }
+  if (Number.isSafeInteger(maxSequence) && sequence !== maxSequence) {
+    corrupt('Ledger is shorter than the current watermark.', { runId, maxSequence });
+  }
   if (options.requireTerminal !== false && !terminalSeen) corrupt('Ledger has no terminal event.', { runId });
 }
 
-async function readRecoveryLedgerSummary(root, runId, start, manifest, options, current) {
+async function readLedgerSummary(root, runId, start, manifest, options, current) {
   const summary = {
     eventCount: 0,
     first: null,
@@ -1825,6 +1838,30 @@ async function findLastNewline(filePath, size) {
       }
     }
     return -1;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function findNthNewline(filePath, size, target) {
+  if (target === 0) return -1;
+  let handle;
+  try {
+    handle = await open(filePath, 'r');
+    const chunkSize = 64 * 1024;
+    const buffer = Buffer.alloc(chunkSize);
+    let count = 0;
+    for (let position = 0; position < size; position += chunkSize) {
+      const length = Math.min(chunkSize, size - position);
+      const result = await handle.read(buffer, 0, length, position);
+      for (let index = 0; index < result.bytesRead; index += 1) {
+        if (buffer[index] === 0x0a) {
+          count += 1;
+          if (count === target) return position + index;
+        }
+      }
+    }
+    return null;
   } finally {
     await handle?.close();
   }
