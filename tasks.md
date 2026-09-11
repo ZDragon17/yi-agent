@@ -1875,3 +1875,10 @@
 - 实现：`ensureBranch()` 改用 `readRunStream()` 并完整消费事件流，使 Run 的完整性校验在恢复前执行，同时只读取流式 Run 的 start 摘要完成分支连续性比较。
 - 验证：数组 `LabStore.readRun()` 被强制禁用时，配对候选初次运行、左分支完成后中断恢复、完成结果 resume 及其余回归共 `5/5` 通过。
 - 边界：本节点覆盖配对候选的单步分支校验，不改变公开 `readRun()` 兼容接口；配对候选历史、Replay 和证据仍按现有契约运行，不提供无限历史、持久索引或现实效果真实性。
+
+## F-250 流式 Run 的 end evidence 绑定
+
+- 反证/缺口：F-248/F-249 把应用层配对 trace 与分支校验迁移到 `readRunStream()`，但旧数组 `readRun()` 还会额外校验 `end.json` 与终态事件的 sequence、digest、状态和 final-state digest；流式读取器此前只校验事件流本身，迁移后可能遗漏这条边界。
+- 实现：为 `readRunStream()` 增加包装生成器，完整消费账本时在终态事件上执行 `validateEndAgainstTerminal()`；无终态时仍按原规则报错，账本的文件稳定性、摘要链、状态连续性和 nonce 校验保持不变。
+- 验证：篡改并重新计算 end evidence 自身 digest 后，完整消费 `readRunStream()` 仍返回 `CORRUPT`；Runtime 定向全量 `73/73`，F-249 配对候选回归 `5/5`。
+- 边界：校验在流被完整消费时发生；调用方若主动提前关闭惰性流，仍由调用方承担未消费历史的验证责任。数组 `readRun()` 兼容接口不变，本节点不提供持久索引、无限历史或现实效果真实性。

@@ -545,3 +545,5 @@ F-247 把 CLI inspect 的 Run 展示从数组读取改为流式读取。`inspect
 F-248 将配对策略实验的 token trace 读取改为流式。`readPolicyTrace()` 完整消费 `readRunStream()` 并只保留每个 STEP 的 token；trace 数组仍作为配对比较和持久化 evidence 的输出，事件 payload 不再整本驻留。配对策略的 Replay、resume、trace digest 和分支一致性校验不变。
 
 F-249 将配对候选实验中已完成分支的恢复校验改为流式。`ensureBranch()` 完整消费 `readRunStream()` 后再比较 start 的初始状态和 scenario；分支事件不再通过数组 `readRun()` 进入应用层。分支初始化、中断恢复、Replay 和 pair evidence 的语义保持不变。
+
+F-250 将 Run end evidence 绑定下沉到流式读取边界。`readRunStream()` 的包装生成器在读到终态事件时校验 `end.json`，并继续让账本流完成文件稳定性检查；因此 inspect、配对候选、配对策略和 Replay 的完整消费路径不会因为去掉数组 `readRun()` 而丢失 end 与 ledger 的一致性校验。事件载荷仍不整本驻留。

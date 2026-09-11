@@ -699,3 +699,5 @@ F-247 把应用层 `inspect` 的 Run 展示接到 `readRunStream()`。它在完�
 F-248 将配对策略实验的 `readPolicyTrace()` 改为完整消费 `readRunStream()`，只保留策略 token trace；配对比较、resume、trace digest 和 Replay 结果不变。数组 `readRun()` 被禁用时初次运行与 resume 仍通过，回归 `2/2`。trace 本身仍是实验输出数组，不宣称无限历史或现实效果真实性。
 
 F-249 将配对候选分支恢复校验也改为完整消费 `readRunStream()`，不再为校验已完成的分支 Run 创建事件数组；数组 `readRun()` 被禁用时配对候选初次运行、分支中断恢复和完成结果 resume 回归 `5/5`。分支 start、账本完整性、Replay 和配对证据契约不变。
+
+F-250 补齐 `readRunStream()` 的终态绑定：完整消费流时会校验 `end.json` 与终态事件的 sequence、digest、状态和 final-state digest。篡改 end evidence 后的 Runtime 回归会返回 `CORRUPT`，全量定向回归 `73/73`；inspect、配对恢复和 trace 继续共享这条校验边界。
