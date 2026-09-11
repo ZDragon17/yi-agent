@@ -1756,3 +1756,10 @@
 - 实现：当前 Run 与历史 loop 扫描共用 `readLoopRunSummary()`，逐事件消费并验证 `readRunStream()`，只保留 immutable start、terminal 和规划模式集合；`end.json` 仍在流消费完成后与终态事件核对。缺失规划模式的旧 continuation 继续回退到历史摘要推断。
 - 验证：Runtime `68/68`、continuous/resume `9/9`、CLI crash/continuation `7/7`；新增反例让数组版 `readRun()` 不可用，现代 current 恢复仍成功。
 - 边界：legacy 推断仍需保留必要的轻量历史摘要，数组版兼容 API 仍存在；该节点不提供无限历史、磁盘分页、跨文件事务快照或现实执行真实性。
+
+## F-233 未决外部事务索引的反转扫描
+
+- 反证/缺口：F-230 已移除完整 Run 数组，但 `findUnresolvedExternalTransition()` 仍把所有历史 STEP 的 `(scenario, executionNonce, token, basedOnVersion, beforeDigest)` 放进 `committed` 集合；没有未决事务时这些身份不会影响结果，却会随长期历史增长。
+- 实现：第一遍完整消费并校验所有终态 Run，只收集 `EXTERNAL_TRANSITION_UNKNOWN` 的 terminal evidence；没有带恢复证据的未决项时直接返回 `null`。存在未决项时再重读事件流，只为候选 recovery identity 建立匹配集合，随后沿用原有 legacy、identity 和冲突判断。
+- 验证：Runtime `69/69`、repo WorldPort `8/8`、reconciliation/durability `10/10`；新增后续同 nonce 已提交的回归，确认此前未知事务不会被重复报告。
+- 边界：异常恢复路径会多读一遍账本，未决项本身仍需保留；该节点不提供磁盘索引、跨文件事务快照、分布式锁或现实执行真实性。

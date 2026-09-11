@@ -193,6 +193,33 @@ test('unresolved external transition recovery remains readable when array run ma
   assert.equal(unresolved.evidence.executionNonce, 'execution:step:1');
 }));
 
+test('resolved external transition history is not reported after a later committed retry', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const initialState = finalState();
+  const retry = {
+    executionNonce: 'execution:step:1',
+    token: 'tok_EXTERNAL01',
+    basedOnVersion: initialState.worldState.stateVersion,
+  };
+  const uncertain = await store.startRun(runInput({ initialState }));
+  await uncertain.markExternalTransition({ ...retry, beforeState: initialState });
+  await uncertain.finish({
+    terminalStatus: 'HALTED',
+    reason: 'EXTERNAL_TRANSITION_UNKNOWN',
+    finalState: initialState,
+  });
+
+  const committed = await store.startRun(runInput({ runId: 'run-2', initialState }));
+  await committed.append(stepEvent({
+    beforeState: initialState,
+    receipt: retry,
+  }));
+  await committed.finish({ terminalStatus: 'COMPLETED', finalState: finalState() });
+
+  assert.equal(await store.findUnresolvedExternalTransition(), null);
+}));
+
 test('legacy loop continuation recovery remains readable when array run materialization is unavailable', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

@@ -503,3 +503,7 @@ F-231 收拢 legacy loop continuation 的全量扫描。旧路径为寻找可恢
 F-232 收拢现代 loop continuation 的当前 Run 读取。旧的 `readCurrentLoopContinuation()` 仍调用数组版 `readRun()`，导致已经拥有 `current.lastRunId` 的现代 `--resume` 也会一次性物化整条 Run。现在当前 Run 与历史扫描共用 `readLoopRunSummary()`：完整消费 `readRunStream()`，验证事件链和 `end.json`，只返回 start、终态和规划模式集合；现代 continuation 直接使用这一摘要，旧 continuation 在规划模式缺失时继续通过历史摘要完成推断。这样重启恢复的热路径不再依赖完整事件数组，同时保留旧版本账本兼容和终态一致性边界。
 
 该节点的 Runtime、continuous/resume 和 CLI crash/continuation 定向回归分别为 `68/68`、`9/9` 和 `7/7`。当前仍会为 legacy 推断保留必要的轻量历史摘要，`readAllRuns()` 等兼容接口也没有改变；这不是无限历史、磁盘分页、跨文件事务快照或现实执行真实性。
+
+F-233 反转未决外部事务的恢复索引。F-230 虽然已经逐事件扫描，但仍为所有历史 STEP 建立 `committed` 集合；当历史中没有未决事务时，这个集合完全不会参与结果，却仍随长期 Run 增长。现在第一遍只完整消费和校验各个终态 Run，收集带 recovery evidence 的 `EXTERNAL_TRANSITION_UNKNOWN`；若没有这类项，直接返回 `null`。若存在，再以这些未决身份为筛选条件重读事件流，只建立可能匹配的 commitment，最后按原有 identity、legacy 和冲突规则决定是否仍需恢复。
+
+该变化把常态扫描的辅助状态从“全部历史 STEP”降为“未决事务集合”，代价是异常恢复路径会多读一遍账本；这是可接受的异常路径成本，并保留每遍的 `end.json` 终态一致性校验。Runtime `69/69`、repo WorldPort `8/8`、reconciliation/durability `10/10` 通过；新增回归覆盖未知事务随后以同 nonce 提交后不再被报告。该节点不提供磁盘索引、跨文件事务快照、分布式锁或现实效果真实性。

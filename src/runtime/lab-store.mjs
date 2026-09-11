@@ -575,16 +575,13 @@ export class LabStore {
     const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
     validateCurrentShape(current);
     const runIds = await listRunIds(this.root);
-    const committed = new Set();
     const unknowns = [];
     for (const runId of runIds) {
       if (runId === current.lastRunId && current.status === 'RUNNING') continue;
       const run = await this.readRunStream(runId);
       let terminal = null;
       for await (const event of run.events) {
-        if (event.kind === 'STEP') {
-          committed.add(externalTransitionCommitmentKey(run.start.scenario, event.payload));
-        } else if (TERMINAL_KINDS.has(event.kind)) {
+        if (TERMINAL_KINDS.has(event.kind)) {
           terminal = event;
         }
       }
@@ -597,6 +594,28 @@ export class LabStore {
       }
       validateExternalTransitionEvidence(evidence, run.start.runId, run.start.scenario);
       unknowns.push({ legacy: false, runId: run.start.runId, scenario: run.start.scenario, evidence });
+    }
+    const retryKeys = new Set(unknowns
+      .filter((candidate) => !candidate.legacy)
+      .map((candidate) => externalTransitionCommitmentKey(candidate.scenario, candidate.evidence)));
+    const committed = new Set();
+    if (retryKeys.size > 0) {
+      for (const runId of runIds) {
+        if (runId === current.lastRunId && current.status === 'RUNNING') continue;
+        const run = await this.readRunStream(runId);
+        let terminal = null;
+        for await (const event of run.events) {
+          const commitmentKey = event.kind === 'STEP'
+            ? externalTransitionCommitmentKey(run.start.scenario, event.payload)
+            : null;
+          if (commitmentKey !== null && retryKeys.has(commitmentKey)) {
+            committed.add(commitmentKey);
+          } else if (TERMINAL_KINDS.has(event.kind)) {
+            terminal = event;
+          }
+        }
+        validateEndAgainstTerminal(run.end, run.start.runId, terminal);
+      }
     }
     const unresolved = unknowns.filter((candidate) => candidate.legacy || !committed.has(
       externalTransitionCommitmentKey(candidate.scenario, candidate.evidence),
