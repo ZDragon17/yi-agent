@@ -7,6 +7,7 @@ import {
   link,
   mkdir,
   mkdtemp,
+  opendir,
   open,
   readFile,
   readdir,
@@ -51,6 +52,7 @@ const MAX_EVENT_LINE_BYTES = MAX_PERSISTED_EVENT_BYTES;
 const MAX_RECENT_COMMITTED_STEPS = 32;
 const MAX_CANDIDATE_SORT_CHUNK = 128;
 const MAX_LOOP_SORT_CHUNK = 128;
+const MAX_CHAIN_SORT_CHUNK = 128;
 const MAX_SORT_MERGE_INPUTS = 32;
 const DURABILITY_MODES = new Set(['strict', 'checkpoint']);
 const EXTERNAL_TRANSITION_MARKER = 'external-transition.json';
@@ -440,6 +442,54 @@ export class LabStore {
         left.runId.localeCompare(right.runId)
       )),
     };
+  }
+
+  async readChainSnapshotStream() {
+    const current = await this.readChainCurrent();
+    const chunk = [];
+    let chunkPaths = [];
+    let chunkSequence = 0;
+    let sortRoot = null;
+    const flushChunk = async () => {
+      if (chunk.length === 0) return;
+      sortRoot ??= await mkdtemp(path.join(tmpdir(), 'yi-agent-chain-sort-'));
+      const chunkPath = path.join(sortRoot, `chunk-${String(chunkSequence++).padStart(8, '0')}.jsonl`);
+      chunk.sort(compareChainRunRecords);
+      await writeFile(chunkPath, `${chunk.map((entry) => canonicalJson(entry)).join('\n')}\n`, 'utf8');
+      chunkPaths.push(chunkPath);
+      chunkPaths = await compactSortedJsonlChunks(
+        chunkPaths,
+        sortRoot,
+        'chain-merge',
+        compareChainRunRecords,
+        readChainRunChunk,
+      );
+      chunk.length = 0;
+    };
+    let handedOff = false;
+    try {
+      for await (const runId of iterateRunIds(this.root)) {
+        const safeRunId = requireSafeSegment(runId, 'runId');
+        const start = await readVerifiedObject(childPath(this.root, 'runs', safeRunId, 'start.json'), 'run start');
+        validateStart(start, this.manifest, safeRunId);
+        chunk.push({ runId: safeRunId, kernelStep: start.initialState.kernelStep });
+        if (chunk.length >= MAX_CHAIN_SORT_CHUNK) await flushChunk();
+      }
+      const ordered = sortRoot === null
+        ? (async function* () {
+          chunk.sort(compareChainRunRecords);
+          yield* chunk;
+        })()
+        : (async function* () {
+          await flushChunk();
+          yield* iterateSortedJsonlChunks(chunkPaths, compareChainRunRecords, readChainRunChunk);
+        })();
+      assertChainCurrentStable(current, await this.readChainCurrent());
+      handedOff = true;
+      return { current, runIds: withCleanup(ordered, sortRoot) };
+    } finally {
+      if (!handedOff && sortRoot !== null) await rm(sortRoot, { recursive: true, force: true });
+    }
   }
 
   async readChainCurrent() {
@@ -2257,6 +2307,10 @@ function compareLoopContinuationRecords(left, right) {
     left.start.runId.localeCompare(right.start.runId);
 }
 
+function compareChainRunRecords(left, right) {
+  return left.kernelStep - right.kernelStep || left.runId.localeCompare(right.runId);
+}
+
 async function forEachLoopContinuationInOrder(chunkPaths, consume) {
   const readers = chunkPaths.map((chunkPath) => readLoopContinuationChunk(chunkPath));
   try {
@@ -2279,6 +2333,19 @@ async function forEachLoopContinuationInOrder(chunkPaths, consume) {
 }
 
 async function* readLoopContinuationChunk(chunkPath) {
+  const input = createReadStream(chunkPath, { encoding: 'utf8' });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (line.length > 0) yield JSON.parse(line);
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+}
+
+async function* readChainRunChunk(chunkPath) {
   const input = createReadStream(chunkPath, { encoding: 'utf8' });
   const lines = createInterface({ input, crlfDelay: Infinity });
   try {
@@ -3490,6 +3557,27 @@ async function mergeSortedJsonlChunkBatch(chunkPaths, outputPath, compare, creat
   }
 }
 
+async function* iterateSortedJsonlChunks(chunkPaths, compare, createReader) {
+  const readers = chunkPaths.map((chunkPath) => createReader(chunkPath));
+  try {
+    const heads = await Promise.all(readers.map((reader) => reader.next()));
+    while (true) {
+      let nextIndex = -1;
+      for (let index = 0; index < heads.length; index += 1) {
+        if (heads[index].done) continue;
+        if (nextIndex === -1 || compare(heads[index].value, heads[nextIndex].value) < 0) {
+          nextIndex = index;
+        }
+      }
+      if (nextIndex === -1) break;
+      yield heads[nextIndex].value;
+      heads[nextIndex] = await readers[nextIndex].next();
+    }
+  } finally {
+    await Promise.all(readers.map((reader) => reader.return()));
+  }
+}
+
 async function annotateCandidateChunks(chunkPaths, limit) {
   const tail = [];
   await forEachCandidateInOrder(chunkPaths, async (entry) => {
@@ -3543,6 +3631,37 @@ async function* readCandidateChunk(chunkPath) {
   } finally {
     lines.close();
     input.destroy();
+  }
+}
+
+async function* withCleanup(iterator, sortRoot) {
+  try {
+    yield* iterator;
+  } finally {
+    if (sortRoot !== null) await rm(sortRoot, { recursive: true, force: true });
+  }
+}
+
+async function* iterateRunIds(root) {
+  const runsPath = childPath(root, 'runs');
+  try {
+    await assertDirectoryIsCanonical(root, runsPath);
+    const directory = await opendir(runsPath);
+    try {
+      for await (const entry of directory) {
+        if (!entry.isDirectory() || entry.isSymbolicLink()) corrupt('Run path is not a plain directory.', { entry: entry.name });
+        yield requireSafeSegment(entry.name, 'runId');
+      }
+    } finally {
+      try {
+        await directory.close();
+      } catch (error) {
+        if (error?.code !== 'ERR_DIR_CLOSED') throw error;
+      }
+    }
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
   }
 }
 

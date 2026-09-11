@@ -675,3 +675,5 @@ F-231 将 legacy loop continuation 的历史扫描也改为流式读取。恢复
 F-236 将 legacy loop continuation 的摘要归并移到临时排序块。扫描 Run 时只写 continuation、Run 身份、终态原因/状态和规划模式摘要；归并按 `loopId → runIndex → startedAt → runId` 逐条消费，每次只保留当前 loop、当前逻辑索引和最终候选，不再把整个 loop 的 `group.runs` 放在内存中。旧的 contract、规划模式推断、重复索引恢复规则和缺口检查保持不变。129 个 Run 跨过 128 条排序块边界的 Runtime 回归通过，连续 Runner、恢复和不同 WorldPort 的 CLI 回归继续通过。临时排序块是本机读路径的辅助文件，仍不是持久索引、跨文件事务快照或无限历史；排序块路径和文件句柄也受归并过程的实现容量约束。
 
 F-237 把排序块归并改为多轮。候选历史和 loop continuation 在临时块超过 32 个时，先分批归并并删除已消费块，最终读取阶段最多打开 32 个输入；块内排序键、候选注释和 continuation 状态机没有变化。这样限制的是同时打开的临时文件数量，不能把临时磁盘空间、总扫描时间或最终返回全部历史的接口说成有界。
+
+F-238 收紧 chain Replay 的 Run 头部快照。旧路径会先把所有 `{runId,kernelStep}` 放进数组；现在 `replay --chain` 通过异步目录迭代器读取 Run 目录，以固定大小块做外部排序，再逐条交给 Application。旧的链回放输出、初始 `kernelStep` 排序、current 移动检测和链尾校验保持不变；`readChainSnapshot()` 与 `readAllRuns()` 仍保留数组兼容接口。129 个 Run 跨过排序块边界的 Runtime 回归通过。这个节点减少的是 chain Replay 的 Run 头部驻留，不等于持久索引、跨文件事务快照或无限历史。

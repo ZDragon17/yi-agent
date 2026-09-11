@@ -521,3 +521,5 @@ F-236 处理 F-231 留下的 loop 摘要数组。`readLoopContinuation()` 扫描
 记录在进入排序块前已经由 `readLoopRunSummary()` 完整消费并校验事件流，临时记录只保留后续状态机需要的字段。129 个 Run 跨排序块的回归与旧 continuation、规划模式推断、应用层恢复和 CLI WorldPort 回归保持通过。临时排序块属于读路径辅助文件，路径列表和归并句柄仍受当前实现容量约束；数组版兼容 API、跨文件事务和现实执行信任边界没有改变。
 
 F-237 把 F-234/F-236 的块归并改为多轮。候选历史与 loop continuation 的排序块超过 32 个时，先按 32 个一组归并成新的 JSONL 块，再继续下一轮；已写入的新块关闭后，旧块才会删除。最终的候选注释器和 continuation reducer 仍消费同一排序顺序，只有临时文件的生命周期发生变化。这个边界约束同时打开的输入数，不约束临时目录总大小、总 I/O、CPU 或公开的全量历史返回。
+
+F-238 将 chain Replay 的 Run 头部扫描改为异步目录迭代和外部排序。`readChainSnapshotStream()` 只在内存中保留固定大小的当前块；超过块大小后写入临时 JSONL，并复用最多 32 路的多轮归并。Application 逐条消费有序的 Run 身份，保留原有 Replay、相邻连续性、current 水位和链尾检查。`readChainSnapshot()` 与 `readAllRuns()` 的数组接口不变，因此这是 Replay 读路径的收紧，不是全仓库历史 API 的强制迁移。临时目录仍属于本机辅助状态，不能替代持久索引或跨文件事务快照。

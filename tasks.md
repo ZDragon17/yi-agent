@@ -1791,3 +1791,10 @@
 - 实现：候选历史和 loop continuation 共用多轮 JSONL 归并。每次只取最多 32 个已排序块写入一个新块，确认写入完成后删除已消费块；重复归并直到剩余块数不超过 32，再交给原有 k-way 消费器。正常和异常路径仍由外层临时目录清理。
 - 验证：候选历史与 loop continuation 的 Runtime 跨块回归、应用层连续/恢复、Advisor 和 CLI WorldPort 回归继续通过；129 Run continuation 用例保持 `nextRunIndex=129` 和 `ACTIVE`。
 - 边界：本节点限制同时打开的排序输入数量，不限制总临时磁盘空间、排序/归并 CPU、历史扫描耗时或兼容接口返回的历史摘要数量；它仍不是持久索引、跨文件事务快照或现实执行真实性。
+
+## F-238 chain Replay Run 头部的流式快照
+
+- 反证/缺口：F-226/F-227 已让 chain Replay 逐个读取完整 Run，但 `readChainSnapshot()` 仍先把全部 Run 头部收进 `runIds` 数组；长期历史下，事件载荷虽已释放，Run 数量仍直接决定头部快照驻留。
+- 实现：新增 `readChainSnapshotStream()`。Runtime 用异步目录迭代器读取并校验 immutable start，以固定大小块按 `{kernelStep,runId}` 排序；跨块时复用 F-237 的多轮 JSONL 归并，Application 用异步迭代逐条 Replay。旧 `readChainSnapshot()` 和 `readAllRuns()` 数组接口保留，current 初末稳定性检查、链尾检查和回放结果结构不变。
+- 验证：Runtime 新增 129 个 Run 跨 128 条排序块边界的有序流测试；chain snapshot 移动水位、目标 epoch、连续 Runner、应用层链回放和相关回归继续通过。
+- 边界：该节点只收紧 `replay --chain` 的 Run 头部读路径，不能把 `readAllRuns()` 或 `replay` 返回的摘要数组说成无限有界；临时排序仍不是持久索引、跨文件事务快照或现实执行真实性。

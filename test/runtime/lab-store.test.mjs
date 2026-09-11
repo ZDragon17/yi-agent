@@ -1445,6 +1445,40 @@ test('chain snapshot rejects a current watermark that moves during the read', as
   );
 }));
 
+test('chain snapshot stream preserves the ordered run identity contract', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  const step = await run.append(stepEvent());
+  await run.commitSnapshot(snapshotFor(step));
+  await run.finish({ terminalStatus: 'COMPLETED', finalState: finalState() });
+
+  const start = await readJson(path.join(lab, 'runs/run-1/start.json'));
+  for (let index = 2; index <= 129; index += 1) {
+    const runId = `run-${index}`;
+    const runPath = path.join(lab, 'runs', runId);
+    await mkdir(runPath);
+    const nextStart = {
+      ...start,
+      runId,
+      initialState: { ...start.initialState, kernelStep: index },
+    };
+    delete nextStart.selfDigest;
+    await writeFile(path.join(runPath, 'start.json'), `${canonicalJson({ ...nextStart, selfDigest: canonicalDigest(nextStart) })}\n`);
+  }
+
+  const snapshot = await store.readChainSnapshotStream();
+  assert.equal(Array.isArray(snapshot.runIds), false);
+  const runIds = [];
+  for await (const item of snapshot.runIds) runIds.push(item);
+  assert.equal(runIds.length, 129);
+  assert.deepEqual(runIds.slice(0, 2), [
+    { runId: 'run-1', kernelStep: 0 },
+    { runId: 'run-2', kernelStep: 2 },
+  ]);
+  assert.deepEqual(runIds.at(-1), { runId: 'run-129', kernelStep: 129 });
+}));
+
 test('recovery truncates a torn trailing ledger line after the last complete event', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

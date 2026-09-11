@@ -1401,16 +1401,15 @@ export async function replayLab(input) {
 }
 
 async function replayLabChain({ store, registry }) {
-  const { current, runIds } = await store.readChainSnapshot();
-  if (runIds.length === 0) {
-    throw new LabStoreError('NOT_FOUND', 'No terminal runs exist for chain replay.', {});
-  }
+  const { current, runIds } = await store.readChainSnapshotStream();
   const summaries = [];
   let previous = null;
   let lastRun = null;
   let checkedSequences = 0;
   let goalEpochs = 0;
-  for (const { runId } of runIds) {
+  let checkedRuns = 0;
+  for await (const { runId } of runIds) {
+    checkedRuns += 1;
     const run = await store.readRunStream(runId);
     registry.assertManifest(run.manifest);
     const result = await replayStoredRunStream(run, registry);
@@ -1426,7 +1425,7 @@ async function replayLabChain({ store, registry }) {
       return {
         schemaVersion: SCHEMA_VERSION,
         verdict: 'INCONSISTENT',
-        checkedRuns: summaries.length,
+        checkedRuns,
         checkedSequences,
         goalEpochs,
         runs: summaries,
@@ -1439,7 +1438,7 @@ async function replayLabChain({ store, registry }) {
         return {
           schemaVersion: SCHEMA_VERSION,
           verdict: 'INCONSISTENT',
-          checkedRuns: summaries.length,
+          checkedRuns,
           checkedSequences,
           goalEpochs,
           runs: summaries,
@@ -1450,6 +1449,9 @@ async function replayLabChain({ store, registry }) {
     }
     previous = { runId: run.start.runId, finalState: result.finalState };
     lastRun = { start: { runId: run.start.runId }, end: run.end };
+  }
+  if (checkedRuns === 0) {
+    throw new LabStoreError('NOT_FOUND', 'No terminal runs exist for chain replay.', {});
   }
   const finalCurrent = await store.readChainCurrent();
   if (canonicalJson(current) !== canonicalJson(finalCurrent)) {
@@ -1464,7 +1466,7 @@ async function replayLabChain({ store, registry }) {
     return {
       schemaVersion: SCHEMA_VERSION,
       verdict: 'INCONSISTENT',
-      checkedRuns: summaries.length,
+      checkedRuns,
       checkedSequences,
       goalEpochs,
       runs: summaries,
@@ -1474,7 +1476,7 @@ async function replayLabChain({ store, registry }) {
   return {
     schemaVersion: SCHEMA_VERSION,
     verdict: 'CONSISTENT',
-    checkedRuns: summaries.length,
+    checkedRuns,
     checkedSequences,
     goalEpochs,
     runs: summaries,
