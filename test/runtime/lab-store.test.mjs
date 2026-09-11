@@ -120,6 +120,30 @@ test('readRunStream exposes validated events as an async stream', async () => wi
   assert.deepEqual(events.map((event) => event.sequence), [1, 2, 3]);
 }));
 
+test('readRunStream validates immutable end evidence against the streamed terminal', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const store = await LabStore.init(initOptions(lab));
+  const run = await store.startRun(runInput());
+  await run.append(stepEvent());
+  await run.finish({ terminalStatus: 'COMPLETED', finalState: finalState() });
+
+  const endPath = path.join(lab, 'runs/run-1/end.json');
+  const end = await readJson(endPath);
+  end.finalSequence -= 1;
+  end.selfDigest = canonicalDigest(omit(end, 'selfDigest'));
+  await writeFile(endPath, `${canonicalJson(end)}\n`);
+
+  const streamed = await store.readRunStream('run-1');
+  await assert.rejects(
+    async () => {
+      for await (const _event of streamed.events) {
+        // 完整消费流，验证终态与 end evidence 的绑定。
+      }
+    },
+    (error) => assertCode(error, 'CORRUPT'),
+  );
+}));
+
 test('candidate outcome history remains readable when array run materialization is unavailable', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

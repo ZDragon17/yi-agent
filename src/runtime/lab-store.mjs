@@ -414,7 +414,7 @@ export class LabStore {
       manifest: cloneJson(this.manifest),
       start: cloneJson(start),
       end: cloneJson(end),
-      events: readLedgerStream(this.root, safeRunId, start, this.manifest),
+      events: readRunEventsStream(this.root, safeRunId, start, this.manifest, end),
     };
   }
 
@@ -1782,6 +1782,18 @@ async function* readLedgerStream(root, runId, start, manifest, options = {}) {
     corrupt('Ledger is shorter than the current watermark.', { runId, maxSequence });
   }
   if (options.requireTerminal !== false && !terminalSeen) corrupt('Ledger has no terminal event.', { runId });
+}
+
+async function* readRunEventsStream(root, runId, start, manifest, end) {
+  let terminal = null;
+  for await (const event of readLedgerStream(root, runId, start, manifest)) {
+    if (TERMINAL_KINDS.has(event.kind)) {
+      terminal = event;
+      validateEndAgainstTerminal(end, runId, event);
+    }
+    yield event;
+  }
+  if (terminal === null) validateEndAgainstTerminal(end, runId, terminal);
 }
 
 async function readLedgerSummary(root, runId, start, manifest, options, current) {
