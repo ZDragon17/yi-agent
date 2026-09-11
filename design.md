@@ -547,3 +547,7 @@ F-248 将配对策略实验的 token trace 读取改为流式。`readPolicyTrace
 F-249 将配对候选实验中已完成分支的恢复校验改为流式。`ensureBranch()` 完整消费 `readRunStream()` 后再比较 start 的初始状态和 scenario；分支事件不再通过数组 `readRun()` 进入应用层。分支初始化、中断恢复、Replay 和 pair evidence 的语义保持不变。
 
 F-250 将 Run end evidence 绑定下沉到流式读取边界。`readRunStream()` 的包装生成器在读到终态事件时校验 `end.json`，并继续让账本流完成文件稳定性检查；因此 inspect、配对候选、配对策略和 Replay 的完整消费路径不会因为去掉数组 `readRun()` 而丢失 end 与 ledger 的一致性校验。事件载荷仍不整本驻留。
+
+F-251 收紧活动 Run 的 nonce 预筛选。原来的 `ActiveRun.knownExecutionNonces` 是一个随 STEP 数量增长的精确集合，但它只决定是否值得执行一次权威账本查找；现在改为固定 256 KiB 的位过滤器，每个 nonce 由 SHA-256 派生四个位位置。过滤器命中只代表“可能存在”，随后仍由 `findCommittedStep()` 完整消费精确账本并比较 payload；未命中只用于跳过不必要的扫描，因为每个已提交 nonce 都会先写入过滤器，过滤器本身不负责接受或拒绝证据。这样活动 Run 的预筛选状态有固定大小，误报只影响性能，不改变 nonce 幂等和冲突语义。
+
+这一步不改 `readLedgerStream()` 的精确 executionNonce 唯一性集合，也不改 40 MiB 单账本上限；后者仍是完整历史校验的资源边界。新增 40 STEP 回归跨过 32 条最近缓存后重试最早 nonce，验证固定过滤器仍能触发精确回读并返回原始提交。该变化不是持久索引、无限历史或跨文件事务快照。
