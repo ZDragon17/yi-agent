@@ -1,0 +1,77 @@
+{
+  "baseline": 13642,
+  "summary": {
+    "base": {
+      "mean": 14135,
+      "meanGapPct": 3.62,
+      "runs": [
+        {
+          "seed": "alpha",
+          "cost": 14617,
+          "chains": 0,
+          "unresolved": 0
+        },
+        {
+          "seed": "beta",
+          "cost": 13172,
+          "chains": 0,
+          "unresolved": 0
+        },
+        {
+          "seed": "gamma",
+          "cost": 14617,
+          "chains": 0,
+          "unresolved": 0
+        }
+      ]
+    },
+    "pair": {
+      "mean": 13279,
+      "meanGapPct": -2.66,
+      "runs": [
+        {
+          "seed": "alpha",
+          "cost": 13197,
+          "chains": 26,
+          "unresolved": 10
+        },
+        {
+          "seed": "beta",
+          "cost": 13327,
+          "chains": 26,
+          "unresolved": 16
+        },
+        {
+          "seed": "gamma",
+          "cost": 13312,
+          "chains": 24,
+          "unresolved": 9
+        }
+      ]
+    },
+    "multi3": {
+      "mean": 13774,
+      "meanGapPct": 0.97,
+      "runs": [
+        {
+          "seed": "alpha",
+          "cost": 13797,
+          "chains": 39,
+          "unresolved": 3
+        },
+        {
+          "seed": "beta",
+          "cost": 13727,
+          "chains": 37,
+          "unresolved": 5
+        },
+        {
+          "seed": "gamma",
+          "cost": 13797,
+          "chains": 39,
+          "unresolved": 3
+        }
+      ]
+    }
+  }
+}
