@@ -38,6 +38,10 @@ const NOISY = process.argv.includes('--noisy-feedback');
 const NOISE_LIMIT = 0.2;
 const ADVERSARIAL = process.argv.includes('--adversarial');
 const UTILITY_MODE = process.argv.includes('--utility-mode');
+// R11：动作链信用——v29 creditChain 的策略收益检验。充电的收益延迟到峰时
+// 放电才实现：charge 步归因窗口未完成（保 pending），首个 discharge 步以
+// 链反馈 [charge 0.5, discharge 0.5] 一次性结算两步的共同延迟效果。
+const CHAIN_CREDIT = process.argv.includes('--chain-credit');
 const REGIME_SHIFT_AT = (() => { const i = process.argv.indexOf('--regime-shift-at'); return i === -1 ? -1 : Number(process.argv[i + 1]); })();
 // R9：mid-run 电价表翻转（谷峰对调）——非平稳叠加
 function effectiveTariffLevel(hour) {
@@ -87,7 +91,7 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}`,
+      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v1' : ''}`,
       capabilityIds: CAPABILITY_IDS,
       scenarioIds: ['steady'],
       valueSpec: UTILITY_MODE
@@ -118,6 +122,8 @@ function dispatch(op, payload) {
         hour: 0,
         soc: 50,
         lastNonce: null,
+        lastChargeNonce: null,
+        chainToRelease: null,
         pendingSettlements: [],
         usedExecutionNonces: [],
         ...(UTILITY_MODE ? { utilityYuan: 0 } : {}),
@@ -205,6 +211,83 @@ function transition(state, request, manifest) {
   }
   const stepCostYuan = Math.max(0, grid) * effectivePrice(state.hour, state);
   const nextUtilityYuan = (state.utilityYuan ?? 0) + stepCostYuan;
+
+  // R11：动作链信用模式——独立分支，不与 settlement-delay 机制叠加。
+  // 协议要求链成员在反馈到达时已经 pending（当前步的 pending 在结算之后
+  // 才建立），因此链反馈在放电后的下一步发出：
+  //   charge（谷）→ 保 pending；discharge（峰）→ 保 pending 并登记链；
+  //   下一步 → 发链反馈 [charge 0.5, discharge 0.5] 结算两步共同延迟效果。
+  if (CHAIN_CREDIT) {
+    const isCharge = entry.capabilityId === 'ess.charge';
+    const isDischarge = entry.capabilityId === 'ess.discharge';
+    const pendingChain = state.chainToRelease ?? null;
+    // 放电登记新链：仅当没有未释放的链且有充电锚点
+    const newChain = pendingChain === null && isDischarge && state.lastChargeNonce !== null
+      ? { anchor: state.lastChargeNonce, member: request.executionNonce }
+      : null;
+    const nextChain = {
+      schemaVersion: VERSION,
+      stateVersion: `arbitrage:${state.hour + 1}`,
+      revision: state.revision + 1,
+      hour: state.hour + 1,
+      soc: nextSoc,
+      lastNonce: request.executionNonce,
+      // charge 设置链锚点、discharge 消费它、idle 保留
+      lastChargeNonce: isCharge ? request.executionNonce : (newChain !== null ? null : state.lastChargeNonce),
+      chainToRelease: newChain,
+      recentActions: [...(state.recentActions ?? []).slice(-2), entry.capabilityId],
+      usedExecutionNonces: [...state.usedExecutionNonces.slice(-7), request.executionNonce],
+      ...(UTILITY_MODE ? { utilityYuan: nextUtilityYuan } : {}),
+    };
+    const chainFeedback = pendingChain === null ? [] : [{
+      schemaVersion: VERSION,
+      executionNonce: pendingChain.anchor,
+      vector: observationVector(nextChain),
+      stateVersion: nextChain.stateVersion,
+      intervalId: nextChain.stateVersion,
+      confounderCount: 0,
+      creditChain: {
+        schemaVersion: VERSION,
+        members: [
+          { executionNonce: pendingChain.anchor, share: 0.5 },
+          { executionNonce: pendingChain.member, share: 0.5 },
+        ],
+      },
+    }];
+    return {
+      nextWorldState: nextChain,
+      receipt: {
+        schemaVersion: VERSION,
+        token: request.token,
+        basedOnVersion: request.basedOnVersion,
+        policyVersion: request.policyVersion,
+        constraintsDigest: request.constraintsDigest,
+        executionNonce: request.executionNonce,
+        status: 'ACCEPTED',
+        rejectionReason: null,
+        effectDigest: canonicalDigest(nextChain),
+        // charge 与链内 discharge 的收益共同延迟：窗口未完成
+        attributionWindowComplete: isCharge || newChain !== null ? false : true,
+        confounderCount: 0,
+      },
+      postObservation: {
+        schemaVersion: VERSION,
+        vector: observationVector(nextChain),
+        stateVersion: nextChain.stateVersion,
+        intervalId: nextChain.stateVersion,
+        ...(chainFeedback.length === 0 ? {} : { feedback: chainFeedback }),
+        evidence: [{
+          schemaVersion: VERSION,
+          kind: 'settlement',
+          hour: state.hour,
+          gridPowerKw: grid,
+          price: effectivePrice(state.hour, state),
+          costYuan: Math.round(stepCostYuan * 1000) / 1000,
+          soc: nextSoc,
+        }],
+      },
+    };
+  }
 
   // R2：结算反馈延迟 2 步——本步动作的结算（电网功率/电价/SOC 快照）在其后
   // 第二步的 feedback[] 中按 executionNonce 送达，Kernel 以 pending credit 结算。

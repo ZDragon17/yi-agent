@@ -1,0 +1,52 @@
+{
+  "baseline": 13642,
+  "r1Archive": {
+    "h1": -0.73,
+    "h4": -2.97,
+    "h8": -2.97
+  },
+  "results": [
+    {
+      "chain": false,
+      "horizon": 1,
+      "cost": 14122,
+      "actionChains": 0,
+      "gapPct": 3.52
+    },
+    {
+      "chain": false,
+      "horizon": 4,
+      "cost": 14617,
+      "actionChains": 0,
+      "gapPct": 7.15
+    },
+    {
+      "chain": false,
+      "horizon": 8,
+      "cost": 14617,
+      "actionChains": 0,
+      "gapPct": 7.15
+    },
+    {
+      "chain": true,
+      "horizon": 1,
+      "cost": 14257,
+      "actionChains": 28,
+      "gapPct": 4.51
+    },
+    {
+      "chain": true,
+      "horizon": 4,
+      "cost": 13767,
+      "actionChains": 34,
+      "gapPct": 0.92
+    },
+    {
+      "chain": true,
+      "horizon": 8,
+      "cost": 13652,
+      "actionChains": 32,
+      "gapPct": 0.07
+    }
+  ]
+}
