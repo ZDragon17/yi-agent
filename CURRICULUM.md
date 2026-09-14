@@ -93,7 +93,7 @@ F-138 将最小必要变化落为 v32 `counterfactual-independent-v1`：主 Worl
 
 F-139 不升级 Kernel 版本，而是补齐 v32 的两面反证：独立见证签名有效但缺少一个链成员时，宿主在第三步前返回 `WORLD_ADAPTER_PROTOCOL`、前两步保留且不学习；两个不同密钥对同一错误闭合份额 `0.9/0.1` 共同签名时，宿主接受并学习错误份额，Replay 仍为 `CONSISTENT`。这证明“第二来源一致”仍可能是共谋或共同错误输入，当前底座只能把它记录为不可辨识边界，不能凭协议自证现实因果。
 
-1. **跨步信用分配的真实增益**：R18 的电价×链信用交互、R20 的动力学×链信用交互和 R21 的动作空间×链信用交互在当前模拟中均为正，R19 的负荷压力交互仍不确定。R22 已验证连续功率 proposal 的传输、边界和 Replay，但固定 proposal 策略没有利用反馈，后续需要测反馈驱动的连续控制；策略对照仍走真实 CLI，不用逐步随机动作替代；
+1. **跨步信用分配的真实增益**：R18 的电价×链信用交互、R20 的动力学×链信用交互和 R21 的动作空间×链信用交互在当前模拟中均为正，R19 的负荷压力交互仍不确定。R22 验证了连续功率 proposal 的传输、边界和 Replay；R23 又验证了 proposal 可逐步读取 observation 并调整，但 action model 仍按 token 聚合，下一步要检验 proposal 条件化记忆；策略对照仍走真实 CLI，不用逐步随机动作替代；
 2. 对抗性世界的多动作扩展（3+ 动作、连续功率设定）；
 3. 非平稳叠加：漂移 + 对抗 + 耦合同时存在。
 
@@ -112,6 +112,14 @@ F-139 不升级 Kernel 版本，而是补齐 v32 的两面反证：独立见证�
 - 结果：20 个 seed、连续 base/chain 共 40 条真实 model-adapter CLI Run 全部完成，proposal 数量为 `3840`，Replay 全部 `CONSISTENT`。两组成本均为 `13692` 元，链差均值为 `0`，20 组全部持平，近似 95% 区间 `[0,0]`，结论为 `INCONCLUSIVE_CONTINUOUS_CHAIN_EFFECT`。
 - 验证：连续能力身份、proposal 边界和真实模型进程 E2E `5/5` 通过；独立审计逐步重算 40 个 Lab 的 proposal、SOC 和成本，`verifiedRuns=40`、`replayConsistent=40`、最大 SOC 差 `0`、最大成本差 `0`，proposal digest 与报告一致。
 - 边界：本轮模型使用固定的 8 步正负功率周期，虽然证明了 proposal 可以穿过 CLI→模型→WorldPort→账本→Replay，但没有证明模型能从观测反馈自主调整功率，也没有证明连续控制收益。第一次运行因固定模型长期充电在第 53 步触发 `BMS_SOC_BOUNDARY` 并 HALTED，作为策略边界反例保留；修正后的正式模型只用于避免无关的测试策略失控。R22 报告绑定源码指纹 `2a23f09e60b43f8bd406876ff5399fcf0ea0a1ab0459d0a936d0bc19cd5a0c27`，后续 adapter 变更不得冒充本轮复现。
+
+## F-268 读取 observation 的连续功率闭环（R23）
+
+- 缺口：R22 的固定功率周期证明了 proposal 能进入外部 WorldPort，但没有证明模型根据世界反馈改变下一步动作。
+- 实现：新增确定性反馈模型适配器。它只读取 prompt 中当前 observation 的电价通道和 SOC：谷时段且 SOC 小于 80% 提议 `+50 kW`，峰时段且 SOC 大于 20% 提议 `-50 kW`，其它情况提议 `0 kW`。实验仍使用真实 CLI、外部 JSONL WorldPort、持久化 STEP 和 Replay。
+- 结果：8 个独立 seed、每个 96 步，共 768 个真实 proposal；每个 Run 的 proposal 都与 preceding observation 的规则计算一致，均观察到 `-50/0/50 kW`，8 次 Replay 全为 `CONSISTENT`。
+- 关键观察：8 个 Run 的 action model key 数均为 `1`，每个最终 sampleCount 为 `95`。也就是说，反馈驱动已经穿过了模型边界并被记录，但当前 Kernel 的预测/学习仍按不透明 token 聚合，没有把 `powerKw` 作为 action model 的条件键。这不是本轮要偷偷修掉的缺陷，而是下一轮可直接检验的底座假设。
+- 边界：R23 只验证了确定性反馈规则的闭环和持久化一致性，不等于通用模型理解，也没有证明电费收益或真实设备安全。`95/96` 是终止 Run 的反馈落盘边界，不将最后一步缺少后续学习样本误判为失败。报告绑定源码指纹 `fc93970bbcfcac95ab0e55fe8c76ddf1475169a5624f6900deab4199a3e8a14a`。
 
 ## L6（远景，属外部卡点）
 

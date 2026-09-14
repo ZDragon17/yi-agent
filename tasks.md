@@ -2013,3 +2013,11 @@
 - 结果：20 个 seed、连续 base/chain 共 40 条真实 model-adapter CLI Run 全部完成，proposal 数量为 `3840`，Replay 全部 `CONSISTENT`。两组成本均为 `13692` 元，链差均值为 `0`，20 组全部持平，近似 95% 区间 `[0,0]`，结论为 `INCONCLUSIVE_CONTINUOUS_CHAIN_EFFECT`。
 - 验证：连续能力身份、proposal 边界和真实模型进程 E2E `5/5` 通过；独立审计逐步重算 40 个 Lab 的 proposal、SOC 和成本，`verifiedRuns=40`、`replayConsistent=40`、最大 SOC 差 `0`、最大成本差 `0`，proposal digest 与报告一致。
 - 边界：本轮模型使用固定的 8 步正负功率周期，虽然证明了 proposal 可以穿过 CLI→模型→WorldPort→账本→Replay，但没有证明模型能从观测反馈自主调整功率，也没有证明连续控制收益。第一次运行因固定模型长期充电在第 53 步触发 `BMS_SOC_BOUNDARY` 并 HALTED，作为策略边界反例保留；修正后的正式模型只用于避免无关的测试策略失控。R22 报告绑定源码指纹 `2a23f09e60b43f8bd406876ff5399fcf0ea0a1ab0459d0a936d0bc19cd5a0c27`，后续 adapter 变更不得冒充本轮复现。
+
+## F-268 读取 observation 的连续功率闭环（R23）
+
+- 缺口：R22 的固定功率周期证明了 proposal 能进入外部 WorldPort，但没有证明模型根据世界反馈改变下一步动作。
+- 实现：新增确定性反馈模型适配器。它读取当前 observation 的电价通道和 SOC，在谷时段且 SOC 小于 80% 提议 `+50 kW`，在峰时段且 SOC 大于 20% 提议 `-50 kW`，其它情况提议 `0 kW`；真实 CLI、外部 JSONL WorldPort、持久化 STEP 和 Replay 链路保持不变。
+- 结果：8 个独立 seed、每个 96 步，共 768 个真实 proposal；每个 Run 的 proposal 都与 preceding observation 的规则计算一致，均观察到 `-50/0/50 kW`，8 次 Replay 全为 `CONSISTENT`。
+- 关键观察：8 个 Run 的 action model key 数均为 `1`，每个最终 sampleCount 为 `95`。反馈驱动已经穿过模型边界并被记录，但当前 Kernel 的预测/学习仍按不透明 token 聚合，没有把 `powerKw` 作为 action model 的条件键；这留下了下一轮 proposal 条件化记忆实验。
+- 边界：R23 只验证了确定性反馈规则的闭环和持久化一致性，不等于通用模型理解，也没有证明电费收益或真实设备安全。`95/96` 是终止 Run 的反馈落盘边界，报告绑定源码指纹 `fc93970bbcfcac95ab0e55fe8c76ddf1475169a5624f6900deab4199a3e8a14a`。

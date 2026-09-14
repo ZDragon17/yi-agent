@@ -1,0 +1,134 @@
+{
+  "experiment": "R23-feedback-continuous-power",
+  "sourceFingerprint": "fc93970bbcfcac95ab0e55fe8c76ddf1475169a5624f6900deab4199a3e8a14a",
+  "nodeVersion": "v26.7.0",
+  "design": {
+    "independentRuns": 8,
+    "stepsPerRun": 96,
+    "policy": "valley +50 kW while SOC < 80%; peak -50 kW while SOC > 20%; otherwise 0 kW",
+    "primaryOutcome": "every persisted proposal equals the function of the preceding observation",
+    "replayRequired": true
+  },
+  "result": {
+    "runs": 8,
+    "allFeedbackAligned": true,
+    "allReplayConsistent": true,
+    "observedPowerValues": [
+      -50,
+      0,
+      50
+    ],
+    "actionModelKeyCounts": [
+      1
+    ],
+    "actionModelSampleCounts": [
+      95
+    ]
+  },
+  "runs": [
+    {
+      "seed": "r23-eca4882874d0cd6823972f31737ee0eb4819284c4ed7c2adc596de60d97a5770",
+      "steps": 96,
+      "feedbackAligned": true,
+      "uniquePowers": [
+        -50,
+        0,
+        50
+      ],
+      "actionModelKeyCount": 1,
+      "actionModelSamples": 95,
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r23-3c1492bc17ed5b2b3e8dff6a3dbc7ec7cdba008cc5e4e2abcd2d8aa78d7864ee",
+      "steps": 96,
+      "feedbackAligned": true,
+      "uniquePowers": [
+        -50,
+        0,
+        50
+      ],
+      "actionModelKeyCount": 1,
+      "actionModelSamples": 95,
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r23-c79d4cffb4924b9c4fb3c1cbfe21898852fd2c0c4eb05053f801520067a97b5c",
+      "steps": 96,
+      "feedbackAligned": true,
+      "uniquePowers": [
+        -50,
+        0,
+        50
+      ],
+      "actionModelKeyCount": 1,
+      "actionModelSamples": 95,
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r23-c5176fab48cf85321293fbea74be9eb8fa5843cb6aec902ace7c784c8fe81662",
+      "steps": 96,
+      "feedbackAligned": true,
+      "uniquePowers": [
+        -50,
+        0,
+        50
+      ],
+      "actionModelKeyCount": 1,
+      "actionModelSamples": 95,
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r23-efd28bddd8e6040de4fd9af7d0450fb34cadc7adc801e05199f343e8436d4ffd",
+      "steps": 96,
+      "feedbackAligned": true,
+      "uniquePowers": [
+        -50,
+        0,
+        50
+      ],
+      "actionModelKeyCount": 1,
+      "actionModelSamples": 95,
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r23-8d8b1584536a5c4cb4febdca7b9cce46aa1f23c07c0b70ce844873dbda7e53e1",
+      "steps": 96,
+      "feedbackAligned": true,
+      "uniquePowers": [
+        -50,
+        0,
+        50
+      ],
+      "actionModelKeyCount": 1,
+      "actionModelSamples": 95,
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r23-81f054c6cd6669a8a996efbf4e130c5b80298468739e512d7fffeae4037af170",
+      "steps": 96,
+      "feedbackAligned": true,
+      "uniquePowers": [
+        -50,
+        0,
+        50
+      ],
+      "actionModelKeyCount": 1,
+      "actionModelSamples": 95,
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r23-7801d5ffadfb5237f5280b320c55f8668c8a19ce8517877daef8297c9c07587d",
+      "steps": 96,
+      "feedbackAligned": true,
+      "uniquePowers": [
+        -50,
+        0,
+        50
+      ],
+      "actionModelKeyCount": 1,
+      "actionModelSamples": 95,
+      "replay": "CONSISTENT"
+    }
+  ]
+}
