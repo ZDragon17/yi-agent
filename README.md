@@ -711,3 +711,5 @@ F-253 将 CLI/EffectBroker 恢复切换到懒加载 Journal：恢复过程逐事
 F-254 将 EffectBroker 的运行状态与审计历史分开。`retainEvents:false` 的 Journal Broker 只在内存中保留 intent、phase、receipt、事件数量和最后事件摘要；`getSummary()`/`listSummaries()` 用于状态展示，`readHistory(executionNonce)` 需要时再从 Journal 流式读取完整审计事件。CLI 的效果操作、inspect 和独立 EffectBroker authority 进程使用该模式，默认 Broker 仍保留原有同步事件数组接口。效果层回归 `30/30`，真实 authority/sandbox CLI 回归 `9/9`。这减少的是 Broker 恢复后的长期事件驻留，不是持久索引、无限历史或跨文件事务快照；需要完整审计时仍要重新扫描 Journal。该模式必须绑定 Journal；没有可回读的 Journal 时会拒绝 `retainEvents:false`，避免把不可用的审计历史表示为空历史。
 
 F-258 补测动作链的中间长度：同一 3 seed、h8、96 步条件下，pair/multi2/multi3 的均值分别为 `13279/-2.66%`、`13585/-0.42%`、`13774/+0.97%`（baseline `13642`）。multi2 的结果介于两者之间，提示链长可能存在中间最优，但当前只是假设，不是全局最优或现实效果证明；对应回归为 `1/1`，所有运行 Replay CONSISTENT。
+
+F-259 检验价值投影与链信用的交互：共享 alpha/beta/gamma seed、h8、96 步下，默认 `distance-v2` 的 base/pair 均值为 `13527/-0.84%`、`13392/-1.83%`，累计 `signed-v1` 为 `14015/+2.74%`、`13942/+2.20%`。累计成本维度没有带来稳定套利，链边际也从 `-135` 降为 `-73`；12 条真实 CLI 运行全部 Replay CONSISTENT。这是对“增加观测维度就会产生长期智能”的负结果，不是对任意价值投影的普遍否定。
