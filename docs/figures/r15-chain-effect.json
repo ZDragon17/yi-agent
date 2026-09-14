@@ -1,0 +1,601 @@
+{
+  "experiment": "R15-chain-effect",
+  "analysisSource": "replayed-existing-cli-ledgers",
+  "design": {
+    "pairedSeeds": 20,
+    "stepsPerCondition": 96,
+    "planningHorizon": 8,
+    "valueMode": "signed-v1",
+    "primaryOutcome": "utility-pair cost minus utility-base cost; negative favors chain credit",
+    "interval": "nominal two-sided 95% paired Student-t interval, df=19; not decision-bearing when base action traces repeat",
+    "inferenceUnit": "distinct baseline action trace; duplicate control trajectories are reported as one cluster",
+    "treatmentOrder": "alternated by paired seed",
+    "objectiveOracle": "STEP action token + deterministic load + public TOU tariff; adapter settlement evidence is not used",
+    "replayRequired": true
+  },
+  "idleBaselineYuan": 13642,
+  "effect": {
+    "nSeedPairs": 20,
+    "meanDeltaYuan": 130.25,
+    "sampleStdDevYuan": 265.94,
+    "nominalCi95Yuan": {
+      "low": 5.79,
+      "high": 254.71
+    },
+    "chainLowerCost": 3,
+    "chainHigherCost": 17,
+    "ties": 0,
+    "uniqueBaseActionTraces": 3,
+    "uniqueChainActionTraces": 12,
+    "uniquePairedActionTraces": 12,
+    "baseTraceClusters": [
+      {
+        "traceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "nSeedPairs": 2,
+        "meanDeltaYuan": -517.5
+      },
+      {
+        "traceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "nSeedPairs": 9,
+        "meanDeltaYuan": 220
+      },
+      {
+        "traceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "nSeedPairs": 9,
+        "meanDeltaYuan": 184.44
+      }
+    ],
+    "ciStatus": "INVALID_DUPLICATE_BASE_TRACES",
+    "decision": "INCONCLUSIVE_DUPLICATE_BASE_TRAJECTORIES"
+  },
+  "pairs": [
+    {
+      "utility-base": {
+        "seed": "alpha",
+        "initSeed": "r14-alpha",
+        "condition": "utility-base",
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a"
+      },
+      "utility-pair": {
+        "seed": "alpha",
+        "initSeed": "r14-alpha",
+        "condition": "utility-pair",
+        "costYuan": 13687,
+        "actionChains": 40,
+        "unresolved": 12,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "dfdb100bb89742cac05d884825e6f92b0dd36e766b8d9b205e98d7b324590436"
+      },
+      "deltaYuan": -535,
+      "seed": "alpha",
+      "initSeed": "r14-alpha"
+    },
+    {
+      "utility-base": {
+        "seed": "beta",
+        "initSeed": "r14-beta",
+        "condition": "utility-base",
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+      },
+      "utility-pair": {
+        "seed": "beta",
+        "initSeed": "r14-beta",
+        "condition": "utility-pair",
+        "costYuan": 13892,
+        "actionChains": 38,
+        "unresolved": 9,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "f07ce767e0f7551e7e2cbba890e69201827f10297afc4ce9267ea02ec7ba2ca1"
+      },
+      "deltaYuan": 290,
+      "seed": "beta",
+      "initSeed": "r14-beta"
+    },
+    {
+      "utility-base": {
+        "seed": "gamma",
+        "initSeed": "r14-gamma",
+        "condition": "utility-base",
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a"
+      },
+      "utility-pair": {
+        "seed": "gamma",
+        "initSeed": "r14-gamma",
+        "condition": "utility-pair",
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "be22b5183a52107c7a652a0de5b3750793c807c964242a3a060f364348e3341f"
+      },
+      "deltaYuan": -500,
+      "seed": "gamma",
+      "initSeed": "r14-gamma"
+    },
+    {
+      "utility-base": {
+        "seed": "new-01",
+        "initSeed": "r15-seed-01",
+        "condition": "utility-base",
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+      },
+      "utility-pair": {
+        "seed": "new-01",
+        "initSeed": "r15-seed-01",
+        "condition": "utility-pair",
+        "costYuan": 13892,
+        "actionChains": 38,
+        "unresolved": 9,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4b3b51c621e4efa6b8cc554b0967fdd62f69a573b76eff274ee3478334c033a4"
+      },
+      "deltaYuan": 320,
+      "seed": "new-01",
+      "initSeed": "r15-seed-01"
+    },
+    {
+      "utility-base": {
+        "seed": "new-02",
+        "initSeed": "r15-seed-02",
+        "condition": "utility-base",
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+      },
+      "utility-pair": {
+        "seed": "new-02",
+        "initSeed": "r15-seed-02",
+        "condition": "utility-pair",
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a7d1e7b2d34eb8e6da9b168785da78c8da9fe009435509caf0f190bc72b589c4"
+      },
+      "deltaYuan": 355,
+      "seed": "new-02",
+      "initSeed": "r15-seed-02"
+    },
+    {
+      "utility-base": {
+        "seed": "new-03",
+        "initSeed": "r15-seed-03",
+        "condition": "utility-base",
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+      },
+      "utility-pair": {
+        "seed": "new-03",
+        "initSeed": "r15-seed-03",
+        "condition": "utility-pair",
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3"
+      },
+      "deltaYuan": 150,
+      "seed": "new-03",
+      "initSeed": "r15-seed-03"
+    },
+    {
+      "utility-base": {
+        "seed": "new-04",
+        "initSeed": "r15-seed-04",
+        "condition": "utility-base",
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+      },
+      "utility-pair": {
+        "seed": "new-04",
+        "initSeed": "r15-seed-04",
+        "condition": "utility-pair",
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235"
+      },
+      "deltaYuan": 235,
+      "seed": "new-04",
+      "initSeed": "r15-seed-04"
+    },
+    {
+      "utility-base": {
+        "seed": "new-05",
+        "initSeed": "r15-seed-05",
+        "condition": "utility-base",
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+      },
+      "utility-pair": {
+        "seed": "new-05",
+        "initSeed": "r15-seed-05",
+        "condition": "utility-pair",
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3"
+      },
+      "deltaYuan": 150,
+      "seed": "new-05",
+      "initSeed": "r15-seed-05"
+    },
+    {
+      "utility-base": {
+        "seed": "new-06",
+        "initSeed": "r15-seed-06",
+        "condition": "utility-base",
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+      },
+      "utility-pair": {
+        "seed": "new-06",
+        "initSeed": "r15-seed-06",
+        "condition": "utility-pair",
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235"
+      },
+      "deltaYuan": 235,
+      "seed": "new-06",
+      "initSeed": "r15-seed-06"
+    },
+    {
+      "utility-base": {
+        "seed": "new-07",
+        "initSeed": "r15-seed-07",
+        "condition": "utility-base",
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+      },
+      "utility-pair": {
+        "seed": "new-07",
+        "initSeed": "r15-seed-07",
+        "condition": "utility-pair",
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3"
+      },
+      "deltaYuan": 150,
+      "seed": "new-07",
+      "initSeed": "r15-seed-07"
+    },
+    {
+      "utility-base": {
+        "seed": "new-08",
+        "initSeed": "r15-seed-08",
+        "condition": "utility-base",
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+      },
+      "utility-pair": {
+        "seed": "new-08",
+        "initSeed": "r15-seed-08",
+        "condition": "utility-pair",
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235"
+      },
+      "deltaYuan": 235,
+      "seed": "new-08",
+      "initSeed": "r15-seed-08"
+    },
+    {
+      "utility-base": {
+        "seed": "new-09",
+        "initSeed": "r15-seed-09",
+        "condition": "utility-base",
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+      },
+      "utility-pair": {
+        "seed": "new-09",
+        "initSeed": "r15-seed-09",
+        "condition": "utility-pair",
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3"
+      },
+      "deltaYuan": 150,
+      "seed": "new-09",
+      "initSeed": "r15-seed-09"
+    },
+    {
+      "utility-base": {
+        "seed": "new-10",
+        "initSeed": "r15-seed-10",
+        "condition": "utility-base",
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+      },
+      "utility-pair": {
+        "seed": "new-10",
+        "initSeed": "r15-seed-10",
+        "condition": "utility-pair",
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "5c59533c462a4293cff5a3f35ae36700a15fbe07d1beec1436e29c9f4008440b"
+      },
+      "deltaYuan": 120,
+      "seed": "new-10",
+      "initSeed": "r15-seed-10"
+    },
+    {
+      "utility-base": {
+        "seed": "new-11",
+        "initSeed": "r15-seed-11",
+        "condition": "utility-base",
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+      },
+      "utility-pair": {
+        "seed": "new-11",
+        "initSeed": "r15-seed-11",
+        "condition": "utility-pair",
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559"
+      },
+      "deltaYuan": 205,
+      "seed": "new-11",
+      "initSeed": "r15-seed-11"
+    },
+    {
+      "utility-base": {
+        "seed": "new-12",
+        "initSeed": "r15-seed-12",
+        "condition": "utility-base",
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+      },
+      "utility-pair": {
+        "seed": "new-12",
+        "initSeed": "r15-seed-12",
+        "condition": "utility-pair",
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "5c59533c462a4293cff5a3f35ae36700a15fbe07d1beec1436e29c9f4008440b"
+      },
+      "deltaYuan": 120,
+      "seed": "new-12",
+      "initSeed": "r15-seed-12"
+    },
+    {
+      "utility-base": {
+        "seed": "new-13",
+        "initSeed": "r15-seed-13",
+        "condition": "utility-base",
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+      },
+      "utility-pair": {
+        "seed": "new-13",
+        "initSeed": "r15-seed-13",
+        "condition": "utility-pair",
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559"
+      },
+      "deltaYuan": 205,
+      "seed": "new-13",
+      "initSeed": "r15-seed-13"
+    },
+    {
+      "utility-base": {
+        "seed": "new-14",
+        "initSeed": "r15-seed-14",
+        "condition": "utility-base",
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+      },
+      "utility-pair": {
+        "seed": "new-14",
+        "initSeed": "r15-seed-14",
+        "condition": "utility-pair",
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "f3cf0845951c650f25f085de4e783fd54042a6c81f38c7cd845655ba6e1798d4"
+      },
+      "deltaYuan": 325,
+      "seed": "new-14",
+      "initSeed": "r15-seed-14"
+    },
+    {
+      "utility-base": {
+        "seed": "new-15",
+        "initSeed": "r15-seed-15",
+        "condition": "utility-base",
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+      },
+      "utility-pair": {
+        "seed": "new-15",
+        "initSeed": "r15-seed-15",
+        "condition": "utility-pair",
+        "costYuan": 13282,
+        "actionChains": 30,
+        "unresolved": 17,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "432595793e83fdf2f49b04b07aef7ed084bc9b4ac83c433fc464bc8c5578364d"
+      },
+      "deltaYuan": -320,
+      "seed": "new-15",
+      "initSeed": "r15-seed-15"
+    },
+    {
+      "utility-base": {
+        "seed": "new-16",
+        "initSeed": "r15-seed-16",
+        "condition": "utility-base",
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+      },
+      "utility-pair": {
+        "seed": "new-16",
+        "initSeed": "r15-seed-16",
+        "condition": "utility-pair",
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "f3cf0845951c650f25f085de4e783fd54042a6c81f38c7cd845655ba6e1798d4"
+      },
+      "deltaYuan": 325,
+      "seed": "new-16",
+      "initSeed": "r15-seed-16"
+    },
+    {
+      "utility-base": {
+        "seed": "new-17",
+        "initSeed": "r15-seed-17",
+        "condition": "utility-base",
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+      },
+      "utility-pair": {
+        "seed": "new-17",
+        "initSeed": "r15-seed-17",
+        "condition": "utility-pair",
+        "costYuan": 13992,
+        "actionChains": 38,
+        "unresolved": 9,
+        "replay": "CONSISTENT",
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "f3ee648765d04890aed65a9a7842af9f4d7492eba761d6fe09821ccc4958121b"
+      },
+      "deltaYuan": 390,
+      "seed": "new-17",
+      "initSeed": "r15-seed-17"
+    }
+  ],
+  "anchorReplication": {
+    "seeds": [
+      "alpha",
+      "beta",
+      "gamma"
+    ],
+    "matched": true
+  }
+}

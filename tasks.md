@@ -1949,3 +1949,11 @@
 - 结果：修正反馈切点后，`distance-v2` 的 base/pair 均值为 `13527/-0.84%`、`13514/-0.94%`，链边际 `-13`；`signed-v1` 为 `14015/+2.74%`、`13767/+0.92%`，链边际 `-248`。utility-pair 有 2/3 seed 成本下降，distance-pair 有 1/3；两组均值仍未低于待机基线。
 - 验证：12 条正式 CLI 运行 Replay 均为 `CONSISTENT`；R14 E2E 四分支确认链反馈向量、版本和区间都对应当前动作前观察，且 Replay 一致。adapter 世界版本升为 `chain-v2`，Kernel 未改。
 - 边界：这是 3 个共享 seed 的受控模拟，不能证明某种投影普遍更好或更差。结果显示投影与链信用的均值交互值得继续检验，但尚未得到跨 seed 稳定套利；Kernel 也不会从 adapter 声明中验证真实因果。
+
+## F-260 配对 seed 的轨迹重复审计（R15：推断降级）
+
+- 缺口：R14 只有 3 组 seed，utility-pair 的均值改善不足以区分稳定收益和策略种子差异。R15 扩到 20 组后，初始按 seed 计算的名义 95% t 区间为 `[5.79, 254.71]`，看似链组成本更高；但这个判断要求样本提供足够独立的控制行为。
+- 实现：新增 `scripts/curriculum/r15-chain-effect.mjs`，固定 `signed-v1`、h8、96 步和 20 个配对 seed。成本从 STEP 中的实际动作 token、确定性负荷和公开 TOU 电价独立重算；每个 Run 都跨 CLI Replay。随后从既有 40 条账本计算动作轨迹摘要，不重跑策略，并按 base 动作轨迹聚类。
+- 结果：40 条 Run 全部 `COMPLETED` 且 Replay `CONSISTENT`；alpha/beta/gamma 精确复现 R14。seed 加权成本差（chain - base）为 `+130.25` 元，3 组更低、17 组更高。20 组只有 3 种 base 动作轨迹、12 种链轨迹和 12 种配对轨迹；名义 t 区间标记为无效。三类 base 轨迹内的平均差分别为 `-517.50`、`+184.44`、`+220` 元，方向不一致，故结论为 `INCONCLUSIVE_DUPLICATE_BASE_TRAJECTORIES`。
+- 验证：R15 统计测试 `4/4`；R14 锚点复现；既有 40 条 CLI 账本重新校验通过。没有修改 Kernel 或 WorldPort 协议。
+- 边界：这是固定 ESS 模型中的 seed sweep，不是现实随机化试验；相同 base 轨迹不能增加控制行为的覆盖。下一轮要增加负荷、电价或动力学变化，或构造真正独立的策略对照，再评估长期效用。
