@@ -28,7 +28,11 @@ const VERSION = 1;
 const ADAPTER_ID = 'ess-arbitrage-adapter-v1';
 const WORLD_ID = 'ess-arbitrage';
 const FINE_GRAINED_ACTIONS = process.argv.includes('--fine-grained-actions');
-const CAPABILITY_IDS = FINE_GRAINED_ACTIONS
+const CONTINUOUS_POWER = process.argv.includes('--continuous-power');
+if (FINE_GRAINED_ACTIONS && CONTINUOUS_POWER) throw new Error('fine-grained and continuous power modes are mutually exclusive');
+const CAPABILITY_IDS = CONTINUOUS_POWER
+  ? ['ess.set-power']
+  : FINE_GRAINED_ACTIONS
   ? ['ess.charge', 'ess.charge-half', 'ess.discharge-half', 'ess.discharge', 'ess.idle']
   : ['ess.charge', 'ess.discharge', 'ess.idle'];
 const ESS_POWER = {
@@ -71,7 +75,7 @@ const BATTERY_EFFICIENCY = BATTERY_EFFICIENCY_INDEX === -1 ? BATTERY.efficiency 
 if (!Number.isFinite(BATTERY_EFFICIENCY) || BATTERY_EFFICIENCY <= 0 || BATTERY_EFFICIENCY > 1) {
   throw new Error('battery dynamics requires a positive --battery-efficiency <= 1');
 }
-const POWER_WORLD_VERSION = FINE_GRAINED_ACTIONS ? '-power-grid-v1' : '';
+const POWER_WORLD_VERSION = CONTINUOUS_POWER ? '-continuous-power-v1' : FINE_GRAINED_ACTIONS ? '-power-grid-v1' : '';
 const BATTERY_WORLD_VERSION = BATTERY_EFFICIENCY_INDEX >= 0 ? `-battery-efficiency-${BATTERY_EFFICIENCY}` : '';
 // R9：mid-run 电价表翻转（谷峰对调）——非平稳叠加
 function effectiveTariffLevel(hour) {
@@ -196,6 +200,7 @@ function dispatch(op, payload) {
 }
 
 function capabilitySafe(capabilityId, state) {
+  if (capabilityId === 'ess.set-power') return true;
   const power = ESS_POWER[capabilityId] ?? 0;
   if (!effectiveBatteryAllows(state.soc, power)) return false;
   // 防逆流投影：放电使并网点为负 → 不安全
@@ -212,6 +217,18 @@ function effectivePrice(hour, state) {
   if (allDischarge && PRICE_LEVELS_BY_HOUR[hour % 24] === 2) return base * 1.3;
   if (allCharge && PRICE_LEVELS_BY_HOUR[hour % 24] === 0) return base * 1.3;
   return base;
+}
+
+function powerForRequest(entry, request) {
+  if (!CONTINUOUS_POWER) return ESS_POWER[entry.capabilityId] ?? 0;
+  const proposal = request?.proposal;
+  if (proposal === null || typeof proposal !== 'object' || Array.isArray(proposal) ||
+      Object.keys(proposal).length !== 1 || !Object.hasOwn(proposal, 'powerKw') ||
+      !Number.isFinite(proposal.powerKw) || proposal.powerKw < -BATTERY.ratedPowerKw ||
+      proposal.powerKw > BATTERY.ratedPowerKw || Math.round(proposal.powerKw * 1000) / 1000 !== proposal.powerKw) {
+    return null;
+  }
+  return proposal.powerKw;
 }
 
 function noisySnapshot(vector, step) {
@@ -245,7 +262,8 @@ function transition(state, request, manifest) {
   const entries = manifest?.tokenMap?.entries;
   const entry = entries?.find((candidate) => candidate.token === request.token);
   if (entry === undefined) throw new Error('unknown action token');
-  const essPower = ESS_POWER[entry.capabilityId] ?? 0;
+  const essPower = powerForRequest(entry, request);
+  if (essPower === null) return rejected(state, request, 'INVALID_POWER_PROPOSAL');
 
   if (!effectiveBatteryAllows(state.soc, essPower)) {
     return rejected(state, request, 'BMS_SOC_BOUNDARY');
@@ -265,8 +283,8 @@ function transition(state, request, manifest) {
   //   discharge（峰）→ 保 pending 并登记链 [charge1..chargeN, discharge]；
   //   下一步 → 发链反馈，份额均分 1/(N+1)，结算全链共同延迟效果。
   if (CHAIN_CREDIT) {
-    const isCharge = CHARGE_CAPABILITIES.has(entry.capabilityId);
-    const isDischarge = DISCHARGE_CAPABILITIES.has(entry.capabilityId);
+    const isCharge = CONTINUOUS_POWER ? essPower > 0 : CHARGE_CAPABILITIES.has(entry.capabilityId);
+    const isDischarge = CONTINUOUS_POWER ? essPower < 0 : DISCHARGE_CAPABILITIES.has(entry.capabilityId);
     const pendingChain = state.chainToRelease ?? null;
     const chargeNonces = [...(state.chargeNonces ?? [])];
     if (isCharge) chargeNonces.push(request.executionNonce);

@@ -1,0 +1,778 @@
+{
+  "experiment": "R22-continuous-power-interaction",
+  "analysisSource": "fresh-cli-runs",
+  "sourceFingerprint": "2a23f09e60b43f8bd406876ff5399fcf0ea0a1ab0459d0a936d0bc19cd5a0c27",
+  "nodeVersion": "v26.7.0",
+  "design": {
+    "sameSeedRuns": 20,
+    "cellsPerSeed": 2,
+    "stepsPerCell": 96,
+    "valueMode": "signed-v1",
+    "cells": [
+      {
+        "label": "continuous-base",
+        "continuousPower": true,
+        "chain": false
+      },
+      {
+        "label": "continuous-chain",
+        "continuousPower": true,
+        "chain": true
+      }
+    ],
+    "changedWorldCondition": "the WorldPort exposes one ess.set-power token and accepts only bounded decimal powerKw proposals; chain credit is the only paired condition",
+    "primaryOutcome": "continuous-chain - continuous-base; positive means chain credit costs more under this proposal policy",
+    "seedSelection": "independent 256-bit labels from node:crypto.randomBytes; sample distribution is induced by the current seed initializer, not asserted uniform over uint32 states",
+    "treatmentOrder": "randomized independently within each seed using node:crypto.randomInt; each cell starts from a fresh Lab with the same seed label",
+    "objectiveOracle": "persisted model proposal + independently encoded ESS SOC dynamics, fixed public load, and TOU tariff; adapter settlement totals are not used",
+    "replayRequired": true
+  },
+  "effect": {
+    "nSeedRuns": 20,
+    "meanChainDeltaYuan": 0,
+    "medianChainDeltaYuan": 0,
+    "sampleStdDevChainDeltaYuan": 0,
+    "nominalCi95ChainDeltaYuan": {
+      "low": 0,
+      "high": 0
+    },
+    "lowerCost": 0,
+    "higherCost": 0,
+    "ties": 20,
+    "uniqueInitialRngStates": 20,
+    "uniqueSeedLabels": 20,
+    "decision": "INCONCLUSIVE_CONTINUOUS_CHAIN_EFFECT"
+  },
+  "worldCondition": {
+    "capabilityId": "ess.set-power",
+    "proposalField": "powerKw",
+    "boundsKw": [
+      -100,
+      100
+    ],
+    "decimalPlaces": 3
+  },
+  "runs": [
+    {
+      "sequence": 1,
+      "seedLabel": "r22-2ed0bf9e7e18e33516c260ac65b5ff306322fd99d6daa26dcc0dd8c2126c4d61",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-2ed0bf9e7e18e33516c260ac65b5ff306322fd99d6daa26dcc0dd8c2126c4d61",
+        "condition": "continuous-base",
+        "initialRngState": 4212305863,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-2ed0bf9e7e18e33516c260ac65b5ff306322fd99d6daa26dcc0dd8c2126c4d61",
+        "condition": "continuous-chain",
+        "initialRngState": 4212305863,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 2,
+      "seedLabel": "r22-a278df895cf20d847e8be03c4f2343c44c1b1cba524c3c41a2f2862cdfd54cc3",
+      "treatmentOrder": [
+        "continuous-base",
+        "continuous-chain"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-a278df895cf20d847e8be03c4f2343c44c1b1cba524c3c41a2f2862cdfd54cc3",
+        "condition": "continuous-base",
+        "initialRngState": 1126816696,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-a278df895cf20d847e8be03c4f2343c44c1b1cba524c3c41a2f2862cdfd54cc3",
+        "condition": "continuous-chain",
+        "initialRngState": 1126816696,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 3,
+      "seedLabel": "r22-2c28c874462aca7f5d868077293771a70f1a61a1dfa628848b98771143fac7e5",
+      "treatmentOrder": [
+        "continuous-base",
+        "continuous-chain"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-2c28c874462aca7f5d868077293771a70f1a61a1dfa628848b98771143fac7e5",
+        "condition": "continuous-base",
+        "initialRngState": 3538486419,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-2c28c874462aca7f5d868077293771a70f1a61a1dfa628848b98771143fac7e5",
+        "condition": "continuous-chain",
+        "initialRngState": 3538486419,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 4,
+      "seedLabel": "r22-af7aa7336705b31243f8761989015501da0bf2eb92d8b8fa1470c398382d75a2",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-af7aa7336705b31243f8761989015501da0bf2eb92d8b8fa1470c398382d75a2",
+        "condition": "continuous-base",
+        "initialRngState": 2558038650,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-af7aa7336705b31243f8761989015501da0bf2eb92d8b8fa1470c398382d75a2",
+        "condition": "continuous-chain",
+        "initialRngState": 2558038650,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 5,
+      "seedLabel": "r22-acc432ad8098bc85bb2b532c931f5c37d58c34098b83fa5b738360a587d701dc",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-acc432ad8098bc85bb2b532c931f5c37d58c34098b83fa5b738360a587d701dc",
+        "condition": "continuous-base",
+        "initialRngState": 1913946351,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-acc432ad8098bc85bb2b532c931f5c37d58c34098b83fa5b738360a587d701dc",
+        "condition": "continuous-chain",
+        "initialRngState": 1913946351,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 6,
+      "seedLabel": "r22-630f960443d2d4ad6fe9d56e0335c12ef8ffbdfd3fe60aee6e0da8b7072b92ce",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-630f960443d2d4ad6fe9d56e0335c12ef8ffbdfd3fe60aee6e0da8b7072b92ce",
+        "condition": "continuous-base",
+        "initialRngState": 491904705,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-630f960443d2d4ad6fe9d56e0335c12ef8ffbdfd3fe60aee6e0da8b7072b92ce",
+        "condition": "continuous-chain",
+        "initialRngState": 491904705,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 7,
+      "seedLabel": "r22-5a420c6e30af6ebdebc209f8d0f508f109c06300ad5ad7e76dff16935a997ab2",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-5a420c6e30af6ebdebc209f8d0f508f109c06300ad5ad7e76dff16935a997ab2",
+        "condition": "continuous-base",
+        "initialRngState": 3693036873,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-5a420c6e30af6ebdebc209f8d0f508f109c06300ad5ad7e76dff16935a997ab2",
+        "condition": "continuous-chain",
+        "initialRngState": 3693036873,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 8,
+      "seedLabel": "r22-f4f66bed99e238bf0d1cd8bbcd24c63b4853a87560d0ba706a3fc19712be7c26",
+      "treatmentOrder": [
+        "continuous-base",
+        "continuous-chain"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-f4f66bed99e238bf0d1cd8bbcd24c63b4853a87560d0ba706a3fc19712be7c26",
+        "condition": "continuous-base",
+        "initialRngState": 1263180780,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-f4f66bed99e238bf0d1cd8bbcd24c63b4853a87560d0ba706a3fc19712be7c26",
+        "condition": "continuous-chain",
+        "initialRngState": 1263180780,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 9,
+      "seedLabel": "r22-b035f3779aaed8fae784ee1cb7f88e564dbf6e563fd7ca53c9ca5897b407f5fb",
+      "treatmentOrder": [
+        "continuous-base",
+        "continuous-chain"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-b035f3779aaed8fae784ee1cb7f88e564dbf6e563fd7ca53c9ca5897b407f5fb",
+        "condition": "continuous-base",
+        "initialRngState": 1282457671,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-b035f3779aaed8fae784ee1cb7f88e564dbf6e563fd7ca53c9ca5897b407f5fb",
+        "condition": "continuous-chain",
+        "initialRngState": 1282457671,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 10,
+      "seedLabel": "r22-0e3e0e6b804104390000d23a3fc553cd2a0b0d22f34eac5af0302a7fa6f32626",
+      "treatmentOrder": [
+        "continuous-base",
+        "continuous-chain"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-0e3e0e6b804104390000d23a3fc553cd2a0b0d22f34eac5af0302a7fa6f32626",
+        "condition": "continuous-base",
+        "initialRngState": 2482506898,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-0e3e0e6b804104390000d23a3fc553cd2a0b0d22f34eac5af0302a7fa6f32626",
+        "condition": "continuous-chain",
+        "initialRngState": 2482506898,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 11,
+      "seedLabel": "r22-d67b9fc56962deb04a0af73f054a26e5d933fedc410e1b44823048a1e1be6ded",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-d67b9fc56962deb04a0af73f054a26e5d933fedc410e1b44823048a1e1be6ded",
+        "condition": "continuous-base",
+        "initialRngState": 2548156554,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-d67b9fc56962deb04a0af73f054a26e5d933fedc410e1b44823048a1e1be6ded",
+        "condition": "continuous-chain",
+        "initialRngState": 2548156554,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 12,
+      "seedLabel": "r22-67ce3fea63bef563b4c59632b06fae05332fab79e1ab14484881cf6d061a7cf4",
+      "treatmentOrder": [
+        "continuous-base",
+        "continuous-chain"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-67ce3fea63bef563b4c59632b06fae05332fab79e1ab14484881cf6d061a7cf4",
+        "condition": "continuous-base",
+        "initialRngState": 561651081,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-67ce3fea63bef563b4c59632b06fae05332fab79e1ab14484881cf6d061a7cf4",
+        "condition": "continuous-chain",
+        "initialRngState": 561651081,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 13,
+      "seedLabel": "r22-2214c02958359a13ac08a724779565ff37c86b3ba74e7fd7b5a59a5acf9e9fe7",
+      "treatmentOrder": [
+        "continuous-base",
+        "continuous-chain"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-2214c02958359a13ac08a724779565ff37c86b3ba74e7fd7b5a59a5acf9e9fe7",
+        "condition": "continuous-base",
+        "initialRngState": 701895492,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-2214c02958359a13ac08a724779565ff37c86b3ba74e7fd7b5a59a5acf9e9fe7",
+        "condition": "continuous-chain",
+        "initialRngState": 701895492,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 14,
+      "seedLabel": "r22-84a801fea564c2b2e017dd5ef9885c279fc3e216966e805797b0430ac80d37f5",
+      "treatmentOrder": [
+        "continuous-base",
+        "continuous-chain"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-84a801fea564c2b2e017dd5ef9885c279fc3e216966e805797b0430ac80d37f5",
+        "condition": "continuous-base",
+        "initialRngState": 19229075,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-84a801fea564c2b2e017dd5ef9885c279fc3e216966e805797b0430ac80d37f5",
+        "condition": "continuous-chain",
+        "initialRngState": 19229075,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 15,
+      "seedLabel": "r22-16b3173324b7276fb301b1fb8dc3063972e80d9c420e24d9ce7ae18aaab9f614",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-16b3173324b7276fb301b1fb8dc3063972e80d9c420e24d9ce7ae18aaab9f614",
+        "condition": "continuous-base",
+        "initialRngState": 555680105,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-16b3173324b7276fb301b1fb8dc3063972e80d9c420e24d9ce7ae18aaab9f614",
+        "condition": "continuous-chain",
+        "initialRngState": 555680105,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 16,
+      "seedLabel": "r22-74cfa4cf0db37f9ab4911c4c1509206aa892c6197b416bf979ab1490210e0009",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-74cfa4cf0db37f9ab4911c4c1509206aa892c6197b416bf979ab1490210e0009",
+        "condition": "continuous-base",
+        "initialRngState": 239267610,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-74cfa4cf0db37f9ab4911c4c1509206aa892c6197b416bf979ab1490210e0009",
+        "condition": "continuous-chain",
+        "initialRngState": 239267610,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 17,
+      "seedLabel": "r22-94fc44abc3e8ee84fbd0fe65cd194255dad794aba5a55d78d518084b6cce1393",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-94fc44abc3e8ee84fbd0fe65cd194255dad794aba5a55d78d518084b6cce1393",
+        "condition": "continuous-base",
+        "initialRngState": 1756461053,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-94fc44abc3e8ee84fbd0fe65cd194255dad794aba5a55d78d518084b6cce1393",
+        "condition": "continuous-chain",
+        "initialRngState": 1756461053,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 18,
+      "seedLabel": "r22-ab97299881a1f0862d9e57c45c6dc755d6e0cd55b365f47311995064a741e66e",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-ab97299881a1f0862d9e57c45c6dc755d6e0cd55b365f47311995064a741e66e",
+        "condition": "continuous-base",
+        "initialRngState": 941086614,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-ab97299881a1f0862d9e57c45c6dc755d6e0cd55b365f47311995064a741e66e",
+        "condition": "continuous-chain",
+        "initialRngState": 941086614,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 19,
+      "seedLabel": "r22-5ceca993a88f383a63d8decc1d1dd6c11f0149dd6a2af0f899b192106329624c",
+      "treatmentOrder": [
+        "continuous-chain",
+        "continuous-base"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-5ceca993a88f383a63d8decc1d1dd6c11f0149dd6a2af0f899b192106329624c",
+        "condition": "continuous-base",
+        "initialRngState": 1231414672,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-5ceca993a88f383a63d8decc1d1dd6c11f0149dd6a2af0f899b192106329624c",
+        "condition": "continuous-chain",
+        "initialRngState": 1231414672,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    },
+    {
+      "sequence": 20,
+      "seedLabel": "r22-f1b78fcdc1c332fb3cfd7b67766af97c41e04521811332b35a2246a445fea527",
+      "treatmentOrder": [
+        "continuous-base",
+        "continuous-chain"
+      ],
+      "continuousBase": {
+        "seedLabel": "r22-f1b78fcdc1c332fb3cfd7b67766af97c41e04521811332b35a2246a445fea527",
+        "condition": "continuous-base",
+        "initialRngState": 3956752659,
+        "costYuan": 13692,
+        "actionChains": 0,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-continuous-power-v1"
+      },
+      "continuousChain": {
+        "seedLabel": "r22-f1b78fcdc1c332fb3cfd7b67766af97c41e04521811332b35a2246a445fea527",
+        "condition": "continuous-chain",
+        "initialRngState": 3956752659,
+        "costYuan": 13692,
+        "actionChains": 94,
+        "unresolved": 0,
+        "proposalCount": 96,
+        "proposalMinKw": -50,
+        "proposalMaxKw": 50,
+        "proposalTraceDigest": "947672886907bb1eda1b6b676020a93924f810b8ae1a3dfaf6bf52d8feab1dab",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-continuous-power-v1"
+      }
+    }
+  ],
+  "rejectedCandidates": []
+}
