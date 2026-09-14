@@ -27,8 +27,19 @@ const PROTOCOL = 'yi-world-cli';
 const VERSION = 1;
 const ADAPTER_ID = 'ess-arbitrage-adapter-v1';
 const WORLD_ID = 'ess-arbitrage';
-const CAPABILITY_IDS = ['ess.charge', 'ess.discharge', 'ess.idle'];
-const ESS_POWER = { 'ess.charge': BATTERY.ratedPowerKw, 'ess.discharge': -BATTERY.ratedPowerKw, 'ess.idle': 0 };
+const FINE_GRAINED_ACTIONS = process.argv.includes('--fine-grained-actions');
+const CAPABILITY_IDS = FINE_GRAINED_ACTIONS
+  ? ['ess.charge', 'ess.charge-half', 'ess.discharge-half', 'ess.discharge', 'ess.idle']
+  : ['ess.charge', 'ess.discharge', 'ess.idle'];
+const ESS_POWER = {
+  'ess.charge': BATTERY.ratedPowerKw,
+  'ess.charge-half': BATTERY.ratedPowerKw / 2,
+  'ess.discharge-half': -BATTERY.ratedPowerKw / 2,
+  'ess.discharge': -BATTERY.ratedPowerKw,
+  'ess.idle': 0,
+};
+const CHARGE_CAPABILITIES = new Set(['ess.charge', 'ess.charge-half']);
+const DISCHARGE_CAPABILITIES = new Set(['ess.discharge', 'ess.discharge-half']);
 const OBS_SCALE = 50;
 const stateFileIndex = process.argv.indexOf('--settlement-delay');
 const SETTLEMENT_DELAY = stateFileIndex === -1 ? 2 : Math.max(1, Number(process.argv[stateFileIndex + 1]) || 2);
@@ -60,6 +71,7 @@ const BATTERY_EFFICIENCY = BATTERY_EFFICIENCY_INDEX === -1 ? BATTERY.efficiency 
 if (!Number.isFinite(BATTERY_EFFICIENCY) || BATTERY_EFFICIENCY <= 0 || BATTERY_EFFICIENCY > 1) {
   throw new Error('battery dynamics requires a positive --battery-efficiency <= 1');
 }
+const POWER_WORLD_VERSION = FINE_GRAINED_ACTIONS ? '-power-grid-v1' : '';
 const BATTERY_WORLD_VERSION = BATTERY_EFFICIENCY_INDEX >= 0 ? `-battery-efficiency-${BATTERY_EFFICIENCY}` : '';
 // R9：mid-run 电价表翻转（谷峰对调）——非平稳叠加
 function effectiveTariffLevel(hour) {
@@ -125,7 +137,7 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v2' : ''}${TARIFF_WORLD_VERSION}${LOAD_WORLD_VERSION}${BATTERY_WORLD_VERSION}`,
+      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v2' : ''}${TARIFF_WORLD_VERSION}${LOAD_WORLD_VERSION}${POWER_WORLD_VERSION}${BATTERY_WORLD_VERSION}`,
       capabilityIds: CAPABILITY_IDS,
       scenarioIds: ['steady'],
       valueSpec: UTILITY_MODE
@@ -195,8 +207,8 @@ function effectivePrice(hour, state) {
   if (!ADVERSARIAL) return base;
   // 市场响应：连续放电（削峰）推高峰价、连续充电（填谷）推高谷价 ×1.3
   const recent = state.recentActions ?? [];
-  const allDischarge = recent.length === 3 && recent.every((c) => c === 'ess.discharge');
-  const allCharge = recent.length === 3 && recent.every((c) => c === 'ess.charge');
+  const allDischarge = recent.length === 3 && recent.every((c) => DISCHARGE_CAPABILITIES.has(c));
+  const allCharge = recent.length === 3 && recent.every((c) => CHARGE_CAPABILITIES.has(c));
   if (allDischarge && PRICE_LEVELS_BY_HOUR[hour % 24] === 2) return base * 1.3;
   if (allCharge && PRICE_LEVELS_BY_HOUR[hour % 24] === 0) return base * 1.3;
   return base;
@@ -253,8 +265,8 @@ function transition(state, request, manifest) {
   //   discharge（峰）→ 保 pending 并登记链 [charge1..chargeN, discharge]；
   //   下一步 → 发链反馈，份额均分 1/(N+1)，结算全链共同延迟效果。
   if (CHAIN_CREDIT) {
-    const isCharge = entry.capabilityId === 'ess.charge';
-    const isDischarge = entry.capabilityId === 'ess.discharge';
+    const isCharge = CHARGE_CAPABILITIES.has(entry.capabilityId);
+    const isDischarge = DISCHARGE_CAPABILITIES.has(entry.capabilityId);
     const pendingChain = state.chainToRelease ?? null;
     const chargeNonces = [...(state.chargeNonces ?? [])];
     if (isCharge) chargeNonces.push(request.executionNonce);
