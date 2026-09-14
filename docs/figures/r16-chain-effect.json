@@ -1,0 +1,790 @@
+{
+  "experiment": "R16-chain-effect",
+  "analysisSource": "fresh-cli-runs",
+  "sourceFingerprint": "761e68e567e875d46677923ccc695272e89d326171d38f2bfa659619583d2ecf",
+  "nodeVersion": "v26.7.0",
+  "design": {
+    "pairedSeeds": 20,
+    "stepsPerCondition": 96,
+    "planningHorizon": 8,
+    "valueMode": "signed-v1",
+    "primaryOutcome": "utility-pair cost minus utility-base cost; negative favors chain credit",
+    "seedSelection": "independent 256-bit labels from node:crypto.randomBytes; sample distribution is induced by the current seed initializer, not asserted uniform over uint32 states",
+    "stateSelection": "record STEP.rngBefore.state and reject only repeated initial states; repeated action traces remain valid coverage observations",
+    "treatmentOrder": "randomized independently within each pair using node:crypto.randomInt",
+    "inferenceUnit": "one accepted paired outcome per distinct observed xorshift32 initial state",
+    "interval": "approximate two-sided 95% paired Student-t interval, df=19; interpreted with raw paired outcomes because normality of deltas is not established",
+    "objectiveOracle": "STEP action token + deterministic load + public TOU tariff; adapter settlement totals are not used",
+    "replayRequired": true
+  },
+  "idleBaselineYuan": 13642,
+  "effect": {
+    "nSeedPairs": 20,
+    "meanDeltaYuan": -16.75,
+    "medianDeltaYuan": 55,
+    "sampleStdDevYuan": 342.82,
+    "nominalCi95Yuan": {
+      "low": -177.19,
+      "high": 143.69
+    },
+    "chainLowerCost": 7,
+    "chainHigherCost": 13,
+    "ties": 0,
+    "uniqueInitialRngStates": 20,
+    "initialRngStateRange": {
+      "min": 31336704,
+      "max": 4041785667
+    },
+    "uniqueSeedLabels": 20,
+    "uniqueBaseActionTraces": 4,
+    "uniqueChainActionTraces": 13,
+    "uniquePairedActionTraces": 14,
+    "baseTraceClusters": [
+      {
+        "traceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "nSeedPairs": 5,
+        "meanDeltaYuan": -60
+      },
+      {
+        "traceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "nSeedPairs": 4,
+        "meanDeltaYuan": -452.5
+      },
+      {
+        "traceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "nSeedPairs": 7,
+        "meanDeltaYuan": 100
+      },
+      {
+        "traceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "nSeedPairs": 4,
+        "meanDeltaYuan": 268.75
+      }
+    ],
+    "ciStatus": "APPROXIMATE_RANDOM_SEED_SAMPLE",
+    "decision": "INCONCLUSIVE_RANDOM_SEED_SWEEP"
+  },
+  "pairs": [
+    {
+      "sequence": 1,
+      "seedLabel": "r16-d219336b75ddf2fb531d9ba09ad756cd74b16b5dc9b5ffd09076d52c234ac72b",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-d219336b75ddf2fb531d9ba09ad756cd74b16b5dc9b5ffd09076d52c234ac72b",
+        "condition": "utility-base",
+        "initialRngState": 2600617706,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-d219336b75ddf2fb531d9ba09ad756cd74b16b5dc9b5ffd09076d52c234ac72b",
+        "condition": "utility-pair",
+        "initialRngState": 2600617706,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 2600617706,
+      "deltaYuan": 55
+    },
+    {
+      "sequence": 2,
+      "seedLabel": "r16-79df894790d38a62d698ca1f3e52ca1dc595ae748aeec91d5368d1d599ce0d39",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-79df894790d38a62d698ca1f3e52ca1dc595ae748aeec91d5368d1d599ce0d39",
+        "condition": "utility-base",
+        "initialRngState": 3377501096,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-79df894790d38a62d698ca1f3e52ca1dc595ae748aeec91d5368d1d599ce0d39",
+        "condition": "utility-pair",
+        "initialRngState": 3377501096,
+        "costYuan": 13592,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4047a3fa018be7437a22c19c5ad134f830bb86779faa6cd85afb29533600c7b0",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 3377501096,
+      "deltaYuan": -280
+    },
+    {
+      "sequence": 3,
+      "seedLabel": "r16-ba3582b9bf98c97f0c95b81ebe23b59d273cda85b11305acd5723149883449c5",
+      "treatmentOrder": [
+        "utility-base",
+        "utility-pair"
+      ],
+      "base": {
+        "seedLabel": "r16-ba3582b9bf98c97f0c95b81ebe23b59d273cda85b11305acd5723149883449c5",
+        "condition": "utility-base",
+        "initialRngState": 2226863289,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-ba3582b9bf98c97f0c95b81ebe23b59d273cda85b11305acd5723149883449c5",
+        "condition": "utility-pair",
+        "initialRngState": 2226863289,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "be22b5183a52107c7a652a0de5b3750793c807c964242a3a060f364348e3341f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 2226863289,
+      "deltaYuan": -500
+    },
+    {
+      "sequence": 4,
+      "seedLabel": "r16-0a5b54b70c29a1b0c87bf36b5f8c542661b13f6e9822f2205066ebde9b5b5c20",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-0a5b54b70c29a1b0c87bf36b5f8c542661b13f6e9822f2205066ebde9b5b5c20",
+        "condition": "utility-base",
+        "initialRngState": 3293615240,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-0a5b54b70c29a1b0c87bf36b5f8c542661b13f6e9822f2205066ebde9b5b5c20",
+        "condition": "utility-pair",
+        "initialRngState": 3293615240,
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "ab34c4db6b20eaf2f7e81d1faa33f2e98ea1f22267bfdefe6630b6d8b69df509",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 3293615240,
+      "deltaYuan": 235
+    },
+    {
+      "sequence": 5,
+      "seedLabel": "r16-3fcd1491c89ec807b755788fa8ad885334bb4643de70f38fcf748f3f9603acfa",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-3fcd1491c89ec807b755788fa8ad885334bb4643de70f38fcf748f3f9603acfa",
+        "condition": "utility-base",
+        "initialRngState": 2593479699,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-3fcd1491c89ec807b755788fa8ad885334bb4643de70f38fcf748f3f9603acfa",
+        "condition": "utility-pair",
+        "initialRngState": 2593479699,
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 2593479699,
+      "deltaYuan": 205
+    },
+    {
+      "sequence": 6,
+      "seedLabel": "r16-63c7763ba9652b5550b7a17b539ef8abc37e8659352ecf95ead82bc3e6c858a5",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-63c7763ba9652b5550b7a17b539ef8abc37e8659352ecf95ead82bc3e6c858a5",
+        "condition": "utility-base",
+        "initialRngState": 1030653285,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-63c7763ba9652b5550b7a17b539ef8abc37e8659352ecf95ead82bc3e6c858a5",
+        "condition": "utility-pair",
+        "initialRngState": 1030653285,
+        "costYuan": 14012,
+        "actionChains": 36,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "8433413ba7f321ece1e0d1c64215172b63eb64c04c91892441d68f6d645073fc",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 1030653285,
+      "deltaYuan": 440
+    },
+    {
+      "sequence": 7,
+      "seedLabel": "r16-d5af61c4c35b9896db20dccd98734ddeaaf15e4ddb8154a110a2b15c64d4f42f",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-d5af61c4c35b9896db20dccd98734ddeaaf15e4ddb8154a110a2b15c64d4f42f",
+        "condition": "utility-base",
+        "initialRngState": 3278790407,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-d5af61c4c35b9896db20dccd98734ddeaaf15e4ddb8154a110a2b15c64d4f42f",
+        "condition": "utility-pair",
+        "initialRngState": 3278790407,
+        "costYuan": 12967,
+        "actionChains": 26,
+        "unresolved": 21,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "475bb4a4b8de0541e5e701ca40d78ec8a6b021918660cd173d0ec2f36edd579f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 3278790407,
+      "deltaYuan": -605
+    },
+    {
+      "sequence": 8,
+      "seedLabel": "r16-36d611f296afe557f2b8524245dae76a8bec2313746733f461b3070c6762655f",
+      "treatmentOrder": [
+        "utility-base",
+        "utility-pair"
+      ],
+      "base": {
+        "seedLabel": "r16-36d611f296afe557f2b8524245dae76a8bec2313746733f461b3070c6762655f",
+        "condition": "utility-base",
+        "initialRngState": 248358925,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-36d611f296afe557f2b8524245dae76a8bec2313746733f461b3070c6762655f",
+        "condition": "utility-pair",
+        "initialRngState": 248358925,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 248358925,
+      "deltaYuan": 55
+    },
+    {
+      "sequence": 9,
+      "seedLabel": "r16-097683d72ef636d9f1d0945c1e33726cd2e73368a539e452c0255cf73c6d630d",
+      "treatmentOrder": [
+        "utility-base",
+        "utility-pair"
+      ],
+      "base": {
+        "seedLabel": "r16-097683d72ef636d9f1d0945c1e33726cd2e73368a539e452c0255cf73c6d630d",
+        "condition": "utility-base",
+        "initialRngState": 2013332905,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-097683d72ef636d9f1d0945c1e33726cd2e73368a539e452c0255cf73c6d630d",
+        "condition": "utility-pair",
+        "initialRngState": 2013332905,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "5c59533c462a4293cff5a3f35ae36700a15fbe07d1beec1436e29c9f4008440b",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 2013332905,
+      "deltaYuan": 120
+    },
+    {
+      "sequence": 10,
+      "seedLabel": "r16-d27a5ca05769794db1bdb038f155e4f843b22919fe8047c490db2386dc569412",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-d27a5ca05769794db1bdb038f155e4f843b22919fe8047c490db2386dc569412",
+        "condition": "utility-base",
+        "initialRngState": 3755018315,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-d27a5ca05769794db1bdb038f155e4f843b22919fe8047c490db2386dc569412",
+        "condition": "utility-pair",
+        "initialRngState": 3755018315,
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "ab34c4db6b20eaf2f7e81d1faa33f2e98ea1f22267bfdefe6630b6d8b69df509",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 3755018315,
+      "deltaYuan": 235
+    },
+    {
+      "sequence": 11,
+      "seedLabel": "r16-31d1865b65e2c356cb96798d71e134f7f8c5a597abecf34253179aeb43afe0f1",
+      "treatmentOrder": [
+        "utility-base",
+        "utility-pair"
+      ],
+      "base": {
+        "seedLabel": "r16-31d1865b65e2c356cb96798d71e134f7f8c5a597abecf34253179aeb43afe0f1",
+        "condition": "utility-base",
+        "initialRngState": 3869155662,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-31d1865b65e2c356cb96798d71e134f7f8c5a597abecf34253179aeb43afe0f1",
+        "condition": "utility-pair",
+        "initialRngState": 3869155662,
+        "costYuan": 13592,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "3502647f2337c64d7c3e1023f1b88056c6154e6781e35a1ba26b2f09869f1f32",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 3869155662,
+      "deltaYuan": 20
+    },
+    {
+      "sequence": 12,
+      "seedLabel": "r16-32beeb5b524fb27a7d8bf7f47fbe31b8f1ecf07e1a526e67b8e24da0fb298f7d",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-32beeb5b524fb27a7d8bf7f47fbe31b8f1ecf07e1a526e67b8e24da0fb298f7d",
+        "condition": "utility-base",
+        "initialRngState": 2725494853,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-32beeb5b524fb27a7d8bf7f47fbe31b8f1ecf07e1a526e67b8e24da0fb298f7d",
+        "condition": "utility-pair",
+        "initialRngState": 2725494853,
+        "costYuan": 13687,
+        "actionChains": 32,
+        "unresolved": 15,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "0aa85fd571285fcc3dc3e4fff60a39449405a9ddc6e981913c2af1386826f53e",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 2725494853,
+      "deltaYuan": -185
+    },
+    {
+      "sequence": 13,
+      "seedLabel": "r16-c7ecdd8b518f3330b3b7c92601a6cf2957efb6de0cb465b286e74bd03a3b1264",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-c7ecdd8b518f3330b3b7c92601a6cf2957efb6de0cb465b286e74bd03a3b1264",
+        "condition": "utility-base",
+        "initialRngState": 42865291,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-c7ecdd8b518f3330b3b7c92601a6cf2957efb6de0cb465b286e74bd03a3b1264",
+        "condition": "utility-pair",
+        "initialRngState": 42865291,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 42865291,
+      "deltaYuan": -295
+    },
+    {
+      "sequence": 14,
+      "seedLabel": "r16-12ee57369c1380ed4eb7fca9f94e87749ea439aa8d7ce366cfffdccaf24e4563",
+      "treatmentOrder": [
+        "utility-base",
+        "utility-pair"
+      ],
+      "base": {
+        "seedLabel": "r16-12ee57369c1380ed4eb7fca9f94e87749ea439aa8d7ce366cfffdccaf24e4563",
+        "condition": "utility-base",
+        "initialRngState": 2047091456,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-12ee57369c1380ed4eb7fca9f94e87749ea439aa8d7ce366cfffdccaf24e4563",
+        "condition": "utility-pair",
+        "initialRngState": 2047091456,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "5c59533c462a4293cff5a3f35ae36700a15fbe07d1beec1436e29c9f4008440b",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 2047091456,
+      "deltaYuan": 120
+    },
+    {
+      "sequence": 15,
+      "seedLabel": "r16-532f42e08fb756c854b3619e9d9ff2127d0624a6062376977c5a1b6ac7b9ac9d",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-532f42e08fb756c854b3619e9d9ff2127d0624a6062376977c5a1b6ac7b9ac9d",
+        "condition": "utility-base",
+        "initialRngState": 242262944,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-532f42e08fb756c854b3619e9d9ff2127d0624a6062376977c5a1b6ac7b9ac9d",
+        "condition": "utility-pair",
+        "initialRngState": 242262944,
+        "costYuan": 14232,
+        "actionChains": 38,
+        "unresolved": 7,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "66e04b156549e8117b05062effbc97831c48354e6c0987a3f19310131f4ed9aa",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 242262944,
+      "deltaYuan": 630
+    },
+    {
+      "sequence": 16,
+      "seedLabel": "r16-69e08834155b135e1517e4c8e1a3bf1da4c8c5ff599aeb4b300dbff4a6bf7734",
+      "treatmentOrder": [
+        "utility-pair",
+        "utility-base"
+      ],
+      "base": {
+        "seedLabel": "r16-69e08834155b135e1517e4c8e1a3bf1da4c8c5ff599aeb4b300dbff4a6bf7734",
+        "condition": "utility-base",
+        "initialRngState": 1801498617,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-69e08834155b135e1517e4c8e1a3bf1da4c8c5ff599aeb4b300dbff4a6bf7734",
+        "condition": "utility-pair",
+        "initialRngState": 1801498617,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 1801498617,
+      "deltaYuan": 55
+    },
+    {
+      "sequence": 17,
+      "seedLabel": "r16-9253706f2d58fb2d1e23552af696f404cebad4c76ee479d3fa87aa2faa468943",
+      "treatmentOrder": [
+        "utility-base",
+        "utility-pair"
+      ],
+      "base": {
+        "seedLabel": "r16-9253706f2d58fb2d1e23552af696f404cebad4c76ee479d3fa87aa2faa468943",
+        "condition": "utility-base",
+        "initialRngState": 31336704,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-9253706f2d58fb2d1e23552af696f404cebad4c76ee479d3fa87aa2faa468943",
+        "condition": "utility-pair",
+        "initialRngState": 31336704,
+        "costYuan": 13592,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "3502647f2337c64d7c3e1023f1b88056c6154e6781e35a1ba26b2f09869f1f32",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 31336704,
+      "deltaYuan": 20
+    },
+    {
+      "sequence": 18,
+      "seedLabel": "r16-c22c3dc6835fa3f4f9d842a1b257f2f132344ca50002f760db6987c0cd8eb5c2",
+      "treatmentOrder": [
+        "utility-base",
+        "utility-pair"
+      ],
+      "base": {
+        "seedLabel": "r16-c22c3dc6835fa3f4f9d842a1b257f2f132344ca50002f760db6987c0cd8eb5c2",
+        "condition": "utility-base",
+        "initialRngState": 1059853873,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-c22c3dc6835fa3f4f9d842a1b257f2f132344ca50002f760db6987c0cd8eb5c2",
+        "condition": "utility-pair",
+        "initialRngState": 1059853873,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "ec26438aabd30c42dff24a175e7019dddbce12e515f929baeb09bc3cf13ab4db",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 1059853873,
+      "deltaYuan": 355
+    },
+    {
+      "sequence": 19,
+      "seedLabel": "r16-cb154ad00e79cec898be1c2c16f9318e7ca7390b8e33342bd81e2ef56a11ea02",
+      "treatmentOrder": [
+        "utility-base",
+        "utility-pair"
+      ],
+      "base": {
+        "seedLabel": "r16-cb154ad00e79cec898be1c2c16f9318e7ca7390b8e33342bd81e2ef56a11ea02",
+        "condition": "utility-base",
+        "initialRngState": 149871251,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-cb154ad00e79cec898be1c2c16f9318e7ca7390b8e33342bd81e2ef56a11ea02",
+        "condition": "utility-pair",
+        "initialRngState": 149871251,
+        "costYuan": 13707,
+        "actionChains": 40,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6e61a3d750fdd32debbf5610af1d1c5c99338fc3e23e3112991c2d4e6c94ec6f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 149871251,
+      "deltaYuan": -515
+    },
+    {
+      "sequence": 20,
+      "seedLabel": "r16-033f4758813444c9a8b938b6a3578ce35f325e8c8fe7e29534b80436876a57b1",
+      "treatmentOrder": [
+        "utility-base",
+        "utility-pair"
+      ],
+      "base": {
+        "seedLabel": "r16-033f4758813444c9a8b938b6a3578ce35f325e8c8fe7e29534b80436876a57b1",
+        "condition": "utility-base",
+        "initialRngState": 4041785667,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "chain": {
+        "seedLabel": "r16-033f4758813444c9a8b938b6a3578ce35f325e8c8fe7e29534b80436876a57b1",
+        "condition": "utility-pair",
+        "initialRngState": 4041785667,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "be22b5183a52107c7a652a0de5b3750793c807c964242a3a060f364348e3341f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "initialRngState": 4041785667,
+      "deltaYuan": -500
+    }
+  ],
+  "rejectedCandidates": []
+}
