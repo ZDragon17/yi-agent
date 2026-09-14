@@ -209,11 +209,11 @@ function capabilitySafe(capabilityId, state) {
 
 function effectivePrice(hour, state) {
   const base = effectiveTariffPrice(hour);
-  if (!ADVERSARIAL) return base;
+  if (!process.argv.includes('--adversarial')) return base;
   // 市场响应：连续放电（削峰）推高峰价、连续充电（填谷）推高谷价 ×1.3
   const recent = state.recentActions ?? [];
-  const allDischarge = recent.length === 3 && recent.every((c) => DISCHARGE_CAPABILITIES.has(c));
-  const allCharge = recent.length === 3 && recent.every((c) => CHARGE_CAPABILITIES.has(c));
+  const allDischarge = recent.length === 3 && recent.every((c) => c === 'ess.discharge' || c === 'ess.discharge-half');
+  const allCharge = recent.length === 3 && recent.every((c) => c === 'ess.charge' || c === 'ess.charge-half');
   if (allDischarge && PRICE_LEVELS_BY_HOUR[hour % 24] === 2) return base * 1.3;
   if (allCharge && PRICE_LEVELS_BY_HOUR[hour % 24] === 0) return base * 1.3;
   return base;
@@ -229,6 +229,11 @@ function powerForRequest(entry, request) {
     return null;
   }
   return proposal.powerKw;
+}
+
+function recentActionFor(entry, powerKw) {
+  if (!CONTINUOUS_POWER) return entry.capabilityId;
+  return powerKw > 0 ? 'ess.charge' : powerKw < 0 ? 'ess.discharge' : 'ess.idle';
 }
 
 function noisySnapshot(vector, step) {
@@ -303,7 +308,7 @@ function transition(state, request, manifest) {
       lastNonce: request.executionNonce,
       chargeNonces: nextCharges,
       chainToRelease: newChain,
-      recentActions: [...(state.recentActions ?? []).slice(-2), entry.capabilityId],
+      recentActions: [...(state.recentActions ?? []).slice(-2), recentActionFor(entry, essPower)],
       usedExecutionNonces: [...state.usedExecutionNonces.slice(-7), request.executionNonce],
       ...(UTILITY_MODE ? { utilityYuan: nextUtilityYuan } : {}),
     };
@@ -391,7 +396,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
       dueRevision: state.revision + SETTLEMENT_DELAY,
       hour: state.hour,
       gridPowerKw: grid,
-      price: effectiveTariffPrice(state.hour),
+      price: effectivePrice(state.hour, state),
       soc: nextSoc,
       ...(UTILITY_MODE ? { utilityYuan: nextUtilityYuan } : {}),
     });
@@ -405,7 +410,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
     soc: nextSoc,
     lastNonce: request.executionNonce,
     pendingSettlements,
-    recentActions: [...(state.recentActions ?? []).slice(-2), entry.capabilityId],
+    recentActions: [...(state.recentActions ?? []).slice(-2), recentActionFor(entry, essPower)],
     usedExecutionNonces: [...state.usedExecutionNonces.slice(-7), request.executionNonce],
     ...(UTILITY_MODE ? { utilityYuan: nextUtilityYuan } : {}),
   };
@@ -458,7 +463,7 @@ const ADVERSARIAL = process.argv.includes('--adversarial');
         kind: 'settlement',
         hour: state.hour,
         gridPowerKw: grid,
-        price: tariffForHour(state.hour).price,
+        price: effectivePrice(state.hour, state),
         costYuan: Math.round(stepCostYuan * 1000) / 1000,
         soc: nextSoc,
       }],

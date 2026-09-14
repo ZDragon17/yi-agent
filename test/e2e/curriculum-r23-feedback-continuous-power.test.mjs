@@ -11,6 +11,17 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const ADAPTER = path.join(ROOT, 'examples/curriculum/ess-arbitrage/adapter.mjs');
 const MODEL_ADAPTER = path.join(ROOT, 'test/fixtures/feedback-continuous-power-model-adapter.mjs');
 
+function adapterRequest(op, payload = {}, args = ['--utility-mode', '--continuous-power']) {
+  const body = { protocol: 'yi-world-cli', version: 1, id: `r23-${op}`, op, payload };
+  const result = spawnSync(process.execPath, [ADAPTER, ...args], {
+    cwd: ROOT, encoding: 'utf8', windowsHide: true, input: `${JSON.stringify(body)}\n`,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const response = JSON.parse(result.stdout.trim());
+  assert.equal(response.ok, true);
+  return response.result;
+}
+
 function expectedPower(observation) {
   const tariff = observation.vector[1];
   const soc = observation.vector[2] * 100;
@@ -60,5 +71,27 @@ test('feedback-driven continuous proposal follows each preceding observation and
     assert.match(replay.stdout, /CONSISTENT/u);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('continuous adversarial pricing sees proposal direction', () => {
+  const args = ['--utility-mode', '--continuous-power', '--adversarial'];
+  const entries = [{ token: 'set-power', capabilityId: 'ess.set-power' }];
+  let state = adapterRequest('initialState', {}, args).state;
+  for (let index = 0; index < 4; index += 1) {
+    const result = adapterRequest('transition', {
+      state,
+      request: {
+        token: 'set-power',
+        proposal: { powerKw: 50 },
+        executionNonce: `execution:step:${index + 1}`,
+        basedOnVersion: state.stateVersion,
+        policyVersion: 'policy:ess-arbitrage:1',
+        constraintsDigest: 'sha256:fixture',
+      },
+      manifest: { tokenMap: { entries } },
+    }, args);
+    state = result.nextWorldState;
+    if (index === 3) assert.equal(Math.round(result.postObservation.evidence[0].price * 1000) / 1000, 0.455);
   }
 });
