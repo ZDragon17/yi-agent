@@ -709,3 +709,5 @@ F-252 将 `EffectJournal.open()` 改为按固定文件范围逐块读取和逐�
 F-253 将 CLI/EffectBroker 恢复切换到懒加载 Journal：恢复过程逐事件消费 `readStream()`，日志头通过 `head()` 获取，冲突重试只流式统计同 nonce；默认 `EffectJournal.open()` 和 `read()` 数组接口继续兼容。懒加载 Journal 跨初始化、追加、重启恢复的效果回归为 `29/29`，CLI 的真实 sandbox、authority 和 signer 路径继续复用同一契约。该变化减少恢复时的重复 Journal 数组，不承诺无限效果历史或持久索引。
 
 F-254 将 EffectBroker 的运行状态与审计历史分开。`retainEvents:false` 的 Journal Broker 只在内存中保留 intent、phase、receipt、事件数量和最后事件摘要；`getSummary()`/`listSummaries()` 用于状态展示，`readHistory(executionNonce)` 需要时再从 Journal 流式读取完整审计事件。CLI 的效果操作、inspect 和独立 EffectBroker authority 进程使用该模式，默认 Broker 仍保留原有同步事件数组接口。效果层回归 `30/30`，真实 authority/sandbox CLI 回归 `9/9`。这减少的是 Broker 恢复后的长期事件驻留，不是持久索引、无限历史或跨文件事务快照；需要完整审计时仍要重新扫描 Journal。该模式必须绑定 Journal；没有可回读的 Journal 时会拒绝 `retainEvents:false`，避免把不可用的审计历史表示为空历史。
+
+F-258 补测动作链的中间长度：同一 3 seed、h8、96 步条件下，pair/multi2/multi3 的均值分别为 `13279/-2.66%`、`13585/-0.42%`、`13774/+0.97%`（baseline `13642`）。multi2 的结果介于两者之间，提示链长可能存在中间最优，但当前只是假设，不是全局最优或现实效果证明；对应回归为 `1/1`，所有运行 Replay CONSISTENT。

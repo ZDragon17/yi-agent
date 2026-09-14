@@ -25,15 +25,15 @@ function tariffPrice(hour) {
 test('R12: pair chains reach stable net arbitrage and multi-charge chains settle correctly', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-r12-e2e-'));
   try {
-    const runs = { pair: [], multi3: [] };
-    for (const label of ['pair', 'multi3']) {
+    const runs = { pair: [], multi2: [], multi3: [] };
+    for (const label of ['pair', 'multi2', 'multi3']) {
       for (const seed of SEEDS) {
         const adapter = path.join(root, `adapter-${label}-${seed}.json`);
         await writeFile(adapter, JSON.stringify({
           executable: process.execPath,
           args: label === 'pair'
             ? [ADAPTER, '--chain-credit']
-            : [ADAPTER, '--chain-credit', '--chain-max-charges', '3'],
+            : [ADAPTER, '--chain-credit', '--chain-max-charges', label === 'multi2' ? '2' : '3'],
           adapterId: 'ess-arbitrage-adapter-v1',
           worldId: 'ess-arbitrage',
           timeoutMs: 30000,
@@ -84,6 +84,12 @@ test('R12: pair chains reach stable net arbitrage and multi-charge chains settle
     for (const r of runs.multi3) {
       assert.ok(r.actionChains >= 20, `multi3 ${r.seed}: chains ${r.actionChains}`);
       assert.equal(r.widestChain, 4, `multi3 ${r.seed}: expected 4-member chains, widest ${r.widestChain}`);
+    }
+
+    // multi2：3 成员链确实出现并结算；策略排序只进入实验存档，不锁死为行为契约。
+    for (const r of runs.multi2) {
+      assert.ok(r.actionChains >= 20, `multi2 ${r.seed}: chains ${r.actionChains}`);
+      assert.equal(r.widestChain, 3, `multi2 ${r.seed}: expected 3-member chains, widest ${r.widestChain}`);
     }
   } finally {
     await rm(root, { recursive: true, force: true });

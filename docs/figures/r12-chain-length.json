@@ -49,6 +49,30 @@
         }
       ]
     },
+    "multi2": {
+      "mean": 13585,
+      "meanGapPct": -0.42,
+      "runs": [
+        {
+          "seed": "alpha",
+          "cost": 13647,
+          "chains": 32,
+          "unresolved": 14
+        },
+        {
+          "seed": "beta",
+          "cost": 13647,
+          "chains": 32,
+          "unresolved": 14
+        },
+        {
+          "seed": "gamma",
+          "cost": 13462,
+          "chains": 21,
+          "unresolved": 5
+        }
+      ]
+    },
     "multi3": {
       "mean": 13774,
       "meanGapPct": 0.97,

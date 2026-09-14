@@ -22,6 +22,7 @@ const SEEDS = ['alpha', 'beta', 'gamma'];
 const CONFIGS = [
   { label: 'base', flags: [] },
   { label: 'pair', flags: ['--chain-credit'] },
+  { label: 'multi2', flags: ['--chain-credit', '--chain-max-charges', '2'] },
   { label: 'multi3', flags: ['--chain-credit', '--chain-max-charges', '3'] },
 ];
 
