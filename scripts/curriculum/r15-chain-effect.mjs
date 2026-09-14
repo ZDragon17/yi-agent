@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-// R15：以同 seed 配对测量 signed-v1 下 creditChain 对 96 步电费的影响。
-// 报告动作轨迹的重复情况，避免把相同控制策略重复计入推断样本。
+// R15：固定 seed 标签配对测量 signed-v1 下 creditChain 对 96 步电费的影响。
+// 记录实际 RNG 状态和轨迹覆盖；固定 seed sweep 只作描述，不作总体推断。
 
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -62,6 +62,10 @@ function requireCliSuccess(result, label) {
 function measureRun({ events, tokenEntries, seed, condition }) {
   const steps = events.filter((event) => event.kind === 'STEP');
   if (steps.length !== STEPS) throw new Error(`wrong STEP count for ${seed.label}/${condition.label}`);
+  const initialRngState = steps[0]?.payload.rngBefore?.state;
+  if (!Number.isInteger(initialRngState) || initialRngState <= 0 || initialRngState > 0xffffffff) {
+    throw new Error(`invalid initial RNG state for ${seed.label}/${condition.label}`);
+  }
 
   const capabilityByToken = new Map(tokenEntries.map((entry) => [entry.token, entry.capabilityId]));
   const actionTrace = [];
@@ -88,6 +92,7 @@ function measureRun({ events, tokenEntries, seed, condition }) {
     seed: seed.label,
     initSeed: seed.value,
     condition: condition.label,
+    initialRngState,
     costYuan: Math.round(cost),
     actionChains,
     unresolved,
@@ -163,11 +168,20 @@ async function readExistingCondition({ lab, seed, condition, previous }) {
 }
 
 function makeReport(pairs, { analysisSource, anchorReplication }) {
-  const effect = summarizeR15PairedRuns(pairs.map((pair) => ({
-    baseTraceDigest: pair['utility-base'].actionTraceDigest,
-    chainTraceDigest: pair['utility-pair'].actionTraceDigest,
-    deltaYuan: pair.deltaYuan,
-  })));
+  const effectPairs = pairs.map((pair) => {
+    const base = pair['utility-base'];
+    const chain = pair['utility-pair'];
+    if (base.initialRngState !== chain.initialRngState) {
+      throw new Error(`paired runs used different initial RNG states for ${pair.seed}`);
+    }
+    return {
+      baseTraceDigest: base.actionTraceDigest,
+      chainTraceDigest: chain.actionTraceDigest,
+      initialRngState: base.initialRngState,
+      deltaYuan: pair.deltaYuan,
+    };
+  });
+  const effect = summarizeR15PairedRuns(effectPairs);
   const baseline = Array.from({ length: STEPS }, (_, hour) => loadKw(hour) * tariffPrice(hour))
     .reduce((sum, cost) => sum + cost, 0);
   return {
@@ -179,8 +193,10 @@ function makeReport(pairs, { analysisSource, anchorReplication }) {
       planningHorizon: HORIZON,
       valueMode: 'signed-v1',
       primaryOutcome: 'utility-pair cost minus utility-base cost; negative favors chain credit',
-      interval: 'nominal two-sided 95% paired Student-t interval, df=19; not decision-bearing when base action traces repeat',
-      inferenceUnit: 'distinct baseline action trace; duplicate control trajectories are reported as one cluster',
+      seedSelection: '20 fixed literal labels; not probability-sampled',
+      seedState: 'recorded from the first STEP.rngBefore.state; paired conditions must match',
+      interval: 'nominal two-sided 95% paired Student-t interval, df=19; descriptive only because seed labels were fixed rather than probability-sampled',
+      inferenceUnit: 'fixed seed label; this sweep is descriptive, and trace counts are coverage diagnostics rather than independent-sample evidence',
       treatmentOrder: 'alternated by paired seed',
       objectiveOracle: 'STEP action token + deterministic load + public TOU tariff; adapter settlement evidence is not used',
       replayRequired: true,
@@ -196,11 +212,7 @@ function writeReport(report) {
   writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2));
   const effect = report.effect;
   console.log(`paired mean delta ${effect.meanDeltaYuan} yuan; distinct base traces ${effect.uniqueBaseActionTraces}/20; ${effect.decision}`);
-  if (effect.ciStatus === 'VALID_DISTINCT_BASE_TRACES') {
-    console.log(`95% CI [${effect.nominalCi95Yuan.low}, ${effect.nominalCi95Yuan.high}]`);
-  } else {
-    console.log(`nominal 95% CI [${effect.nominalCi95Yuan.low}, ${effect.nominalCi95Yuan.high}] is not inferentially valid`);
-  }
+  console.log(`nominal 95% paired t interval [${effect.nominalCi95Yuan.low}, ${effect.nominalCi95Yuan.high}] is descriptive only`);
   console.log(`written docs/figures/r15-chain-effect.json`);
 }
 

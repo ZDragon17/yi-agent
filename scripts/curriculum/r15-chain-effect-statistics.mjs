@@ -6,8 +6,9 @@ export function summarizeR15PairedRuns(pairs) {
     pair === null || typeof pair !== 'object' ||
     typeof pair.baseTraceDigest !== 'string' || pair.baseTraceDigest.length === 0 ||
     typeof pair.chainTraceDigest !== 'string' || pair.chainTraceDigest.length === 0 ||
+    !Number.isInteger(pair.initialRngState) || pair.initialRngState <= 0 || pair.initialRngState > 0xffffffff ||
     !Number.isFinite(pair.deltaYuan))) {
-    throw new TypeError('R15 requires exactly 20 paired runs with finite deltas and trace digests.');
+    throw new TypeError('R15 requires exactly 20 paired runs with finite deltas, trace digests, and valid initial RNG states.');
   }
 
   const deltas = pairs.map((pair) => pair.deltaYuan);
@@ -24,9 +25,6 @@ export function summarizeR15PairedRuns(pairs) {
     baseClusters.set(pair.baseTraceDigest, cluster);
   }
   const uniqueBaseActionTraces = baseClusters.size;
-  const ciStatus = uniqueBaseActionTraces === SAMPLE_SIZE
-    ? 'VALID_DISTINCT_BASE_TRACES'
-    : 'INVALID_DUPLICATE_BASE_TRACES';
 
   return {
     nSeedPairs: SAMPLE_SIZE,
@@ -36,6 +34,11 @@ export function summarizeR15PairedRuns(pairs) {
     chainLowerCost: deltas.filter((delta) => delta < 0).length,
     chainHigherCost: deltas.filter((delta) => delta > 0).length,
     ties: deltas.filter((delta) => delta === 0).length,
+    uniqueInitialRngStates: new Set(pairs.map((pair) => pair.initialRngState)).size,
+    initialRngStateRange: {
+      min: Math.min(...pairs.map((pair) => pair.initialRngState)),
+      max: Math.max(...pairs.map((pair) => pair.initialRngState)),
+    },
     uniqueBaseActionTraces,
     uniqueChainActionTraces: new Set(pairs.map((pair) => pair.chainTraceDigest)).size,
     uniquePairedActionTraces: new Set(pairs.map((pair) => `${pair.baseTraceDigest}|${pair.chainTraceDigest}`)).size,
@@ -46,10 +49,8 @@ export function summarizeR15PairedRuns(pairs) {
         nSeedPairs: clusterDeltas.length,
         meanDeltaYuan: round2(clusterDeltas.reduce((sum, delta) => sum + delta, 0) / clusterDeltas.length),
       })),
-    ciStatus,
-    decision: ciStatus !== 'VALID_DISTINCT_BASE_TRACES'
-      ? 'INCONCLUSIVE_DUPLICATE_BASE_TRAJECTORIES'
-      : high < 0 ? 'CHAIN_BENEFIT' : low > 0 ? 'CHAIN_HARM' : 'INCONCLUSIVE',
+    ciStatus: 'EXPLORATORY_FIXED_SEED_SWEEP',
+    decision: 'INCONCLUSIVE_FIXED_SEED_SWEEP',
   };
 }
 

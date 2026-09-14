@@ -7,8 +7,10 @@
     "planningHorizon": 8,
     "valueMode": "signed-v1",
     "primaryOutcome": "utility-pair cost minus utility-base cost; negative favors chain credit",
-    "interval": "nominal two-sided 95% paired Student-t interval, df=19; not decision-bearing when base action traces repeat",
-    "inferenceUnit": "distinct baseline action trace; duplicate control trajectories are reported as one cluster",
+    "seedSelection": "20 fixed literal labels; not probability-sampled",
+    "seedState": "recorded from the first STEP.rngBefore.state; paired conditions must match",
+    "interval": "nominal two-sided 95% paired Student-t interval, df=19; descriptive only because seed labels were fixed rather than probability-sampled",
+    "inferenceUnit": "fixed seed label; this sweep is descriptive, and trace counts are coverage diagnostics rather than independent-sample evidence",
     "treatmentOrder": "alternated by paired seed",
     "objectiveOracle": "STEP action token + deterministic load + public TOU tariff; adapter settlement evidence is not used",
     "replayRequired": true
@@ -25,6 +27,11 @@
     "chainLowerCost": 3,
     "chainHigherCost": 17,
     "ties": 0,
+    "uniqueInitialRngStates": 20,
+    "initialRngStateRange": {
+      "min": 2049547814,
+      "max": 4193932783
+    },
     "uniqueBaseActionTraces": 3,
     "uniqueChainActionTraces": 12,
     "uniquePairedActionTraces": 12,
@@ -45,8 +52,8 @@
         "meanDeltaYuan": 184.44
       }
     ],
-    "ciStatus": "INVALID_DUPLICATE_BASE_TRACES",
-    "decision": "INCONCLUSIVE_DUPLICATE_BASE_TRAJECTORIES"
+    "ciStatus": "EXPLORATORY_FIXED_SEED_SWEEP",
+    "decision": "INCONCLUSIVE_FIXED_SEED_SWEEP"
   },
   "pairs": [
     {
@@ -59,7 +66,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a"
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "initialRngState": 4188722086
       },
       "utility-pair": {
         "seed": "alpha",
@@ -70,7 +78,8 @@
         "unresolved": 12,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "dfdb100bb89742cac05d884825e6f92b0dd36e766b8d9b205e98d7b324590436"
+        "actionTraceDigest": "dfdb100bb89742cac05d884825e6f92b0dd36e766b8d9b205e98d7b324590436",
+        "initialRngState": 4188722086
       },
       "deltaYuan": -535,
       "seed": "alpha",
@@ -86,7 +95,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "initialRngState": 3183184552
       },
       "utility-pair": {
         "seed": "beta",
@@ -97,7 +107,8 @@
         "unresolved": 9,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "f07ce767e0f7551e7e2cbba890e69201827f10297afc4ce9267ea02ec7ba2ca1"
+        "actionTraceDigest": "f07ce767e0f7551e7e2cbba890e69201827f10297afc4ce9267ea02ec7ba2ca1",
+        "initialRngState": 3183184552
       },
       "deltaYuan": 290,
       "seed": "beta",
@@ -113,7 +124,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a"
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "initialRngState": 4193932783
       },
       "utility-pair": {
         "seed": "gamma",
@@ -124,7 +136,8 @@
         "unresolved": 9,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "be22b5183a52107c7a652a0de5b3750793c807c964242a3a060f364348e3341f"
+        "actionTraceDigest": "be22b5183a52107c7a652a0de5b3750793c807c964242a3a060f364348e3341f",
+        "initialRngState": 4193932783
       },
       "deltaYuan": -500,
       "seed": "gamma",
@@ -140,7 +153,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "initialRngState": 2049547814
       },
       "utility-pair": {
         "seed": "new-01",
@@ -151,7 +165,8 @@
         "unresolved": 9,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "4b3b51c621e4efa6b8cc554b0967fdd62f69a573b76eff274ee3478334c033a4"
+        "actionTraceDigest": "4b3b51c621e4efa6b8cc554b0967fdd62f69a573b76eff274ee3478334c033a4",
+        "initialRngState": 2049547814
       },
       "deltaYuan": 320,
       "seed": "new-01",
@@ -167,7 +182,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "initialRngState": 2049547815
       },
       "utility-pair": {
         "seed": "new-02",
@@ -178,7 +194,8 @@
         "unresolved": 8,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "a7d1e7b2d34eb8e6da9b168785da78c8da9fe009435509caf0f190bc72b589c4"
+        "actionTraceDigest": "a7d1e7b2d34eb8e6da9b168785da78c8da9fe009435509caf0f190bc72b589c4",
+        "initialRngState": 2049547815
       },
       "deltaYuan": 355,
       "seed": "new-02",
@@ -194,7 +211,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "initialRngState": 2049547816
       },
       "utility-pair": {
         "seed": "new-03",
@@ -205,7 +223,8 @@
         "unresolved": 9,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3"
+        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3",
+        "initialRngState": 2049547816
       },
       "deltaYuan": 150,
       "seed": "new-03",
@@ -221,7 +240,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "initialRngState": 2049547817
       },
       "utility-pair": {
         "seed": "new-04",
@@ -232,7 +252,8 @@
         "unresolved": 10,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235"
+        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235",
+        "initialRngState": 2049547817
       },
       "deltaYuan": 235,
       "seed": "new-04",
@@ -248,7 +269,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "initialRngState": 2049547818
       },
       "utility-pair": {
         "seed": "new-05",
@@ -259,7 +281,8 @@
         "unresolved": 9,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3"
+        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3",
+        "initialRngState": 2049547818
       },
       "deltaYuan": 150,
       "seed": "new-05",
@@ -275,7 +298,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "initialRngState": 2049547819
       },
       "utility-pair": {
         "seed": "new-06",
@@ -286,7 +310,8 @@
         "unresolved": 10,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235"
+        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235",
+        "initialRngState": 2049547819
       },
       "deltaYuan": 235,
       "seed": "new-06",
@@ -302,7 +327,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "initialRngState": 2049547820
       },
       "utility-pair": {
         "seed": "new-07",
@@ -313,7 +339,8 @@
         "unresolved": 9,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3"
+        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3",
+        "initialRngState": 2049547820
       },
       "deltaYuan": 150,
       "seed": "new-07",
@@ -329,7 +356,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "initialRngState": 2049547821
       },
       "utility-pair": {
         "seed": "new-08",
@@ -340,7 +368,8 @@
         "unresolved": 10,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235"
+        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235",
+        "initialRngState": 2049547821
       },
       "deltaYuan": 235,
       "seed": "new-08",
@@ -356,7 +385,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25"
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "initialRngState": 2049547822
       },
       "utility-pair": {
         "seed": "new-09",
@@ -367,7 +397,8 @@
         "unresolved": 9,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3"
+        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3",
+        "initialRngState": 2049547822
       },
       "deltaYuan": 150,
       "seed": "new-09",
@@ -383,7 +414,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "initialRngState": 2049547844
       },
       "utility-pair": {
         "seed": "new-10",
@@ -394,7 +426,8 @@
         "unresolved": 9,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "5c59533c462a4293cff5a3f35ae36700a15fbe07d1beec1436e29c9f4008440b"
+        "actionTraceDigest": "5c59533c462a4293cff5a3f35ae36700a15fbe07d1beec1436e29c9f4008440b",
+        "initialRngState": 2049547844
       },
       "deltaYuan": 120,
       "seed": "new-10",
@@ -410,7 +443,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "initialRngState": 2049547845
       },
       "utility-pair": {
         "seed": "new-11",
@@ -421,7 +455,8 @@
         "unresolved": 10,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559"
+        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559",
+        "initialRngState": 2049547845
       },
       "deltaYuan": 205,
       "seed": "new-11",
@@ -437,7 +472,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "initialRngState": 2049547846
       },
       "utility-pair": {
         "seed": "new-12",
@@ -448,7 +484,8 @@
         "unresolved": 9,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "5c59533c462a4293cff5a3f35ae36700a15fbe07d1beec1436e29c9f4008440b"
+        "actionTraceDigest": "5c59533c462a4293cff5a3f35ae36700a15fbe07d1beec1436e29c9f4008440b",
+        "initialRngState": 2049547846
       },
       "deltaYuan": 120,
       "seed": "new-12",
@@ -464,7 +501,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "initialRngState": 2049547847
       },
       "utility-pair": {
         "seed": "new-13",
@@ -475,7 +513,8 @@
         "unresolved": 10,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559"
+        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559",
+        "initialRngState": 2049547847
       },
       "deltaYuan": 205,
       "seed": "new-13",
@@ -491,7 +530,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "initialRngState": 2049547848
       },
       "utility-pair": {
         "seed": "new-14",
@@ -502,7 +542,8 @@
         "unresolved": 8,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "f3cf0845951c650f25f085de4e783fd54042a6c81f38c7cd845655ba6e1798d4"
+        "actionTraceDigest": "f3cf0845951c650f25f085de4e783fd54042a6c81f38c7cd845655ba6e1798d4",
+        "initialRngState": 2049547848
       },
       "deltaYuan": 325,
       "seed": "new-14",
@@ -518,7 +559,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "initialRngState": 2049547849
       },
       "utility-pair": {
         "seed": "new-15",
@@ -529,7 +571,8 @@
         "unresolved": 17,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "432595793e83fdf2f49b04b07aef7ed084bc9b4ac83c433fc464bc8c5578364d"
+        "actionTraceDigest": "432595793e83fdf2f49b04b07aef7ed084bc9b4ac83c433fc464bc8c5578364d",
+        "initialRngState": 2049547849
       },
       "deltaYuan": -320,
       "seed": "new-15",
@@ -545,7 +588,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "initialRngState": 2049547850
       },
       "utility-pair": {
         "seed": "new-16",
@@ -556,7 +600,8 @@
         "unresolved": 8,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "f3cf0845951c650f25f085de4e783fd54042a6c81f38c7cd845655ba6e1798d4"
+        "actionTraceDigest": "f3cf0845951c650f25f085de4e783fd54042a6c81f38c7cd845655ba6e1798d4",
+        "initialRngState": 2049547850
       },
       "deltaYuan": 325,
       "seed": "new-16",
@@ -572,7 +617,8 @@
         "unresolved": 0,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1"
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "initialRngState": 2049547851
       },
       "utility-pair": {
         "seed": "new-17",
@@ -583,7 +629,8 @@
         "unresolved": 9,
         "replay": "CONSISTENT",
         "valueMode": "signed-v1",
-        "actionTraceDigest": "f3ee648765d04890aed65a9a7842af9f4d7492eba761d6fe09821ccc4958121b"
+        "actionTraceDigest": "f3ee648765d04890aed65a9a7842af9f4d7492eba761d6fe09821ccc4958121b",
+        "initialRngState": 2049547851
       },
       "deltaYuan": 390,
       "seed": "new-17",
