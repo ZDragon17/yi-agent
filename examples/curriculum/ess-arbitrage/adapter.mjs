@@ -51,6 +51,12 @@ const CHAIN_MAX_CHARGES = (() => {
 })();
 const REGIME_SHIFT_AT = (() => { const i = process.argv.indexOf('--regime-shift-at'); return i === -1 ? -1 : Number(process.argv[i + 1]); })();
 const TARIFF_WORLD_VERSION = REGIME_SHIFT_AT >= 0 ? `-tariff-flip-${REGIME_SHIFT_AT}` : '';
+const LOAD_SHIFT_AT = (() => { const i = process.argv.indexOf('--load-shift-at'); return i === -1 ? -1 : Number(process.argv[i + 1]); })();
+const LOAD_SCALE = (() => { const i = process.argv.indexOf('--load-scale'); return i === -1 ? 1 : Number(process.argv[i + 1]); })();
+if (!Number.isInteger(LOAD_SHIFT_AT) || LOAD_SHIFT_AT < -1 || !Number.isFinite(LOAD_SCALE) || LOAD_SCALE <= 0) {
+  throw new Error('load stress requires an integer --load-shift-at >= 0 and a positive --load-scale');
+}
+const LOAD_WORLD_VERSION = LOAD_SHIFT_AT >= 0 ? `-load-scale-${LOAD_SCALE}-at-${LOAD_SHIFT_AT}` : '';
 // R9：mid-run 电价表翻转（谷峰对调）——非平稳叠加
 function effectiveTariffLevel(hour) {
   const level = PRICE_LEVELS_BY_HOUR[hour % 24];
@@ -59,6 +65,12 @@ function effectiveTariffLevel(hour) {
 }
 function effectiveTariffPrice(hour) {
   return [TOU_TARIFF.valley, TOU_TARIFF.flat, TOU_TARIFF.peak][effectiveTariffLevel(hour)];
+}
+
+function effectiveLoadKw(hour) {
+  const base = loadKw(hour);
+  if (LOAD_SHIFT_AT < 0 || hour < LOAD_SHIFT_AT) return base;
+  return Math.round(base * LOAD_SCALE * 1000) / 1000;
 }
 
 const EVIDENCE_PUBLIC_KEY = 'MCowBQYDK2VwAyEA2R0znN74/jSx8OPrwSEnDH8UKEKU4l0es4XeSwfuOEY=';
@@ -99,7 +111,7 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v2' : ''}${TARIFF_WORLD_VERSION}`,
+      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v2' : ''}${TARIFF_WORLD_VERSION}${LOAD_WORLD_VERSION}`,
       capabilityIds: CAPABILITY_IDS,
       scenarioIds: ['steady'],
       valueSpec: UTILITY_MODE
@@ -161,7 +173,7 @@ function capabilitySafe(capabilityId, state) {
   const power = ESS_POWER[capabilityId] ?? 0;
   if (!batteryAllows(state.soc, power)) return false;
   // 防逆流投影：放电使并网点为负 → 不安全
-  return gridPowerKw({ load: loadKw(state.hour), pv: 0, essPower: power }) >= 0;
+  return gridPowerKw({ load: effectiveLoadKw(state.hour), pv: 0, essPower: power }) >= 0;
 }
 
 function effectivePrice(hour, state) {
@@ -194,7 +206,7 @@ function observation(state) {
 }
 
 function observationVector(state) {
-  const grid = gridPowerKw({ load: loadKw(state.hour), pv: 0, essPower: 0 });
+  const grid = gridPowerKw({ load: effectiveLoadKw(state.hour), pv: 0, essPower: 0 });
   return [
     grid / OBS_SCALE,
     Math.round((effectiveTariffPrice(state.hour) - 0.7) * 1000) / 1000,
@@ -213,7 +225,7 @@ function transition(state, request, manifest) {
     return rejected(state, request, 'BMS_SOC_BOUNDARY');
   }
   const nextSoc = batteryStep(state.soc, essPower);
-  const grid = gridPowerKw({ load: loadKw(state.hour), pv: 0, essPower });
+  const grid = gridPowerKw({ load: effectiveLoadKw(state.hour), pv: 0, essPower });
   if (grid < 0) {
     return rejected(state, request, 'GRID_EXPORT_NOT_ALLOWED');
   }
