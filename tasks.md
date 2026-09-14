@@ -1997,3 +1997,11 @@
 - 结果：20 个 seed、80 条真实 CLI Run 均完成，四格初态按 seed 匹配且跨 seed 唯一，Replay 全为 `CONSISTENT`。基准动力学下链组相对 base 的平均成本差为 `+61.75` 元，低效率动力学下为 `+199.25` 元；同 seed 差中差均值 `+137.50` 元，中位数 `+185.00` 元，近似 95% 配对区间 `[0.31, 274.69]` 元，结论为 `EVIDENCE_DYNAMICS_STRESS_INCREASES_CHAIN_COST`。
 - 验证：WorldPort 身份和公共 transition 测试先红后绿；R20 身份、SOC oracle、统计器定向测试共 `6/6` 通过，三个新增脚本和 adapter 语法检查通过。独立审计逐格读取 80 份 Lab，按 STEP 动作、效率动力学、固定负荷和静态 TOU 电价重算 SOC 与成本，重新执行 80 次 Replay；`verifiedRuns=80`、`replayConsistent=80`、最大 SOC 差 `0`、最大成本差 `0`，与报告均值一致。
 - 边界：这只覆盖当前 ESS、效率 `0.95/0.85`、单条负荷曲线、静态电价、h8 和 96 步，不能外推到其它效率、功率控制、设备老化或其它 WorldPort。近似 t 区间未验证差值正态性，256-bit 标签仍经当前 32-bit 初始化器映射。R20 报告绑定运行时源码指纹，后续 adapter 变更不应把新源码 Replay 冒充为旧实验复现。下一步应进入 3+ 动作或连续功率设定，同时保留四格配对和独立审计。
+
+## F-266 同 seed 四格的 ESS 动作空间×链信用交互（R21）
+
+- 缺口：R20 只改变 ESS 动力学参数，尚未检验底座在动作集合从 3 档扩展到 5 档后，链信用的行为和收益是否保持一致。
+- 实现：ESS adapter 新增可选 `--fine-grained-actions`，增加 `ess.charge-half` 与 `ess.discharge-half` 两个 ±50 kW 动作；能力集合、动作安全性和世界版本进入同一 WorldPort 身份。链信用按动作所属的充电/放电集合归类，Kernel 不增加领域分支。新增 R21 runner、独立功率/SOC oracle 和四格统计器；每个 CSPRNG seed 在 3 档/5 档 × 无链/有链四个独立 Lab 中随机化顺序。
+- 结果：20 个 seed、80 条真实 CLI Run 均完成，四格初态按 seed 匹配且跨 seed 唯一，Replay 全为 `CONSISTENT`。3 档动作下链组相对 base 的平均成本差为 `-119.25` 元，5 档动作下为 `+213.10` 元；同 seed 差中差均值 `+332.35` 元，中位数 `+295.50` 元，4 组为负、16 组为正，近似 95% 配对区间 `[120.26, 544.44]` 元，结论为 `EVIDENCE_POWER_GRID_INCREASES_CHAIN_COST`。
+- 验证：WorldPort 身份、半功率 transition、功率/SOC oracle 与统计器定向测试 `6/6` 通过，adapter 和三个 R21 脚本语法检查通过。独立审计逐格读取 80 个 Lab，按动作 token、固定功率表、SOC 动力学、负荷和 TOU 电价重算；`verifiedRuns=80`、`replayConsistent=80`、最大 SOC 差 `0`、最大成本差 `0`，差中差重算为 `332.35` 元，与报告一致。
+- 边界：本轮只覆盖当前 ESS、±100/±50/0 kW 五档离散动作、静态电价、单条负荷曲线、h8 和 96 步，不能外推到连续控制或其它 WorldPort。区间是近似 t 区间，差值分布未作正态性验证；结果只说明当前模拟中动作空间扩展改变了链信用成本差，不能说明扩展动作必然伤害任何任务。R21 报告绑定源码指纹 `c94cafa0ba726e2789a92749cc3f41879b42bfeb440f6d620690eb4c7403282b`，后续 adapter 变更不得冒充本轮复现。

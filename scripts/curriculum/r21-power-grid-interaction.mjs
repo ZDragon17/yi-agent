@@ -189,7 +189,7 @@ function writeJsonAtomically(filePath, value) {
   renameSync(temporaryPath, filePath);
 }
 function acceptedRuns(state) { return state.candidates.filter((candidate) => candidate.status === 'ACCEPTED').map((candidate) => candidate.factorial); }
-function conditionResultKey(label) { return label.replace(/-([a-z])/gu, (_, letter) => letter.toUpperCase()); }
+function conditionResultKey(label) { return label.replace(/-([a-z0-9])/gu, (_, character) => character.toUpperCase()); }
 function factorialResult(candidate) {
   const byLabel = new Map(Object.entries(candidate.conditions));
   const result = { sequence: candidate.sequence, seedLabel: candidate.seedLabel, treatmentOrder: candidate.treatmentOrder };

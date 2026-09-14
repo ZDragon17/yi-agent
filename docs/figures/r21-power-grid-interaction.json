@@ -1,0 +1,1238 @@
+{
+  "experiment": "R21-power-grid-interaction",
+  "analysisSource": "fresh-cli-runs",
+  "sourceFingerprint": "c94cafa0ba726e2789a92749cc3f41879b42bfeb440f6d620690eb4c7403282b",
+  "nodeVersion": "v26.7.0",
+  "design": {
+    "sameSeedRuns": 20,
+    "cellsPerSeed": 4,
+    "stepsPerCell": 96,
+    "planningHorizon": 8,
+    "valueMode": "signed-v1",
+    "cells": [
+      {
+        "label": "base-3",
+        "fineGrainedActions": false,
+        "chain": false
+      },
+      {
+        "label": "chain-3",
+        "fineGrainedActions": false,
+        "chain": true
+      },
+      {
+        "label": "base-5",
+        "fineGrainedActions": true,
+        "chain": false
+      },
+      {
+        "label": "chain-5",
+        "fineGrainedActions": true,
+        "chain": true
+      }
+    ],
+    "changedWorldCondition": "ESS action set changes from 3 actions (±100, 0 kW) to 5 actions (±100, ±50, 0 kW); load, tariff, battery dynamics, planning horizon, and all other settings remain fixed",
+    "primaryOutcome": "(chain-5 - base-5) - (chain-3 - base-3); positive means the expanded power grid changes the chain cost upward",
+    "seedSelection": "independent 256-bit labels from node:crypto.randomBytes; sample distribution is induced by the current seed initializer, not asserted uniform over uint32 states",
+    "treatmentOrder": "randomized independently within each seed using node:crypto.randomInt; every cell starts from a fresh Lab with the same seed label",
+    "stateSelection": "record STEP.rngBefore.state and reject only repeated initial states across seeds; repeated action traces remain valid coverage observations",
+    "interval": "approximate two-sided 95% paired Student-t interval for same-seed interaction, df=19; difference normality is not established",
+    "objectiveOracle": "STEP action token + independently encoded ESS power map, SOC dynamics, fixed public load, and TOU tariff; adapter settlement totals are not used",
+    "replayRequired": true
+  },
+  "effect": {
+    "nSeedRuns": 20,
+    "meanBase3ChainDeltaYuan": -119.25,
+    "meanBase5ChainDeltaYuan": 213.1,
+    "meanInteractionDeltaYuan": 332.35,
+    "medianInteractionDeltaYuan": 295.5,
+    "sampleStdDevInteractionYuan": 453.17,
+    "nominalCi95InteractionYuan": {
+      "low": 120.26,
+      "high": 544.44
+    },
+    "interactionLowerCost": 4,
+    "interactionHigherCost": 16,
+    "interactionTies": 0,
+    "uniqueInitialRngStates": 20,
+    "uniqueSeedLabels": 20,
+    "decision": "EVIDENCE_POWER_GRID_INCREASES_CHAIN_COST"
+  },
+  "worldCondition": {
+    "baseActions": [
+      "ess.charge",
+      "ess.discharge",
+      "ess.idle"
+    ],
+    "fineActions": [
+      "ess.charge",
+      "ess.charge-half",
+      "ess.discharge-half",
+      "ess.discharge",
+      "ess.idle"
+    ]
+  },
+  "runs": [
+    {
+      "sequence": 1,
+      "seedLabel": "r21-2a5dafaaa53b80ba67aea357a0aebd7da71cf3305e6035042aa5002f67e339fb",
+      "treatmentOrder": [
+        "base-5",
+        "chain-3",
+        "chain-5",
+        "base-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-2a5dafaaa53b80ba67aea357a0aebd7da71cf3305e6035042aa5002f67e339fb",
+        "condition": "base-3",
+        "initialRngState": 1186749246,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-2a5dafaaa53b80ba67aea357a0aebd7da71cf3305e6035042aa5002f67e339fb",
+        "condition": "chain-3",
+        "initialRngState": 1186749246,
+        "costYuan": 13282,
+        "actionChains": 30,
+        "unresolved": 17,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "18a64c2e62fb83681c0cba0fad62d3748406dfb0751d5d3cd8a40e552d654188",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-2a5dafaaa53b80ba67aea357a0aebd7da71cf3305e6035042aa5002f67e339fb",
+        "condition": "base-5",
+        "initialRngState": 1186749246,
+        "costYuan": 14157,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "751f87e6609c563fbc5196611e34302e51692950167847464722dd9c7a39f40a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-2a5dafaaa53b80ba67aea357a0aebd7da71cf3305e6035042aa5002f67e339fb",
+        "condition": "chain-5",
+        "initialRngState": 1186749246,
+        "costYuan": 14130,
+        "actionChains": 48,
+        "unresolved": 15,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "faa8ed4e8a898b364462c7cd64112ef94cefe52e4c0de0fa848d4660cb0a837c",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 2,
+      "seedLabel": "r21-5f738797569caf5594820537d3e25be7cef57006bfb2b193a83abfde4ccec6ec",
+      "treatmentOrder": [
+        "base-3",
+        "chain-3",
+        "base-5",
+        "chain-5"
+      ],
+      "base3": {
+        "seedLabel": "r21-5f738797569caf5594820537d3e25be7cef57006bfb2b193a83abfde4ccec6ec",
+        "condition": "base-3",
+        "initialRngState": 398898760,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-5f738797569caf5594820537d3e25be7cef57006bfb2b193a83abfde4ccec6ec",
+        "condition": "chain-3",
+        "initialRngState": 398898760,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-5f738797569caf5594820537d3e25be7cef57006bfb2b193a83abfde4ccec6ec",
+        "condition": "base-5",
+        "initialRngState": 398898760,
+        "costYuan": 13867,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "9f0d1a9c83de9e3c4a0f4d831d19647d38e6db6a0200feb44e564e2483c9a17d",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-5f738797569caf5594820537d3e25be7cef57006bfb2b193a83abfde4ccec6ec",
+        "condition": "chain-5",
+        "initialRngState": 398898760,
+        "costYuan": 14015,
+        "actionChains": 44,
+        "unresolved": 21,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "548d2783d43d802521ef52cd45566732762407fb04b00c4de0600aa831d17bd0",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 3,
+      "seedLabel": "r21-f8ac49d3792d5a01b1be4169088b6cf20ec1d54dceb3d30df44304d300812d4a",
+      "treatmentOrder": [
+        "base-3",
+        "chain-5",
+        "base-5",
+        "chain-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-f8ac49d3792d5a01b1be4169088b6cf20ec1d54dceb3d30df44304d300812d4a",
+        "condition": "base-3",
+        "initialRngState": 3038004116,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-f8ac49d3792d5a01b1be4169088b6cf20ec1d54dceb3d30df44304d300812d4a",
+        "condition": "chain-3",
+        "initialRngState": 3038004116,
+        "costYuan": 13707,
+        "actionChains": 40,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6e61a3d750fdd32debbf5610af1d1c5c99338fc3e23e3112991c2d4e6c94ec6f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-f8ac49d3792d5a01b1be4169088b6cf20ec1d54dceb3d30df44304d300812d4a",
+        "condition": "base-5",
+        "initialRngState": 3038004116,
+        "costYuan": 13685,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "26660c37644c9bda8cac9e19d357d0b194bbb25b3110476b67e0d50c9aa83676",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-f8ac49d3792d5a01b1be4169088b6cf20ec1d54dceb3d30df44304d300812d4a",
+        "condition": "chain-5",
+        "initialRngState": 3038004116,
+        "costYuan": 14202,
+        "actionChains": 50,
+        "unresolved": 18,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "f6b813d2599dfe5614a7551e1d06fd83d752a4a18a878e42c27f2b64fab58ec1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 4,
+      "seedLabel": "r21-5c9aac8d431b8d9c4f82fee97a4804f05cc5fc5f0ee7d8379a459717505d97c9",
+      "treatmentOrder": [
+        "base-5",
+        "chain-3",
+        "chain-5",
+        "base-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-5c9aac8d431b8d9c4f82fee97a4804f05cc5fc5f0ee7d8379a459717505d97c9",
+        "condition": "base-3",
+        "initialRngState": 3562722105,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-5c9aac8d431b8d9c4f82fee97a4804f05cc5fc5f0ee7d8379a459717505d97c9",
+        "condition": "chain-3",
+        "initialRngState": 3562722105,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "f3cf0845951c650f25f085de4e783fd54042a6c81f38c7cd845655ba6e1798d4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-5c9aac8d431b8d9c4f82fee97a4804f05cc5fc5f0ee7d8379a459717505d97c9",
+        "condition": "base-5",
+        "initialRngState": 3562722105,
+        "costYuan": 13965,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "82c86cde05d06565e79fcc1c90bfc2c23ae94403f5001cc6a19a11f95eef2db0",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-5c9aac8d431b8d9c4f82fee97a4804f05cc5fc5f0ee7d8379a459717505d97c9",
+        "condition": "chain-5",
+        "initialRngState": 3562722105,
+        "costYuan": 14412,
+        "actionChains": 42,
+        "unresolved": 15,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "34b04dc1d23c2b838059c6f7393ad754babed0ae4fef1d59a8ef5eb595ff32e3",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 5,
+      "seedLabel": "r21-f0ce0cd15ab76adf930a64d2e47f6bb9f211d624b49b0914f9118642ffd06ee5",
+      "treatmentOrder": [
+        "base-5",
+        "chain-5",
+        "base-3",
+        "chain-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-f0ce0cd15ab76adf930a64d2e47f6bb9f211d624b49b0914f9118642ffd06ee5",
+        "condition": "base-3",
+        "initialRngState": 3670875151,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-f0ce0cd15ab76adf930a64d2e47f6bb9f211d624b49b0914f9118642ffd06ee5",
+        "condition": "chain-3",
+        "initialRngState": 3670875151,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "f3cf0845951c650f25f085de4e783fd54042a6c81f38c7cd845655ba6e1798d4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-f0ce0cd15ab76adf930a64d2e47f6bb9f211d624b49b0914f9118642ffd06ee5",
+        "condition": "base-5",
+        "initialRngState": 3670875151,
+        "costYuan": 13775,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "18089a3037a4bc3b6e72a418d0109e01f4ac7431a34f8d13078f895f1c924c9b",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-f0ce0cd15ab76adf930a64d2e47f6bb9f211d624b49b0914f9118642ffd06ee5",
+        "condition": "chain-5",
+        "initialRngState": 3670875151,
+        "costYuan": 13572,
+        "actionChains": 40,
+        "unresolved": 15,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "2a39a395c352182eee620d53a091a66756f16d2dfb037c305dd2fc38ac0fbeb9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 6,
+      "seedLabel": "r21-e9b55fa22b95b07784e7c06ed928c5e768645ff3a59446c8d5f65f397592c340",
+      "treatmentOrder": [
+        "chain-5",
+        "base-5",
+        "base-3",
+        "chain-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-e9b55fa22b95b07784e7c06ed928c5e768645ff3a59446c8d5f65f397592c340",
+        "condition": "base-3",
+        "initialRngState": 3997070215,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-e9b55fa22b95b07784e7c06ed928c5e768645ff3a59446c8d5f65f397592c340",
+        "condition": "chain-3",
+        "initialRngState": 3997070215,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "ec26438aabd30c42dff24a175e7019dddbce12e515f929baeb09bc3cf13ab4db",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-e9b55fa22b95b07784e7c06ed928c5e768645ff3a59446c8d5f65f397592c340",
+        "condition": "base-5",
+        "initialRngState": 3997070215,
+        "costYuan": 13815,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "424f71b6014f33d70afcce16ca310c36d0ef11bb9d2f6e189536e77204701185",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-e9b55fa22b95b07784e7c06ed928c5e768645ff3a59446c8d5f65f397592c340",
+        "condition": "chain-5",
+        "initialRngState": 3997070215,
+        "costYuan": 13972,
+        "actionChains": 40,
+        "unresolved": 20,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "03b1339f1cb390311ed96070b70c5cb2646acc3321d4b6c905f8a53b0efa282f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 7,
+      "seedLabel": "r21-f81a0c89c604b595d5e4b52ad1beaf06657ea24baa8a7cb7f3884fb19d958b37",
+      "treatmentOrder": [
+        "base-5",
+        "chain-5",
+        "chain-3",
+        "base-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-f81a0c89c604b595d5e4b52ad1beaf06657ea24baa8a7cb7f3884fb19d958b37",
+        "condition": "base-3",
+        "initialRngState": 3390526702,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-f81a0c89c604b595d5e4b52ad1beaf06657ea24baa8a7cb7f3884fb19d958b37",
+        "condition": "chain-3",
+        "initialRngState": 3390526702,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "89bc113b3e73b1261fdec7113ec7209cd20b561adbb1da00e949d6a223e01ad3",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-f81a0c89c604b595d5e4b52ad1beaf06657ea24baa8a7cb7f3884fb19d958b37",
+        "condition": "base-5",
+        "initialRngState": 3390526702,
+        "costYuan": 13215,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "23620adf833cd26f670449ed8f451851652a19fb4d0cbae22139655bf8a1bb69",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-f81a0c89c604b595d5e4b52ad1beaf06657ea24baa8a7cb7f3884fb19d958b37",
+        "condition": "chain-5",
+        "initialRngState": 3390526702,
+        "costYuan": 14042,
+        "actionChains": 48,
+        "unresolved": 14,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "bb032edc5734948969edee7ec775657079afb9e163c31bcb7da8f8cd3b9eddce",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 8,
+      "seedLabel": "r21-234e5ec5eb38509504712f84e1c3118315786e2ceac96b23dd824968889201e2",
+      "treatmentOrder": [
+        "base-5",
+        "base-3",
+        "chain-5",
+        "chain-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-234e5ec5eb38509504712f84e1c3118315786e2ceac96b23dd824968889201e2",
+        "condition": "base-3",
+        "initialRngState": 3445380346,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-234e5ec5eb38509504712f84e1c3118315786e2ceac96b23dd824968889201e2",
+        "condition": "chain-3",
+        "initialRngState": 3445380346,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-234e5ec5eb38509504712f84e1c3118315786e2ceac96b23dd824968889201e2",
+        "condition": "base-5",
+        "initialRngState": 3445380346,
+        "costYuan": 14042,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b6c44333d7efffc54590f02798a84c2290127e0cd06a1023048ac6f21b31b235",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-234e5ec5eb38509504712f84e1c3118315786e2ceac96b23dd824968889201e2",
+        "condition": "chain-5",
+        "initialRngState": 3445380346,
+        "costYuan": 14305,
+        "actionChains": 32,
+        "unresolved": 18,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "15809d466646a0bdfda7665261882fc0da373f7801d734fdf9a4bcce9a92ceb9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 9,
+      "seedLabel": "r21-afb4c755e197e2bec7f4168f0c2414b721e10a3b77f38357aa025411243aac6c",
+      "treatmentOrder": [
+        "base-5",
+        "chain-5",
+        "chain-3",
+        "base-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-afb4c755e197e2bec7f4168f0c2414b721e10a3b77f38357aa025411243aac6c",
+        "condition": "base-3",
+        "initialRngState": 1301514904,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-afb4c755e197e2bec7f4168f0c2414b721e10a3b77f38357aa025411243aac6c",
+        "condition": "chain-3",
+        "initialRngState": 1301514904,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "be22b5183a52107c7a652a0de5b3750793c807c964242a3a060f364348e3341f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-afb4c755e197e2bec7f4168f0c2414b721e10a3b77f38357aa025411243aac6c",
+        "condition": "base-5",
+        "initialRngState": 1301514904,
+        "costYuan": 13977,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "3f997f15e79b5ff71833b682191a7a65afd6c398b0ed42ac9dc19b48726c72dd",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-afb4c755e197e2bec7f4168f0c2414b721e10a3b77f38357aa025411243aac6c",
+        "condition": "chain-5",
+        "initialRngState": 1301514904,
+        "costYuan": 13652,
+        "actionChains": 36,
+        "unresolved": 19,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "da7630c5eff2334d32f4f0bcc7be58be6fcd1afbd7e22e4f74c82821c2240f08",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 10,
+      "seedLabel": "r21-4e500a87328c2c70d8a717a24ea5d2b121d3b00f4b013c8eb3ee009d3d1fdb32",
+      "treatmentOrder": [
+        "chain-3",
+        "base-3",
+        "base-5",
+        "chain-5"
+      ],
+      "base3": {
+        "seedLabel": "r21-4e500a87328c2c70d8a717a24ea5d2b121d3b00f4b013c8eb3ee009d3d1fdb32",
+        "condition": "base-3",
+        "initialRngState": 161017548,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-4e500a87328c2c70d8a717a24ea5d2b121d3b00f4b013c8eb3ee009d3d1fdb32",
+        "condition": "chain-3",
+        "initialRngState": 161017548,
+        "costYuan": 13367,
+        "actionChains": 26,
+        "unresolved": 18,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "2f4df0fb34d51d92b24512f1715aff0bd6400ceb26a0d562d3f2783e9c22a4b6",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-4e500a87328c2c70d8a717a24ea5d2b121d3b00f4b013c8eb3ee009d3d1fdb32",
+        "condition": "base-5",
+        "initialRngState": 161017548,
+        "costYuan": 13682,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "2a404c51e93ebb7f6bfb9dda870e75440099974c76a211f52a171ab2ff92850a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-4e500a87328c2c70d8a717a24ea5d2b121d3b00f4b013c8eb3ee009d3d1fdb32",
+        "condition": "chain-5",
+        "initialRngState": 161017548,
+        "costYuan": 13897,
+        "actionChains": 34,
+        "unresolved": 20,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "3dcc3bf24dc417ef0ff9df9cc91bd17a066f01b7167938b9921d7e3fff605e6d",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 11,
+      "seedLabel": "r21-891e5d3291197537f212a76aa4a8664a611e22a4ee62e07b637228618fd13a11",
+      "treatmentOrder": [
+        "base-5",
+        "base-3",
+        "chain-5",
+        "chain-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-891e5d3291197537f212a76aa4a8664a611e22a4ee62e07b637228618fd13a11",
+        "condition": "base-3",
+        "initialRngState": 2627959260,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-891e5d3291197537f212a76aa4a8664a611e22a4ee62e07b637228618fd13a11",
+        "condition": "chain-3",
+        "initialRngState": 2627959260,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-891e5d3291197537f212a76aa4a8664a611e22a4ee62e07b637228618fd13a11",
+        "condition": "base-5",
+        "initialRngState": 2627959260,
+        "costYuan": 13780,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "98839251045f36f2f8cd83ec92f6bb4927276b07557e3cd95671037c08365924",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-891e5d3291197537f212a76aa4a8664a611e22a4ee62e07b637228618fd13a11",
+        "condition": "chain-5",
+        "initialRngState": 2627959260,
+        "costYuan": 13560,
+        "actionChains": 34,
+        "unresolved": 21,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "96c558b3f6b926ce24eee3c724c13dcb8fb94e2ccbbf48f021ee153612825d7f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 12,
+      "seedLabel": "r21-c47970ac37d8cc4b8d41d10ea3ee2bc03dbaf8f2248ea315ef47e2493d95b54b",
+      "treatmentOrder": [
+        "chain-3",
+        "base-3",
+        "base-5",
+        "chain-5"
+      ],
+      "base3": {
+        "seedLabel": "r21-c47970ac37d8cc4b8d41d10ea3ee2bc03dbaf8f2248ea315ef47e2493d95b54b",
+        "condition": "base-3",
+        "initialRngState": 1041255105,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-c47970ac37d8cc4b8d41d10ea3ee2bc03dbaf8f2248ea315ef47e2493d95b54b",
+        "condition": "chain-3",
+        "initialRngState": 1041255105,
+        "costYuan": 13707,
+        "actionChains": 40,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6e61a3d750fdd32debbf5610af1d1c5c99338fc3e23e3112991c2d4e6c94ec6f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-c47970ac37d8cc4b8d41d10ea3ee2bc03dbaf8f2248ea315ef47e2493d95b54b",
+        "condition": "base-5",
+        "initialRngState": 1041255105,
+        "costYuan": 13977,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "53366b36860d43dad51af4c201fb749b2ca314e910f5764cb9bba5f3c04197fa",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-c47970ac37d8cc4b8d41d10ea3ee2bc03dbaf8f2248ea315ef47e2493d95b54b",
+        "condition": "chain-5",
+        "initialRngState": 1041255105,
+        "costYuan": 13490,
+        "actionChains": 42,
+        "unresolved": 16,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "2464b849219858781c3e1d2a47f174ae8501fb17ac5c4e503d936e1136b9f2ac",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 13,
+      "seedLabel": "r21-637221b9d2c2d2afba67269d89736880dfa8e3f0eba4f51abe1e18b510a729bf",
+      "treatmentOrder": [
+        "chain-3",
+        "chain-5",
+        "base-3",
+        "base-5"
+      ],
+      "base3": {
+        "seedLabel": "r21-637221b9d2c2d2afba67269d89736880dfa8e3f0eba4f51abe1e18b510a729bf",
+        "condition": "base-3",
+        "initialRngState": 278656625,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-637221b9d2c2d2afba67269d89736880dfa8e3f0eba4f51abe1e18b510a729bf",
+        "condition": "chain-3",
+        "initialRngState": 278656625,
+        "costYuan": 13707,
+        "actionChains": 40,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6e61a3d750fdd32debbf5610af1d1c5c99338fc3e23e3112991c2d4e6c94ec6f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-637221b9d2c2d2afba67269d89736880dfa8e3f0eba4f51abe1e18b510a729bf",
+        "condition": "base-5",
+        "initialRngState": 278656625,
+        "costYuan": 13807,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "09c8d968faf8fcdaebb8e5770dd8f0c8918018985d6fd42d416d30e2addd97e1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-637221b9d2c2d2afba67269d89736880dfa8e3f0eba4f51abe1e18b510a729bf",
+        "condition": "chain-5",
+        "initialRngState": 278656625,
+        "costYuan": 14267,
+        "actionChains": 36,
+        "unresolved": 17,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a9c40701573758f8600d0b54d5dac73d566d1c88fb1c6d911b7240ac8d6dab2b",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 14,
+      "seedLabel": "r21-dc18cae66bd9583637d416ead926c4d82eb553968dbce004eb1c2da7aab39648",
+      "treatmentOrder": [
+        "base-5",
+        "chain-5",
+        "base-3",
+        "chain-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-dc18cae66bd9583637d416ead926c4d82eb553968dbce004eb1c2da7aab39648",
+        "condition": "base-3",
+        "initialRngState": 370349681,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-dc18cae66bd9583637d416ead926c4d82eb553968dbce004eb1c2da7aab39648",
+        "condition": "chain-3",
+        "initialRngState": 370349681,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-dc18cae66bd9583637d416ead926c4d82eb553968dbce004eb1c2da7aab39648",
+        "condition": "base-5",
+        "initialRngState": 370349681,
+        "costYuan": 13565,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "f877fad8f3ca202ca3fcffb5344d423554dee6063122dc48b3333e7651d511c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-dc18cae66bd9583637d416ead926c4d82eb553968dbce004eb1c2da7aab39648",
+        "condition": "chain-5",
+        "initialRngState": 370349681,
+        "costYuan": 14187,
+        "actionChains": 46,
+        "unresolved": 18,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "22bbd3613f987c36582c67b7ec8c404d102e3461f1855531b59069d99c73a530",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 15,
+      "seedLabel": "r21-95843012fc483c88813621ab17575e7d2b442573f971d74dd41f6e809d6537d3",
+      "treatmentOrder": [
+        "chain-3",
+        "chain-5",
+        "base-3",
+        "base-5"
+      ],
+      "base3": {
+        "seedLabel": "r21-95843012fc483c88813621ab17575e7d2b442573f971d74dd41f6e809d6537d3",
+        "condition": "base-3",
+        "initialRngState": 3074122604,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-95843012fc483c88813621ab17575e7d2b442573f971d74dd41f6e809d6537d3",
+        "condition": "chain-3",
+        "initialRngState": 3074122604,
+        "costYuan": 13687,
+        "actionChains": 40,
+        "unresolved": 12,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "dfdb100bb89742cac05d884825e6f92b0dd36e766b8d9b205e98d7b324590436",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-95843012fc483c88813621ab17575e7d2b442573f971d74dd41f6e809d6537d3",
+        "condition": "base-5",
+        "initialRngState": 3074122604,
+        "costYuan": 13677,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "7f3fbb77a148339a4684b21437c2e316a54401dd48f79f2da42b0d0c71703c49",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-95843012fc483c88813621ab17575e7d2b442573f971d74dd41f6e809d6537d3",
+        "condition": "chain-5",
+        "initialRngState": 3074122604,
+        "costYuan": 13875,
+        "actionChains": 40,
+        "unresolved": 17,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6e4206f76301b2d88ec948ecb4caf7aa9e1be59c3e4871f2d2feb0d28b7556ec",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 16,
+      "seedLabel": "r21-216f416896c76290017ef984da21a52ae307545bbbeac8fbf1b4d570697eea98",
+      "treatmentOrder": [
+        "base-5",
+        "chain-3",
+        "chain-5",
+        "base-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-216f416896c76290017ef984da21a52ae307545bbbeac8fbf1b4d570697eea98",
+        "condition": "base-3",
+        "initialRngState": 3663254956,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-216f416896c76290017ef984da21a52ae307545bbbeac8fbf1b4d570697eea98",
+        "condition": "chain-3",
+        "initialRngState": 3663254956,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "be22b5183a52107c7a652a0de5b3750793c807c964242a3a060f364348e3341f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-216f416896c76290017ef984da21a52ae307545bbbeac8fbf1b4d570697eea98",
+        "condition": "base-5",
+        "initialRngState": 3663254956,
+        "costYuan": 13510,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "85e25ed335010f2c1c29bf67e164d58528def14b85c14cb88f513ed92ff49ff1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-216f416896c76290017ef984da21a52ae307545bbbeac8fbf1b4d570697eea98",
+        "condition": "chain-5",
+        "initialRngState": 3663254956,
+        "costYuan": 14035,
+        "actionChains": 48,
+        "unresolved": 14,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "81c7626ce72de10317d373c99d1810ec800f3929f05aeb9c063c33533996b126",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 17,
+      "seedLabel": "r21-c10394bf4ce9e19f642bb1ce6d7ad9f90bab3771052e12e58cfd6f597cd21b4f",
+      "treatmentOrder": [
+        "chain-3",
+        "chain-5",
+        "base-5",
+        "base-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-c10394bf4ce9e19f642bb1ce6d7ad9f90bab3771052e12e58cfd6f597cd21b4f",
+        "condition": "base-3",
+        "initialRngState": 4182710907,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-c10394bf4ce9e19f642bb1ce6d7ad9f90bab3771052e12e58cfd6f597cd21b4f",
+        "condition": "chain-3",
+        "initialRngState": 4182710907,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "f3cf0845951c650f25f085de4e783fd54042a6c81f38c7cd845655ba6e1798d4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-c10394bf4ce9e19f642bb1ce6d7ad9f90bab3771052e12e58cfd6f597cd21b4f",
+        "condition": "base-5",
+        "initialRngState": 4182710907,
+        "costYuan": 13830,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "ad1bc8793205c8cd0e1bfbe496039bd83f57ecc53588c77860c2be72643c2671",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-c10394bf4ce9e19f642bb1ce6d7ad9f90bab3771052e12e58cfd6f597cd21b4f",
+        "condition": "chain-5",
+        "initialRngState": 4182710907,
+        "costYuan": 14235,
+        "actionChains": 42,
+        "unresolved": 17,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "fd7ec3e5a4ad0089d3b0ef09bb2b61d7474cd084076d708b0ebfd7a7b4cfda7a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 18,
+      "seedLabel": "r21-c7ee67d58f5d9009a9b23171ec7f3032aa714b9e98c7c34776f70e85911b1c18",
+      "treatmentOrder": [
+        "base-3",
+        "chain-3",
+        "chain-5",
+        "base-5"
+      ],
+      "base3": {
+        "seedLabel": "r21-c7ee67d58f5d9009a9b23171ec7f3032aa714b9e98c7c34776f70e85911b1c18",
+        "condition": "base-3",
+        "initialRngState": 3708130502,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-c7ee67d58f5d9009a9b23171ec7f3032aa714b9e98c7c34776f70e85911b1c18",
+        "condition": "chain-3",
+        "initialRngState": 3708130502,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-c7ee67d58f5d9009a9b23171ec7f3032aa714b9e98c7c34776f70e85911b1c18",
+        "condition": "base-5",
+        "initialRngState": 3708130502,
+        "costYuan": 13675,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6f1e03315bee08c4e979776ad94186850f6fd666ca466086bc3e70b13fb0414c",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-c7ee67d58f5d9009a9b23171ec7f3032aa714b9e98c7c34776f70e85911b1c18",
+        "condition": "chain-5",
+        "initialRngState": 3708130502,
+        "costYuan": 13800,
+        "actionChains": 38,
+        "unresolved": 22,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "3c6631a87407f8d79e055a1daff062f83d2d995cbe27fd8cf47a21a589bb88c0",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 19,
+      "seedLabel": "r21-38ad8d33c7afcb795db2988d9d176424d8cacd6f82780251c802a5c3eb7b1dc6",
+      "treatmentOrder": [
+        "base-5",
+        "chain-5",
+        "chain-3",
+        "base-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-38ad8d33c7afcb795db2988d9d176424d8cacd6f82780251c802a5c3eb7b1dc6",
+        "condition": "base-3",
+        "initialRngState": 2798346922,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-38ad8d33c7afcb795db2988d9d176424d8cacd6f82780251c802a5c3eb7b1dc6",
+        "condition": "chain-3",
+        "initialRngState": 2798346922,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "be22b5183a52107c7a652a0de5b3750793c807c964242a3a060f364348e3341f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-38ad8d33c7afcb795db2988d9d176424d8cacd6f82780251c802a5c3eb7b1dc6",
+        "condition": "base-5",
+        "initialRngState": 2798346922,
+        "costYuan": 13827,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "77100c8e6f65a8d69e46be0ee20178df799d95005c44ff60197a22eca5f866c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-38ad8d33c7afcb795db2988d9d176424d8cacd6f82780251c802a5c3eb7b1dc6",
+        "condition": "chain-5",
+        "initialRngState": 2798346922,
+        "costYuan": 14005,
+        "actionChains": 44,
+        "unresolved": 13,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4de632715f5611d60700bfaadadfc6b0c6ee252e77ef66666da835a7bd0138d8",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    },
+    {
+      "sequence": 20,
+      "seedLabel": "r21-986dfce74349b171a92ae17eab711f53dc664765bbd9fa26e1654c613d411a47",
+      "treatmentOrder": [
+        "base-3",
+        "chain-5",
+        "base-5",
+        "chain-3"
+      ],
+      "base3": {
+        "seedLabel": "r21-986dfce74349b171a92ae17eab711f53dc664765bbd9fa26e1654c613d411a47",
+        "condition": "base-3",
+        "initialRngState": 1865370975,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1"
+      },
+      "chain3": {
+        "seedLabel": "r21-986dfce74349b171a92ae17eab711f53dc664765bbd9fa26e1654c613d411a47",
+        "condition": "chain-3",
+        "initialRngState": 1865370975,
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2"
+      },
+      "base5": {
+        "seedLabel": "r21-986dfce74349b171a92ae17eab711f53dc664765bbd9fa26e1654c613d411a47",
+        "condition": "base-5",
+        "initialRngState": 1865370975,
+        "costYuan": 13885,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6116341d4ce87cb6a015609d6d39d77d35d5c9ed086f043837ab6b52a3ab9403",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-power-grid-v1"
+      },
+      "chain5": {
+        "seedLabel": "r21-986dfce74349b171a92ae17eab711f53dc664765bbd9fa26e1654c613d411a47",
+        "condition": "chain-5",
+        "initialRngState": 1865370975,
+        "costYuan": 14322,
+        "actionChains": 44,
+        "unresolved": 12,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "c53f498864dab3b8a65e787234ff19151a4d46968bc88d43de45cbc373c3f056",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-power-grid-v1"
+      }
+    }
+  ],
+  "rejectedCandidates": []
+}
