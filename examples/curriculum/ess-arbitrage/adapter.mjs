@@ -98,7 +98,7 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v1' : ''}`,
+      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v2' : ''}`,
       capabilityIds: CAPABILITY_IDS,
       scenarioIds: ['steady'],
       valueSpec: UTILITY_MODE
@@ -250,12 +250,14 @@ function transition(state, request, manifest) {
       usedExecutionNonces: [...state.usedExecutionNonces.slice(-7), request.executionNonce],
       ...(UTILITY_MODE ? { utilityYuan: nextUtilityYuan } : {}),
     };
+    const feedbackSnapshot = pendingChain === null ? null : observation(state);
     const chainFeedback = pendingChain === null ? [] : [{
       schemaVersion: VERSION,
       executionNonce: pendingChain.members[0],
-      vector: observationVector(nextChain),
-      stateVersion: nextChain.stateVersion,
-      intervalId: nextChain.stateVersion,
+      // 链反馈截在当前动作前，不能把非链成员的释放动作归给旧链。
+      vector: feedbackSnapshot.vector,
+      stateVersion: feedbackSnapshot.stateVersion,
+      intervalId: feedbackSnapshot.intervalId,
       confounderCount: 0,
       creditChain: {
         schemaVersion: VERSION,

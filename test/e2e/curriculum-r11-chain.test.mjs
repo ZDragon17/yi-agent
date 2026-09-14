@@ -15,10 +15,9 @@ function tariffPrice(hour) {
 }
 
 // R11：动作链信用的策略收益（CURRICULUM L5 开放方向的直接实验）。
-// 关键发现（docs/figures/r11-chain-gain.json 存档）：种子敏感性显著——无链
-// 配置跨 seed 的缺口从 +7.15% 到 -3.4%（高方差），链配置聚在基线附近
-// （+0.07% 到 -2.3%）。稳健断言：3 seed × 2 配置，链的均值严格优于无链，
-// 且每次链运行都有成对 ACTION_CHAIN 结算。
+// 修正释放反馈切点后的正式测量见 docs/figures/r11-chain-gain.json：h1 链接近基线，
+// h4/h8 有净节省。此测试另用 3 seed 检查 h8 链组均值是否低于无链组，不把单次
+// 实验的收益幅度当作通用保证；每条链运行还必须产生 ACTION_CHAIN 并通过 Replay。
 const R11_SEEDS = ['alpha', 'beta', 'gamma'];
 
 test('R11: chain credit settles ACTION_CHAIN pairs and beats the no-chain mean across seeds', async () => {

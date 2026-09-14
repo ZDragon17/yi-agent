@@ -30,23 +30,23 @@
     {
       "chain": true,
       "horizon": 1,
-      "cost": 14257,
-      "actionChains": 28,
-      "gapPct": 4.51
+      "cost": 13662,
+      "actionChains": 24,
+      "gapPct": 0.15
     },
     {
       "chain": true,
       "horizon": 4,
-      "cost": 13767,
-      "actionChains": 34,
-      "gapPct": 0.92
+      "cost": 13107,
+      "actionChains": 24,
+      "gapPct": -3.92
     },
     {
       "chain": true,
       "horizon": 8,
-      "cost": 13652,
-      "actionChains": 32,
-      "gapPct": 0.07
+      "cost": 13107,
+      "actionChains": 24,
+      "gapPct": -3.92
     }
   ]
 }

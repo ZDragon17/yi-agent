@@ -67,6 +67,21 @@ test('R14: value projection is persisted, chain feedback settles, and all four C
       if (config.chain) assert.ok(chainSettlements.length > 0, `${config.label} must settle chain credit`);
       else assert.equal(chainSettlements.length, 0, `${config.label} must not settle chain credit`);
 
+      if (config.chain) {
+        const releases = events.flatMap((event) =>
+          (event.payload.postObservation.feedback ?? [])
+            .filter((feedback) => feedback.creditChain !== undefined)
+            .map((feedback) => ({ event, feedback })),
+        );
+        assert.ok(releases.length > 0, 'utility-pair must emit chain feedback');
+        for (const { event, feedback } of releases) {
+          assert.deepEqual(feedback.vector, event.payload.beforeObservation.vector);
+          assert.equal(feedback.stateVersion, event.payload.beforeObservation.stateVersion);
+          assert.equal(feedback.intervalId, event.payload.beforeObservation.intervalId);
+          if (config.utility) assert.notEqual(feedback.vector[3], event.payload.postObservation.vector[3]);
+        }
+      }
+
       const replay = await invoke(['replay', '--lab', lab, '--run', 'r', '--adapter', adapter, '--json']);
       assert.equal(replay.code, 0, JSON.stringify(replay));
       assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');

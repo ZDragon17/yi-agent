@@ -29,29 +29,29 @@
       ]
     },
     "distance-pair": {
-      "mean": 13392,
-      "meanGapPct": -1.83,
+      "mean": 13514,
+      "meanGapPct": -0.94,
       "runs": [
         {
           "seed": "alpha",
           "valueMode": "distance-v2",
-          "cost": 13327,
-          "chains": 26,
-          "unresolved": 16
+          "cost": 13512,
+          "chains": 24,
+          "unresolved": 15
         },
         {
           "seed": "beta",
           "valueMode": "distance-v2",
-          "cost": 13197,
-          "chains": 26,
-          "unresolved": 10
+          "cost": 13922,
+          "chains": 24,
+          "unresolved": 12
         },
         {
           "seed": "gamma",
           "valueMode": "distance-v2",
-          "cost": 13652,
-          "chains": 32,
-          "unresolved": 16
+          "cost": 13107,
+          "chains": 24,
+          "unresolved": 17
         }
       ]
     },
@@ -83,37 +83,37 @@
       ]
     },
     "utility-pair": {
-      "mean": 13942,
-      "meanGapPct": 2.2,
+      "mean": 13767,
+      "meanGapPct": 0.92,
       "runs": [
         {
           "seed": "alpha",
           "valueMode": "signed-v1",
-          "cost": 13757,
-          "chains": 34,
-          "unresolved": 11
+          "cost": 13687,
+          "chains": 40,
+          "unresolved": 12
         },
         {
           "seed": "beta",
           "valueMode": "signed-v1",
-          "cost": 13757,
-          "chains": 34,
-          "unresolved": 11
+          "cost": 13892,
+          "chains": 38,
+          "unresolved": 9
         },
         {
           "seed": "gamma",
           "valueMode": "signed-v1",
-          "cost": 14312,
-          "chains": 30,
+          "cost": 13722,
+          "chains": 34,
           "unresolved": 9
         }
       ]
     }
   },
   "interaction": {
-    "distanceChainDelta": -135,
-    "utilityChainDelta": -73,
-    "distanceProjectionDelta": -550,
+    "distanceChainDelta": -13,
+    "utilityChainDelta": -248,
+    "distanceProjectionDelta": -253,
     "baseProjectionDelta": -488
   }
 }

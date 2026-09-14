@@ -26,74 +26,74 @@
       ]
     },
     "pair": {
-      "mean": 13279,
-      "meanGapPct": -2.66,
+      "mean": 13867,
+      "meanGapPct": 1.65,
       "runs": [
         {
           "seed": "alpha",
-          "cost": 13197,
-          "chains": 26,
-          "unresolved": 10
+          "cost": 13922,
+          "chains": 24,
+          "unresolved": 12
         },
         {
           "seed": "beta",
-          "cost": 13327,
-          "chains": 26,
-          "unresolved": 16
+          "cost": 13512,
+          "chains": 24,
+          "unresolved": 15
         },
         {
           "seed": "gamma",
-          "cost": 13312,
-          "chains": 24,
-          "unresolved": 9
+          "cost": 14167,
+          "chains": 16,
+          "unresolved": 5
         }
       ]
     },
     "multi2": {
-      "mean": 13585,
-      "meanGapPct": -0.42,
+      "mean": 13962,
+      "meanGapPct": 2.35,
       "runs": [
         {
           "seed": "alpha",
-          "cost": 13647,
+          "cost": 14162,
           "chains": 32,
-          "unresolved": 14
+          "unresolved": 8
         },
         {
           "seed": "beta",
-          "cost": 13647,
+          "cost": 14162,
           "chains": 32,
-          "unresolved": 14
+          "unresolved": 8
         },
         {
           "seed": "gamma",
-          "cost": 13462,
-          "chains": 21,
-          "unresolved": 5
+          "cost": 13562,
+          "chains": 34,
+          "unresolved": 10
         }
       ]
     },
     "multi3": {
-      "mean": 13774,
-      "meanGapPct": 0.97,
+      "mean": 13684,
+      "meanGapPct": 0.31,
       "runs": [
         {
           "seed": "alpha",
-          "cost": 13797,
-          "chains": 39,
-          "unresolved": 3
+          "cost": 13802,
+          "chains": 35,
+          "unresolved": 0
         },
         {
           "seed": "beta",
-          "cost": 13727,
-          "chains": 37,
-          "unresolved": 5
+          "cost": 13447,
+          "chains": 30,
+          "unresolved": 3
         },
         {
           "seed": "gamma",
-          "cost": 13797,
-          "chains": 39,
-          "unresolved": 3
+          "cost": 13802,
+          "chains": 35,
+          "unresolved": 0
         }
       ]
     }
