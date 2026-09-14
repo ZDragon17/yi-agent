@@ -50,6 +50,7 @@ const CHAIN_MAX_CHARGES = (() => {
   return parsed;
 })();
 const REGIME_SHIFT_AT = (() => { const i = process.argv.indexOf('--regime-shift-at'); return i === -1 ? -1 : Number(process.argv[i + 1]); })();
+const TARIFF_WORLD_VERSION = REGIME_SHIFT_AT >= 0 ? `-tariff-flip-${REGIME_SHIFT_AT}` : '';
 // R9：mid-run 电价表翻转（谷峰对调）——非平稳叠加
 function effectiveTariffLevel(hour) {
   const level = PRICE_LEVELS_BY_HOUR[hour % 24];
@@ -98,7 +99,7 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v2' : ''}`,
+      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v2' : ''}${TARIFF_WORLD_VERSION}`,
       capabilityIds: CAPABILITY_IDS,
       scenarioIds: ['steady'],
       valueSpec: UTILITY_MODE
