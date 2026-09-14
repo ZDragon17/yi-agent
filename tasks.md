@@ -1947,5 +1947,5 @@
 - 缺口：R11-R13 都在默认 `distance-v2` 投影下测量链收益；真实目标是累计电费，而默认观测不直接表达累计成本，因此不能判断收益来自链信用、价值投影，还是二者交互。
 - 实现：新增 `scripts/curriculum/r14-utility-projection.mjs`，用相同 alpha/beta/gamma seed、h8、96 步，对照 `distance-v2` 与 WorldPort 显式声明的 `signed-v1` 累计效用，再分别开关 pair 链；结果写入 `docs/figures/r14-utility-projection.json`。
 - 结果（负结果，如实记录）：默认投影 base/pair 均值为 `13527/-0.84%`、`13392/-1.83%`，链边际为 `-135`；累计效用投影 base/pair 为 `14015/+2.74%`、`13942/+2.20%`，链边际仅 `-73`。累计效用投影没有改善成本，且两种投影下单 seed 的链方向都会翻转，未复现“稳定净套利”。
-- 验证：12 条真实 CLI 运行全部 `COMPLETED`，每条独立 Replay 均为 `CONSISTENT`；四组 STEP 边界分别确认 `distance-v2` 与 `signed-v1`。该轮只检验已有价值语义，不修改 Kernel。
+- 验证：12 条真实 CLI 运行全部 `COMPLETED`，每条独立 Replay 均为 `CONSISTENT`；四组 STEP 边界分别确认 `distance-v2` 与 `signed-v1`。新增 R14 CLI E2E 以共享 seed 对四种投影/链分支各运行 48 步，`1/1` 通过（含链实际结算与四条 Replay）。该轮只检验已有价值语义，不修改 Kernel。
 - 边界：这是 3 个共享 seed 的受控模拟，不足以证明某种投影普遍更差；它只排除了“增加累计成本维度就自然得到长期智能”的假设。下一步应把独立因果证据或策略层利用信号接入同一对照，而不是继续堆叠观测维度。
