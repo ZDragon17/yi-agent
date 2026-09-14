@@ -1,0 +1,1310 @@
+{
+  "experiment": "R20-dynamics-interaction",
+  "analysisSource": "fresh-cli-runs",
+  "sourceFingerprint": "cf5bfa75389ef2d882614983fa0fef7fb1001d1735814a216aaed5e80b4e3917",
+  "nodeVersion": "v26.7.0",
+  "design": {
+    "sameSeedRuns": 20,
+    "cellsPerSeed": 4,
+    "stepsPerCell": 96,
+    "planningHorizon": 8,
+    "valueMode": "signed-v1",
+    "cells": [
+      {
+        "label": "baseline-base",
+        "chain": false,
+        "batteryEfficiency": 0.95
+      },
+      {
+        "label": "baseline-chain",
+        "chain": true,
+        "batteryEfficiency": 0.95
+      },
+      {
+        "label": "dynamic-base",
+        "chain": false,
+        "batteryEfficiency": 0.85
+      },
+      {
+        "label": "dynamic-chain",
+        "chain": true,
+        "batteryEfficiency": 0.85
+      }
+    ],
+    "changedWorldCondition": "ESS charge/discharge efficiency changes from 0.95 to 0.85; load, tariff, planning horizon, and all other settings remain fixed",
+    "primaryOutcome": "(dynamic-chain - dynamic-base) - (baseline-chain - baseline-base); positive means dynamics stress increases chain cost relative to base",
+    "seedSelection": "independent 256-bit labels from node:crypto.randomBytes; sample distribution is induced by the current seed initializer, not asserted uniform over uint32 states",
+    "treatmentOrder": "randomized independently within each seed using node:crypto.randomInt; every cell starts from a fresh Lab with the same seed label",
+    "stateSelection": "record STEP.rngBefore.state and reject only repeated initial states across seeds; repeated action traces remain valid coverage observations",
+    "interval": "approximate two-sided 95% paired Student-t interval for same-seed interaction, df=19; difference normality is not established",
+    "objectiveOracle": "STEP action token + independently encoded SOC dynamics + fixed public load and TOU tariff; adapter settlement totals are not used",
+    "replayRequired": true
+  },
+  "effect": {
+    "nSeedRuns": 20,
+    "meanBaselineChainDeltaYuan": 61.75,
+    "medianBaselineChainDeltaYuan": 87.5,
+    "meanDynamicChainDeltaYuan": 199.25,
+    "medianDynamicChainDeltaYuan": 350,
+    "meanInteractionDeltaYuan": 137.5,
+    "medianInteractionDeltaYuan": 185,
+    "sampleStdDevInteractionYuan": 293.13,
+    "nominalCi95InteractionYuan": {
+      "low": 0.31,
+      "high": 274.69
+    },
+    "interactionLowerCost": 7,
+    "interactionHigherCost": 13,
+    "interactionTies": 0,
+    "uniqueInitialRngStates": 20,
+    "uniqueSeedLabels": 20,
+    "decision": "EVIDENCE_DYNAMICS_STRESS_INCREASES_CHAIN_COST"
+  },
+  "worldCondition": {
+    "baselineBatteryEfficiency": 0.95,
+    "dynamicBatteryEfficiency": 0.85
+  },
+  "runs": [
+    {
+      "sequence": 1,
+      "seedLabel": "r20-eb32758b7f77f95052379f1f56652dc41d27edf173736af9857af0e034ea5d7f",
+      "treatmentOrder": [
+        "baseline-base",
+        "baseline-chain",
+        "dynamic-chain",
+        "dynamic-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-eb32758b7f77f95052379f1f56652dc41d27edf173736af9857af0e034ea5d7f",
+        "condition": "baseline-base",
+        "initialRngState": 3041667603,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-eb32758b7f77f95052379f1f56652dc41d27edf173736af9857af0e034ea5d7f",
+        "condition": "baseline-chain",
+        "initialRngState": 3041667603,
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-eb32758b7f77f95052379f1f56652dc41d27edf173736af9857af0e034ea5d7f",
+        "condition": "dynamic-base",
+        "initialRngState": 3041667603,
+        "costYuan": 14082,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "760f76a188cd210a5b2cffc41a3ce78bb9dca7bcd09a11c89c25f2742f51260a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-eb32758b7f77f95052379f1f56652dc41d27edf173736af9857af0e034ea5d7f",
+        "condition": "dynamic-chain",
+        "initialRngState": 3041667603,
+        "costYuan": 14477,
+        "actionChains": 36,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a7ac5e50f650a81976337eeb251dbdc0d10b9569c63ea8ef58c7161e2d9793a4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 2,
+      "seedLabel": "r20-4745a5703a5daf7966cee367be95ab33691fe046467a8a95bfb5f577b70e4e6e",
+      "treatmentOrder": [
+        "dynamic-chain",
+        "baseline-base",
+        "dynamic-base",
+        "baseline-chain"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-4745a5703a5daf7966cee367be95ab33691fe046467a8a95bfb5f577b70e4e6e",
+        "condition": "baseline-base",
+        "initialRngState": 3761714665,
+        "costYuan": 14222,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "21b460290871e273a3cf97775751cff44ce7fd50473f20ebb2e9ed7341c02e4a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-4745a5703a5daf7966cee367be95ab33691fe046467a8a95bfb5f577b70e4e6e",
+        "condition": "baseline-chain",
+        "initialRngState": 3761714665,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-4745a5703a5daf7966cee367be95ab33691fe046467a8a95bfb5f577b70e4e6e",
+        "condition": "dynamic-base",
+        "initialRngState": 3761714665,
+        "costYuan": 13927,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "52d47bee0a73e2de27c789c1af4e98cd4c07fbb894d56313ece9a30859c8913d",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-4745a5703a5daf7966cee367be95ab33691fe046467a8a95bfb5f577b70e4e6e",
+        "condition": "dynamic-chain",
+        "initialRngState": 3761714665,
+        "costYuan": 13862,
+        "actionChains": 26,
+        "unresolved": 23,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "089204c31b30bf2c9d4f401dc5b29cab39aef156dbab4bc9499e8b2faec0f7bb",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 3,
+      "seedLabel": "r20-885c98b7bf6ed5528262c43dc98ee4d43f33ddb4bb06d431cfd35a87edd39719",
+      "treatmentOrder": [
+        "baseline-base",
+        "baseline-chain",
+        "dynamic-chain",
+        "dynamic-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-885c98b7bf6ed5528262c43dc98ee4d43f33ddb4bb06d431cfd35a87edd39719",
+        "condition": "baseline-base",
+        "initialRngState": 2973869220,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-885c98b7bf6ed5528262c43dc98ee4d43f33ddb4bb06d431cfd35a87edd39719",
+        "condition": "baseline-chain",
+        "initialRngState": 2973869220,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "fa6726b328952d6f74de2de31773195b5370af06dd42fca455d7291f8c1858ed",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-885c98b7bf6ed5528262c43dc98ee4d43f33ddb4bb06d431cfd35a87edd39719",
+        "condition": "dynamic-base",
+        "initialRngState": 2973869220,
+        "costYuan": 13992,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "c191691ba63708e4284e19ae5d66d6e4e46c45a9b2930e0a81066dcb14c75b63",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-885c98b7bf6ed5528262c43dc98ee4d43f33ddb4bb06d431cfd35a87edd39719",
+        "condition": "dynamic-chain",
+        "initialRngState": 2973869220,
+        "costYuan": 13887,
+        "actionChains": 26,
+        "unresolved": 23,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "938586c2b9d3d64cbdd5ddd530def7bce5bae92745ea86504f23465b2e9abd7c",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 4,
+      "seedLabel": "r20-ee61b19ac07a09e5ee5a2aa9d8507e7778d72c6a4ed77f9f9c20388de0aa1048",
+      "treatmentOrder": [
+        "dynamic-chain",
+        "baseline-chain",
+        "dynamic-base",
+        "baseline-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-ee61b19ac07a09e5ee5a2aa9d8507e7778d72c6a4ed77f9f9c20388de0aa1048",
+        "condition": "baseline-base",
+        "initialRngState": 4160177926,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-ee61b19ac07a09e5ee5a2aa9d8507e7778d72c6a4ed77f9f9c20388de0aa1048",
+        "condition": "baseline-chain",
+        "initialRngState": 4160177926,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-ee61b19ac07a09e5ee5a2aa9d8507e7778d72c6a4ed77f9f9c20388de0aa1048",
+        "condition": "dynamic-base",
+        "initialRngState": 4160177926,
+        "costYuan": 14057,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1feec399abb09d38f4acb906acc7140b209728a32e27b6d792e2b0c5d0be56b7",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-ee61b19ac07a09e5ee5a2aa9d8507e7778d72c6a4ed77f9f9c20388de0aa1048",
+        "condition": "dynamic-chain",
+        "initialRngState": 4160177926,
+        "costYuan": 13862,
+        "actionChains": 26,
+        "unresolved": 23,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "089204c31b30bf2c9d4f401dc5b29cab39aef156dbab4bc9499e8b2faec0f7bb",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 5,
+      "seedLabel": "r20-c354b85179ceacc29ce95114ae0680bebd8fa920e067e9814bf698817a377ac1",
+      "treatmentOrder": [
+        "dynamic-base",
+        "dynamic-chain",
+        "baseline-chain",
+        "baseline-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-c354b85179ceacc29ce95114ae0680bebd8fa920e067e9814bf698817a377ac1",
+        "condition": "baseline-base",
+        "initialRngState": 2577881648,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-c354b85179ceacc29ce95114ae0680bebd8fa920e067e9814bf698817a377ac1",
+        "condition": "baseline-chain",
+        "initialRngState": 2577881648,
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "ab34c4db6b20eaf2f7e81d1faa33f2e98ea1f22267bfdefe6630b6d8b69df509",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-c354b85179ceacc29ce95114ae0680bebd8fa920e067e9814bf698817a377ac1",
+        "condition": "dynamic-base",
+        "initialRngState": 2577881648,
+        "costYuan": 13992,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "c191691ba63708e4284e19ae5d66d6e4e46c45a9b2930e0a81066dcb14c75b63",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-c354b85179ceacc29ce95114ae0680bebd8fa920e067e9814bf698817a377ac1",
+        "condition": "dynamic-chain",
+        "initialRngState": 2577881648,
+        "costYuan": 14407,
+        "actionChains": 36,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "077b57b6e2a103702f008e5721eec24ed03eb9bcd90d24f685593498bd1c9209",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 6,
+      "seedLabel": "r20-49510311f98aa35063f7403f991c05ae509b20299e8cc2f72d4e834f2f20f19d",
+      "treatmentOrder": [
+        "dynamic-chain",
+        "baseline-base",
+        "dynamic-base",
+        "baseline-chain"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-49510311f98aa35063f7403f991c05ae509b20299e8cc2f72d4e834f2f20f19d",
+        "condition": "baseline-base",
+        "initialRngState": 1888539450,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-49510311f98aa35063f7403f991c05ae509b20299e8cc2f72d4e834f2f20f19d",
+        "condition": "baseline-chain",
+        "initialRngState": 1888539450,
+        "costYuan": 13992,
+        "actionChains": 38,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "c7e02a166e536081b09e93ff3922a3b1488a76dbddef000bb0f4cb83c6387f56",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-49510311f98aa35063f7403f991c05ae509b20299e8cc2f72d4e834f2f20f19d",
+        "condition": "dynamic-base",
+        "initialRngState": 1888539450,
+        "costYuan": 13992,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "c191691ba63708e4284e19ae5d66d6e4e46c45a9b2930e0a81066dcb14c75b63",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-49510311f98aa35063f7403f991c05ae509b20299e8cc2f72d4e834f2f20f19d",
+        "condition": "dynamic-chain",
+        "initialRngState": 1888539450,
+        "costYuan": 14307,
+        "actionChains": 30,
+        "unresolved": 18,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4a51eb4c2e5270b5467d7f4b052b6eb7da2de688deef54e7a7021aee0714be42",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 7,
+      "seedLabel": "r20-4a9a75b0acaf77b23deabde1da0a3eb36d7ffa91b04fb21b2f9abdac7fa9c9ae",
+      "treatmentOrder": [
+        "dynamic-chain",
+        "baseline-chain",
+        "dynamic-base",
+        "baseline-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-4a9a75b0acaf77b23deabde1da0a3eb36d7ffa91b04fb21b2f9abdac7fa9c9ae",
+        "condition": "baseline-base",
+        "initialRngState": 3031500787,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-4a9a75b0acaf77b23deabde1da0a3eb36d7ffa91b04fb21b2f9abdac7fa9c9ae",
+        "condition": "baseline-chain",
+        "initialRngState": 3031500787,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "5c59533c462a4293cff5a3f35ae36700a15fbe07d1beec1436e29c9f4008440b",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-4a9a75b0acaf77b23deabde1da0a3eb36d7ffa91b04fb21b2f9abdac7fa9c9ae",
+        "condition": "dynamic-base",
+        "initialRngState": 3031500787,
+        "costYuan": 14082,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "760f76a188cd210a5b2cffc41a3ce78bb9dca7bcd09a11c89c25f2742f51260a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-4a9a75b0acaf77b23deabde1da0a3eb36d7ffa91b04fb21b2f9abdac7fa9c9ae",
+        "condition": "dynamic-chain",
+        "initialRngState": 3031500787,
+        "costYuan": 14357,
+        "actionChains": 32,
+        "unresolved": 13,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "00f15f95cdad2803481a6f5f5a0d42591fe5b90f154b31d3ad5d1994e0b017f2",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 8,
+      "seedLabel": "r20-fa581b2ae721c9f2b8cfe0ccd066d5445afda50ea4513d9ea23cb79ee08c7402",
+      "treatmentOrder": [
+        "dynamic-base",
+        "baseline-chain",
+        "baseline-base",
+        "dynamic-chain"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-fa581b2ae721c9f2b8cfe0ccd066d5445afda50ea4513d9ea23cb79ee08c7402",
+        "condition": "baseline-base",
+        "initialRngState": 3462037797,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-fa581b2ae721c9f2b8cfe0ccd066d5445afda50ea4513d9ea23cb79ee08c7402",
+        "condition": "baseline-chain",
+        "initialRngState": 3462037797,
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-fa581b2ae721c9f2b8cfe0ccd066d5445afda50ea4513d9ea23cb79ee08c7402",
+        "condition": "dynamic-base",
+        "initialRngState": 3462037797,
+        "costYuan": 14082,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "760f76a188cd210a5b2cffc41a3ce78bb9dca7bcd09a11c89c25f2742f51260a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-fa581b2ae721c9f2b8cfe0ccd066d5445afda50ea4513d9ea23cb79ee08c7402",
+        "condition": "dynamic-chain",
+        "initialRngState": 3462037797,
+        "costYuan": 14477,
+        "actionChains": 36,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a7ac5e50f650a81976337eeb251dbdc0d10b9569c63ea8ef58c7161e2d9793a4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 9,
+      "seedLabel": "r20-5cf626381552c35f44a9146694dedf5a701b2f272c6d0f42bc62e086154d2180",
+      "treatmentOrder": [
+        "dynamic-chain",
+        "baseline-base",
+        "dynamic-base",
+        "baseline-chain"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-5cf626381552c35f44a9146694dedf5a701b2f272c6d0f42bc62e086154d2180",
+        "condition": "baseline-base",
+        "initialRngState": 267231410,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-5cf626381552c35f44a9146694dedf5a701b2f272c6d0f42bc62e086154d2180",
+        "condition": "baseline-chain",
+        "initialRngState": 267231410,
+        "costYuan": 13707,
+        "actionChains": 40,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6e61a3d750fdd32debbf5610af1d1c5c99338fc3e23e3112991c2d4e6c94ec6f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-5cf626381552c35f44a9146694dedf5a701b2f272c6d0f42bc62e086154d2180",
+        "condition": "dynamic-base",
+        "initialRngState": 267231410,
+        "costYuan": 14057,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1feec399abb09d38f4acb906acc7140b209728a32e27b6d792e2b0c5d0be56b7",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-5cf626381552c35f44a9146694dedf5a701b2f272c6d0f42bc62e086154d2180",
+        "condition": "dynamic-chain",
+        "initialRngState": 267231410,
+        "costYuan": 14407,
+        "actionChains": 36,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "58567173f68d74c83c8200299fc29d36e36703f58d841b8b24666693806df2f4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 10,
+      "seedLabel": "r20-1b3aea57954cd8989f50c2e1737b4007f65ada26466cc2f2c9d92f0ca7510121",
+      "treatmentOrder": [
+        "baseline-base",
+        "dynamic-chain",
+        "dynamic-base",
+        "baseline-chain"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-1b3aea57954cd8989f50c2e1737b4007f65ada26466cc2f2c9d92f0ca7510121",
+        "condition": "baseline-base",
+        "initialRngState": 2324463376,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-1b3aea57954cd8989f50c2e1737b4007f65ada26466cc2f2c9d92f0ca7510121",
+        "condition": "baseline-chain",
+        "initialRngState": 2324463376,
+        "costYuan": 14012,
+        "actionChains": 36,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1a87f282383a7586a7d74add1831e87e7492b6661c1e76f11e8abd6d6f05e5aa",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-1b3aea57954cd8989f50c2e1737b4007f65ada26466cc2f2c9d92f0ca7510121",
+        "condition": "dynamic-base",
+        "initialRngState": 2324463376,
+        "costYuan": 14057,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1feec399abb09d38f4acb906acc7140b209728a32e27b6d792e2b0c5d0be56b7",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-1b3aea57954cd8989f50c2e1737b4007f65ada26466cc2f2c9d92f0ca7510121",
+        "condition": "dynamic-chain",
+        "initialRngState": 2324463376,
+        "costYuan": 14162,
+        "actionChains": 30,
+        "unresolved": 19,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "f9f3014dd11f0a003d6a4c76b67abd870f974272bec694ac7bc888f5d133ed9d",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 11,
+      "seedLabel": "r20-f8f8ad13740b5b9c60bd133d6b2ee6af3054a2045f39dac7eb22a1f625b24f8b",
+      "treatmentOrder": [
+        "dynamic-chain",
+        "dynamic-base",
+        "baseline-chain",
+        "baseline-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-f8f8ad13740b5b9c60bd133d6b2ee6af3054a2045f39dac7eb22a1f625b24f8b",
+        "condition": "baseline-base",
+        "initialRngState": 3389034645,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-f8f8ad13740b5b9c60bd133d6b2ee6af3054a2045f39dac7eb22a1f625b24f8b",
+        "condition": "baseline-chain",
+        "initialRngState": 3389034645,
+        "costYuan": 13707,
+        "actionChains": 40,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6e61a3d750fdd32debbf5610af1d1c5c99338fc3e23e3112991c2d4e6c94ec6f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-f8f8ad13740b5b9c60bd133d6b2ee6af3054a2045f39dac7eb22a1f625b24f8b",
+        "condition": "dynamic-base",
+        "initialRngState": 3389034645,
+        "costYuan": 14057,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1feec399abb09d38f4acb906acc7140b209728a32e27b6d792e2b0c5d0be56b7",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-f8f8ad13740b5b9c60bd133d6b2ee6af3054a2045f39dac7eb22a1f625b24f8b",
+        "condition": "dynamic-chain",
+        "initialRngState": 3389034645,
+        "costYuan": 14407,
+        "actionChains": 36,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "58567173f68d74c83c8200299fc29d36e36703f58d841b8b24666693806df2f4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 12,
+      "seedLabel": "r20-466fdcff4623248960275af6f0ef06a988654652da94e837e16b588e17ff81bf",
+      "treatmentOrder": [
+        "baseline-base",
+        "dynamic-chain",
+        "baseline-chain",
+        "dynamic-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-466fdcff4623248960275af6f0ef06a988654652da94e837e16b588e17ff81bf",
+        "condition": "baseline-base",
+        "initialRngState": 2205052432,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-466fdcff4623248960275af6f0ef06a988654652da94e837e16b588e17ff81bf",
+        "condition": "baseline-chain",
+        "initialRngState": 2205052432,
+        "costYuan": 13722,
+        "actionChains": 34,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "be22b5183a52107c7a652a0de5b3750793c807c964242a3a060f364348e3341f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-466fdcff4623248960275af6f0ef06a988654652da94e837e16b588e17ff81bf",
+        "condition": "dynamic-base",
+        "initialRngState": 2205052432,
+        "costYuan": 14057,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1feec399abb09d38f4acb906acc7140b209728a32e27b6d792e2b0c5d0be56b7",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-466fdcff4623248960275af6f0ef06a988654652da94e837e16b588e17ff81bf",
+        "condition": "dynamic-chain",
+        "initialRngState": 2205052432,
+        "costYuan": 14487,
+        "actionChains": 38,
+        "unresolved": 12,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "aacf835b9f21e9ce69044e34e54d5d68684bbb275201e790ddf4cd2ec1862fa4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 13,
+      "seedLabel": "r20-21dd7b4057648684c2932a1d34cb8cb6dc7b6b0c824722ebec1a09f3ede8973d",
+      "treatmentOrder": [
+        "baseline-chain",
+        "dynamic-chain",
+        "baseline-base",
+        "dynamic-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-21dd7b4057648684c2932a1d34cb8cb6dc7b6b0c824722ebec1a09f3ede8973d",
+        "condition": "baseline-base",
+        "initialRngState": 826977327,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-21dd7b4057648684c2932a1d34cb8cb6dc7b6b0c824722ebec1a09f3ede8973d",
+        "condition": "baseline-chain",
+        "initialRngState": 826977327,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-21dd7b4057648684c2932a1d34cb8cb6dc7b6b0c824722ebec1a09f3ede8973d",
+        "condition": "dynamic-base",
+        "initialRngState": 826977327,
+        "costYuan": 14057,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1feec399abb09d38f4acb906acc7140b209728a32e27b6d792e2b0c5d0be56b7",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-21dd7b4057648684c2932a1d34cb8cb6dc7b6b0c824722ebec1a09f3ede8973d",
+        "condition": "dynamic-chain",
+        "initialRngState": 826977327,
+        "costYuan": 13862,
+        "actionChains": 26,
+        "unresolved": 23,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "089204c31b30bf2c9d4f401dc5b29cab39aef156dbab4bc9499e8b2faec0f7bb",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 14,
+      "seedLabel": "r20-909373dde7d8aa9c8f35aac17f84222f488447a98a8dca306fecbd16fed3dfbd",
+      "treatmentOrder": [
+        "baseline-chain",
+        "dynamic-chain",
+        "baseline-base",
+        "dynamic-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-909373dde7d8aa9c8f35aac17f84222f488447a98a8dca306fecbd16fed3dfbd",
+        "condition": "baseline-base",
+        "initialRngState": 3018414569,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-909373dde7d8aa9c8f35aac17f84222f488447a98a8dca306fecbd16fed3dfbd",
+        "condition": "baseline-chain",
+        "initialRngState": 3018414569,
+        "costYuan": 13707,
+        "actionChains": 40,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6e61a3d750fdd32debbf5610af1d1c5c99338fc3e23e3112991c2d4e6c94ec6f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-909373dde7d8aa9c8f35aac17f84222f488447a98a8dca306fecbd16fed3dfbd",
+        "condition": "dynamic-base",
+        "initialRngState": 3018414569,
+        "costYuan": 14057,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1feec399abb09d38f4acb906acc7140b209728a32e27b6d792e2b0c5d0be56b7",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-909373dde7d8aa9c8f35aac17f84222f488447a98a8dca306fecbd16fed3dfbd",
+        "condition": "dynamic-chain",
+        "initialRngState": 3018414569,
+        "costYuan": 14407,
+        "actionChains": 36,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "58567173f68d74c83c8200299fc29d36e36703f58d841b8b24666693806df2f4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 15,
+      "seedLabel": "r20-89ded1f8d5a9a8e4d10713e683f83720f41107cfb22f5dc2de40dce21db95268",
+      "treatmentOrder": [
+        "baseline-chain",
+        "dynamic-chain",
+        "dynamic-base",
+        "baseline-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-89ded1f8d5a9a8e4d10713e683f83720f41107cfb22f5dc2de40dce21db95268",
+        "condition": "baseline-base",
+        "initialRngState": 3393233647,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-89ded1f8d5a9a8e4d10713e683f83720f41107cfb22f5dc2de40dce21db95268",
+        "condition": "baseline-chain",
+        "initialRngState": 3393233647,
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-89ded1f8d5a9a8e4d10713e683f83720f41107cfb22f5dc2de40dce21db95268",
+        "condition": "dynamic-base",
+        "initialRngState": 3393233647,
+        "costYuan": 14082,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "760f76a188cd210a5b2cffc41a3ce78bb9dca7bcd09a11c89c25f2742f51260a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-89ded1f8d5a9a8e4d10713e683f83720f41107cfb22f5dc2de40dce21db95268",
+        "condition": "dynamic-chain",
+        "initialRngState": 3393233647,
+        "costYuan": 14477,
+        "actionChains": 36,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a7ac5e50f650a81976337eeb251dbdc0d10b9569c63ea8ef58c7161e2d9793a4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 16,
+      "seedLabel": "r20-679efd17f34b23110db8ef32afc335e2b6cff78c455772e53ad39242e22b506b",
+      "treatmentOrder": [
+        "baseline-chain",
+        "baseline-base",
+        "dynamic-chain",
+        "dynamic-base"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-679efd17f34b23110db8ef32afc335e2b6cff78c455772e53ad39242e22b506b",
+        "condition": "baseline-base",
+        "initialRngState": 4290353329,
+        "costYuan": 13602,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "b9aafe10ab49e6b0af32bca97fb680a0fad82d960a64aac9e5d2b503635ed7c1",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-679efd17f34b23110db8ef32afc335e2b6cff78c455772e53ad39242e22b506b",
+        "condition": "baseline-chain",
+        "initialRngState": 4290353329,
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a31e4285884b617302646f92916ce657aa4456d93f19851d149b7a562be06559",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-679efd17f34b23110db8ef32afc335e2b6cff78c455772e53ad39242e22b506b",
+        "condition": "dynamic-base",
+        "initialRngState": 4290353329,
+        "costYuan": 14082,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "760f76a188cd210a5b2cffc41a3ce78bb9dca7bcd09a11c89c25f2742f51260a",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-679efd17f34b23110db8ef32afc335e2b6cff78c455772e53ad39242e22b506b",
+        "condition": "dynamic-chain",
+        "initialRngState": 4290353329,
+        "costYuan": 14477,
+        "actionChains": 36,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "a7ac5e50f650a81976337eeb251dbdc0d10b9569c63ea8ef58c7161e2d9793a4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 17,
+      "seedLabel": "r20-f4ed1d2f90b2b59d57c45f83a464787b57f00cc13ea6c29871f0ee0eda134426",
+      "treatmentOrder": [
+        "baseline-base",
+        "dynamic-base",
+        "dynamic-chain",
+        "baseline-chain"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-f4ed1d2f90b2b59d57c45f83a464787b57f00cc13ea6c29871f0ee0eda134426",
+        "condition": "baseline-base",
+        "initialRngState": 3279979760,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-f4ed1d2f90b2b59d57c45f83a464787b57f00cc13ea6c29871f0ee0eda134426",
+        "condition": "baseline-chain",
+        "initialRngState": 3279979760,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-f4ed1d2f90b2b59d57c45f83a464787b57f00cc13ea6c29871f0ee0eda134426",
+        "condition": "dynamic-base",
+        "initialRngState": 3279979760,
+        "costYuan": 14057,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1feec399abb09d38f4acb906acc7140b209728a32e27b6d792e2b0c5d0be56b7",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-f4ed1d2f90b2b59d57c45f83a464787b57f00cc13ea6c29871f0ee0eda134426",
+        "condition": "dynamic-chain",
+        "initialRngState": 3279979760,
+        "costYuan": 13862,
+        "actionChains": 26,
+        "unresolved": 23,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "089204c31b30bf2c9d4f401dc5b29cab39aef156dbab4bc9499e8b2faec0f7bb",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 18,
+      "seedLabel": "r20-7275722c6a72eb313b920d14b5e2b650319b10c3601681595c28b394ebd52f59",
+      "treatmentOrder": [
+        "baseline-chain",
+        "dynamic-base",
+        "baseline-base",
+        "dynamic-chain"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-7275722c6a72eb313b920d14b5e2b650319b10c3601681595c28b394ebd52f59",
+        "condition": "baseline-base",
+        "initialRngState": 2927399465,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-7275722c6a72eb313b920d14b5e2b650319b10c3601681595c28b394ebd52f59",
+        "condition": "baseline-chain",
+        "initialRngState": 2927399465,
+        "costYuan": 13927,
+        "actionChains": 40,
+        "unresolved": 8,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "4fa322dc9d62e72383cff9b95ca6f66c79afe6142c2213d2f4a856ec10d5b1c9",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-7275722c6a72eb313b920d14b5e2b650319b10c3601681595c28b394ebd52f59",
+        "condition": "dynamic-base",
+        "initialRngState": 2927399465,
+        "costYuan": 14057,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1feec399abb09d38f4acb906acc7140b209728a32e27b6d792e2b0c5d0be56b7",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-7275722c6a72eb313b920d14b5e2b650319b10c3601681595c28b394ebd52f59",
+        "condition": "dynamic-chain",
+        "initialRngState": 2927399465,
+        "costYuan": 13862,
+        "actionChains": 26,
+        "unresolved": 23,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "089204c31b30bf2c9d4f401dc5b29cab39aef156dbab4bc9499e8b2faec0f7bb",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 19,
+      "seedLabel": "r20-4caa3d451fe8b3408a61101ed3692bcba8c09d0913f49ac46d10c6e408664697",
+      "treatmentOrder": [
+        "dynamic-base",
+        "baseline-base",
+        "dynamic-chain",
+        "baseline-chain"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-4caa3d451fe8b3408a61101ed3692bcba8c09d0913f49ac46d10c6e408664697",
+        "condition": "baseline-base",
+        "initialRngState": 3377351715,
+        "costYuan": 13572,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "568cdf514a5e936ccff5d1305ea618dd5a431ee2f3ff60353b6ad2f975d23e25",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-4caa3d451fe8b3408a61101ed3692bcba8c09d0913f49ac46d10c6e408664697",
+        "condition": "baseline-chain",
+        "initialRngState": 3377351715,
+        "costYuan": 13807,
+        "actionChains": 34,
+        "unresolved": 10,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "134a1ad8f4f76efc83f607cb52fe045a5834170a263331972d1db636aabec235",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-4caa3d451fe8b3408a61101ed3692bcba8c09d0913f49ac46d10c6e408664697",
+        "condition": "dynamic-base",
+        "initialRngState": 3377351715,
+        "costYuan": 13992,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "c191691ba63708e4284e19ae5d66d6e4e46c45a9b2930e0a81066dcb14c75b63",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-4caa3d451fe8b3408a61101ed3692bcba8c09d0913f49ac46d10c6e408664697",
+        "condition": "dynamic-chain",
+        "initialRngState": 3377351715,
+        "costYuan": 14407,
+        "actionChains": 36,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "156caba869e9c795df1b44e96faafbe5941773184904845b66bc9f56c519dcd6",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    },
+    {
+      "sequence": 20,
+      "seedLabel": "r20-90f43e0f3e958af1eb270a52a8270311e001bdf763553cf62c5691f709be7d19",
+      "treatmentOrder": [
+        "baseline-base",
+        "dynamic-base",
+        "dynamic-chain",
+        "baseline-chain"
+      ],
+      "baselineBase": {
+        "seedLabel": "r20-90f43e0f3e958af1eb270a52a8270311e001bdf763553cf62c5691f709be7d19",
+        "condition": "baseline-base",
+        "initialRngState": 1900067219,
+        "costYuan": 13872,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1ab1562635d9f3b694ba23abe8da0f143449c2b83de897a327634d4d6c5e1f60",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1",
+        "worldImplementationDigest": "sha256:83899a73bb618b8fd89c439b74d11a42021ee005c42269bb95c50223a4dd517e"
+      },
+      "baselineChain": {
+        "seedLabel": "r20-90f43e0f3e958af1eb270a52a8270311e001bdf763553cf62c5691f709be7d19",
+        "condition": "baseline-chain",
+        "initialRngState": 1900067219,
+        "costYuan": 13707,
+        "actionChains": 40,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "6e61a3d750fdd32debbf5610af1d1c5c99338fc3e23e3112991c2d4e6c94ec6f",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2",
+        "worldImplementationDigest": "sha256:8c7667df836b9c2f3f5a2a7140d32c8e5d2463cbb8a2db5fc6929eb153b2d17c"
+      },
+      "dynamicBase": {
+        "seedLabel": "r20-90f43e0f3e958af1eb270a52a8270311e001bdf763553cf62c5691f709be7d19",
+        "condition": "dynamic-base",
+        "initialRngState": 1900067219,
+        "costYuan": 14057,
+        "actionChains": 0,
+        "unresolved": 0,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "1feec399abb09d38f4acb906acc7140b209728a32e27b6d792e2b0c5d0be56b7",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:88d500a32ac1abecaa1be924e74a3f25d5995d44852de99d422ee92711389a1b"
+      },
+      "dynamicChain": {
+        "seedLabel": "r20-90f43e0f3e958af1eb270a52a8270311e001bdf763553cf62c5691f709be7d19",
+        "condition": "dynamic-chain",
+        "initialRngState": 1900067219,
+        "costYuan": 14407,
+        "actionChains": 36,
+        "unresolved": 9,
+        "valueMode": "signed-v1",
+        "actionTraceDigest": "58567173f68d74c83c8200299fc29d36e36703f58d841b8b24666693806df2f4",
+        "replay": "CONSISTENT",
+        "worldVersion": "ess-arbitrage-2-d2-utility-v1-chain-v2-battery-efficiency-0.85",
+        "worldImplementationDigest": "sha256:fc492ead42282eea09e87f52623c69eadb03ce1f705e8cd95b5a2df9e26edba0"
+      }
+    }
+  ],
+  "rejectedCandidates": []
+}

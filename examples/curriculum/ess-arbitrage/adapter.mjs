@@ -16,8 +16,6 @@ import { createInterface } from 'node:readline';
 import {
   PRICE_LEVELS_BY_HOUR,
   BATTERY,
-  batteryAllows,
-  batteryStep,
   gridPowerKw,
   loadKw,
   priceChannel,
@@ -57,6 +55,12 @@ if (!Number.isInteger(LOAD_SHIFT_AT) || LOAD_SHIFT_AT < -1 || !Number.isFinite(L
   throw new Error('load stress requires an integer --load-shift-at >= 0 and a positive --load-scale');
 }
 const LOAD_WORLD_VERSION = LOAD_SHIFT_AT >= 0 ? `-load-scale-${LOAD_SCALE}-at-${LOAD_SHIFT_AT}` : '';
+const BATTERY_EFFICIENCY_INDEX = process.argv.indexOf('--battery-efficiency');
+const BATTERY_EFFICIENCY = BATTERY_EFFICIENCY_INDEX === -1 ? BATTERY.efficiency : Number(process.argv[BATTERY_EFFICIENCY_INDEX + 1]);
+if (!Number.isFinite(BATTERY_EFFICIENCY) || BATTERY_EFFICIENCY <= 0 || BATTERY_EFFICIENCY > 1) {
+  throw new Error('battery dynamics requires a positive --battery-efficiency <= 1');
+}
+const BATTERY_WORLD_VERSION = BATTERY_EFFICIENCY_INDEX >= 0 ? `-battery-efficiency-${BATTERY_EFFICIENCY}` : '';
 // R9：mid-run 电价表翻转（谷峰对调）——非平稳叠加
 function effectiveTariffLevel(hour) {
   const level = PRICE_LEVELS_BY_HOUR[hour % 24];
@@ -71,6 +75,16 @@ function effectiveLoadKw(hour) {
   const base = loadKw(hour);
   if (LOAD_SHIFT_AT < 0 || hour < LOAD_SHIFT_AT) return base;
   return Math.round(base * LOAD_SCALE * 1000) / 1000;
+}
+
+function effectiveBatteryStep(soc, powerKw, hours = 1) {
+  const deltaSoc = (powerKw * hours * (powerKw > 0 ? BATTERY_EFFICIENCY : 1 / BATTERY_EFFICIENCY) * 100) / BATTERY.capacityKWh;
+  return Math.round(Math.min(100, Math.max(0, soc + deltaSoc)) * 1000) / 1000;
+}
+
+function effectiveBatteryAllows(soc, powerKw) {
+  const next = effectiveBatteryStep(soc, powerKw);
+  return next >= BATTERY.socMin && next <= BATTERY.socMax;
 }
 
 const EVIDENCE_PUBLIC_KEY = 'MCowBQYDK2VwAyEA2R0znN74/jSx8OPrwSEnDH8UKEKU4l0es4XeSwfuOEY=';
@@ -111,7 +125,7 @@ function dispatch(op, payload) {
     const descriptor = {
       adapterId: ADAPTER_ID,
       worldId: WORLD_ID,
-      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v2' : ''}${TARIFF_WORLD_VERSION}${LOAD_WORLD_VERSION}`,
+      worldVersion: `ess-arbitrage-2-d${SETTLEMENT_DELAY}${UTILITY_MODE ? '-utility-v1' : ''}${CHAIN_CREDIT ? '-chain-v2' : ''}${TARIFF_WORLD_VERSION}${LOAD_WORLD_VERSION}${BATTERY_WORLD_VERSION}`,
       capabilityIds: CAPABILITY_IDS,
       scenarioIds: ['steady'],
       valueSpec: UTILITY_MODE
@@ -171,7 +185,7 @@ function dispatch(op, payload) {
 
 function capabilitySafe(capabilityId, state) {
   const power = ESS_POWER[capabilityId] ?? 0;
-  if (!batteryAllows(state.soc, power)) return false;
+  if (!effectiveBatteryAllows(state.soc, power)) return false;
   // 防逆流投影：放电使并网点为负 → 不安全
   return gridPowerKw({ load: effectiveLoadKw(state.hour), pv: 0, essPower: power }) >= 0;
 }
@@ -221,10 +235,10 @@ function transition(state, request, manifest) {
   if (entry === undefined) throw new Error('unknown action token');
   const essPower = ESS_POWER[entry.capabilityId] ?? 0;
 
-  if (!batteryAllows(state.soc, essPower)) {
+  if (!effectiveBatteryAllows(state.soc, essPower)) {
     return rejected(state, request, 'BMS_SOC_BOUNDARY');
   }
-  const nextSoc = batteryStep(state.soc, essPower);
+  const nextSoc = effectiveBatteryStep(state.soc, essPower);
   const grid = gridPowerKw({ load: effectiveLoadKw(state.hour), pv: 0, essPower });
   if (grid < 0) {
     return rejected(state, request, 'GRID_EXPORT_NOT_ALLOWED');

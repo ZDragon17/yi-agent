@@ -1989,3 +1989,11 @@
 - 结果：20 个 seed、80 条真实 CLI Run 均完成，四格初态按 seed 匹配且跨 seed 唯一，Replay 全为 `CONSISTENT`。正常负荷下链组相对 base 的平均成本差为 `-126.50` 元，压力负荷下为 `-69.00` 元；同 seed 差中差均值 `+57.50` 元，中位数 `+37.50` 元，9 组为负、11 组为正，近似 95% 配对区间 `[-44.93, 159.93]` 元，结论为 `INCONCLUSIVE_LOAD_INTERACTION`。
 - 验证：WorldPort 负荷身份测试先红后绿；R17 身份、R17 模型、R18 统计与 R19 统计定向测试共 `8/8` 通过，三个新增脚本和 adapter 语法检查通过。独立审计逐格读取 80 份 Lab，按 STEP 动作、压力负荷 oracle 和静态 TOU 电价重算成本，重新执行 80 次 Replay；`verifiedRuns=80`、`replayConsistent=80`、最大成本差 `0` 元，与报告均值 `57.5` 元一致。
 - 边界：压力只覆盖当前 ESS、单条负荷曲线、×1.2、小时 48、h8 和 96 步，不能外推到其它 WorldPort、倍率、时点或真实设备。近似 t 区间未验证差值正态性，256-bit 标签仍经当前 32-bit 初始化器映射。历史 R18/R19 报告绑定各自运行时源码指纹；后续 adapter 变更不应把新源码 Replay 冒充为旧实验复现。下一步应保持同 seed 四格设计，单独改变 ESS 充放电动力学。
+
+## F-265 同 seed 四格的 ESS 动力学×链信用交互（R20）
+
+- 缺口：R19 的负荷压力交互区间跨过 0，不能说明链信用交互是否依赖世界动力学；下一轮需要只改变储能动力学，并把动作后的真实 SOC 纳入独立审计。
+- 实现：ESS adapter 新增可选 `--battery-efficiency`，效率参数同时进入充放电 SOC 转移和 BMS 安全判断，`worldVersion` 写入 `battery-efficiency-0.85`。新增独立 SOC oracle、统计器和可恢复 R20 runner；每个 CSPRNG seed 在基准/低效率 × 无链/有链四个独立 Lab 中随机化顺序，四格共用 seed 并校验初始 RNG 状态。
+- 结果：20 个 seed、80 条真实 CLI Run 均完成，四格初态按 seed 匹配且跨 seed 唯一，Replay 全为 `CONSISTENT`。基准动力学下链组相对 base 的平均成本差为 `+61.75` 元，低效率动力学下为 `+199.25` 元；同 seed 差中差均值 `+137.50` 元，中位数 `+185.00` 元，近似 95% 配对区间 `[0.31, 274.69]` 元，结论为 `EVIDENCE_DYNAMICS_STRESS_INCREASES_CHAIN_COST`。
+- 验证：WorldPort 身份和公共 transition 测试先红后绿；R20 身份、SOC oracle、统计器定向测试共 `6/6` 通过，三个新增脚本和 adapter 语法检查通过。独立审计逐格读取 80 份 Lab，按 STEP 动作、效率动力学、固定负荷和静态 TOU 电价重算 SOC 与成本，重新执行 80 次 Replay；`verifiedRuns=80`、`replayConsistent=80`、最大 SOC 差 `0`、最大成本差 `0`，与报告均值一致。
+- 边界：这只覆盖当前 ESS、效率 `0.95/0.85`、单条负荷曲线、静态电价、h8 和 96 步，不能外推到其它效率、功率控制、设备老化或其它 WorldPort。近似 t 区间未验证差值正态性，256-bit 标签仍经当前 32-bit 初始化器映射。R20 报告绑定运行时源码指纹，后续 adapter 变更不应把新源码 Replay 冒充为旧实验复现。下一步应进入 3+ 动作或连续功率设定，同时保留四格配对和独立审计。
