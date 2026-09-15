@@ -167,6 +167,12 @@ F-139 不升级 Kernel 版本，而是补齐 v32 的两面反证：独立见证�
 - 验证：测试仍通过真实 CLI、持久 WorldPort、账本和 Replay；本次结果把旧负结果标为已被当前行为反证，而不是修改成本阈值掩盖差异。
 - 边界：这只是单 seed、短窗口和受限 ESS adapter 的规划收益证据，不能推出长期套利、跨步信用或现实经济收益已经成立；后续仍需多 seed、延迟反馈和独立对照。
 
+## F-276 候选集跨内置 WorldPort 闭环
+
+- 设计：同一个候选集协议分别进入 temperature、virtual-desktop、inventory 和 queue 四个内置 WorldPort。每个实验都由 Advisor 提供一个安全主候选和一个不同的备选，WorldPort 可以把备选标成 unsafe，但不能被模型绕过。
+- 验证：4/4 个 WorldPort 都完成真实 `init→agent run→STEP→Replay`；候选集大小和摘要指纹均写入 policy evidence，`applied=true`，Replay 全部为 `CONSISTENT`。
+- 边界：这证明候选集的传输、过滤、持久化和重放不依赖这四个领域的名称或维度，不证明候选质量、跨领域迁移收益，也不覆盖真实副作用 WorldPort。网格的拒绝路径仍由既有测试单独验证。
+
 ## L6（远景，属外部卡点）
 
 真实设备遥测接入（数据通道 WorldPort + 人工数据契约）、真实经济结算。

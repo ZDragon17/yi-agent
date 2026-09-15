@@ -1013,6 +1013,39 @@ test('application evaluates model candidates with the kernel and replays the sel
   });
 });
 
+test('application carries candidate-set evidence across built-in WorldPorts', async () => {
+  await withLab(async (root) => {
+    for (const worldId of ['temperature', 'virtual-desktop', 'inventory', 'queue']) {
+      const lab = path.join(root, worldId);
+      await initLab({ labPath: lab, labId: `candidate-${worldId}`, worldId, seed: `candidate-${worldId}` });
+      const result = await runLab({
+        labPath: lab,
+        runId: 'run-1',
+        steps: 1,
+        advisor: async ({ capabilities }) => {
+          const safe = capabilities.filter((capability) => capability.allowed && capability.safe);
+          assert.ok(safe.length >= 1, `${worldId} should expose a safe primary candidate`);
+          const alternative = capabilities.find((capability) => capability.token !== safe[0].token);
+          assert.ok(alternative, `${worldId} should expose a distinct alternative candidate`);
+          return {
+            model: 'cross-world-candidate-advisor',
+            responseDigest: `sha256:${'c'.repeat(64)}`,
+            token: safe[0].token,
+            candidates: [{ token: alternative.token }],
+          };
+        },
+      });
+      assert.equal(result.status, 'COMPLETED', worldId);
+      const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+      const step = run.events.find((event) => event.kind === 'STEP');
+      assert.equal(step.payload.policyEvidence.candidateSetSize, 2, worldId);
+      assert.match(step.payload.policyEvidence.candidateSetDigest, /^sha256:[0-9a-f]{64}$/u, worldId);
+      assert.equal(step.payload.policyEvidence.applied, true, worldId);
+      assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT', worldId);
+    }
+  });
+});
+
 test('application isolates mutable planner and advisor inputs from the closed-loop state', async () => {
   await withLab(async (lab) => {
     const registry = createGeneratedRegistry();
