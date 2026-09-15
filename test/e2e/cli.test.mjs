@@ -2752,11 +2752,11 @@ async function rewriteDelayedRunAsV7(lab) {
   current.boundary = { ...current.boundary, kernelLearningVersion: 7 };
   current.update = {
     ...current.update,
-    nextMemory: withoutModelAge(withoutHistoryAccumulator(current.update.nextMemory)),
+    nextMemory: withoutV7OptionalMemory(withoutModelAge(withoutHistoryAccumulator(current.update.nextMemory))),
   };
   current.afterState = {
     ...current.afterState,
-    memory: withoutModelAge(withoutHistoryAccumulator(current.afterState.memory)),
+    memory: withoutV7OptionalMemory(withoutModelAge(withoutHistoryAccumulator(current.afterState.memory))),
   };
   current.afterState = { ...current.afterState, changeSupervisor: legacySupervisor };
   current.afterDigest = canonicalDigest(current.afterState);
@@ -2788,6 +2788,11 @@ async function rewriteDelayedRunAsV7(lab) {
   currentState.changeSupervisor = legacySupervisor;
   currentState.eventsDigest = terminal.digest;
   await writeFile(currentPath, `${canonicalJson(withSelfDigest(currentState))}\n`);
+}
+
+function withoutV7OptionalMemory(memory) {
+  const { proposalContextModels: _ignoredProposalContext, ...legacyMemory } = memory;
+  return legacyMemory;
 }
 
 function withoutHistoryAccumulator(memory) {

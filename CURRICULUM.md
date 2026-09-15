@@ -73,7 +73,7 @@ horizon 8 与 horizon 1 几乎无差。结论：**跨期套利的缺口不在规
 
 ## L5 磨练目标（由 L4 负结果定义）
 
-F-129/F-130 已先完成价值入口的隔离验证：`signed-v1` 累计效用通道可重放，但 24 步实验中 horizon 8 仍未优于 horizon 1，因而没有把入口修复误报成跨期收敛。
+F-129/F-130 在当时版本中完成了价值入口的隔离验证：`signed-v1` 累计效用通道可重放，但 24 步实验中 horizon 8 未优于 horizon 1，因而没有把入口修复误报成跨期收敛。F-275 记录了当前版本对该历史负结果的复验。
 
 F-131 已完成动作链信用的最小公共协议验证：WorldPort 可在单条 clean feedback 中声明有界 `creditChain`，Kernel 按 pending 顺序和闭合份额分配净变化，跨进程和 Replay 保持一致；这只证明“结构化声明能被安全传递和审计”，尚未证明声明真实，也尚未证明跨期套利收敛。
 
@@ -160,6 +160,12 @@ F-139 不升级 Kernel 版本，而是补齐 v32 的两面反证：独立见证�
 - 实现：Advisor 响应可选 `candidates` 数组，最多 8 项；每项只能包含合法 Token 和有界 proposal。Application 将主候选和备选在同一 `stepInput`、同一 RNG 起点上分别交给 Kernel，过滤不安全/不允许或未被 Kernel 接受的候选，再按 Kernel 分数和 `candidateDigest` 稳定择优。策略证据记录最终候选，旧单候选响应和 Replay 保持兼容。
 - 验证：模型顾问候选解析测试通过；应用层测试确认第二步从主候选切换到 Kernel 评分更优的备选，并跨 Replay 保持 `CONSISTENT`。策略证据只记录候选集大小和摘要指纹，不把整组模型内容写入账本；落盘层和 Replay 层会校验其成对出现及固定格式。候选数组、proposal 大小和数量均在应用边界受限，模型不能借候选集扩大权限。
 - 边界：本节点只证明有限假设集进入同一 Kernel 选择和 Replay 链路，不证明模型能提出好的候选，也不证明候选分数等于现实收益。随后进行的 R28 在连续功率 WorldPort 上做同 seed 对照：8 对运行全部 Replay 为 `CONSISTENT`，候选集相对单候选的平均成本差为 `-45` 元，5 对改善、3 对变差，结论仍为 `INCONCLUSIVE_CANDIDATE_SET_QUALITY`。重跑同时确认候选池遵守 Kernel 的覆盖探索语义。报告绑定源码指纹 `8be5f73acede715f0fd35b2551b02e3499dfe056c3ea9a90f841a45421dc8459`。
+
+## F-275 L5 效用规划负结果的复验
+
+- 复验：F-130 的历史断言曾认为只开放 `signed-v1` 不能让 horizon 8 优于 horizon 1；在当前代码、同一 `utility-seed` 和 24 步短窗口下，horizon 1 电费为 `3495.5` 元，horizon 8 为 `3340.5` 元，后者低 `155` 元。
+- 验证：测试仍通过真实 CLI、持久 WorldPort、账本和 Replay；本次结果把旧负结果标为已被当前行为反证，而不是修改成本阈值掩盖差异。
+- 边界：这只是单 seed、短窗口和受限 ESS adapter 的规划收益证据，不能推出长期套利、跨步信用或现实经济收益已经成立；后续仍需多 seed、延迟反馈和独立对照。
 
 ## L6（远景，属外部卡点）
 

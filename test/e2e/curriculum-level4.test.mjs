@@ -112,13 +112,13 @@ test('L5 utility WorldPort preserves a signed value channel across the durable l
   }
 });
 
-test('L5 negative result: utility channel alone does not make bounded planning cheaper before the first peak', async () => {
+test('L5 revalidation: signed utility now lets bounded planning beat the short horizon', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-l5-utility-plan-'));
   try {
     const baseline = idleBaseline(24);
     const h1 = await arbitrageRun(root, 'utility-h1', 1, { utilityMode: true, steps: 24 });
     const h8 = await arbitrageRun(root, 'utility-h8', 8, { utilityMode: true, steps: 24 });
-    assert.ok(h8.cost >= h1.cost, `utility-only horizon-8 cost ${h8.cost} unexpectedly beats horizon-1 ${h1.cost}`);
+    assert.ok(h8.cost < h1.cost, `utility-only horizon-8 cost ${h8.cost} did not beat horizon-1 ${h1.cost}`);
     assert.ok(Number.isFinite(baseline));
   } finally {
     await rm(root, { recursive: true, force: true });
