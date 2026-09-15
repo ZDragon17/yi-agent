@@ -48,6 +48,7 @@ test('model advisor receives bounded proposal and proposal-context memory', asyn
   });
   await advisor({
     observation: { vector: [1], stateVersion: 'state-1', intervalId: 'interval-1' },
+    contextKeys: ['h2:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'],
     capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
     memory: {
       proposalModels: {
@@ -69,6 +70,9 @@ test('model advisor receives bounded proposal and proposal-context memory', asyn
     },
   });
   const context = JSON.parse(prompt.split('\n').at(-1));
+  assert.deepEqual(context.activeContextKeys, [
+    'h2:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  ]);
   assert.equal(context.memory.proposalModels[TOKEN_A][digest].sampleCount, 3);
   assert.equal(
     context.memory.proposalContextModels[TOKEN_A][digest][

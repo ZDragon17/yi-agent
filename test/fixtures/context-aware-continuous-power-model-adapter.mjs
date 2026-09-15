@@ -1,8 +1,8 @@
 import readline from 'node:readline';
 import { candidateDigest } from '../../src/runtime/schema.mjs';
 
-// R25：在同一 Token 的多个连续 proposal 都已有 verified model 后，
-// 模型按 utility 通道的已验证平均变化选择候选；尚未覆盖完整候选集时先轮换取证。
+// R26：在候选 proposal 已经有 verified 全局模型后，优先读取当前活动上下文的
+// proposal-context 模型；没有上下文样本时回退到全局模型。
 const PROPOSALS = [-50, 0, 50];
 
 function parseContext(prompt) {
@@ -15,7 +15,9 @@ function tokenFromPrompt(prompt) {
 }
 
 function proposalFor(context, token) {
-  const models = context.memory?.proposalModels?.[token] ?? {};
+  const globalModels = context.memory?.proposalModels?.[token] ?? {};
+  const contextualModels = context.memory?.proposalContextModels?.[token] ?? {};
+  const activeContextKeys = context.activeContextKeys ?? [];
   const soc = Number(context.observation?.vector?.[2]) * 100;
   const allowed = (powerKw) => {
     const nextSoc = soc + (powerKw * (powerKw > 0 ? 0.95 : 1 / 0.95) * 100) / 800;
@@ -23,15 +25,17 @@ function proposalFor(context, token) {
   };
   const known = PROPOSALS.map((powerKw) => {
     const digest = candidateDigest({ token, proposal: { powerKw } });
-    return { powerKw, model: models[digest] };
-  }).filter((candidate) => candidate.model !== undefined);
+    const contextual = activeContextKeys
+      .map((contextKey) => contextualModels[digest]?.[contextKey])
+      .find((model) => model !== undefined);
+    return { powerKw, model: contextual ?? globalModels[digest] };
+  }).filter((candidate) => candidate.model !== undefined && allowed(candidate.powerKw));
   if (known.length < PROPOSALS.length) {
     const candidate = PROPOSALS[Math.max(0, Number(context.step) || 0) % PROPOSALS.length];
     return allowed(candidate) ? candidate : 0;
   }
-  const safeKnown = known.filter((candidate) => allowed(candidate.powerKw));
-  if (safeKnown.length === 0) return 0;
-  return safeKnown.reduce((best, candidate) =>
+  if (known.length === 0) return 0;
+  return known.reduce((best, candidate) =>
     candidate.model.meanDelta[3] > best.model.meanDelta[3] ? candidate : best,
   ).powerKw;
 }
@@ -50,6 +54,6 @@ rl.on('line', (line) => {
     version: 1,
     id: request.id,
     ok: true,
-    result: { model: 'memory-aware-continuous-power-fixture', content },
+    result: { model: 'context-aware-continuous-power-fixture', content },
   }) + '\n');
 });

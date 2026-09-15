@@ -55,7 +55,7 @@ export function createModelAdvisor({ client, model, goal = null } = {}) {
   };
 }
 
-export function buildDecisionPrompt({ observation, observationEvidence = [], observationEvidenceTruncated = false, memory, candidateHistory = [], valueSpec, capabilities, manifest, step = 0, goal = null } = {}) {
+export function buildDecisionPrompt({ observation, observationEvidence = [], observationEvidenceTruncated = false, memory, contextKeys = [], candidateHistory = [], valueSpec, capabilities, manifest, step = 0, goal = null } = {}) {
   const modelObservation = projectModelObservation(observation, observationEvidence, observationEvidenceTruncated);
   const capabilityIds = new Map((manifest?.tokenMap?.entries ?? []).map((entry) => [entry.token, entry.capabilityId]));
   const candidateHistoryProjection = candidateHistorySummary(candidateHistory);
@@ -67,6 +67,7 @@ export function buildDecisionPrompt({ observation, observationEvidence = [], obs
     observationEvidenceTruncated: modelObservation.observationEvidenceTruncated,
     candidateHistory: candidateHistoryProjection.entries,
     candidateHistoryTruncated: candidateHistoryProjection.truncated,
+    activeContextKeys: Array.isArray(contextKeys) ? contextKeys.slice(0, 3) : [],
     valueSpec,
     capabilities: Array.isArray(capabilities)
       ? capabilities.map((capability) => ({

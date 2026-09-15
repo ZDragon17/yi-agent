@@ -4,7 +4,7 @@ import { candidateDigest, canonicalDigest, canonicalJson, cloneJson, MAX_CANDIDA
 import { buildCandidateOutcome } from '../runtime/candidate-evidence.mjs';
 import { annotateCandidateHistory } from '../runtime/candidate-history.mjs';
 import { acceptedSupersessionDigest } from '../runtime/candidate-lineage.mjs';
-import { KERNEL_LEARNING_VERSIONS, learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
+import { contextKeysForMemory, KERNEL_LEARNING_VERSIONS, learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan, startGoalEpoch } from '../agent/change-supervisor.mjs';
 import { replayRunStream } from '../runtime/replay.mjs';
 import {
@@ -460,6 +460,10 @@ export async function runLab(input) {
           step: state.kernelStep,
           observationEvidence: beforeModelObservation.observationEvidence,
           observationEvidenceTruncated: beforeModelObservation.observationEvidenceTruncated,
+          contextKeys: contextKeysForMemory(state.memory, {
+            includeShortContext: true,
+            longContextWindow: true,
+          }),
           candidateHistory,
           goal: supervisor?.goal ?? requestedGoal,
         })

@@ -133,14 +133,20 @@ F-139 不升级 Kernel 版本，而是补齐 v32 的两面反证：独立见证�
 
 - 缺口：R24 证明不同 proposal 的反馈不会互相污染，但没有证明模型读取这些模型后会改善后续候选；如果只按 proposal 的全局平均效用选择，可能把不同时段和 SOC 状态混为一谈。
 - 实现：新增 memory-aware 连续功率模型适配器。候选集完整覆盖前先轮换 `-50/0/50 kW` 取证，覆盖后读取模型提示词中有界暴露的 `memory.proposalModels`，按 utility 通道平均变化选择候选，并过滤当前 SOC 动力学不允许的动作；与 R23 observation-only 模型使用同一批随机 seed、同一外部 JSONL WorldPort、同一 96 步和 utility 账本配对。
-- 结果：8 对、16 条真实 CLI Run 全部完成，32 次 Replay 全部 `CONSISTENT`。reactive 模型累计成本均为 `12469.5` 元，memory-aware 模型均为 `13537` 元；8 对全部变差，平均差值（memory-aware - reactive）为 `+1067.5` 元，改善 `0` 对、持平 `0` 对。
-- 边界：负结果说明即使模型确实读取了全局 proposal 模型，跨时段/SOC 的平均值仍不足以表达连续控制；不证明 proposal 条件化记忆无用，也不证明任何真实电费策略。下一轮的最小变化应增加 proposal × context 的有界模型，并用同 seed 对照检验是否消除这类混淆；不能直接把全局均值改成新的领域权重。R25 报告绑定源码指纹 `6c051da1d2529f0d6abfded4e96b5bf9b9e5b4f66cde211e548a0ad5bba70165`。
+- 结果：8 对、16 条真实 CLI Run 全部完成，32 次 Replay 全部 `CONSISTENT`。reactive 模型累计成本均为 `12469.5` 元，memory-aware 模型均为 `13579.5` 元；8 对全部变差，平均差值（memory-aware - reactive）为 `+1110` 元，改善 `0` 对、持平 `0` 对。
+- 边界：负结果说明即使模型确实读取了全局 proposal 模型，跨时段/SOC 的平均值仍不足以表达连续控制；不证明 proposal 条件化记忆无用，也不证明任何真实电费策略。下一轮的最小变化应增加 proposal × context 的有界模型，并用同 seed 对照检验是否消除这类混淆；不能直接把全局均值改成新的领域权重。R25 报告绑定源码指纹 `558508b702538f68535339c2fdad156a3de49b0b2f204d628b367ed914d70e6c`。
 
 ## F-271 proposal × context 的三层记忆骨架
 
 - 实现：新增可选的 `memory.proposalContextModels[token][candidateDigest][contextKey]`。同一 proposal 同时保留全局模型和上下文模型，读取时按 `proposal × context → proposal → context → relation → action` 的特异性顺序回退；上下文仍由 Kernel 从历史生成，不引入电价、SOC 等领域字段。
 - 持久化：三层模型纳入 model clock、紧凑年龄表、质量/预算淘汰、旧学习版本投影和 Replay；新 Lab 默认开启空容器，旧账本不强制重写。
-- 验证：Kernel 合同测试 `88/88`，模型顾问测试 `16/16`，应用层和 Replay 回归中唯一失败是学习版本断言从 `32` 更新为 `33`，修正后定向用例通过。R26 还没有证明该结构能改善真实收益，下一步必须做同 seed 的 context-aware 对照实验。
+- 验证：Kernel 合同测试 `88/88`，模型顾问测试 `16/16`，应用层和 Replay 回归中唯一失败是学习版本断言从 `32` 更新为 `33`，修正后定向用例通过。R26 形成了 `281` 个 proposal×context 模型，并用同 seed 对照验证其运行路径，但还没有证明该结构能改善真实收益。
+
+## F-272 proposal × context 的真实收益反证（R26）
+
+- 设计：沿用 R25 的 ESS 外部 JSONL WorldPort、8 个同 seed 配对和每个 96 步；global 适配器读取 proposal 的全局均值，contextual 适配器优先读取模型提示词暴露的活动上下文键对应的 proposal×context 模型。
+- 结果：16 条真实 CLI Run 全部完成，32 次 Replay 全部 `CONSISTENT`。global 累计成本均为 `13579.5` 元，contextual 均为 `13692` 元；8 对全部变差，平均差值（contextual - global）为 `+112.5` 元。
+- 结论：上下文条件化的协议、学习、重启恢复和 Replay 已经成立，但当前上下文键与候选取证策略没有带来收益，不能把“更具体的记忆”当成智能本身。下一轮应先验证上下文键的可复用性、样本覆盖和探测策略，再决定是否调整模型结构。R26 报告绑定源码指纹 `41e2f02ca9b3f401fd941b5e3d6adbfba1e7be41dd33f22873581649c6223fcb`。
 
 ## L6（远景，属外部卡点）
 

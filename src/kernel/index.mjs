@@ -4770,7 +4770,7 @@ function assertBeliefContextKey(value, field, dimensions) {
   return assertRelationKey(value, field, dimensions);
 }
 
-function contextKeysForMemory(memory, {
+export function contextKeysForMemory(memory, {
   includeShortContext = false,
   longContextWindow = false,
 } = {}) {
