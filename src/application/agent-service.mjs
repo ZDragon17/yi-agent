@@ -242,6 +242,7 @@ export async function runLab(input) {
         memory: {
           schemaVersion: SCHEMA_VERSION,
           actionModels: {},
+          proposalContextModels: {},
           relationModels: {},
           rejectionModels: {},
           pendingCredits: [],

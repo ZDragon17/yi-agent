@@ -107,11 +107,54 @@ function memorySummary(memory) {
     meanDelta: model.meanDelta,
     uncertainty: model.uncertainty,
     }]));
+  const proposalModels = boundedProposalModels(memory?.proposalModels);
+  const proposalContextModels = boundedProposalContextModels(memory?.proposalContextModels);
   const relationModels = memory?.relationModels;
   const relationContexts = relationModels === null || typeof relationModels !== 'object' || Array.isArray(relationModels)
     ? {}
     : Object.fromEntries(Object.entries(relationModels).slice(0, MAX_MEMORY_MODELS).map(([token, relations]) => [token, relations]));
-  return { actionModels, relationContexts };
+  return { actionModels, proposalModels, proposalContextModels, relationContexts };
+}
+
+function modelSummary(model) {
+  return {
+    sampleCount: model.sampleCount,
+    meanDelta: model.meanDelta,
+    uncertainty: model.uncertainty,
+  };
+}
+
+function boundedProposalModels(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).slice(0, MAX_MEMORY_MODELS).map(([token, proposals]) => [
+    token,
+    Object.fromEntries(Object.entries(proposals ?? {}).slice(0, MAX_MEMORY_MODELS).map(([digest, model]) => [
+      digest,
+      modelSummary(model),
+    ])),
+  ]));
+}
+
+function boundedProposalContextModels(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  let remaining = MAX_MEMORY_MODELS;
+  const result = {};
+  for (const [token, proposals] of Object.entries(value)) {
+    if (remaining === 0) break;
+    const boundedProposals = {};
+    for (const [digest, contexts] of Object.entries(proposals ?? {})) {
+      if (remaining === 0) break;
+      const boundedContexts = {};
+      for (const [contextKey, model] of Object.entries(contexts ?? {})) {
+        if (remaining === 0) break;
+        boundedContexts[contextKey] = modelSummary(model);
+        remaining -= 1;
+      }
+      if (Object.keys(boundedContexts).length > 0) boundedProposals[digest] = boundedContexts;
+    }
+    if (Object.keys(boundedProposals).length > 0) result[token] = boundedProposals;
+  }
+  return result;
 }
 
 function candidateHistorySummary(history) {

@@ -16,6 +16,7 @@ const MAX_VECTOR_DIMENSIONS = 1024;
 const MAX_CAPABILITIES = 4096;
 const MAX_ACTION_MODELS = 8192;
 const MAX_PROPOSAL_MODELS = 8192;
+const MAX_PROPOSAL_CONTEXT_MODELS = 8192;
 const PROPOSAL_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const MAX_RELATION_MODELS = 8192;
 const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
@@ -50,7 +51,7 @@ const LONG_CONTEXT_KEY_WINDOW = 8;
 const MAX_LONG_CONTEXTS = 8;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
-const CURRENT_LEARNING_VERSION = 32;
+const CURRENT_LEARNING_VERSION = 33;
 export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   settledFeedback: 3,
   pendingCreditExpiry: 4,
@@ -78,6 +79,7 @@ export const KERNEL_LEARNING_VERSIONS = Object.freeze({
   causalCreditEvidence: 30,
   attestedCausalCreditEvidence: 31,
   independentCausalCreditEvidence: 32,
+  proposalContext: 33,
   current: CURRENT_LEARNING_VERSION,
 });
 const MODEL_RECENCY_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.modelRecency;
@@ -146,7 +148,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'proposalModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps', 'lastProbeSteps', 'modelClock', 'modelAges', 'contextKeyScale'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'proposalModels', 'proposalContextModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps', 'lastProbeSteps', 'modelClock', 'modelAges', 'contextKeyScale'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -239,7 +241,7 @@ const PENDING_CREDIT_KEYS = [
 ];
 const PENDING_CREDIT_POLICY_KEYS = ['schemaVersion', 'maxAge'];
 const BELIEF_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'samples', 'modelAge'];
-const MODEL_AGE_KEYS = ['schemaVersion', 'actionModels', 'proposalModels', 'relationModels', 'rejectionModels', 'beliefModels', 'contextModels'];
+const MODEL_AGE_KEYS = ['schemaVersion', 'actionModels', 'proposalModels', 'proposalContextModels', 'relationModels', 'rejectionModels', 'beliefModels', 'contextModels'];
 const HISTORY_ENTRY_KEYS = ['schemaVersion', 'token', 'actualDelta', 'historyOrder'];
 
 export function step(input) {
@@ -1525,6 +1527,13 @@ function normalizeMemory(value, field, dimensions) {
   const normalizedProposalModels = source.proposalModels === undefined
     ? undefined
     : normalizeProposalModels(source.proposalModels, `${field}.proposalModels`, dimensions);
+  const normalizedProposalContextModels = source.proposalContextModels === undefined
+    ? undefined
+    : normalizeProposalContextModels(
+        source.proposalContextModels,
+        `${field}.proposalContextModels`,
+        dimensions,
+      );
   const normalizedRelations = source.relationModels === undefined
     ? undefined
     : normalizeRelationModels(source.relationModels, `${field}.relationModels`, dimensions);
@@ -1572,6 +1581,7 @@ function normalizeMemory(value, field, dimensions) {
       source.modelAges,
       normalizedModels,
       normalizedProposalModels,
+      normalizedProposalContextModels,
       normalizedRelations,
       normalizedRejections,
       normalizedBeliefs,
@@ -1583,6 +1593,7 @@ function normalizeMemory(value, field, dimensions) {
     source.modelAges !== undefined ||
     hasModelAge(normalizedModels) ||
     hasNestedModelAge(normalizedProposalModels) ||
+    hasDeepNestedModelAge(normalizedProposalContextModels) ||
     hasNestedModelAge(normalizedRelations) ||
     hasModelAge(normalizedRejections) ||
     hasNestedModelAge(normalizedBeliefs) ||
@@ -1627,6 +1638,7 @@ function normalizeMemory(value, field, dimensions) {
     modelClock,
     normalizedModels,
     normalizedProposalModels,
+    normalizedProposalContextModels,
     normalizedRelations,
     normalizedRejections,
     normalizedBeliefs,
@@ -1637,6 +1649,9 @@ function normalizeMemory(value, field, dimensions) {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
     ...(normalizedProposalModels === undefined ? {} : { proposalModels: normalizedProposalModels }),
+    ...(normalizedProposalContextModels === undefined ? {} : {
+      proposalContextModels: normalizedProposalContextModels,
+    }),
     ...(normalizedRelations === undefined ? {} : { relationModels: normalizedRelations }),
     ...(normalizedRejections === undefined ? {} : { rejectionModels: normalizedRejections }),
     ...(normalizedPendingCredits === undefined ? {} : { pendingCredits: normalizedPendingCredits }),
@@ -1684,6 +1699,46 @@ function normalizeProposalModels(value, field, dimensions) {
   return normalized;
 }
 
+function normalizeProposalContextModels(value, field, dimensions) {
+  const source = assertDynamicRecord(value, field, MAX_ACTION_MODELS);
+  const normalized = Object.create(null);
+  let modelCount = 0;
+  for (const [token, proposals] of Object.entries(source)) {
+    assertOpaqueToken(token, `${field} token`);
+    const proposalSource = assertDynamicRecord(proposals, `${field}.${token}`, MAX_ACTION_MODELS);
+    const proposalModels = Object.create(null);
+    for (const [digest, contexts] of Object.entries(proposalSource)) {
+      if (!PROPOSAL_DIGEST_PATTERN.test(digest)) {
+        contractViolation('kernel proposal-context model key is not a candidate digest', {
+          field: `${field}.${token}.${digest}`,
+        });
+      }
+      const contextSource = assertDynamicRecord(
+        contexts,
+        `${field}.${token}.${digest}`,
+        MAX_ACTION_MODELS,
+      );
+      const contextModels = Object.create(null);
+      for (const [contextKey, model] of Object.entries(contextSource)) {
+        assertContextKey(contextKey, `${field}.${token}.${digest}.${contextKey}`);
+        modelCount += 1;
+        if (modelCount > MAX_PROPOSAL_CONTEXT_MODELS) {
+          contractViolation('kernel proposal-context memory exceeds its size limit', { field });
+        }
+        contextModels[contextKey] = normalizeActionModel(
+          model,
+          `${field}.${token}.${digest}.${contextKey}`,
+          dimensions,
+        );
+      }
+      proposalModels[digest] = contextModels;
+    }
+    normalized[token] = proposalModels;
+  }
+  NESTED_MODEL_COUNTS.set(normalized, modelCount);
+  return normalized;
+}
+
 function normalizeLastProbeSteps(value, field) {
   const source = assertDynamicRecord(value, field, MAX_ACTION_MODELS);
   const normalized = Object.create(null);
@@ -1714,10 +1769,17 @@ function hasNestedModelAge(models) {
   return Object.values(models ?? {}).some((nested) => hasModelAge(nested));
 }
 
-function applyCompactModelAges(value, actionModels, proposalModels, relationModels, rejectionModels, beliefModels, contextModels, field) {
+function hasDeepNestedModelAge(models) {
+  return Object.values(models ?? {}).some((proposals) =>
+    Object.values(proposals).some((contexts) => hasModelAge(contexts)),
+  );
+}
+
+function applyCompactModelAges(value, actionModels, proposalModels, proposalContextModels, relationModels, rejectionModels, beliefModels, contextModels, field) {
   const source = assertPlainRecord(value, field, MODEL_AGE_KEYS, ['schemaVersion']);
   applyTopLevelModelAges(actionModels, source.actionModels, `${field}.actionModels`);
   applyNestedModelAges(proposalModels, source.proposalModels, `${field}.proposalModels`);
+  applyDeepNestedModelAges(proposalContextModels, source.proposalContextModels, `${field}.proposalContextModels`);
   applyTopLevelModelAges(rejectionModels, source.rejectionModels, `${field}.rejectionModels`);
   applyNestedModelAges(relationModels, source.relationModels, `${field}.relationModels`);
   applyNestedModelAges(beliefModels, source.beliefModels, `${field}.beliefModels`);
@@ -2130,6 +2192,7 @@ function validateModelAgeCoverage(
   modelClock,
   actionModels,
   proposalModels,
+  proposalContextModels,
   relationModels,
   rejectionModels,
   beliefModels,
@@ -2148,6 +2211,13 @@ function validateModelAgeCoverage(
   for (const [token, model] of Object.entries(actionModels)) check(model, `${field}.actionModels.${token}.modelAge`);
   for (const [token, proposals] of Object.entries(proposalModels ?? {})) {
     for (const [digest, model] of Object.entries(proposals)) check(model, `${field}.proposalModels.${token}.${digest}.modelAge`);
+  }
+  for (const [token, proposals] of Object.entries(proposalContextModels ?? {})) {
+    for (const [digest, contexts] of Object.entries(proposals)) {
+      for (const [contextKey, model] of Object.entries(contexts)) {
+        check(model, `${field}.proposalContextModels.${token}.${digest}.${contextKey}.modelAge`);
+      }
+    }
   }
   for (const [token, model] of Object.entries(rejectionModels ?? {})) check(model, `${field}.rejectionModels.${token}.modelAge`);
   for (const [token, relations] of Object.entries(relationModels ?? {})) {
@@ -2308,6 +2378,7 @@ function recordActionEvidence(memory, {
       dimensions,
       field,
       refreshModelAge,
+      contextKeys,
     });
   }
   if (memory.rejectionModels?.[token] !== undefined) {
@@ -2398,6 +2469,41 @@ function recordActionEvidence(memory, {
     : countRelationModels(relationModels));
 }
 
+function applyDeepNestedModelAges(models, ages, field) {
+  if (ages === undefined) return;
+  const values = assertArray(ages, field);
+  const outerKeys = Object.keys(models ?? {}).sort();
+  if (values.length !== outerKeys.length) {
+    contractViolation('kernel compact deep nested model ages do not match its model record', { field });
+  }
+  for (let outerIndex = 0; outerIndex < outerKeys.length; outerIndex += 1) {
+    const outerKey = outerKeys[outerIndex];
+    const proposalValues = assertArray(values[outerIndex], `${field}[${outerIndex}]`);
+    const proposalKeys = Object.keys(models[outerKey]).sort();
+    if (proposalValues.length !== proposalKeys.length) {
+      contractViolation('kernel compact deep nested model ages do not match its model record', { field });
+    }
+    for (let proposalIndex = 0; proposalIndex < proposalKeys.length; proposalIndex += 1) {
+      const proposalKey = proposalKeys[proposalIndex];
+      const contextAges = decodeCompactModelAges(
+        proposalValues[proposalIndex],
+        `${field}[${outerIndex}][${proposalIndex}]`,
+      );
+      const contextKeys = Object.keys(models[outerKey][proposalKey]).sort();
+      if (contextAges.length !== contextKeys.length) {
+        contractViolation('kernel compact deep nested model ages do not match its model record', { field });
+      }
+      for (let contextIndex = 0; contextIndex < contextKeys.length; contextIndex += 1) {
+        setModelAge(
+          models[outerKey][proposalKey][contextKeys[contextIndex]],
+          contextAges[contextIndex],
+          `${field}[${outerIndex}][${proposalIndex}][${contextIndex}]`,
+        );
+      }
+    }
+  }
+}
+
 function recordProposalEvidence(memory, {
   token,
   proposal,
@@ -2406,6 +2512,7 @@ function recordProposalEvidence(memory, {
   dimensions,
   field,
   refreshModelAge = false,
+  contextKeys,
 }) {
   const digest = candidateDigest({ token, proposal });
   const proposalModels = memory.proposalModels ?? {};
@@ -2445,11 +2552,67 @@ function recordProposalEvidence(memory, {
   NESTED_MODEL_COUNTS.set(memory.proposalModels, existing === undefined
     ? modelCount + 1
     : countProposalModels(proposalModels));
+
+  if (memory.proposalContextModels === undefined) return;
+  let proposalContexts = memory.proposalContextModels;
+  let tokenContexts = { ...(proposalContexts[token] ?? {}) };
+  let contextModels = { ...(tokenContexts[digest] ?? {}) };
+  for (const contextKey of contextKeys ?? []) {
+    let existingContext = contextModels[contextKey];
+    let contextModelCount = existingContext === undefined
+      ? countProposalContextModels(proposalContexts)
+      : null;
+    if (existingContext === undefined && contextModelCount >= MAX_PROPOSAL_CONTEXT_MODELS) {
+      const evicted = evictOldestDeepNestedModel(proposalContexts);
+      if (!evicted) {
+        contractViolation('kernel learning has no evictable proposal-context model', {
+          field: `${field}.proposalContextModels.${token}.${digest}.${contextKey}`,
+        });
+      }
+      contextModelCount -= 1;
+      proposalContexts = memory.proposalContextModels;
+      tokenContexts = { ...(proposalContexts[token] ?? {}) };
+      contextModels = { ...(tokenContexts[digest] ?? {}) };
+      existingContext = contextModels[contextKey];
+    }
+    if (existingContext === undefined && contextModelCount >= MAX_PROPOSAL_CONTEXT_MODELS) {
+      contractViolation('kernel learning would exceed the proposal-context model limit', {
+        field: `${field}.proposalContextModels.${token}.${digest}.${contextKey}`,
+      });
+    }
+    contextModels[contextKey] = updateActionModel(
+      existingContext ?? defaultActionModel(dimensions),
+      actualDelta,
+      errorMagnitude,
+      dimensions,
+      `${field}.proposalContextModels.${token}.${digest}.${contextKey}`,
+      modelAgeFor(
+        memory,
+        existingContext,
+        `${field}.proposalContextModels.${token}.${digest}.${contextKey}.modelAge`,
+        refreshModelAge,
+      ),
+    );
+    tokenContexts[digest] = contextModels;
+    proposalContexts = { ...proposalContexts, [token]: tokenContexts };
+    memory.proposalContextModels = proposalContexts;
+    NESTED_MODEL_COUNTS.set(memory.proposalContextModels, countProposalContextModels(proposalContexts));
+  }
 }
 
 function countProposalModels(value) {
   return cachedNestedModelCount(value, () => Object.values(value).reduce(
     (sum, proposals) => sum + Object.keys(proposals).length,
+    0,
+  ));
+}
+
+function countProposalContextModels(value) {
+  return cachedNestedModelCount(value, () => Object.values(value).reduce(
+    (sum, proposals) => sum + Object.values(proposals).reduce(
+      (proposalSum, contexts) => proposalSum + Object.keys(contexts).length,
+      0,
+    ),
     0,
   ));
 }
@@ -2561,6 +2724,35 @@ function evictOldestNestedModel(value) {
   const currentModels = value[oldest.outerKey];
   delete currentModels[oldest.innerKey];
   if (Object.keys(currentModels).length === 0) delete value[oldest.outerKey];
+  return true;
+}
+
+function evictOldestDeepNestedModel(value) {
+  const candidates = [];
+  for (const [outerKey, proposals] of Object.entries(value)) {
+    for (const [proposalKey, contexts] of Object.entries(proposals)) {
+      for (const [contextKey, model] of Object.entries(contexts)) {
+        candidates.push({ outerKey, proposalKey, contextKey, model });
+      }
+    }
+  }
+  if (candidates.length === 0) return false;
+  const allHaveAge = candidates.every((candidate) => candidate.model.modelAge !== undefined);
+  const oldest = allHaveAge
+    ? candidates.reduce((current, candidate) => {
+        const currentIdentity = `${current.outerKey}\u0000${current.proposalKey}\u0000${current.contextKey}`;
+        const candidateIdentity = `${candidate.outerKey}\u0000${candidate.proposalKey}\u0000${candidate.contextKey}`;
+        return candidate.model.modelAge < current.model.modelAge ||
+          (candidate.model.modelAge === current.model.modelAge && candidateIdentity < currentIdentity)
+          ? candidate
+          : current;
+      })
+    : candidates[0];
+  const proposals = value[oldest.outerKey];
+  const contexts = proposals[oldest.proposalKey];
+  delete contexts[oldest.contextKey];
+  if (Object.keys(contexts).length === 0) delete proposals[oldest.proposalKey];
+  if (Object.keys(proposals).length === 0) delete value[oldest.outerKey];
   return true;
 }
 
@@ -2982,7 +3174,13 @@ function buildPredictions(input, preference = null) {
     const proposalModel = proposalDigest === undefined
       ? undefined
       : input.memory.proposalModels?.[capability.token]?.[proposalDigest];
-    const model = proposalModel ??
+    const proposalContextModel = proposalDigest === undefined
+      ? undefined
+      : contextKeys
+        ?.map((contextKey) => input.memory.proposalContextModels?.[capability.token]?.[proposalDigest]?.[contextKey])
+        .find((candidate) => candidate !== undefined);
+    const model = proposalContextModel ??
+      proposalModel ??
       contextKeys
         ?.map((contextKey) => input.memory.contextModels?.[contextKey]?.[capability.token])
         .find((candidate) => candidate !== undefined) ??
@@ -2992,7 +3190,7 @@ function buildPredictions(input, preference = null) {
     const contextModel = contextKeys
       ?.map((contextKey) => input.memory.contextModels?.[contextKey]?.[capability.token])
       .find((candidate) => candidate !== undefined);
-    const contextResolved = contextModel !== undefined;
+    const contextResolved = proposalContextModel !== undefined || contextModel !== undefined;
     const beliefModel = input.memory.beliefModels?.[capability.token]?.[
       relationKey ?? OVERALL_BELIEF_CONTEXT
     ];
@@ -3046,7 +3244,7 @@ function buildPredictions(input, preference = null) {
       },
       rejectedRecently,
       contextResolved,
-      contextModelAge: contextModel?.modelAge,
+      contextModelAge: (proposalContextModel ?? contextModel)?.modelAge,
     };
   });
 }
@@ -3737,17 +3935,19 @@ function cloneRngState(value) {
 function compactModelAgeState(value) {
   const actionModels = compactTopLevelModelAges(value.actionModels);
   const proposalModels = compactNestedModelAges(value.proposalModels);
+  const proposalContextModels = compactDeepNestedModelAges(value.proposalContextModels);
   const relationModels = compactNestedModelAges(value.relationModels);
   const rejectionModels = compactTopLevelModelAges(value.rejectionModels);
   const beliefModels = compactNestedModelAges(value.beliefModels);
   const contextModels = compactNestedModelAges(value.contextModels);
-  const states = [actionModels, proposalModels, relationModels, rejectionModels, beliefModels, contextModels];
+  const states = [actionModels, proposalModels, proposalContextModels, relationModels, rejectionModels, beliefModels, contextModels];
   if (states.some((state) => state === null)) return undefined;
   if (value.modelClock === undefined && states.every((state) => state === undefined)) return undefined;
   return {
     schemaVersion: SCHEMA_VERSION,
     ...(actionModels === undefined ? {} : { actionModels }),
     ...(proposalModels === undefined ? {} : { proposalModels }),
+    ...(proposalContextModels === undefined ? {} : { proposalContextModels }),
     ...(relationModels === undefined ? {} : { relationModels }),
     ...(rejectionModels === undefined ? {} : { rejectionModels }),
     ...(beliefModels === undefined ? {} : { beliefModels }),
@@ -3808,6 +4008,25 @@ function cloneMemory(
       ]),
     );
     NESTED_MODEL_COUNTS.set(cloned.proposalModels, countProposalModels(value.proposalModels));
+  }
+  if (value.proposalContextModels !== undefined) {
+    cloned.proposalContextModels = Object.fromEntries(
+      Object.entries(value.proposalContextModels).map(([token, proposals]) => [token,
+        Object.fromEntries(Object.entries(proposals).map(([digest, contexts]) => [digest,
+          Object.fromEntries(Object.entries(contexts).map(([contextKey, model]) => [contextKey, {
+            schemaVersion: SCHEMA_VERSION,
+            sampleCount: model.sampleCount,
+            meanDelta: cloneVector(model.meanDelta),
+            uncertainty: model.uncertainty,
+            ...(model.modelAge === undefined ? {} : { modelAge: model.modelAge }),
+          }]))
+        ])),
+      ]),
+    );
+    NESTED_MODEL_COUNTS.set(
+      cloned.proposalContextModels,
+      countProposalContextModels(value.proposalContextModels),
+    );
   }
   if (value.modelClock !== undefined) cloned.modelClock = value.modelClock;
   if (value.contextKeyScale !== undefined) cloned.contextKeyScale = value.contextKeyScale;
@@ -3936,7 +4155,9 @@ function compactPersistedMemory(memory, { retentionMode = 'recency-v1' } = {}) {
     for (let index = 0; index < PERSISTED_MEMORY_TRIM_BATCH && candidates.length > 0; index += 1) {
       const candidate = candidates.shift();
       delete candidate.parent[candidate.key];
-      if (candidate.outerParent !== undefined && Object.keys(candidate.parent).length === 0) {
+      if (candidate.cleanup !== undefined) {
+        candidate.cleanup();
+      } else if (candidate.outerParent !== undefined && Object.keys(candidate.parent).length === 0) {
         delete candidate.outerParent[candidate.outerKey];
       }
     }
@@ -3971,9 +4192,27 @@ function compactPersistedModelAges(memory, ageByIdentity) {
     }
     return result;
   };
+  const deepNested = (family, models) => {
+    const outerKeys = Object.keys(models ?? {}).sort();
+    if (outerKeys.length === 0) return undefined;
+    const result = [];
+    for (const outerKey of outerKeys) {
+      const proposalKeys = Object.keys(models[outerKey]).sort();
+      const proposalAges = [];
+      for (const proposalKey of proposalKeys) {
+        const contextKeys = Object.keys(models[outerKey][proposalKey]).sort();
+        const ages = contextKeys.map((contextKey) => ageByIdentity.get(`${family}:${outerKey}:${proposalKey}:${contextKey}`));
+        if (ages.some((age) => age === undefined)) return null;
+        proposalAges.push(ages.map((age) => age.toString(36)).join(','));
+      }
+      result.push(proposalAges);
+    }
+    return result;
+  };
   const states = {
     actionModels: topLevel('action', memory.actionModels),
     proposalModels: nested('proposal', memory.proposalModels),
+    proposalContextModels: deepNested('proposalContext', memory.proposalContextModels),
     relationModels: nested('relation', memory.relationModels),
     rejectionModels: topLevel('rejection', memory.rejectionModels),
     beliefModels: nested('belief', memory.beliefModels),
@@ -4017,10 +4256,33 @@ function persistedModelCandidates(memory, { retentionMode = 'recency-v1' } = {})
       }
     }
   };
+  const addDeepNested = (family, models) => {
+    for (const [outerKey, proposals] of Object.entries(models ?? {})) {
+      for (const [proposalKey, contexts] of Object.entries(proposals)) {
+        for (const [contextKey, model] of Object.entries(contexts)) {
+          candidates.push({
+            family,
+            parent: contexts,
+            key: contextKey,
+            age: model.modelAge,
+            model,
+            identity: `${family}:${outerKey}:${proposalKey}:${contextKey}`,
+            cleanup: () => {
+              if (Object.keys(contexts).length > 0) return;
+              delete proposals[proposalKey];
+              if (Object.keys(proposals).length > 0) return;
+              delete models[outerKey];
+            },
+          });
+        }
+      }
+    }
+  };
 
   addTopLevel('action', memory.actionModels);
   addTopLevel('rejection', memory.rejectionModels);
   addNested('proposal', memory.proposalModels);
+  addDeepNested('proposalContext', memory.proposalContextModels);
   addNested('relation', memory.relationModels);
   addNested('belief', memory.beliefModels);
   addNested('context', memory.contextModels);
@@ -4061,7 +4323,7 @@ function markDominatedPredictionModels(candidates) {
 }
 
 function isComparablePredictionModel(candidate) {
-  return ['action', 'proposal', 'relation', 'context'].includes(candidate.family) &&
+  return ['action', 'proposal', 'proposalContext', 'relation', 'context'].includes(candidate.family) &&
     Number.isSafeInteger(candidate.model.sampleCount) &&
     Number.isFinite(candidate.model.uncertainty);
 }
@@ -4073,10 +4335,16 @@ function stripModelAges(memory) {
   const stripNested = (models) => {
     for (const nested of Object.values(models ?? {})) stripTopLevel(nested);
   };
+  const stripDeepNested = (models) => {
+    for (const proposals of Object.values(models ?? {})) {
+      for (const contexts of Object.values(proposals)) stripTopLevel(contexts);
+    }
+  };
 
   stripTopLevel(memory.actionModels);
   stripTopLevel(memory.rejectionModels);
   stripNested(memory.proposalModels);
+  stripDeepNested(memory.proposalContextModels);
   stripNested(memory.relationModels);
   stripNested(memory.beliefModels);
   stripNested(memory.contextModels);
@@ -4098,6 +4366,7 @@ function pruneOrphanedVerificationSteps(memory) {
 function hasReusableModelEvidence(memory, token) {
   return Object.hasOwn(memory.actionModels, token) ||
     Object.keys(memory.proposalModels?.[token] ?? {}).length > 0 ||
+    Object.values(memory.proposalContextModels?.[token] ?? {}).some((contexts) => Object.keys(contexts).length > 0) ||
     Object.keys(memory.relationModels?.[token] ?? {}).length > 0 ||
     Object.keys(memory.beliefModels?.[token] ?? {}).length > 0 ||
     Object.values(memory.contextModels ?? {}).some((models) => Object.hasOwn(models, token));
@@ -4149,6 +4418,24 @@ function cloneChoice(value) {
     ...(value.proposal === undefined ? {} : { proposal: cloneJson(value.proposal) }),
     ...(value.contextProbe === undefined ? {} : { contextProbe: value.contextProbe }),
   };
+}
+
+function compactDeepNestedModelAges(models) {
+  if (models === undefined) return undefined;
+  const outerKeys = Object.keys(models).sort();
+  if (outerKeys.length === 0) return undefined;
+  const result = [];
+  for (const outerKey of outerKeys) {
+    const proposalKeys = Object.keys(models[outerKey]).sort();
+    const proposalAges = [];
+    for (const proposalKey of proposalKeys) {
+      const contextKeys = Object.keys(models[outerKey][proposalKey]).sort();
+      if (contextKeys.some((contextKey) => models[outerKey][proposalKey][contextKey].modelAge === undefined)) return null;
+      proposalAges.push(contextKeys.map((contextKey) => models[outerKey][proposalKey][contextKey].modelAge.toString(36)).join(','));
+    }
+    result.push(proposalAges);
+  }
+  return result;
 }
 
 function assertPlainRecord(value, field, allowedKeys, requiredKeys = allowedKeys) {

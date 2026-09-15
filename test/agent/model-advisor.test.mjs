@@ -34,6 +34,50 @@ test('model advisor reduces a response to a bounded token proposal', async () =>
   assert.doesNotMatch(JSON.stringify(result), /temperature\.increase/u);
 });
 
+test('model advisor receives bounded proposal and proposal-context memory', async () => {
+  let prompt;
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const advisor = createModelAdvisor({
+    model: 'model-memory',
+    client: {
+      async chat(value) {
+        prompt = value;
+        return { model: 'model-memory', content: `{"token":"${TOKEN_A}"}` };
+      },
+    },
+  });
+  await advisor({
+    observation: { vector: [1], stateVersion: 'state-1', intervalId: 'interval-1' },
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    memory: {
+      proposalModels: {
+        [TOKEN_A]: {
+          [digest]: { sampleCount: 3, meanDelta: [0.5], uncertainty: 0.1 },
+        },
+      },
+      proposalContextModels: {
+        [TOKEN_A]: {
+          [digest]: {
+            'h1:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': {
+              sampleCount: 2,
+              meanDelta: [0.75],
+              uncertainty: 0.2,
+            },
+          },
+        },
+      },
+    },
+  });
+  const context = JSON.parse(prompt.split('\n').at(-1));
+  assert.equal(context.memory.proposalModels[TOKEN_A][digest].sampleCount, 3);
+  assert.equal(
+    context.memory.proposalContextModels[TOKEN_A][digest][
+      'h1:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    ].sampleCount,
+    2,
+  );
+});
+
 test('model advisor receives bounded WorldPort evidence without changing the token contract', async () => {
   let prompt;
   const advisor = createModelAdvisor({

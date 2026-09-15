@@ -89,15 +89,16 @@ test('kernel public entry exposes step and verify as the kernel contract seams',
   assert.equal(typeof kernel.verify, 'function');
   assert.equal(typeof kernel.learn, 'function');
   assert.equal(Object.isFrozen(kernel.KERNEL_LEARNING_VERSIONS), true);
-  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.current, 32);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.current, 33);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.pendingWindowExtension, 28);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.creditChain, 29);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.causalCreditEvidence, 30);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.attestedCausalCreditEvidence, 31);
-  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.independentCausalCreditEvidence, kernel.KERNEL_LEARNING_VERSIONS.current);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.independentCausalCreditEvidence, 32);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.revalidationBeliefGate, 27);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.longContextWindow, 26);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.multiScaleContext, 25);
+  assert.equal(kernel.KERNEL_LEARNING_VERSIONS.proposalContext, 33);
   assert.equal(kernel.KERNEL_LEARNING_VERSIONS.modelQualityRetention, 24);
 });
 
@@ -177,6 +178,89 @@ test('proposal preference selects a proposal-conditioned transition model', asyn
   assert.equal(result.choice.token, TOKEN_A);
   assert.deepEqual(result.choice.proposal, proposal);
   assert.deepEqual(result.expectation.expectedDelta, [2, 0]);
+});
+
+test('proposal preference selects the most specific proposal-context model', async () => {
+  const { stepWithPreference } = await loadKernel();
+  const proposal = { powerKw: 50 };
+  const digest = candidateDigest({ token: TOKEN_A, proposal });
+  const contextKey = `h1:${canonicalDigest([])}`;
+  const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });
+  input.memory.recentHistory = [];
+  input.memory.contextKeyScale = 9;
+  input.memory.actionModels = {};
+  input.memory.proposalModels = {
+    [TOKEN_A]: {
+      [digest]: { schemaVersion: 1, sampleCount: 4, meanDelta: [2, 0], uncertainty: 0 },
+    },
+  };
+  input.memory.proposalContextModels = {
+    [TOKEN_A]: {
+      [digest]: {
+        [contextKey]: { schemaVersion: 1, sampleCount: 2, meanDelta: [4, 0], uncertainty: 0 },
+      },
+    },
+  };
+
+  const result = stepWithPreference(input, {
+    schemaVersion: 1,
+    token: TOKEN_A,
+    proposal,
+    required: true,
+  });
+
+  assert.deepEqual(result.expectation.expectedDelta, [4, 0]);
+});
+
+test('learn keeps global and proposal-context evidence separate', async () => {
+  const { stepWithPreference, verify, learn } = await loadKernel();
+  const proposal = { powerKw: 50 };
+  const digest = candidateDigest({ token: TOKEN_A, proposal });
+  const contextKey = `h1:${canonicalDigest([])}`;
+  const input = makeStepInput({ capabilities: [capability(TOKEN_A)] });
+  input.memory.recentHistory = [];
+  input.memory.contextKeyScale = 9;
+  input.memory.actionModels = {};
+  input.memory.proposalModels = {};
+  input.memory.proposalContextModels = {};
+  input.memory.modelClock = 0;
+  const intent = stepWithPreference(input, {
+    schemaVersion: 1,
+    token: TOKEN_A,
+    proposal,
+    required: true,
+  });
+  const request = actionRequest({ token: TOKEN_A });
+  const receipt = receiptForRequest(request);
+  const postObservation = observation(
+    [intent.expectation.predictedObservation.vector[0] + 1, intent.expectation.predictedObservation.vector[1]],
+    'state-2',
+  );
+  const verification = verify({ intent, receipt, postObservation });
+  const updated = learn({
+    memory: input.memory,
+    intent,
+    receipt,
+    postObservation,
+    verification,
+  });
+
+  assert.equal(updated.nextMemory.proposalModels[TOKEN_A][digest].sampleCount, 1);
+  assert.equal(
+    updated.nextMemory.proposalContextModels[TOKEN_A][digest][contextKey].sampleCount,
+    1,
+  );
+  assert.equal(updated.nextMemory.modelClock, 2);
+  assert.equal(Array.isArray(updated.nextMemory.modelAges.proposalContextModels), true);
+  assert.deepEqual(
+    stepWithPreference({ ...input, memory: updated.nextMemory }, {
+      schemaVersion: 1,
+      token: TOKEN_A,
+      proposal,
+      required: true,
+    }).expectation.expectedDelta,
+    [1, 0],
+  );
 });
 
 test('step preserves signed utility direction when a WorldPort selects signed-v1', async () => {

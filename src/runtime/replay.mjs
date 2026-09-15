@@ -576,12 +576,31 @@ function projectLearningForVersion(update, learningVersion) {
   const withoutRevalidation = learningVersion < KERNEL_LEARNING_VERSIONS.revalidation
     ? withoutLastVerifiedSteps(withoutAccumulator)
     : withoutAccumulator;
-  const withoutModelAge = learningVersion < KERNEL_LEARNING_VERSIONS.modelAge
-    ? withoutModelAgeState(withoutRevalidation)
+  const withoutProposalContext = learningVersion < KERNEL_LEARNING_VERSIONS.proposalContext
+    ? withoutProposalContextModels(withoutRevalidation)
     : withoutRevalidation;
+  const withoutModelAge = learningVersion < KERNEL_LEARNING_VERSIONS.modelAge
+    ? withoutModelAgeState(withoutProposalContext)
+    : withoutProposalContext;
   return learningVersion < KERNEL_LEARNING_VERSIONS.historyAccumulator
     ? withoutPendingContextKeys(withoutModelAge)
     : withoutModelAge;
+}
+
+function withoutProposalContextModels(update) {
+  const memory = update.nextMemory;
+  if (memory === undefined || memory.proposalContextModels === undefined) return update;
+  const nextMemory = { ...memory };
+  delete nextMemory.proposalContextModels;
+  if (nextMemory.modelAges !== undefined) {
+    const { proposalContextModels: _ignored, ...modelAges } = nextMemory.modelAges;
+    if (Object.keys(modelAges).length === 1 && modelAges.schemaVersion !== undefined) {
+      delete nextMemory.modelAges;
+    } else {
+      nextMemory.modelAges = modelAges;
+    }
+  }
+  return { ...update, nextMemory };
 }
 
 function withoutModelAgeState(update) {
@@ -592,6 +611,7 @@ function withoutModelAgeState(update) {
   delete nextMemory.modelAges;
   nextMemory.actionModels = stripModelAges(memory.actionModels);
   if (memory.proposalModels !== undefined) nextMemory.proposalModels = stripNestedModelAges(memory.proposalModels);
+  if (memory.proposalContextModels !== undefined) nextMemory.proposalContextModels = stripDeepNestedModelAges(memory.proposalContextModels);
   if (memory.relationModels !== undefined) nextMemory.relationModels = stripNestedModelAges(memory.relationModels);
   if (memory.rejectionModels !== undefined) nextMemory.rejectionModels = stripModelAges(memory.rejectionModels);
   if (memory.beliefModels !== undefined) nextMemory.beliefModels = stripNestedModelAges(memory.beliefModels);
@@ -610,6 +630,16 @@ function stripNestedModelAges(models) {
   return Object.fromEntries(Object.entries(models).map(([outerKey, nested]) => [
     outerKey,
     stripModelAges(nested),
+  ]));
+}
+
+function stripDeepNestedModelAges(models) {
+  return Object.fromEntries(Object.entries(models).map(([token, proposals]) => [
+    token,
+    Object.fromEntries(Object.entries(proposals).map(([digest, contexts]) => [
+      digest,
+      stripModelAges(contexts),
+    ])),
   ]));
 }
 
