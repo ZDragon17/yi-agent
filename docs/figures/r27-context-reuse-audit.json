@@ -1,0 +1,193 @@
+{
+  "experiment": "R27-context-reuse-audit",
+  "sourceFingerprint": "cc8952e53043f2a4070a637c000ba3ae5347f0d0efdade8d98ad6b6c2ec6ba4b",
+  "nodeVersion": "v26.7.0",
+  "design": {
+    "independentRuns": 8,
+    "stepsPerRun": 96,
+    "primaryOutcome": "whether proposal-context models recur often enough to form reusable evidence",
+    "reusableThresholdSamples": 2,
+    "replayRequired": true
+  },
+  "result": {
+    "runs": 8,
+    "allReplayConsistent": true,
+    "averageProposalContextModelCount": 281,
+    "averageReusableModelCountAtTwoSamples": 0,
+    "modelCountsBySampleCount": {
+      "1": 281
+    },
+    "modelsByScale": {
+      "h0": 93,
+      "h1": 95,
+      "h2": 93
+    },
+    "reusableModelsByScaleAtTwoSamples": {
+      "h0": 0,
+      "h1": 0,
+      "h2": 0
+    }
+  },
+  "runs": [
+    {
+      "seed": "r27-0cc422168207f92682fa995b577a09a805a0c9d9b0b4607c9c3b9c635a3efc98",
+      "steps": 96,
+      "replay": "CONSISTENT",
+      "proposalContextModelCount": 281,
+      "reusableModelCountAtTwoSamples": 0,
+      "modelCountsBySampleCount": {
+        "1": 281
+      },
+      "modelsByScale": {
+        "h0": 93,
+        "h1": 95,
+        "h2": 93
+      },
+      "reusableModelsByScaleAtTwoSamples": {
+        "h0": 0,
+        "h1": 0,
+        "h2": 0
+      }
+    },
+    {
+      "seed": "r27-8022686ebf847d8e4ee180acfe871db168cfd8b038d54056668bb32794a4e9ff",
+      "steps": 96,
+      "replay": "CONSISTENT",
+      "proposalContextModelCount": 281,
+      "reusableModelCountAtTwoSamples": 0,
+      "modelCountsBySampleCount": {
+        "1": 281
+      },
+      "modelsByScale": {
+        "h0": 93,
+        "h1": 95,
+        "h2": 93
+      },
+      "reusableModelsByScaleAtTwoSamples": {
+        "h0": 0,
+        "h1": 0,
+        "h2": 0
+      }
+    },
+    {
+      "seed": "r27-93d5531772f4df57282148cf19d52fa49eb28b0e7516e9f72edfee36db052362",
+      "steps": 96,
+      "replay": "CONSISTENT",
+      "proposalContextModelCount": 281,
+      "reusableModelCountAtTwoSamples": 0,
+      "modelCountsBySampleCount": {
+        "1": 281
+      },
+      "modelsByScale": {
+        "h0": 93,
+        "h1": 95,
+        "h2": 93
+      },
+      "reusableModelsByScaleAtTwoSamples": {
+        "h0": 0,
+        "h1": 0,
+        "h2": 0
+      }
+    },
+    {
+      "seed": "r27-798cba9d17566713b3bcf6a20bed0b034c625f463670ee7abef174c4a9db1ec0",
+      "steps": 96,
+      "replay": "CONSISTENT",
+      "proposalContextModelCount": 281,
+      "reusableModelCountAtTwoSamples": 0,
+      "modelCountsBySampleCount": {
+        "1": 281
+      },
+      "modelsByScale": {
+        "h0": 93,
+        "h1": 95,
+        "h2": 93
+      },
+      "reusableModelsByScaleAtTwoSamples": {
+        "h0": 0,
+        "h1": 0,
+        "h2": 0
+      }
+    },
+    {
+      "seed": "r27-2c8f9fc233b4b015d4cf11c36fb7b8981846ed62be64427e306f619d39f02980",
+      "steps": 96,
+      "replay": "CONSISTENT",
+      "proposalContextModelCount": 281,
+      "reusableModelCountAtTwoSamples": 0,
+      "modelCountsBySampleCount": {
+        "1": 281
+      },
+      "modelsByScale": {
+        "h0": 93,
+        "h1": 95,
+        "h2": 93
+      },
+      "reusableModelsByScaleAtTwoSamples": {
+        "h0": 0,
+        "h1": 0,
+        "h2": 0
+      }
+    },
+    {
+      "seed": "r27-225ca946731d1931bbdfd01701654abda92fd7be36ed306a708bdc425af11ca5",
+      "steps": 96,
+      "replay": "CONSISTENT",
+      "proposalContextModelCount": 281,
+      "reusableModelCountAtTwoSamples": 0,
+      "modelCountsBySampleCount": {
+        "1": 281
+      },
+      "modelsByScale": {
+        "h0": 93,
+        "h1": 95,
+        "h2": 93
+      },
+      "reusableModelsByScaleAtTwoSamples": {
+        "h0": 0,
+        "h1": 0,
+        "h2": 0
+      }
+    },
+    {
+      "seed": "r27-04a8b462ec91a71ec8237fecb18aace901500ecbd09b6f082bf8d0675686897b",
+      "steps": 96,
+      "replay": "CONSISTENT",
+      "proposalContextModelCount": 281,
+      "reusableModelCountAtTwoSamples": 0,
+      "modelCountsBySampleCount": {
+        "1": 281
+      },
+      "modelsByScale": {
+        "h0": 93,
+        "h1": 95,
+        "h2": 93
+      },
+      "reusableModelsByScaleAtTwoSamples": {
+        "h0": 0,
+        "h1": 0,
+        "h2": 0
+      }
+    },
+    {
+      "seed": "r27-247b1dcf9c7e3b69d0379e592fc07dc6d6fa8e87f2aca891bc7c47b1d3627e5a",
+      "steps": 96,
+      "replay": "CONSISTENT",
+      "proposalContextModelCount": 281,
+      "reusableModelCountAtTwoSamples": 0,
+      "modelCountsBySampleCount": {
+        "1": 281
+      },
+      "modelsByScale": {
+        "h0": 93,
+        "h1": 95,
+        "h2": 93
+      },
+      "reusableModelsByScaleAtTwoSamples": {
+        "h0": 0,
+        "h1": 0,
+        "h2": 0
+      }
+    }
+  ]
+}
