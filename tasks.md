@@ -2029,3 +2029,10 @@
 - 结果：8 个独立 seed、每个 96 步。每个 Run 都得到 3 个 proposal model，`actionModels` 保持为空；已完成反馈按 proposal 分成 `+50:29、0:38、-50:28`，8 次 Replay 全为 `CONSISTENT`。
 - 验证：Kernel 合同测试 `57/57`，连续 proposal E2E `2/2`；R24 脚本逐 Run 用 `candidateDigest` 重算模型身份，并核对每个模型的 sampleCount 只等于该 proposal 的反馈次数。
 - 边界：这证明了条件化记忆的协议和持久化行为，不证明模型找到了正确的控制策略，也没有测量电费收益、现实设备安全或跨 WorldPort 迁移。R24 报告绑定源码指纹 `875b0e857efd6f7f433ddc9d657c59275ff034204b7f66bb1ec92803cdf6ecfb`。
+
+## F-270 记忆驱动 proposal 质量的同 seed 对照（R25）
+
+- 缺口：R24 证明不同 proposal 的反馈不会互相污染，但没有证明模型读取这些模型后会改善后续候选；如果只按 proposal 的全局平均效用选择，可能把不同时段和 SOC 状态混为一谈。
+- 实现：新增 memory-aware 连续功率模型适配器。候选集完整覆盖前先轮换 `-50/0/50 kW` 取证，覆盖后读取 `memory.proposalModels` 的 utility 通道平均变化，只在当前 SOC 动力学允许的候选中选择；与 R23 observation-only 模型使用同一批随机 seed、同一外部 JSONL WorldPort、同一 96 步和 utility 账本配对。
+- 结果：8 对、16 条真实 CLI Run 全部完成，32 次 Replay 全部 `CONSISTENT`。reactive 模型累计成本均为 `12469.5` 元，memory-aware 模型均为 `13537` 元；8 对全部变差，平均差值（memory-aware - reactive）为 `+1067.5` 元，改善 `0` 对、持平 `0` 对。
+- 边界：负结果只说明当前全局 proposal 模型不能表达时段/SOC 条件下的连续控制，不证明 proposal 条件化记忆无用，也不证明任何真实电费策略。下一轮的最小变化应增加 proposal × context 的有界模型，并用同 seed 对照检验是否消除这类混淆；不能直接把全局均值改成新的领域权重。R25 报告绑定源码指纹 `cadfb719c69da041661c974721f05ff76acf1d0d50f563ec5c1748fbb3348f32`。
