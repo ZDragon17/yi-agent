@@ -1041,6 +1041,8 @@ test('application carries candidate-set evidence across built-in WorldPorts', as
       assert.equal(step.payload.policyEvidence.candidateSetSize, 2, worldId);
       assert.match(step.payload.policyEvidence.candidateSetDigest, /^sha256:[0-9a-f]{64}$/u, worldId);
       assert.equal(step.payload.policyEvidence.applied, true, worldId);
+      assert.equal(step.payload.choice.allowed, true, worldId);
+      assert.equal(step.payload.choice.safe, true, worldId);
       assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT', worldId);
     }
   });

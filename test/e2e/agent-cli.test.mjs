@@ -10,6 +10,7 @@ import { main } from '../../src/cli.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const MODEL_ADAPTER = path.resolve('test/fixtures/model-adapter.mjs');
+const OPAQUE_VECTOR_ADAPTER = path.resolve('test/fixtures/opaque-vector-world-adapter.mjs');
 
 test('agent CLI can use an isolated process model adapter without API configuration', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-process-model-e2e-'));
@@ -94,6 +95,135 @@ test('a model proposal with an optional proposal field cannot reject built-in Wo
     const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env);
     assert.equal(replay.code, 0);
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('agent CLI carries HTTP model candidates through the closed loop and Replay', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-model-candidates-e2e-'));
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    requests.push(context);
+    const safe = context.capabilities.filter((capability) => capability.allowed && capability.safe);
+    const alternative = context.capabilities.find((capability) => capability.token !== safe[0]?.token);
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'agent-candidates',
+      model: body.model,
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            token: safe[0]?.token ?? null,
+            candidates: alternative === undefined ? [] : [{ token: alternative.token }],
+          }),
+        },
+      }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'local-candidates-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'local-candidates-model',
+  };
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'model-candidates-seed', '--json'], process.env)).code, 0);
+    const first = await invoke(['agent', 'run', '--lab', lab, '--steps', '1', '--json'], env);
+    const second = await invoke(['agent', 'run', '--lab', lab, '--steps', '1', '--json'], env);
+    assert.equal(first.code, 0, JSON.stringify(first));
+    assert.equal(second.code, 0, JSON.stringify(second));
+    assert.equal(first.stdout[0].data.status, 'COMPLETED');
+    assert.equal(second.stdout[0].data.status, 'COMPLETED');
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].candidateHistory.length, 0);
+    assert.equal(requests[1].candidateHistory.length, 1);
+    for (const run of [first, second]) {
+      const events = (await (await LabStore.open({ labPath: lab })).readRun(run.stdout[0].data.runId)).events;
+      const step = events.find((event) => event.kind === 'STEP');
+      assert.equal(step.payload.policyEvidence.candidateSetSize, 2);
+      assert.match(step.payload.policyEvidence.candidateSetDigest, /^sha256:[0-9a-f]{64}$/u);
+      assert.equal(step.payload.policyEvidence.applied, true);
+      assert.equal(step.payload.choice.allowed, true);
+      assert.equal(step.payload.choice.safe, true);
+      const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env);
+      assert.equal(replay.code, 0, JSON.stringify(replay));
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    }
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('agent CLI carries HTTP model candidates through an external WorldPort restart', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-external-candidates-e2e-'));
+  const adapterConfig = path.join(root, 'adapter.json');
+  await writeFile(adapterConfig, JSON.stringify({
+    executable: process.execPath,
+    args: [OPAQUE_VECTOR_ADAPTER],
+    adapterId: 'opaque-vector-adapter-v1',
+    worldId: 'opaque-vector',
+    timeoutMs: 5000,
+  }));
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    requests.push(context);
+    const safe = context.capabilities.filter((capability) => capability.allowed && capability.safe);
+    const alternative = context.capabilities.find((capability) => capability.token !== safe[0]?.token);
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'agent-external-candidates',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({
+        token: safe[0]?.token ?? null,
+        candidates: alternative === undefined ? [] : [{ token: alternative.token }],
+      }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'local-external-candidates-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'local-external-candidates-model',
+  };
+  const lab = path.join(root, 'lab');
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'opaque-vector', '--seed', 'external-candidates-seed', '--adapter', adapterConfig, '--json'], process.env);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const first = await invoke(['agent', 'run', '--lab', lab, '--steps', '1', '--adapter', adapterConfig, '--json'], env);
+    const second = await invoke(['agent', 'run', '--lab', lab, '--steps', '1', '--adapter', adapterConfig, '--json'], env);
+    assert.equal(first.code, 0, JSON.stringify(first));
+    assert.equal(second.code, 0, JSON.stringify(second));
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].candidateHistory.length, 0);
+    assert.equal(requests[1].candidateHistory.length, 1);
+    for (const run of [first, second]) {
+      const events = (await (await LabStore.open({ labPath: lab })).readRun(run.stdout[0].data.runId)).events;
+      const step = events.find((event) => event.kind === 'STEP');
+      assert.equal(step.payload.policyEvidence.candidateSetSize, 2);
+      assert.match(step.payload.policyEvidence.candidateSetDigest, /^sha256:[0-9a-f]{64}$/u);
+      assert.equal(step.payload.policyEvidence.applied, true);
+      assert.equal(step.payload.choice.allowed, true);
+      assert.equal(step.payload.choice.safe, true);
+      const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--adapter', adapterConfig, '--json'], process.env);
+      assert.equal(replay.code, 0, JSON.stringify(replay));
+      assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    }
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     await rm(root, { recursive: true, force: true });
