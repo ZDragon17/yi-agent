@@ -259,6 +259,7 @@ export async function runLab(input) {
           lastProbeSteps: {},
           modelClock: 0,
           contextKeyScale: 9,
+          contextKeyMode: 'direction-v1',
         },
         rngState: initialRng(manifest.seed),
         kernelStep: 0,

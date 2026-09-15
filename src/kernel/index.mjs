@@ -50,6 +50,7 @@ const MAX_CONTEXT_MODELS = 8192;
 const LONG_CONTEXT_KEY_WINDOW = 8;
 const MAX_LONG_CONTEXTS = 8;
 const MAX_CONTEXT_KEY_LENGTH = 4096;
+const CONTEXT_KEY_MODES = ['exact-v1', 'direction-v1'];
 const PERSISTED_MEMORY_TRIM_BATCH = 64;
 const CURRENT_LEARNING_VERSION = 33;
 export const KERNEL_LEARNING_VERSIONS = Object.freeze({
@@ -148,7 +149,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'proposalModels', 'proposalContextModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps', 'lastProbeSteps', 'modelClock', 'modelAges', 'contextKeyScale'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'proposalContextModels', 'proposalModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps', 'lastProbeSteps', 'modelClock', 'modelAges', 'contextKeyScale', 'contextKeyMode'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -1576,6 +1577,9 @@ function normalizeMemory(value, field, dimensions) {
   const contextKeyScale = source.contextKeyScale === undefined
     ? undefined
     : assertContextKeyScale(source.contextKeyScale, `${field}.contextKeyScale`);
+  const contextKeyMode = source.contextKeyMode === undefined
+    ? undefined
+    : assertContextKeyMode(source.contextKeyMode, `${field}.contextKeyMode`);
   if (source.modelAges !== undefined) {
     applyCompactModelAges(
       source.modelAges,
@@ -1666,6 +1670,7 @@ function normalizeMemory(value, field, dimensions) {
     ...(lastProbeSteps === undefined ? {} : { lastProbeSteps }),
     ...(modelClock === undefined ? {} : { modelClock }),
     ...(contextKeyScale === undefined ? {} : { contextKeyScale }),
+    ...(contextKeyMode === undefined ? {} : { contextKeyMode }),
   };
 }
 
@@ -1759,6 +1764,10 @@ function assertContextKeyScale(value, field) {
     });
   }
   return scale;
+}
+
+function assertContextKeyMode(value, field) {
+  return assertOneOf(value, CONTEXT_KEY_MODES, field);
 }
 
 function hasModelAge(models) {
@@ -4030,6 +4039,7 @@ function cloneMemory(
   }
   if (value.modelClock !== undefined) cloned.modelClock = value.modelClock;
   if (value.contextKeyScale !== undefined) cloned.contextKeyScale = value.contextKeyScale;
+  if (value.contextKeyMode !== undefined) cloned.contextKeyMode = value.contextKeyMode;
   if (value.pendingCreditPolicy !== undefined) {
     cloned.pendingCreditPolicy = {
       schemaVersion: SCHEMA_VERSION,
@@ -4776,16 +4786,16 @@ export function contextKeysForMemory(memory, {
 } = {}) {
   const keys = [];
   if (longContextWindow) {
-    const longKey = longContextKeyForHistory(memory.recentHistory, memory.contextKeyScale);
+    const longKey = longContextKeyForHistory(memory.recentHistory, memory.contextKeyScale, memory.contextKeyMode);
     if (longKey !== undefined && !keys.includes(longKey)) keys.push(longKey);
   } else if (memory.historyAccumulator !== undefined) {
     keys.push(`h2:${canonicalDigest({ historyAccumulator: memory.historyAccumulator })}`);
   }
   const scale = memory.contextKeyScale;
-  const recentKey = contextKeyForHistory(memory.recentHistory, scale);
+  const recentKey = contextKeyForHistory(memory.recentHistory, scale, memory.contextKeyMode);
   if (recentKey !== undefined && !keys.includes(recentKey)) keys.push(recentKey);
   if (includeShortContext) {
-    const shortKey = shortContextKeyForHistory(memory.recentHistory, scale);
+    const shortKey = shortContextKeyForHistory(memory.recentHistory, scale, memory.contextKeyMode);
     if (shortKey !== undefined && !keys.includes(shortKey)) keys.push(shortKey);
   }
   return keys.length === 0 ? undefined : keys;
@@ -4794,35 +4804,38 @@ export function contextKeysForMemory(memory, {
 // 窗口-8 长上下文键：周期 < 8 的轨道每个相位拥有唯一的窗口摘要，可表达
 // 窗口-1/2 无法区分的碰撞相位。它取代按构造永不复现的累加器键成为 h2 的
 // 读取与写入基础；累加器字段本身仍按原样维护，仅作审计。
-function longContextKeyForHistory(history, contextKeyScale = undefined) {
+function longContextKeyForHistory(history, contextKeyScale = undefined, contextKeyMode = undefined) {
   const ordered = orderedHistory(history ?? []);
   if (ordered.length === 0) return undefined;
   return `h2:${canonicalDigest(ordered.slice(-LONG_CONTEXT_KEY_WINDOW).map((entry) => ({
     token: entry.token,
-    actualDelta: canonicalContextDelta(entry.actualDelta, contextKeyScale),
+    actualDelta: canonicalContextDelta(entry.actualDelta, contextKeyScale, contextKeyMode),
   })))}`;
 }
 
-function contextKeyForHistory(history, contextKeyScale = undefined) {
+function contextKeyForHistory(history, contextKeyScale = undefined, contextKeyMode = undefined) {
   if (history === undefined) return undefined;
   // 空历史保持历史怪癖：键为 digest([]) 而非 undefined，旧账本首个 STEP 依赖该形状。
   const ordered = orderedHistory(history).slice(-H1_CONTEXT_WINDOW);
   return `h1:${canonicalDigest(ordered.map((entry) => ({
     token: entry.token,
-    actualDelta: canonicalContextDelta(entry.actualDelta, contextKeyScale),
+    actualDelta: canonicalContextDelta(entry.actualDelta, contextKeyScale, contextKeyMode),
   })))}`;
 }
 
 // 窗口-1 上下文：相位类周期里最近一条已验证变化就足以区分状态，
 // 更粗的键在上下文碎片化时比窗口-2 键更早积累出可复用样本。
-function shortContextKeyForHistory(history, contextKeyScale = undefined) {
+function shortContextKeyForHistory(history, contextKeyScale = undefined, contextKeyMode = undefined) {
   const ordered = orderedHistory(history ?? []);
   if (ordered.length === 0) return undefined;
   const last = ordered.at(-1);
-  return `h0:${canonicalDigest([{ token: last.token, actualDelta: canonicalContextDelta(last.actualDelta, contextKeyScale) }])}`;
+  return `h0:${canonicalDigest([{ token: last.token, actualDelta: canonicalContextDelta(last.actualDelta, contextKeyScale, contextKeyMode) }])}`;
 }
 
-function canonicalContextDelta(vector, contextKeyScale) {
+function canonicalContextDelta(vector, contextKeyScale, contextKeyMode = undefined) {
+  if (contextKeyMode === 'direction-v1') {
+    return vector.map((component) => component === 0 ? 0 : component > 0 ? 1 : -1);
+  }
   if (contextKeyScale === undefined) return vector;
   const factor = 10 ** contextKeyScale;
   return vector.map((component) => {

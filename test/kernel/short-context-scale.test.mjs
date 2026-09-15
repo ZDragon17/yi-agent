@@ -152,6 +152,16 @@ test('context keys canonicalize floating-point reconstruction residue into one k
   assert.notEqual(withoutScaleA.contextKey, withoutScaleB.contextKey);
 });
 
+test('direction context mode reuses a key across magnitude changes', () => {
+  const directionMemory = { ...newMemory(), contextKeyMode: 'direction-v1' };
+  const positiveSmall = learnFromHistory({ token: ALPHA, actualDelta: [0.2] }, directionMemory);
+  const positiveLarge = learnFromHistory({ token: ALPHA, actualDelta: [0.8] }, {
+    ...newMemory(),
+    contextKeyMode: 'direction-v1',
+  });
+  assert.equal(positiveSmall.contextKey, positiveLarge.contextKey);
+});
+
 // 一次 learn 把动作前记忆的最近历史写入 h1/h0 上下文证据；
 // 两条语义相同（残差 vs 精确零）的历史在带 scale 的记忆中必须产生同一键。
 function learnFromHistory(entry, memory) {
