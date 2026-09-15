@@ -24,6 +24,7 @@ const DEFAULT_MODEL_TIMEOUT_MS = 60_000;
 const MIN_MODEL_TIMEOUT_MS = 100;
 const MAX_MODEL_TIMEOUT_MS = 300_000;
 const MAX_MODEL_CANDIDATES = 8;
+const MAX_CANDIDATE_SET_SIZE = MAX_MODEL_CANDIDATES + 1;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -536,6 +537,7 @@ export async function runLab(input) {
         proposalEnabled: manifest.adapter !== undefined,
         expectedObservationDigest: beforeModelObservation.digest,
         selectedCandidate: modelSelection?.candidate ?? null,
+        candidateSet: modelSelection?.candidateSet ?? modelCandidateSet(modelDecision, manifest.adapter !== undefined),
       }));
     const externalInputs = await registry.scenarioExternalInputs(
       manifest.worldId,
@@ -1029,12 +1031,32 @@ export async function runContinuous(input) {
 }
 
 function selectModelCandidate(stepInput, modelDecision, allowProposal) {
+  const candidateSet = modelCandidateSet(modelDecision, allowProposal);
+  if (candidateSet === null) return null;
+  const candidates = [];
+  for (const candidate of candidateSet) {
+    const capability = stepInput.capabilities.find((item) => item.token === candidate.token);
+    if (capability?.allowed !== true || capability.safe !== true) continue;
+    candidates.push({ candidate, preference: preferenceFor(candidate, true, allowProposal) });
+  }
+  if (candidates.length === 0) return null;
+  const intent = stepWithPreferences(stepInput, candidates.map(({ preference }) => preference));
+  const selected = candidates.find((item) => item.preference.token === intent.choice.token &&
+    canonicalJson(item.preference.proposal ?? null) === canonicalJson(intent.choice.proposal ?? null));
+  return selected === undefined ? null : {
+    ...selected,
+    intent,
+    candidateSet,
+  };
+}
+
+function modelCandidateSet(modelDecision, allowProposal) {
   if (!Array.isArray(modelDecision?.candidates)) return null;
   const rawCandidates = [
     { token: modelDecision.token, ...(modelDecision.proposal === undefined ? {} : { proposal: cloneJson(modelDecision.proposal) }) },
     ...modelDecision.candidates.map((candidate) => cloneJson(candidate)),
   ];
-  const candidates = [];
+  const candidateSet = [];
   const seen = new Set();
   for (const candidate of rawCandidates) {
     const preference = preferenceFor(candidate, true, allowProposal);
@@ -1042,15 +1064,9 @@ function selectModelCandidate(stepInput, modelDecision, allowProposal) {
     const digest = candidateDigest({ token: preference.token, proposal: preference.proposal ?? null });
     if (seen.has(digest)) continue;
     seen.add(digest);
-    const capability = stepInput.capabilities.find((item) => item.token === candidate.token);
-    if (capability?.allowed !== true || capability.safe !== true) continue;
-    candidates.push({ candidate, preference });
+    candidateSet.push(candidate);
   }
-  if (candidates.length === 0) return null;
-  const intent = stepWithPreferences(stepInput, candidates.map(({ preference }) => preference));
-  const selected = candidates.find((item) => item.preference.token === intent.choice.token &&
-    canonicalJson(item.preference.proposal ?? null) === canonicalJson(intent.choice.proposal ?? null));
-  return selected === undefined ? null : { ...selected, intent };
+  return candidateSet.slice(0, MAX_CANDIDATE_SET_SIZE);
 }
 
 function preferenceFor(modelDecision, required = false, allowProposal = true) {
@@ -1335,6 +1351,7 @@ function policyEvidence(modelDecision, intent, capabilities, {
   proposalEnabled,
   expectedObservationDigest,
   selectedCandidate = null,
+  candidateSet = null,
 }) {
   const appliedCandidate = selectedCandidate ?? {
     token: modelDecision.token,
@@ -1368,6 +1385,10 @@ function policyEvidence(modelDecision, intent, capabilities, {
     ...(appliedCandidate.proposal === undefined ? {} : { proposal: cloneJson(appliedCandidate.proposal) }),
     ...(supersedesCandidateDigest === null ? {} : { supersedesCandidateDigest }),
     ...(modelDecision.errorContext === undefined ? {} : { errorContext: cloneJson(modelDecision.errorContext) }),
+    ...(candidateSet === null ? {} : {
+      candidateSetSize: candidateSet.length,
+      candidateSetDigest: canonicalDigest(candidateSet),
+    }),
     applied,
     reason: applied ? null : (modelDecision.reason ?? (safe ? 'KERNEL_SELECTION_REJECTED' : 'TOKEN_NOT_SAFE')),
   };

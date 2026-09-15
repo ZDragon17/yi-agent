@@ -101,6 +101,7 @@ class ExecutionNonceFilter {
 
 export const INTERNAL_RUN_APPEND = Symbol('yi-agent.internal-run-append');
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
+const MAX_CANDIDATE_SET_SIZE = 9;
 const LEGACY_WORLD_SCENARIOS = {
   temperature: new Set(['steady', 'regime-shift', 'external-during-step', 'execution-rejected', 'all-unsafe']),
   'virtual-desktop': new Set(['steady', 'new-files', 'external-during-step', 'execution-rejected', 'all-unsafe']),
@@ -2271,9 +2272,10 @@ function validateExternalPolicyEvidence(value, runId) {
     (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
     typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||
     (value.observationDigest !== undefined && (typeof value.observationDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.observationDigest))) ||
-    (value.supersedesCandidateDigest !== undefined &&
-      (typeof value.supersedesCandidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.supersedesCandidateDigest))) ||
-    (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
+      (value.supersedesCandidateDigest !== undefined &&
+        (typeof value.supersedesCandidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.supersedesCandidateDigest))) ||
+      !isValidCandidateSetEvidence(value) ||
+      (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
     (value.errorContext !== undefined && !isValidErrorContext(value.errorContext)) ||
     typeof value.applied !== 'boolean' ||
     (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))
@@ -2939,12 +2941,22 @@ function validatePolicyEvidence(value, field, corruptOnFailure) {
       (value.supersedesCandidateDigest !== undefined &&
         (typeof value.supersedesCandidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.supersedesCandidateDigest))) ||
       (value.candidateDigest !== undefined && !isValidCandidateDigest(value)) ||
+      !isValidCandidateSetEvidence(value) ||
       (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
       (value.errorContext !== undefined && !isValidErrorContext(value.errorContext)) ||
       typeof value.applied !== 'boolean' ||
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
     fail('STEP model policy evidence is invalid.');
   }
+}
+
+function isValidCandidateSetEvidence(value) {
+  const hasSize = value.candidateSetSize !== undefined;
+  const hasDigest = value.candidateSetDigest !== undefined;
+  return (!hasSize && !hasDigest) ||
+    (hasSize && hasDigest && Number.isSafeInteger(value.candidateSetSize) &&
+      value.candidateSetSize >= 1 && value.candidateSetSize <= MAX_CANDIDATE_SET_SIZE &&
+      typeof value.candidateSetDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.candidateSetDigest));
 }
 
 function isValidErrorContext(value) {

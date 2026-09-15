@@ -1006,6 +1006,8 @@ test('application evaluates model candidates with the kernel and replays the sel
     const step = run.events.filter((event) => event.kind === 'STEP').at(-1);
     assert.equal(step.payload.choice.token, increase);
     assert.equal(step.payload.policyEvidence.token, increase);
+    assert.equal(step.payload.policyEvidence.candidateSetSize, 2);
+    assert.match(step.payload.policyEvidence.candidateSetDigest, /^sha256:[0-9a-f]{64}$/u);
     assert.equal(step.payload.policyEvidence.applied, true);
     assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
   });

@@ -22,6 +22,7 @@ const REQUIRED_BOUNDARY_KEYS = ['schemaVersion', 'valueSpec'];
 const MAX_SCENARIO_IDS = 256;
 const MAX_SCENARIO_ID_LENGTH = 4096;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
+const MAX_CANDIDATE_SET_SIZE = 9;
 const MAX_SUPPORTED_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.current;
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -770,12 +771,22 @@ function validatePolicyEvidence(value, sequence) {
       (value.supersedesCandidateDigest !== undefined &&
         (typeof value.supersedesCandidateDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.supersedesCandidateDigest))) ||
       (value.candidateDigest !== undefined && !isValidCandidateDigest(value)) ||
+      !isValidCandidateSetEvidence(value) ||
       (value.proposal !== undefined && !isValidModelProposal(value.proposal)) ||
       (value.errorContext !== undefined && !isValidErrorContext(value.errorContext)) ||
       typeof value.applied !== 'boolean' ||
       (value.reason !== null && (typeof value.reason !== 'string' || value.reason.length === 0 || value.reason.length > 256))) {
     corrupt('STEP model policy evidence is invalid.', { sequence });
   }
+}
+
+function isValidCandidateSetEvidence(value) {
+  const hasSize = value.candidateSetSize !== undefined;
+  const hasDigest = value.candidateSetDigest !== undefined;
+  return (!hasSize && !hasDigest) ||
+    (hasSize && hasDigest && Number.isSafeInteger(value.candidateSetSize) &&
+      value.candidateSetSize >= 1 && value.candidateSetSize <= MAX_CANDIDATE_SET_SIZE &&
+      typeof value.candidateSetDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.candidateSetDigest));
 }
 
 function isValidErrorContext(value) {
