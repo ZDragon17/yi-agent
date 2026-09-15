@@ -2060,7 +2060,7 @@
 - 缺口：R26/R27 已经证明 proposal×context 记忆可以保存和读取，但 Advisor 每步仍只给出一个 proposal，Kernel 无法在同一个观测边界比较多个假设。
 - 实现：Advisor 响应现在可以带最多 8 个备选。每个备选都要经过 Token、proposal 大小和 WorldPort 安全边界检查；Kernel 在同一份状态和 RNG 起点上逐个计算预测，Application 只执行最终选中的一个动作。单候选响应继续使用原路径。
 - 验证：新增 Kernel 候选集合同测试和应用层 Replay 测试。候选集可从主候选切换到预测分数更高的备选，日志、重启和 Replay 保持一致。
-- 边界：这一步只证明多假设进入了底座选择，并不证明模型能提出好假设。R28 在连续功率 WorldPort 上做同 seed 对照：8 对运行全部 Replay 为 `CONSISTENT`，候选集相对单候选的平均成本差为 `+18.75` 元，4 对改善、4 对变差，结论为 `INCONCLUSIVE_CANDIDATE_SET_QUALITY`。重跑同时确认候选池遵守 Kernel 的覆盖探索语义。报告绑定源码指纹 `a266f90bdf41d0c6601313d8662d0fbaca8a927c45a837a5ce878feac78e5679`。
+- 边界：这一步只证明多假设进入了底座选择，并不证明模型能提出好假设。随后进行的 R28 在连续功率 WorldPort 上做同 seed 对照：8 对运行全部 Replay 为 `CONSISTENT`，候选集相对单候选的平均成本差为 `+18.75` 元，4 对改善、4 对变差，结论为 `INCONCLUSIVE_CANDIDATE_SET_QUALITY`。重跑同时确认候选池遵守 Kernel 的覆盖探索语义。报告绑定源码指纹 `a266f90bdf41d0c6601313d8662d0fbaca8a927c45a837a5ce878feac78e5679`。
 
 ## F-274 有限候选集进入 Kernel 选择闭环
 
