@@ -29,13 +29,14 @@ function proposalFor(context, token) {
       .map((contextKey) => contextualModels[digest]?.[contextKey])
       .find((model) => model !== undefined);
     return { powerKw, model: contextual ?? globalModels[digest] };
-  }).filter((candidate) => candidate.model !== undefined && allowed(candidate.powerKw));
+  }).filter((candidate) => candidate.model !== undefined);
   if (known.length < PROPOSALS.length) {
     const candidate = PROPOSALS[Math.max(0, Number(context.step) || 0) % PROPOSALS.length];
     return allowed(candidate) ? candidate : 0;
   }
-  if (known.length === 0) return 0;
-  return known.reduce((best, candidate) =>
+  const safeKnown = known.filter((candidate) => allowed(candidate.powerKw));
+  if (safeKnown.length === 0) return 0;
+  return safeKnown.reduce((best, candidate) =>
     candidate.model.meanDelta[3] > best.model.meanDelta[3] ? candidate : best,
   ).powerKw;
 }
