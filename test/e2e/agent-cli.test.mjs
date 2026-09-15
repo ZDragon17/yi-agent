@@ -437,11 +437,30 @@ test('agent loop recovers a crashed process and preserves candidate history', as
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-loop-crash-recovery-e2e-'));
   let requestCount = 0;
   let activeChild = null;
+  const requestWaiters = new Map();
+  const waitForRequest = (expected) => new Promise((resolve, reject) => {
+    if (requestCount >= expected) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      requestWaiters.delete(expected);
+      reject(new Error(`Timed out waiting for model request ${expected}; received ${requestCount}.`));
+    }, 5000);
+    requestWaiters.set(expected, {
+      resolve: () => {
+        clearTimeout(timer);
+        resolve();
+      },
+    });
+  });
   const server = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     requestCount += 1;
+    requestWaiters.get(requestCount)?.resolve();
+    requestWaiters.delete(requestCount);
     if (requestCount === 2 || requestCount === 4) {
       // 留住下一轮模型请求，让宿主在已经提交上一轮后被硬终止。
       request.resume();
@@ -477,8 +496,15 @@ test('agent loop recovers a crashed process and preserves candidate history', as
         activeChild = child;
       },
     );
-    await waitForCurrent(lab, (current) => requestCount >= 2 && current.kernelStep >= 1 && current.status === 'RUNNING');
-    assert.equal(firstChild?.kill(), true);
+    try {
+      await waitForRequest(2);
+    } catch (error) {
+      forceTerminate(firstChild);
+      const first = await firstPromise;
+      throw new Error(`${error.message} child=${JSON.stringify(first)} requests=${requestCount}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(forceTerminate(firstChild), true);
     await firstPromise;
 
     let secondChild = null;
@@ -491,13 +517,14 @@ test('agent loop recovers a crashed process and preserves candidate history', as
       },
     );
     try {
-      await waitForCurrent(lab, (current) => requestCount >= 4 && current.kernelStep >= 2 && current.status === 'RUNNING');
+      await waitForRequest(4);
     } catch (error) {
-      secondChild?.kill();
+      forceTerminate(secondChild);
       const second = await secondPromise;
       throw new Error(`${error.message} child=${JSON.stringify(second)}`);
     }
-    assert.equal(secondChild?.kill(), true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(forceTerminate(secondChild), true);
     await secondPromise;
 
     const store = await LabStore.open({ labPath: lab });
@@ -515,7 +542,7 @@ test('agent loop recovers a crashed process and preserves candidate history', as
       assert.equal((await invoke(['replay', '--lab', lab, '--run', run.start.runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
     }
   } finally {
-    activeChild?.kill();
+    forceTerminate(activeChild);
     server.closeAllConnections?.();
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     await rm(root, { recursive: true, force: true });
@@ -977,22 +1004,7 @@ function parseJsonLines(value) {
   return value.trim().length === 0 ? [] : value.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
 }
 
-async function waitForCurrent(lab, predicate) {
-  const deadline = Date.now() + 5000;
-  let lastCurrent = null;
-  let lastContinuation = null;
-  while (Date.now() < deadline) {
-    try {
-      const store = await LabStore.open({ labPath: lab });
-      const inspection = await store.inspect();
-      const current = inspection.current;
-      lastCurrent = current;
-      if (predicate(current)) return;
-      lastContinuation = await store.readCurrentLoopContinuation();
-    } catch {
-      // The child may still be creating or rotating its current Run.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error(`Timed out waiting for current state: ${JSON.stringify({ current: lastCurrent, continuation: lastContinuation })}`);
+function forceTerminate(child) {
+  if (child === null || child === undefined || child.killed) return false;
+  return process.platform === 'win32' ? child.kill() : child.kill('SIGKILL');
 }
