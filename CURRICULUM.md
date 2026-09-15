@@ -191,6 +191,13 @@ F-139 不升级 Kernel 版本，而是补齐 v32 的两面反证：独立见证�
 - 验证：3/3 Run 执行成功，候选历史跨 Run 增长；每个 STEP 都记录候选集大小、摘要指纹和 `applied=true`，最终选择保持 `allowed=true/safe=true`，三个 Run Replay 均为 `CONSISTENT`。
 - 边界：这证明候选集进入连续 Runner 的持久化边界，不证明多 Run 之间的候选质量改善、长期收益或无限运行能力。
 
+## F-280 连续 Runner 的进程崩溃恢复与候选历史接续
+
+- 缺口：F-279 只在一个连续进程中串联 Run；已有的重启证据也没有把“下一 Run 已经启动但模型请求尚未返回”与候选集历史放在同一次真实 CLI 崩溃实验中。
+- 设计：本机 HTTP 模型在第一条 STEP 提交后挂住下一 Run 的请求，测试强制终止第一个 CLI 进程；第二个独立 CLI 进程用 `agent loop --resume --auto-recover` 接管，再在第二条 STEP 提交后重复终止。模型仍返回安全主候选和一个备选，候选内容不写进宿主进程外的隐式状态。
+- 验证：第二个进程完成接管并把 `kernelStep` 从 `1` 推进到 `2`；候选历史从 `1` 条恢复为 `2` 条，恢复后的终态 Run 与崩溃 Run 逐个 Replay 均为 `CONSISTENT`。测试还显式调用一次 Runtime recovery 清理第二次故意留下的活动 Run，确认 continuation 仍为 `ACTIVE`。
+- 边界：这是内置 inventory WorldPort、本机文件账本和本机 HTTP 模型的崩溃证据；外部 WorldPort 的候选重启契约见 F-278。它证明的是 owner 已死亡时的恢复、候选历史持久化和确定性重放，不证明模型质量、外部现实效果、跨机器锁接管或无限运行。
+
 ## L6（远景，属外部卡点）
 
 真实设备遥测接入（数据通道 WorldPort + 人工数据契约）、真实经济结算。

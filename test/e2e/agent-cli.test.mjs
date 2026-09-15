@@ -433,6 +433,95 @@ test('agent loop carries candidate sets across persisted runs and Replay', async
   }
 });
 
+test('agent loop recovers a crashed process and preserves candidate history', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-loop-crash-recovery-e2e-'));
+  let requestCount = 0;
+  let activeChild = null;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    requestCount += 1;
+    if (requestCount === 2 || requestCount === 4) {
+      // 留住下一轮模型请求，让宿主在已经提交上一轮后被硬终止。
+      request.resume();
+      return;
+    }
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    const safe = context.capabilities.find((capability) => capability.allowed && capability.safe);
+    const alternative = context.capabilities.find((capability) => capability.token !== safe?.token);
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ id: 'agent-crash-recovery', model: body.model, choices: [{ message: { content: JSON.stringify({
+      token: safe?.token ?? null,
+      candidates: alternative === undefined ? [] : [{ token: alternative.token }],
+    }) } }] }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'local-crash-recovery-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'local-crash-recovery-model',
+  };
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'inventory', '--seed', 'crash-recovery-seed', '--json'], process.env)).code, 0);
+
+    let firstChild = null;
+    const firstPromise = invoke(
+      ['agent', 'loop', '--lab', lab, '--steps', '1', '--forever', '--json'],
+      env,
+      (child) => {
+        firstChild = child;
+        activeChild = child;
+      },
+    );
+    await waitForCurrent(lab, (current) => requestCount >= 2 && current.kernelStep >= 1 && current.status === 'RUNNING');
+    assert.equal(firstChild?.kill(), true);
+    await firstPromise;
+
+    let secondChild = null;
+    const secondPromise = invoke(
+      ['agent', 'loop', '--lab', lab, '--resume', '--auto-recover', '--json'],
+      env,
+      (child) => {
+        secondChild = child;
+        activeChild = child;
+      },
+    );
+    try {
+      await waitForCurrent(lab, (current) => requestCount >= 4 && current.kernelStep >= 2 && current.status === 'RUNNING');
+    } catch (error) {
+      secondChild?.kill();
+      const second = await secondPromise;
+      throw new Error(`${error.message} child=${JSON.stringify(second)}`);
+    }
+    assert.equal(secondChild?.kill(), true);
+    await secondPromise;
+
+    const store = await LabStore.open({ labPath: lab });
+    const inspection = await store.inspect();
+    assert.equal(inspection.current.kernelStep, 2);
+    assert.equal((await store.readCandidateOutcomes()).length, 2);
+    await LabStore.recover({ labPath: lab, command: 'test-crash-cleanup' });
+    assert.equal((await store.readCurrentLoopContinuation()).status, 'ACTIVE');
+    assert.equal(requestCount, 4);
+
+    const runs = await store.readAllRuns();
+    const terminalRuns = runs.filter((run) => run.end !== undefined);
+    assert.ok(terminalRuns.some((run) => run.events.some((event) => event.kind === 'STEP')));
+    for (const run of terminalRuns) {
+      assert.equal((await invoke(['replay', '--lab', lab, '--run', run.start.runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+    }
+  } finally {
+    activeChild?.kill();
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent loop accepts an explicit forever policy without confusing it with a run count', async () => {
   const help = await invoke(['agent', 'loop', '--lab', 'missing', '--steps', '1', '--forever', '--json'], {
     ...process.env,
@@ -886,4 +975,24 @@ function invoke(args, env, onChild) {
 
 function parseJsonLines(value) {
   return value.trim().length === 0 ? [] : value.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+}
+
+async function waitForCurrent(lab, predicate) {
+  const deadline = Date.now() + 5000;
+  let lastCurrent = null;
+  let lastContinuation = null;
+  while (Date.now() < deadline) {
+    try {
+      const store = await LabStore.open({ labPath: lab });
+      const inspection = await store.inspect();
+      const current = inspection.current;
+      lastCurrent = current;
+      if (predicate(current)) return;
+      lastContinuation = await store.readCurrentLoopContinuation();
+    } catch {
+      // The child may still be creating or rotating its current Run.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for current state: ${JSON.stringify({ current: lastCurrent, continuation: lastContinuation })}`);
 }

@@ -569,6 +569,8 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 
 如果明确选择自动路径，可使用 `yi-agent agent loop --lab PATH --resume --auto-recover --json`；它只自动处理 current 为 `RUNNING` 且 liveness probe 证明旧 owner 已死亡的本地恢复，不会绕过活跃进程保护，也不把无法确认的锁当作安全可接管。
 
+F-280 在 `test/e2e/agent-cli.test.mjs` 中用两个真实 CLI 子进程覆盖了这条路径：第一进程在下一 Run 的模型请求挂起时被强制终止，第二进程通过 `--resume --auto-recover` 接管并继续推进；候选历史和终态 Run 仍可离线 Replay。该测试使用内置 inventory WorldPort，外部 WorldPort 的重启证据见 F-278。
+
 连续 Runner 默认使用 `checkpoint` 持久化：STEP 仍逐条写入完整证据账本，在每 128 步及终态前执行 data-sync；需要每一步都完成物理同步时，应用层可传 `durability: 'strict'`。CLI 的普通 `run` 保持 strict 语义，`agent loop` 采用 checkpoint 语义。
 
 ## 独立晚绑定 Oracle
