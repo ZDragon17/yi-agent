@@ -198,6 +198,8 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 候选集已经在四个内置 WorldPort（temperature、virtual-desktop、inventory、queue）上验证了传输、unsafe 过滤、账本记录和 Replay；随后又通过独立 CLI 子进程的 HTTP 模型入口，以及四维 opaque 外部 WorldPort 的两次独立运行和重启恢复。每个 STEP 只执行一个最终安全动作，候选集大小和摘要指纹用于审计。F-276 至 F-278 证明的是协议和恢复边界，不是候选质量、跨领域收益、真实模型长期改进或现实副作用安全。
 
+`agent loop` 也会在多个持久化 Run 间复用同一候选集契约：模型上下文重新读取 current 和有界候选历史，Kernel 每步重新检查权限与安全性，Replay 仍只使用已落盘的最终选择。F-279 的三 Run 测试证明了这条连续 Runner 路径，但不等于无限运行、长期收益或模型自我改进已经成立。
+
 模型进程适配器是可选的可靠性边界，不是权限沙箱。配置格式为 `{ "executable": "绝对路径", "args": [], "model": "名称", "timeoutMs": 5000, "env": ["显式允许传递的环境变量名"] }`；适配器从 stdin 读取一条 `yi-model-cli` JSONL 请求，并返回一条 `{protocol,version,id,ok,result:{model,content}}` 回包。它解决的是“不合作的模型回调不能永久占住 CLI”这一 liveness 问题，不证明模型安全、不会访问网络，也不撤销已经发生的副作用。
 
 ### 内置世界的测试面

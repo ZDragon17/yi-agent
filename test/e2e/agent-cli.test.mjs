@@ -372,17 +372,22 @@ test('agent CLI bounds a hanging HTTP advisor and records a timeout fallback', a
   }
 });
 
-test('agent loop commits multiple runs and resumes from the persisted current state', async () => {
+test('agent loop carries candidate sets across persisted runs and Replay', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-loop-e2e-'));
   const contexts = [];
   const server = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    contexts.push(JSON.parse(body.messages[0].content.split('\n').at(-1)));
-    const token = /tok_[A-Z0-9]{8,128}/u.exec(body.messages[0].content)?.[0] ?? null;
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    contexts.push(context);
+    const safe = context.capabilities.find((capability) => capability.allowed && capability.safe);
+    const alternative = context.capabilities.find((capability) => capability.token !== safe?.token);
     response.setHeader('Content-Type', 'application/json');
-    response.end(JSON.stringify({ id: 'agent-loop', model: body.model, choices: [{ message: { content: JSON.stringify({ token }) } }] }));
+    response.end(JSON.stringify({ id: 'agent-loop', model: body.model, choices: [{ message: { content: JSON.stringify({
+      token: safe?.token ?? null,
+      candidates: alternative === undefined ? [] : [{ token: alternative.token }],
+    }) } }] }));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -411,6 +416,13 @@ test('agent loop commits multiple runs and resumes from the persisted current st
       assert.match(candidate.beforeStateDigest, /^sha256:[0-9a-f]{64}$/u);
     }
     for (const result of loop.stdout[0].data.results) {
+      const events = (await (await LabStore.open({ labPath: lab })).readRun(result.runId)).events;
+      const step = events.find((event) => event.kind === 'STEP');
+      assert.equal(step.payload.policyEvidence.candidateSetSize, 2);
+      assert.match(step.payload.policyEvidence.candidateSetDigest, /^sha256:[0-9a-f]{64}$/u);
+      assert.equal(step.payload.policyEvidence.applied, true);
+      assert.equal(step.payload.choice.allowed, true);
+      assert.equal(step.payload.choice.safe, true);
       const replay = await invoke(['replay', '--lab', lab, '--run', result.runId, '--json'], process.env);
       assert.equal(replay.code, 0);
       assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');

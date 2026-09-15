@@ -185,6 +185,12 @@ F-139 不升级 Kernel 版本，而是补齐 v32 的两面反证：独立见证�
 - 验证：两个运行都完成，第二次模型上下文收到第一次候选历史；两个 STEP 均记录候选集大小、摘要指纹和 `applied=true`，两个独立 Replay 均为 `CONSISTENT`。
 - 边界：这证明候选集能跨 CLI 重启和外部 JSONL WorldPort 保持账本契约，不证明 adapter 的现实状态诚实、模型候选有效或副作用具备回滚和人工授权。
 
+## F-279 连续 Runner 中的候选集闭环
+
+- 设计：将 HTTP 模型候选集接入 `agent loop`，一次连续 Runner 提交三个持久化 Run；每个 Run 重新从 current 和候选历史构造模型上下文。
+- 验证：3/3 Run 执行成功，候选历史跨 Run 增长；每个 STEP 都记录候选集大小、摘要指纹和 `applied=true`，最终选择保持 `allowed=true/safe=true`，三个 Run Replay 均为 `CONSISTENT`。
+- 边界：这证明候选集进入连续 Runner 的持久化边界，不证明多 Run 之间的候选质量改善、长期收益或无限运行能力。
+
 ## L6（远景，属外部卡点）
 
 真实设备遥测接入（数据通道 WorldPort + 人工数据契约）、真实经济结算。
