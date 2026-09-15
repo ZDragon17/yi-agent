@@ -985,6 +985,32 @@ test('application binds policy evidence to the observed boundary instead of a mo
   });
 });
 
+test('application evaluates model candidates with the kernel and replays the selected candidate', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'candidate-set-lab', worldId: 'temperature', seed: 'candidate-set-seed' });
+    const store = await LabStore.open({ labPath: lab });
+    const [increase, decrease] = store.manifest.tokenMap.entries.map((entry) => entry.token);
+    const result = await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 2,
+      advisor: async ({ step }) => ({
+        model: 'candidate-advisor',
+        responseDigest: `sha256:${'b'.repeat(64)}`,
+        token: decrease,
+        ...(step === 1 ? { candidates: [{ token: increase }] } : {}),
+      }),
+    });
+    assert.equal(result.status, 'COMPLETED');
+    const run = await store.readRun('run-1');
+    const step = run.events.filter((event) => event.kind === 'STEP').at(-1);
+    assert.equal(step.payload.choice.token, increase);
+    assert.equal(step.payload.policyEvidence.token, increase);
+    assert.equal(step.payload.policyEvidence.applied, true);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
 test('application isolates mutable planner and advisor inputs from the closed-loop state', async () => {
   await withLab(async (lab) => {
     const registry = createGeneratedRegistry();

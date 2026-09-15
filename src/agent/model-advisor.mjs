@@ -6,6 +6,7 @@ const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const MAX_PROMPT_BYTES = 128 * 1024;
 const MAX_MEMORY_MODELS = 128;
+const MAX_MODEL_CANDIDATES = 8;
 
 export function createModelAdvisor({ client, model, goal = null } = {}) {
   if (client === null || typeof client?.chat !== 'function') {
@@ -45,6 +46,7 @@ export function createModelAdvisor({ client, model, goal = null } = {}) {
       model: response.model ?? model,
       token: parsed.token,
       ...(parsed.proposal === undefined ? {} : { proposal: parsed.proposal }),
+      ...(parsed.candidates === undefined ? {} : { candidates: parsed.candidates }),
       ...(parsed.supersedesCandidateDigest === undefined
         ? {}
         : { supersedesCandidateDigest: parsed.supersedesCandidateDigest }),
@@ -90,7 +92,7 @@ export function buildDecisionPrompt({ observation, observationEvidence = [], obs
     'stepsSinceSupersededCandidate is only the bounded kernel-step interval between a referenced candidate and this candidate; never treat it as causal repair cost.',
     'You may optionally include supersedesCandidateDigest to reference one prior candidate digest from the supplied history. The host accepts it only when the reference exists in this same WorldPort scope; acceptance is not proof of causal repair.',
     'The host kernel independently recomputes predictions and rejects unsafe or disallowed choices.',
-    'Return JSON only with this shape: {"token":"tok_...","proposal":{...},"supersedesCandidateDigest":"sha256:..."}. Omit proposal or supersedesCandidateDigest when not applicable.',
+    'Return JSON only with this shape: {"token":"tok_...","proposal":{...},"candidates":[{"token":"tok_...","proposal":{...}}],"supersedesCandidateDigest":"sha256:..."}. candidates is an optional bounded list of alternative proposals; omit it when one proposal is enough. Omit proposal, candidate proposal, or supersedesCandidateDigest when not applicable.',
     JSON.stringify(context),
   ].join('\n');
   if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES) {
@@ -332,10 +334,56 @@ function parseProposal(content) {
       (typeof value.supersedesCandidateDigest !== 'string' || !DIGEST_PATTERN.test(value.supersedesCandidateDigest))) {
     return { token: null, reason: 'INVALID_MODEL_OUTPUT' };
   }
+  const candidates = normalizeModelCandidates(value.candidates);
+  if (!candidates.valid) return { token: null, reason: 'INVALID_MODEL_OUTPUT' };
   return {
     token: value.token,
     ...(proposal === undefined ? {} : { proposal }),
+    ...(candidates.value === undefined ? {} : { candidates: candidates.value }),
     ...(value.supersedesCandidateDigest === undefined ? {} : { supersedesCandidateDigest: value.supersedesCandidateDigest }),
     reason: null,
   };
+}
+
+function normalizeModelCandidates(value) {
+  if (value === undefined) return { valid: true, value: undefined };
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_MODEL_CANDIDATES) {
+    return { valid: false, value: undefined };
+  }
+  const candidates = [];
+  for (const candidate of value) {
+    if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate) ||
+        typeof candidate.token !== 'string' || !TOKEN_PATTERN.test(candidate.token)) {
+      return { valid: false, value: undefined };
+    }
+    const candidateProposal = normalizeCandidateProposal(candidate.proposal);
+    if (!candidateProposal.valid) return { valid: false, value: undefined };
+    candidates.push({
+      token: candidate.token,
+      ...(candidateProposal.value === undefined ? {} : { proposal: candidateProposal.value }),
+    });
+  }
+  try {
+    if (Buffer.byteLength(canonicalJson(candidates), 'utf8') > MAX_MODEL_PROPOSAL_BYTES) {
+      return { valid: false, value: undefined };
+    }
+  } catch {
+    return { valid: false, value: undefined };
+  }
+  return { valid: true, value: candidates };
+}
+
+function normalizeCandidateProposal(value) {
+  if (value === undefined) return { valid: true, value: undefined };
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return { valid: false, value: undefined };
+  }
+  try {
+    if (Buffer.byteLength(canonicalJson(value), 'utf8') > MAX_MODEL_PROPOSAL_BYTES) {
+      return { valid: false, value: undefined };
+    }
+    return { valid: true, value: cloneJson(value) };
+  } catch {
+    return { valid: false, value: undefined };
+  }
 }

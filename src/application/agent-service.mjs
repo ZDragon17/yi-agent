@@ -23,6 +23,7 @@ const KERNEL_LEARNING_VERSION = KERNEL_LEARNING_VERSIONS.current;
 const DEFAULT_MODEL_TIMEOUT_MS = 60_000;
 const MIN_MODEL_TIMEOUT_MS = 100;
 const MAX_MODEL_TIMEOUT_MS = 300_000;
+const MAX_MODEL_CANDIDATES = 8;
 
 export async function initLab(input) {
   const source = requireRecord(input, 'init input');
@@ -469,7 +470,7 @@ export async function runLab(input) {
           goal: supervisor?.goal ?? requestedGoal,
         })
       : null;
-    const intent = persistedRecoveryIntent ?? stepWithPreference({
+    const stepInput = {
       observation: beforeObservation,
       memory: state.memory,
       valueSpec: stepValueSpec,
@@ -478,9 +479,19 @@ export async function runLab(input) {
       learningVersion: KERNEL_LEARNING_VERSION,
       ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
       planning: planningEvidence(planningHorizon, planningContextMode, planningBranchingMode),
-    }, randomization === null
-      ? preferenceFor(retryPreference ?? modelDecision, retryPreference !== null, manifest.adapter !== undefined)
-      : { schemaVersion: SCHEMA_VERSION, token: randomization.selectedToken, required: true });
+    };
+    const modelSelection = persistedRecoveryIntent === null && randomization === null
+      ? selectModelCandidate(stepInput, modelDecision, manifest.adapter !== undefined)
+      : null;
+    const intent = persistedRecoveryIntent ?? (randomization === null
+      ? modelSelection?.intent ?? stepWithPreference(
+          stepInput,
+          preferenceFor(retryPreference ?? modelDecision, retryPreference !== null, manifest.adapter !== undefined),
+        )
+      : stepWithPreference(
+          stepInput,
+          { schemaVersion: SCHEMA_VERSION, token: randomization.selectedToken, required: true },
+        ));
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
       terminalRequested = true;
@@ -524,6 +535,7 @@ export async function runLab(input) {
         scenario,
         proposalEnabled: manifest.adapter !== undefined,
         expectedObservationDigest: beforeModelObservation.digest,
+        selectedCandidate: modelSelection?.candidate ?? null,
       }));
     const externalInputs = await registry.scenarioExternalInputs(
       manifest.worldId,
@@ -1016,6 +1028,36 @@ export async function runContinuous(input) {
   };
 }
 
+function selectModelCandidate(stepInput, modelDecision, allowProposal) {
+  if (!Array.isArray(modelDecision?.candidates)) return null;
+  const rawCandidates = [
+    { token: modelDecision.token, ...(modelDecision.proposal === undefined ? {} : { proposal: cloneJson(modelDecision.proposal) }) },
+    ...modelDecision.candidates.map((candidate) => cloneJson(candidate)),
+  ];
+  const candidates = [];
+  const seen = new Set();
+  for (const candidate of rawCandidates) {
+    const preference = preferenceFor(candidate, true, allowProposal);
+    const digest = candidateDigest({ token: preference.token, proposal: preference.proposal ?? null });
+    if (seen.has(digest)) continue;
+    seen.add(digest);
+    const capability = stepInput.capabilities.find((item) => item.token === candidate.token);
+    if (capability?.allowed !== true || capability.safe !== true) continue;
+    const intent = stepWithPreference(stepInput, preference);
+    if (intent.status !== 'READY' || intent.choice.token !== preference.token ||
+        canonicalJson(intent.choice.proposal ?? null) !== canonicalJson(preference.proposal ?? null)) continue;
+    candidates.push({ candidate, intent });
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((left, right) => {
+    if (left.intent.choice.score !== right.intent.choice.score) {
+      return right.intent.choice.score - left.intent.choice.score;
+    }
+    return candidateDigest(left.candidate).localeCompare(candidateDigest(right.candidate));
+  });
+  return candidates[0];
+}
+
 function preferenceFor(modelDecision, required = false, allowProposal = true) {
   return modelDecision?.token === null || modelDecision?.token === undefined
     ? null
@@ -1089,8 +1131,9 @@ function normalizedAdvice(result, fallbackReason, errorContext = null) {
     const reasonValid = result.reason === undefined || result.reason === null ||
       (typeof result.reason === 'string' && result.reason.length > 0 && result.reason.length <= 256);
     const proposal = normalizeModelProposal(result.proposal);
+    const candidates = normalizeModelCandidates(result.candidates);
     const supersessionValid = result.supersedesCandidateDigest === undefined || validDigest(result.supersedesCandidateDigest);
-    const valid = tokenValid && reasonValid && proposal.valid && supersessionValid;
+    const valid = tokenValid && reasonValid && proposal.valid && candidates.valid && supersessionValid;
     const reason = valid ? (result.reason ?? null) : 'INVALID_ADVISOR_RESULT';
     const responseDigest = validDigest(result.responseDigest)
       ? result.responseDigest
@@ -1104,6 +1147,7 @@ function normalizedAdvice(result, fallbackReason, errorContext = null) {
       responseDigest,
       ...(observationDigest === null ? {} : { observationDigest }),
       ...(proposal.value === undefined ? {} : { proposal: proposal.value }),
+      ...(valid && candidates.value !== undefined ? { candidates: candidates.value } : {}),
       ...(valid && result.supersedesCandidateDigest !== undefined
         ? { supersedesCandidateDigest: result.supersedesCandidateDigest }
         : {}),
@@ -1295,16 +1339,21 @@ function policyEvidence(modelDecision, intent, capabilities, {
   scenario,
   proposalEnabled,
   expectedObservationDigest,
+  selectedCandidate = null,
 }) {
-  const safe = capabilities.some((capability) => capability.token === modelDecision.token && capability.allowed && capability.safe);
-  const applied = safe && intent.status === 'READY' && intent.choice.token === modelDecision.token &&
-    (!proposalEnabled || canonicalJson(intent.choice.proposal ?? null) === canonicalJson(modelDecision.proposal ?? null));
+  const appliedCandidate = selectedCandidate ?? {
+    token: modelDecision.token,
+    ...(modelDecision.proposal === undefined ? {} : { proposal: modelDecision.proposal }),
+  };
+  const safe = capabilities.some((capability) => capability.token === appliedCandidate.token && capability.allowed && capability.safe);
+  const applied = safe && intent.status === 'READY' && intent.choice.token === appliedCandidate.token &&
+    (!proposalEnabled || canonicalJson(intent.choice.proposal ?? null) === canonicalJson(appliedCandidate.proposal ?? null));
   const observationDigest = validDigest(expectedObservationDigest)
     ? expectedObservationDigest
     : (validDigest(modelDecision.observationDigest) ? modelDecision.observationDigest : null);
   const candidate = {
-    token: modelDecision.token,
-    proposal: modelDecision.proposal ?? null,
+    token: appliedCandidate.token,
+    proposal: appliedCandidate.proposal ?? null,
   };
   const supersedesCandidateDigest = acceptedSupersessionDigest({
     requestedDigest: modelDecision.supersedesCandidateDigest,
@@ -1317,11 +1366,11 @@ function policyEvidence(modelDecision, intent, capabilities, {
     schemaVersion: SCHEMA_VERSION,
     source: 'model',
     model: modelDecision.model,
-    token: modelDecision.token,
+    token: appliedCandidate.token,
     responseDigest: modelDecision.responseDigest,
     candidateDigest: candidateDigest(candidate),
     ...(observationDigest === null ? {} : { observationDigest }),
-    ...(modelDecision.proposal === undefined ? {} : { proposal: cloneJson(modelDecision.proposal) }),
+    ...(appliedCandidate.proposal === undefined ? {} : { proposal: cloneJson(appliedCandidate.proposal) }),
     ...(supersedesCandidateDigest === null ? {} : { supersedesCandidateDigest }),
     ...(modelDecision.errorContext === undefined ? {} : { errorContext: cloneJson(modelDecision.errorContext) }),
     applied,
@@ -1385,6 +1434,34 @@ export async function inspectLab(input) {
       valueSpec: registry.valueSpec(manifest.worldId),
     }),
   };
+}
+
+function normalizeModelCandidates(value) {
+  if (value === undefined) return { valid: true, value: undefined };
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_MODEL_CANDIDATES) {
+    return { valid: false, value: undefined };
+  }
+  const candidates = [];
+  for (const candidate of value) {
+    if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate) ||
+        typeof candidate.token !== 'string' || !TOKEN_PATTERN.test(candidate.token)) {
+      return { valid: false, value: undefined };
+    }
+    const proposal = normalizeModelProposal(candidate.proposal);
+    if (!proposal.valid) return { valid: false, value: undefined };
+    candidates.push({
+      token: candidate.token,
+      ...(proposal.value === undefined ? {} : { proposal: proposal.value }),
+    });
+  }
+  try {
+    if (Buffer.byteLength(canonicalJson(candidates), 'utf8') > MAX_MODEL_PROPOSAL_BYTES) {
+      return { valid: false, value: undefined };
+    }
+  } catch {
+    return { valid: false, value: undefined };
+  }
+  return { valid: true, value: candidates };
 }
 
 async function readRunInspection(store, runId, actionReference = null) {

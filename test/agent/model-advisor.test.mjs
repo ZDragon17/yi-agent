@@ -34,6 +34,37 @@ test('model advisor reduces a response to a bounded token proposal', async () =>
   assert.doesNotMatch(JSON.stringify(result), /temperature\.increase/u);
 });
 
+test('model advisor preserves a bounded set of alternative proposals', async () => {
+  const advisor = createModelAdvisor({
+    model: 'model-candidates',
+    client: {
+      async chat() {
+        return {
+          model: 'model-candidates',
+          content: JSON.stringify({
+            token: TOKEN_A,
+            candidates: [
+              { token: TOKEN_A, proposal: { mode: 'careful' } },
+              { token: TOKEN_A, proposal: { mode: 'fast' } },
+            ],
+          }),
+        };
+      },
+    },
+  });
+  const result = await advisor({
+    observation: { vector: [1], stateVersion: 'state-1', intervalId: 'interval-1' },
+    valueSpec: { observationDimensions: 1, weights: [1], target: [0] },
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    manifest: { tokenMap: { entries: [{ token: TOKEN_A, capabilityId: 'temperature.increase' }] } },
+    memory: { actionModels: {} },
+  });
+  assert.deepEqual(result.candidates, [
+    { token: TOKEN_A, proposal: { mode: 'careful' } },
+    { token: TOKEN_A, proposal: { mode: 'fast' } },
+  ]);
+});
+
 test('model advisor receives bounded proposal and proposal-context memory', async () => {
   let prompt;
   const digest = `sha256:${'a'.repeat(64)}`;

@@ -71,9 +71,9 @@ Codex CLI 的官方定位是运行在终端中的编码 Agent，可以读取、�
 ```text
 WorldPort 观察
     ↓
-ModelAdvisor 提出候选 Token
+ModelAdvisor 提出有限候选集
     ↓
-Kernel 独立计算预期、检查权限和安全性
+Kernel 逐候选独立计算预期、检查权限和安全性，并确定性选出一个
     ↓
 WorldPort 执行动作并返回回执
     ↓
@@ -167,8 +167,8 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 多 WorldPort 耐久矩阵：`test/e2e/durability-matrix-cli.test.mjs` 用 `temperature`、`inventory`、`queue` 验证 kernel-only 连续多 Run、独立进程 inspect 和逐 Run Replay；用外部 `durable-counter` 验证效果已提交但响应丢失后的 recover、跨进程 resume、幂等效果计数和 Replay 不触发副作用；同一外部 loop 还连续经历四次独立 CLI 强杀、recover、resume，最终仍只提交四个效果；
 - 跨 WorldPort 同构回归：独立外部 adapter 在坐标、状态表示和启动身份都不同的情况下，仍通过相同的应用闭环跨进程继续，并让两段 Run 的状态、记忆、监督器和 Replay 保持等价；另有文件持久化 adapter 覆盖多 Run 外部效果在响应丢失后的同 nonce 重试，验证外部效果只提交一次且 Replay 不触发副作用；
 - 证据驱动策略变化：停滞不会只写一条日志，而会把领域无关的 `BALANCED/EXPLORATORY` 策略、版本、探索覆盖策略和原因持久化；新的 `coverage-v1` 在单步选择和有界规划的首步都先覆盖样本更少的安全候选，再在同样本数内按不确定度排序，避免高残差动作垄断探索；旧策略缺少该字段时仍按历史 `uncertainty-v1` 回放；
-- 模型提议层：通过 OpenAI-compatible API 提出候选 Token；
-- 模型证据不自证：`policyEvidence.observationDigest` 由 Application 按真实本步观测重新计算，模型自报的摘要不会成为事实；模型仍只提供候选 Token、回答摘要和可选 proposal；
+- 模型提议层：通过 OpenAI-compatible API 提出一个主候选和最多 8 个有限备选；Application 将候选逐个送入 Kernel 重算预期，只把允许且安全的候选纳入确定性评分，最终仍只执行一个动作；旧的单候选 Advisor 契约保持兼容；
+- 模型证据不自证：`policyEvidence.observationDigest` 由 Application 按真实本步观测重新计算，模型自报的摘要不会成为事实；模型仍只提供候选 Token、回答摘要和可选 proposal，候选集不会获得额外权限；
 - 规划证据不自证：`goalActivation/goalReplan.planEvidence.observationDigest` 同样由 Application 按 Planner 实际收到的有界观测上下文重新计算；非法计划或 Planner 故障不会获得伪造的观测来源；
 - 模型输入隔离：传给 Planner/Advisor 的观测、Memory、ValueSpec、能力和 manifest 都是闭环内部状态的副本；模型回调即使原地改写输入，也不能改变 Kernel 选择、权限或账本连续性；
 - 模型回调截止时间：Application 对 Planner/Advisor 统一施加有界等待，默认 60 秒；CLI 沿用 `YI_AGENT_API_TIMEOUT_MS`，超时分别记录 `MODEL_TIMEOUT`/`PLANNER_TIMEOUT` 并回退到可验证 Kernel 路径，连续 Runner 不会因一个永不返回的模型永久占住 Run；该截止时间只停止宿主等待，不等于能取消任意进程内回调，真正不可信插件仍需进程级隔离；
@@ -191,6 +191,8 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 周期再验证信念门控：`kernelLearningVersion: 26` 起，token 级强制重验只针对「信念上仍不劣于任何安全候选」的过期行动（隐藏漂移只能靠真实重验发现，这类候选仍会被强制重访）；全局证据已判劣的冷门候选改由上下文反事实探测层取证，freshness 不再为它们打破已收敛的上下文轨道；v25 及更早语义按学习版本原样保留，漂移 E2E（含 `--stagnation-limit 100000` 的纯新鲜度契约）原样通过；
 - 目标驻留（F-118 度量更正）：长跑中「6/7 平台在数百步后赢家率瓦解」经值曲线插桩证实为度量伪影——~650 步时值精确到达目标 400 并转入驻留（|v-400| ≤ 0.2 持续 500+ 步），越过目标后调度赢家不再是价值最优动作，调度赢家率失效。周期-7 碰撞世界的完整证据链：~150 步收敛到相位条件策略 → 值以接近理论上限的增速逼近目标 → 精确到达并无限期驻留（距离 0.0），全程重放一致；F-40 重验信念门控保留（v27 `revalidationBeliefGate`，动机更正为证据治理），同轮检验并回退了「饥饿上下文探测」假设（与既定学习契约 E2E 冲突）；
 - Windows PowerShell CLI：所有核心实验可以脚本化运行。
+
+候选集不是让模型直接控制多个动作，也不是一次执行多个动作。它只把“提出一个答案”扩展为“提出有限假设集合”，再让同一个 Kernel 在同一观测、同一 Memory 和同一 RNG 边界上逐个比较。账本只固化最终选择；原始回答由 `responseDigest` 绑定，Replay 不重新请求模型。
 
 模型进程适配器是可选的可靠性边界，不是权限沙箱。配置格式为 `{ "executable": "绝对路径", "args": [], "model": "名称", "timeoutMs": 5000, "env": ["显式允许传递的环境变量名"] }`；适配器从 stdin 读取一条 `yi-model-cli` JSONL 请求，并返回一条 `{protocol,version,id,ok,result:{model,content}}` 回包。它解决的是“不合作的模型回调不能永久占住 CLI”这一 liveness 问题，不证明模型安全、不会访问网络，也不撤销已经发生的副作用。
 
