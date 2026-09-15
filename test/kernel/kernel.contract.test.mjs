@@ -175,6 +175,23 @@ test('kernel compares a bounded candidate set at one deterministic decision boun
   assert.deepEqual(result.expectation.expectedDelta, [0.5, 0.5]);
 });
 
+test('kernel candidate sets retain coverage exploration within the supplied pool', async () => {
+  const { stepWithPreferences } = await loadKernel();
+  const result = stepWithPreferences(makeStepInput({
+    capabilities: [capability(TOKEN_A), capability(TOKEN_B)],
+    memory: memoryWithModels([
+      [TOKEN_A, { sampleCount: 4, meanDelta: [0.1, 0.1], uncertainty: 0 }],
+      [TOKEN_B, { sampleCount: 0, meanDelta: [2, 2], uncertainty: 1 }],
+    ]),
+  }), [
+    { schemaVersion: 1, token: TOKEN_A, required: true },
+    { schemaVersion: 1, token: TOKEN_B, required: true },
+  ]);
+
+  assert.equal(result.status, 'READY');
+  assert.equal(result.choice.token, TOKEN_B);
+});
+
 test('proposal preference selects a proposal-conditioned transition model', async () => {
   const { stepWithPreference } = await loadKernel();
   const proposal = { powerKw: 50 };

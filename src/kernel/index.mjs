@@ -325,24 +325,23 @@ export function stepWithPreferences(input, preferences = []) {
   if (normalizedPreferences.length === 0) {
     return stepWithPreferenceNormalized(normalized, null);
   }
-  const evaluated = normalizedPreferences
-    .map((preference) => stepWithPreferenceNormalized(normalized, { ...preference, required: true }))
-    .filter((intent, index) => intent.status === 'READY' &&
-      intent.choice.token === normalizedPreferences[index].token &&
-      canonicalJson(intent.choice.proposal ?? null) === canonicalJson(normalizedPreferences[index].proposal ?? null));
-  if (evaluated.length === 0) {
-    return stepWithPreferenceNormalized(normalized, normalizedPreferences[0]);
-  }
-  evaluated.sort((left, right) => {
-    if (left.choice.score !== right.choice.score) return right.choice.score - left.choice.score;
-    return candidateDigest({ token: left.choice.token, proposal: left.choice.proposal ?? null })
-      .localeCompare(candidateDigest({ token: right.choice.token, proposal: right.choice.proposal ?? null }));
+  const candidatePredictions = normalizedPreferences.flatMap((preference) => {
+    const prediction = buildPredictions(normalized, preference).find((item) =>
+      item.choice.token === preference.token &&
+      canonicalJson(item.choice.proposal ?? null) === canonicalJson(preference.proposal ?? null));
+    return prediction === undefined ? [] : [prediction];
   });
-  return evaluated[0];
+  return candidatePredictions.length === 0
+    ? stepWithPreferenceNormalized(normalized, null)
+    : intentFromPredictions(normalized, candidatePredictions, null);
 }
 
 function stepWithPreferenceNormalized(normalized, normalizedPreference) {
   const predictions = buildPredictions(normalized, normalizedPreference);
+  return intentFromPredictions(normalized, predictions, normalizedPreference);
+}
+
+function intentFromPredictions(normalized, predictions, normalizedPreference) {
   const safePredictions = predictions.filter(
     (item) => item.choice.allowed && item.choice.safe,
   );
