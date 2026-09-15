@@ -61,11 +61,15 @@ test('feedback-driven continuous proposal follows each preceding observation and
     assert.deepEqual(powers, steps.map((event) => expectedPower(event.payload.beforeObservation)));
     assert.deepEqual(new Set(powers), new Set([50, 0, -50]));
     const current = await ledger.readChainCurrent();
-    assert.equal(Object.keys(current.memory.actionModels).length, 1);
+    assert.equal(Object.keys(current.memory.actionModels).length, 0);
+    assert.equal(Object.keys(current.memory.proposalModels ?? {}).length, 1);
+    const proposalModels = Object.values(current.memory.proposalModels)[0];
+    assert.equal(Object.keys(proposalModels).length, 3);
     // 末步的反馈可能留在 terminal STEP 的持久化边界之外；这里确认绝大多数
     // observation-driven 动作已进入记忆，不把终止时序误判成 proposal 失败。
-    assert.ok(Object.values(current.memory.actionModels)[0].sampleCount >= 23);
-    assert.ok(Object.values(current.memory.actionModels)[0].sampleCount <= 24);
+    const learnedSamples = Object.values(proposalModels).reduce((sum, model) => sum + model.sampleCount, 0);
+    assert.ok(learnedSamples >= 23);
+    assert.ok(learnedSamples <= 24);
     const replay = spawnSync(process.execPath, [path.join(ROOT, 'bin/yi-agent.mjs'), 'replay', '--lab', lab, '--run', 'r', '--adapter', adapterConfig, '--json'], { cwd: ROOT, encoding: 'utf8', windowsHide: true });
     assert.equal(replay.status, 0, replay.stderr);
     assert.match(replay.stdout, /CONSISTENT/u);

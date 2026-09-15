@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   MAX_BOUNDARY_IDENTIFIER_LENGTH,
   MAX_PERSISTED_MEMORY_BYTES,
+  candidateDigest,
   canonicalDigest,
   canonicalJson,
 } from '../../src/runtime/schema.mjs';
@@ -150,6 +151,32 @@ test('step ranks absolute distance to the target and does not reward overshoot',
 
   assert.equal(result.choice.token, TOKEN_B);
   assert.equal(result.choice.expectedValue, -0.5);
+});
+
+test('proposal preference selects a proposal-conditioned transition model', async () => {
+  const { stepWithPreference } = await loadKernel();
+  const proposal = { powerKw: 50 };
+  const digest = candidateDigest({ token: TOKEN_A, proposal });
+  const input = makeStepInput({
+    capabilities: [capability(TOKEN_A), capability(TOKEN_B)],
+    memory: memoryWithModels([]),
+  });
+  input.memory.proposalModels = {
+    [TOKEN_A]: {
+      [digest]: { schemaVersion: 1, sampleCount: 4, meanDelta: [2, 0], uncertainty: 0 },
+    },
+  };
+
+  const result = stepWithPreference(input, {
+    schemaVersion: 1,
+    token: TOKEN_A,
+    proposal,
+    required: true,
+  });
+
+  assert.equal(result.choice.token, TOKEN_A);
+  assert.deepEqual(result.choice.proposal, proposal);
+  assert.deepEqual(result.expectation.expectedDelta, [2, 0]);
 });
 
 test('step preserves signed utility direction when a WorldPort selects signed-v1', async () => {
@@ -408,6 +435,56 @@ test('learn gives recent contradictory evidence bounded influence over stale his
   assert.deepEqual(
     step({ ...input, memory: updated.nextMemory }).expectation.expectedDelta,
     [0.75, 0],
+  );
+});
+
+test('learn keeps verified transition evidence separate for each proposal', async () => {
+  const { stepWithPreference, verify, learn } = await loadKernel();
+  const proposal = { powerKw: 50 };
+  const digest = candidateDigest({ token: TOKEN_A, proposal });
+  const input = makeStepInput({
+    capabilities: [capability(TOKEN_A)],
+    memory: memoryWithModels([]),
+  });
+  input.memory.proposalModels = {
+    [TOKEN_A]: {
+      [digest]: { schemaVersion: 1, sampleCount: 4, meanDelta: [2, 0], uncertainty: 0 },
+    },
+  };
+
+  const intent = stepWithPreference(input, {
+    schemaVersion: 1,
+    token: TOKEN_A,
+    proposal,
+    required: true,
+  });
+  const request = actionRequest({ token: TOKEN_A });
+  const receipt = receiptForRequest(request);
+  const postObservation = observation(
+    [intent.expectation.predictedObservation.vector[0] + 1, intent.expectation.predictedObservation.vector[1]],
+    'state-2',
+  );
+  const verification = verify({ intent, receipt, postObservation });
+  const updated = learn({
+    memory: input.memory,
+    intent,
+    receipt,
+    postObservation,
+    verification,
+  });
+
+  assert.equal(updated.status, 'UPDATED');
+  assert.equal(updated.nextMemory.actionModels[TOKEN_A], undefined);
+  assert.equal(updated.nextMemory.proposalModels[TOKEN_A][digest].sampleCount, 5);
+  assert.deepEqual(updated.nextMemory.proposalModels[TOKEN_A][digest].meanDelta, [2.2, 0]);
+  assert.deepEqual(
+    stepWithPreference({ ...input, memory: updated.nextMemory }, {
+      schemaVersion: 1,
+      token: TOKEN_A,
+      proposal,
+      required: true,
+    }).expectation.expectedDelta,
+    [2.2, 0],
   );
 });
 
@@ -957,6 +1034,90 @@ test('accepted incomplete feedback is retained and later settled by its executio
   assert.equal(settled.settled[0].executionNonce, firstRequest.executionNonce);
   assert.equal(settled.settled[0].attribution, 'ACTION');
   assert.equal(settled.nextMemory.actionModels[TOKEN_A].sampleCount, 4);
+});
+
+test('accepted incomplete proposal feedback keeps its proposal identity until settlement', async () => {
+  const { stepWithPreference, verify, learn } = await loadKernel();
+  const proposal = { powerKw: 50 };
+  const digest = candidateDigest({ token: TOKEN_A, proposal });
+  const input = makeStepInput({
+    capabilities: [capability(TOKEN_A)],
+    memory: memoryWithModels([]),
+  });
+  const firstIntent = stepWithPreference(input, {
+    schemaVersion: 1,
+    token: TOKEN_A,
+    proposal,
+    required: true,
+  });
+  const firstRequest = actionRequest({ token: TOKEN_A });
+  const firstReceipt = receiptForRequest(firstRequest, {
+    attributionWindowComplete: false,
+    confounderCount: 0,
+  });
+  const firstPostObservation = observation([1, 1], 'state-2');
+  const firstVerification = verify({
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPostObservation,
+  });
+  const deferred = learn({
+    memory: input.memory,
+    intent: firstIntent,
+    receipt: firstReceipt,
+    postObservation: firstPostObservation,
+    verification: firstVerification,
+  });
+
+  assert.equal(deferred.status, 'DEFERRED');
+  assert.deepEqual(deferred.nextMemory.pendingCredits[0].proposal, proposal);
+
+  const secondInput = {
+    ...input,
+    observation: observation([2, 0.75], 'state-3'),
+    memory: deferred.nextMemory,
+    rngState: firstIntent.nextRngState,
+  };
+  const secondIntent = stepWithPreference(secondInput, {
+    schemaVersion: 1,
+    token: TOKEN_A,
+    proposal,
+    required: true,
+  });
+  const secondRequest = actionRequest({
+    token: TOKEN_A,
+    basedOnVersion: 'state-3',
+    executionNonce: 'nonce:00000002',
+  });
+  const secondReceipt = receiptForRequest(secondRequest);
+  const secondPostObservation = {
+    ...observation([2, 0.75], 'state-4'),
+    feedback: [{
+      schemaVersion: 1,
+      executionNonce: firstRequest.executionNonce,
+      stateVersion: 'state-3',
+      intervalId: 'interval:state-3',
+      vector: [2, 0.75],
+      confounderCount: 0,
+    }],
+  };
+  const secondVerification = verify({
+    intent: secondIntent,
+    receipt: secondReceipt,
+    postObservation: secondPostObservation,
+  });
+  const settled = learn({
+    memory: deferred.nextMemory,
+    intent: secondIntent,
+    receipt: secondReceipt,
+    postObservation: secondPostObservation,
+    verification: secondVerification,
+  });
+
+  assert.equal(settled.status, 'SKIPPED');
+  assert.equal(settled.nextMemory.actionModels[TOKEN_A], undefined);
+  assert.equal(settled.nextMemory.proposalModels[TOKEN_A][digest].sampleCount, 1);
+  assert.deepEqual(settled.nextMemory.proposalModels[TOKEN_A][digest].meanDelta, [1, -0.25]);
 });
 
 test('feedback settlement is canonical across transport order when multiple pending actions are returned together', async () => {

@@ -2021,3 +2021,11 @@
 - 结果：8 个独立 seed、每个 96 步，共 768 个真实 proposal；每个 Run 的 proposal 都与 preceding observation 的规则计算一致，均观察到 `-50/0/50 kW`，8 次 Replay 全为 `CONSISTENT`。
 - 关键观察：8 个 Run 的 action model key 数均为 `1`，每个最终 sampleCount 为 `95`。反馈驱动已经穿过模型边界并被记录，但当前 Kernel 的预测/学习仍按不透明 token 聚合，没有把 `powerKw` 作为 action model 的条件键；这留下了下一轮 proposal 条件化记忆实验。
 - 边界：R23 只验证了确定性反馈规则的闭环和持久化一致性，不等于通用模型理解，也没有证明电费收益或真实设备安全。`95/96` 是终止 Run 的反馈落盘边界，报告绑定源码指纹 `fc93970bbcfcac95ab0e55fe8c76ddf1475169a5624f6900deab4199a3e8a14a`。
+
+## F-269 proposal 条件化记忆的真实 CLI 闭环（R24）
+
+- 缺口：R23 中同一个 `ess.set-power` Token 的 `+50/0/-50 kW` proposal 都写入了同一个 action model，反馈虽然进入记忆，但不同控制量的动力学可能互相污染。
+- 实现：Kernel 增加可选 `choice.proposal`、`stepPreference.proposal` 和 `memory.proposalModels[token][candidateDigest]`。带 proposal 的已验证反馈只更新对应的 proposal model；无 proposal 的旧账本仍走 `actionModels[token]`。proposal 同时进入 pending credit、model age、持久化预算和 Replay。
+- 结果：8 个独立 seed、每个 96 步。每个 Run 都得到 3 个 proposal model，`actionModels` 保持为空；已完成反馈按 proposal 分成 `+50:29、0:38、-50:28`，8 次 Replay 全为 `CONSISTENT`。
+- 验证：Kernel 合同测试 `57/57`，连续 proposal E2E `2/2`；R24 脚本逐 Run 用 `candidateDigest` 重算模型身份，并核对每个模型的 sampleCount 只等于该 proposal 的反馈次数。
+- 边界：这证明了条件化记忆的协议和持久化行为，不证明模型找到了正确的控制策略，也没有测量电费收益、现实设备安全或跨 WorldPort 迁移。R24 报告绑定源码指纹 `875b0e857efd6f7f433ddc9d657c59275ff034204b7f66bb1ec92803cdf6ecfb`。

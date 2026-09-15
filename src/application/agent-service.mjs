@@ -473,7 +473,7 @@ export async function runLab(input) {
       ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
       planning: planningEvidence(planningHorizon, planningContextMode, planningBranchingMode),
     }, randomization === null
-      ? preferenceFor(retryPreference ?? modelDecision, retryPreference !== null)
+      ? preferenceFor(retryPreference ?? modelDecision, retryPreference !== null, manifest.adapter !== undefined)
       : { schemaVersion: SCHEMA_VERSION, token: randomization.selectedToken, required: true });
     if (intent.status === 'HALTED') {
       stopReason = intent.stopReason;
@@ -483,7 +483,7 @@ export async function runLab(input) {
     }
 
     const selectedProposal = persistedRecoveryRequest?.proposal ??
-      (modelDecision?.token === intent.choice.token ? modelDecision.proposal : undefined) ??
+      (intent.choice.proposal === undefined ? undefined : cloneJson(intent.choice.proposal)) ??
       (unresolvedExternalTransition !== null && intent.choice.token === unresolvedExternalTransition.evidence.token
         ? persistedRecoveryProposal
         : undefined);
@@ -516,6 +516,7 @@ export async function runLab(input) {
         worldVersion: manifest.worldVersion,
         tokenMapDigest: manifest.tokenMap.digest,
         scenario,
+        proposalEnabled: manifest.adapter !== undefined,
         expectedObservationDigest: beforeModelObservation.digest,
       }));
     const externalInputs = await registry.scenarioExternalInputs(
@@ -1009,12 +1010,13 @@ export async function runContinuous(input) {
   };
 }
 
-function preferenceFor(modelDecision, required = false) {
+function preferenceFor(modelDecision, required = false, allowProposal = true) {
   return modelDecision?.token === null || modelDecision?.token === undefined
     ? null
     : {
         schemaVersion: SCHEMA_VERSION,
         token: modelDecision.token,
+        ...(!allowProposal || modelDecision.proposal === undefined ? {} : { proposal: cloneJson(modelDecision.proposal) }),
         ...(required ? { required: true } : {}),
       };
 }
@@ -1285,10 +1287,12 @@ function policyEvidence(modelDecision, intent, capabilities, {
   worldVersion,
   tokenMapDigest,
   scenario,
+  proposalEnabled,
   expectedObservationDigest,
 }) {
   const safe = capabilities.some((capability) => capability.token === modelDecision.token && capability.allowed && capability.safe);
-  const applied = safe && intent.status === 'READY' && intent.choice.token === modelDecision.token;
+  const applied = safe && intent.status === 'READY' && intent.choice.token === modelDecision.token &&
+    (!proposalEnabled || canonicalJson(intent.choice.proposal ?? null) === canonicalJson(modelDecision.proposal ?? null));
   const observationDigest = validDigest(expectedObservationDigest)
     ? expectedObservationDigest
     : (validDigest(modelDecision.observationDigest) ? modelDecision.observationDigest : null);

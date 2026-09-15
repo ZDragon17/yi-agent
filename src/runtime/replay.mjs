@@ -336,8 +336,19 @@ function replayStep({ event, state, manifest, adapter, world, kernel, worldId, s
       ? kernel.step(stepInput)
       : kernel.stepWithPreference(
           stepInput,
-          decision?.applied
-            ? { schemaVersion: SCHEMA_VERSION, token: decision.token, required: true }
+            decision?.applied && payload.choice?.proposal !== undefined
+            ? {
+                schemaVersion: SCHEMA_VERSION,
+                token: decision.token,
+                proposal: cloneJson(payload.choice.proposal),
+                required: true,
+              }
+            : decision?.applied
+              ? {
+                  schemaVersion: SCHEMA_VERSION,
+                  token: decision.token,
+                  required: true,
+                }
             : randomization === null
               ? null
               : { schemaVersion: SCHEMA_VERSION, token: randomization.selectedToken, required: true },
@@ -358,8 +369,8 @@ function replayStep({ event, state, manifest, adapter, world, kernel, worldId, s
     executionNonce: payload.receipt.executionNonce,
     // proposal 只属于声明 adapter 的 WorldPort 写入边界；内置世界的封闭
     // 键集会拒收带 proposal 的请求，重放必须与原 run 的构造规则一致。
-    ...(payload.policyEvidence?.applied === true && payload.policyEvidence.proposal !== undefined && adapter !== undefined
-      ? { proposal: cloneJson(payload.policyEvidence.proposal) }
+    ...(payload.policyEvidence?.applied === true && payload.choice?.proposal !== undefined && adapter !== undefined
+      ? { proposal: cloneJson(payload.choice.proposal) }
       : {}),
   };
   let transition;
@@ -580,6 +591,7 @@ function withoutModelAgeState(update) {
   delete nextMemory.modelClock;
   delete nextMemory.modelAges;
   nextMemory.actionModels = stripModelAges(memory.actionModels);
+  if (memory.proposalModels !== undefined) nextMemory.proposalModels = stripNestedModelAges(memory.proposalModels);
   if (memory.relationModels !== undefined) nextMemory.relationModels = stripNestedModelAges(memory.relationModels);
   if (memory.rejectionModels !== undefined) nextMemory.rejectionModels = stripModelAges(memory.rejectionModels);
   if (memory.beliefModels !== undefined) nextMemory.beliefModels = stripNestedModelAges(memory.beliefModels);

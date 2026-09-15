@@ -1,9 +1,12 @@
 import {
   MAX_BOUNDARY_IDENTIFIER_LENGTH,
   MAX_EXECUTION_NONCE_LENGTH,
+  MAX_MODEL_PROPOSAL_BYTES,
   MAX_PERSISTED_MEMORY_BYTES,
   canonicalDigest,
   canonicalJson,
+  candidateDigest,
+  cloneJson,
 } from '../runtime/schema.mjs';
 
 const SCHEMA_VERSION = 1;
@@ -12,6 +15,8 @@ const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const MAX_VECTOR_DIMENSIONS = 1024;
 const MAX_CAPABILITIES = 4096;
 const MAX_ACTION_MODELS = 8192;
+const MAX_PROPOSAL_MODELS = 8192;
+const PROPOSAL_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const MAX_RELATION_MODELS = 8192;
 const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
 const ADAPTATION_WINDOW = 8;
@@ -141,7 +146,7 @@ const VALUE_SPEC_KEYS = [
   'valueMode',
 ];
 const VALUE_MODES = ['signed-v1', 'distance-v2'];
-const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps', 'lastProbeSteps', 'modelClock', 'modelAges', 'contextKeyScale'];
+const MEMORY_KEYS = ['schemaVersion', 'actionModels', 'proposalModels', 'relationModels', 'rejectionModels', 'pendingCredits', 'settledFeedback', 'pendingCreditPolicy', 'beliefModels', 'contextModels', 'recentHistory', 'historyClock', 'historyAccumulator', 'lastVerifiedSteps', 'lastProbeSteps', 'modelClock', 'modelAges', 'contextKeyScale'];
 const ACTION_MODEL_KEYS = [
   'schemaVersion',
   'sampleCount',
@@ -186,10 +191,11 @@ const CHOICE_KEYS = [
   'cost',
   'allowed',
   'safe',
+  'proposal',
   'contextProbe',
 ];
 // contextProbe 只出现在 v25+ 的探测选择里，历史账本的 choice 没有该字段。
-const CHOICE_REQUIRED_KEYS = CHOICE_KEYS.filter((key) => key !== 'contextProbe');
+const CHOICE_REQUIRED_KEYS = CHOICE_KEYS.filter((key) => key !== 'proposal' && key !== 'contextProbe');
 // 上下文反事实探测的复验间隔：同一候选两次探测之间至少间隔的已验证动作数。
 const CONTEXT_PROBE_INTERVAL = 8;
 const RECEIPT_KEYS = [
@@ -220,6 +226,7 @@ const PENDING_CREDIT_KEYS = [
   'schemaVersion',
   'executionNonce',
   'token',
+  'proposal',
   'beforeStateVersion',
   'beforeIntervalId',
   'beforeVector',
@@ -232,7 +239,7 @@ const PENDING_CREDIT_KEYS = [
 ];
 const PENDING_CREDIT_POLICY_KEYS = ['schemaVersion', 'maxAge'];
 const BELIEF_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'samples', 'modelAge'];
-const MODEL_AGE_KEYS = ['schemaVersion', 'actionModels', 'relationModels', 'rejectionModels', 'beliefModels', 'contextModels'];
+const MODEL_AGE_KEYS = ['schemaVersion', 'actionModels', 'proposalModels', 'relationModels', 'rejectionModels', 'beliefModels', 'contextModels'];
 const HISTORY_ENTRY_KEYS = ['schemaVersion', 'token', 'actualDelta', 'historyOrder'];
 
 export function step(input) {
@@ -289,7 +296,7 @@ export function validateObservationFeedback(memoryValue, observationValue) {
 export function stepWithPreference(input, preference = null) {
   const normalized = normalizeStepInput(input);
   const normalizedPreference = normalizePreference(preference);
-  const predictions = buildPredictions(normalized);
+  const predictions = buildPredictions(normalized, normalizedPreference);
   const safePredictions = predictions.filter(
     (item) => item.choice.allowed && item.choice.safe,
   );
@@ -378,10 +385,12 @@ function withContextualProbe(selectionPool, selected, memory) {
 
 function normalizePreference(value) {
   if (value === null || value === undefined) return null;
-  const source = assertPlainRecord(value, 'stepPreference', ['schemaVersion', 'token', 'required'], ['schemaVersion', 'token']);
+  const source = assertPlainRecord(value, 'stepPreference', ['schemaVersion', 'token', 'proposal', 'required'], ['schemaVersion', 'token']);
+  const proposal = normalizeProposal(source.proposal, 'stepPreference.proposal');
   return {
     schemaVersion: requireSchemaVersion(source, 'stepPreference'),
     token: assertOpaqueToken(source.token, 'stepPreference.token'),
+    ...(proposal === undefined ? {} : { proposal }),
     required: source.required === undefined ? false : assertBoolean(source.required, 'stepPreference.required'),
   };
 }
@@ -635,6 +644,7 @@ export function learn(input) {
   const errorMagnitude = totalError / dimensions;
   recordActionEvidence(nextMemory, {
     token,
+    proposal: intent.choice.proposal,
     relationKey: intent.expectation.relationKey,
     contextKeys,
     historyOrder,
@@ -881,6 +891,7 @@ function settlePendingCredits(
     const errorMagnitude = totalError / dimensions;
     recordActionEvidence(memory, {
       token: pending.token,
+      proposal: pending.proposal,
       relationKey: pending.relationKey,
       contextKeys: pending.contextKeys ?? (pending.contextKey === undefined ? undefined : [pending.contextKey]),
       historyOrder: pending.historyOrder,
@@ -965,6 +976,7 @@ function settleCreditChain(memory, feedback, members, pendingByNonce, dimensions
       }
       recordActionEvidence(memory, {
         token: pending.token,
+        proposal: pending.proposal,
         relationKey: pending.relationKey,
         contextKeys: pending.contextKeys ?? (pending.contextKey === undefined ? undefined : [pending.contextKey]),
         historyOrder: pending.historyOrder,
@@ -1010,6 +1022,7 @@ function settleCreditChain(memory, feedback, members, pendingByNonce, dimensions
     }
     recordActionEvidence(memory, {
       token: pending.token,
+      proposal: pending.proposal,
       relationKey: pending.relationKey,
       contextKeys: pending.contextKeys ?? (pending.contextKey === undefined ? undefined : [pending.contextKey]),
       historyOrder: pending.historyOrder,
@@ -1084,6 +1097,7 @@ function addPendingCredit(memory, intent, executionNonce, baselineObservation, c
     schemaVersion: SCHEMA_VERSION,
     executionNonce,
     token: intent.choice.token,
+    ...(intent.choice.proposal === undefined ? {} : { proposal: cloneJson(intent.choice.proposal) }),
     beforeStateVersion: baselineObservation.stateVersion,
     beforeIntervalId: baselineObservation.intervalId,
     beforeVector: cloneVector(baselineObservation.vector),
@@ -1508,6 +1522,9 @@ function normalizeMemory(value, field, dimensions) {
   }
   TOP_LEVEL_MODEL_COUNTS.set(normalizedModels, Object.keys(normalizedModels).length);
 
+  const normalizedProposalModels = source.proposalModels === undefined
+    ? undefined
+    : normalizeProposalModels(source.proposalModels, `${field}.proposalModels`, dimensions);
   const normalizedRelations = source.relationModels === undefined
     ? undefined
     : normalizeRelationModels(source.relationModels, `${field}.relationModels`, dimensions);
@@ -1554,6 +1571,7 @@ function normalizeMemory(value, field, dimensions) {
     applyCompactModelAges(
       source.modelAges,
       normalizedModels,
+      normalizedProposalModels,
       normalizedRelations,
       normalizedRejections,
       normalizedBeliefs,
@@ -1564,6 +1582,7 @@ function normalizeMemory(value, field, dimensions) {
   if (modelClock === undefined && (
     source.modelAges !== undefined ||
     hasModelAge(normalizedModels) ||
+    hasNestedModelAge(normalizedProposalModels) ||
     hasNestedModelAge(normalizedRelations) ||
     hasModelAge(normalizedRejections) ||
     hasNestedModelAge(normalizedBeliefs) ||
@@ -1607,6 +1626,7 @@ function normalizeMemory(value, field, dimensions) {
   validateModelAgeCoverage(
     modelClock,
     normalizedModels,
+    normalizedProposalModels,
     normalizedRelations,
     normalizedRejections,
     normalizedBeliefs,
@@ -1616,6 +1636,7 @@ function normalizeMemory(value, field, dimensions) {
   return {
     schemaVersion: requireSchemaVersion(source, field),
     actionModels: normalizedModels,
+    ...(normalizedProposalModels === undefined ? {} : { proposalModels: normalizedProposalModels }),
     ...(normalizedRelations === undefined ? {} : { relationModels: normalizedRelations }),
     ...(normalizedRejections === undefined ? {} : { rejectionModels: normalizedRejections }),
     ...(normalizedPendingCredits === undefined ? {} : { pendingCredits: normalizedPendingCredits }),
@@ -1631,6 +1652,36 @@ function normalizeMemory(value, field, dimensions) {
     ...(modelClock === undefined ? {} : { modelClock }),
     ...(contextKeyScale === undefined ? {} : { contextKeyScale }),
   };
+}
+
+function normalizeProposalModels(value, field, dimensions) {
+  const source = assertDynamicRecord(value, field, MAX_ACTION_MODELS);
+  const normalized = Object.create(null);
+  let modelCount = 0;
+  for (const [token, proposals] of Object.entries(source)) {
+    assertOpaqueToken(token, `${field} token`);
+    const proposalSource = assertDynamicRecord(proposals, `${field}.${token}`, MAX_ACTION_MODELS);
+    const proposalModels = Object.create(null);
+    for (const [digest, model] of Object.entries(proposalSource)) {
+      if (!PROPOSAL_DIGEST_PATTERN.test(digest)) {
+        contractViolation('kernel proposal-model key is not a candidate digest', {
+          field: `${field}.${token}.${digest}`,
+        });
+      }
+      modelCount += 1;
+      if (modelCount > MAX_PROPOSAL_MODELS) {
+        contractViolation('kernel proposal-model memory exceeds its size limit', { field });
+      }
+      proposalModels[digest] = normalizeActionModel(
+        model,
+        `${field}.${token}.${digest}`,
+        dimensions,
+      );
+    }
+    normalized[token] = proposalModels;
+  }
+  NESTED_MODEL_COUNTS.set(normalized, modelCount);
+  return normalized;
 }
 
 function normalizeLastProbeSteps(value, field) {
@@ -1663,9 +1714,10 @@ function hasNestedModelAge(models) {
   return Object.values(models ?? {}).some((nested) => hasModelAge(nested));
 }
 
-function applyCompactModelAges(value, actionModels, relationModels, rejectionModels, beliefModels, contextModels, field) {
+function applyCompactModelAges(value, actionModels, proposalModels, relationModels, rejectionModels, beliefModels, contextModels, field) {
   const source = assertPlainRecord(value, field, MODEL_AGE_KEYS, ['schemaVersion']);
   applyTopLevelModelAges(actionModels, source.actionModels, `${field}.actionModels`);
+  applyNestedModelAges(proposalModels, source.proposalModels, `${field}.proposalModels`);
   applyTopLevelModelAges(rejectionModels, source.rejectionModels, `${field}.rejectionModels`);
   applyNestedModelAges(relationModels, source.relationModels, `${field}.relationModels`);
   applyNestedModelAges(beliefModels, source.beliefModels, `${field}.beliefModels`);
@@ -1938,13 +1990,14 @@ function normalizePendingCredits(value, field, dimensions) {
       item,
       itemField,
       PENDING_CREDIT_KEYS,
-      PENDING_CREDIT_KEYS.filter((key) => key !== 'relationKey' && key !== 'contextKey' && key !== 'contextKeys' && key !== 'historyOrder' && key !== 'age'),
+      PENDING_CREDIT_KEYS.filter((key) => key !== 'proposal' && key !== 'relationKey' && key !== 'contextKey' && key !== 'contextKeys' && key !== 'historyOrder' && key !== 'age'),
     );
     const executionNonce = assertBoundedString(source.executionNonce, `${itemField}.executionNonce`, MAX_EXECUTION_NONCE_LENGTH);
     if (seen.has(executionNonce)) {
       contractViolation('kernel pending credits contain a duplicate execution nonce', { field: itemField });
     }
     seen.add(executionNonce);
+    const proposal = normalizeProposal(source.proposal, `${itemField}.proposal`);
     const relationKey = source.relationKey === undefined
       ? undefined
       : assertRelationKey(source.relationKey, `${itemField}.relationKey`, dimensions);
@@ -1973,6 +2026,7 @@ function normalizePendingCredits(value, field, dimensions) {
       schemaVersion: requireSchemaVersion(source, itemField),
       executionNonce,
       token: assertOpaqueToken(source.token, `${itemField}.token`),
+      ...(proposal === undefined ? {} : { proposal }),
       beforeStateVersion: assertBoundedString(
         source.beforeStateVersion,
         `${itemField}.beforeStateVersion`,
@@ -2075,6 +2129,7 @@ function normalizeActionModel(value, field, dimensions) {
 function validateModelAgeCoverage(
   modelClock,
   actionModels,
+  proposalModels,
   relationModels,
   rejectionModels,
   beliefModels,
@@ -2091,6 +2146,9 @@ function validateModelAgeCoverage(
     }
   };
   for (const [token, model] of Object.entries(actionModels)) check(model, `${field}.actionModels.${token}.modelAge`);
+  for (const [token, proposals] of Object.entries(proposalModels ?? {})) {
+    for (const [digest, model] of Object.entries(proposals)) check(model, `${field}.proposalModels.${token}.${digest}.modelAge`);
+  }
   for (const [token, model] of Object.entries(rejectionModels ?? {})) check(model, `${field}.rejectionModels.${token}.modelAge`);
   for (const [token, relations] of Object.entries(relationModels ?? {})) {
     for (const [relationKey, model] of Object.entries(relations)) check(model, `${field}.relationModels.${token}.${relationKey}.modelAge`);
@@ -2196,6 +2254,7 @@ function countRelationModels(value) {
 
 function recordActionEvidence(memory, {
   token,
+  proposal,
   relationKey,
   contextKeys,
   historyOrder,
@@ -2206,21 +2265,49 @@ function recordActionEvidence(memory, {
   refreshModelAge = false,
   contextProbe = false,
 }) {
-  let existing = memory.actionModels[token];
-  let actionModelCount = existing === undefined ? cachedTopLevelModelCount(memory.actionModels) : null;
-  if (existing === undefined && actionModelCount >= MAX_ACTION_MODELS) {
-    const evictedToken = evictOldestTopLevelModel(memory.actionModels);
-    if (evictedToken === undefined) {
-      contractViolation('kernel learning has no evictable action model', {
+  if (proposal === undefined) {
+    let existing = memory.actionModels[token];
+    let actionModelCount = existing === undefined ? cachedTopLevelModelCount(memory.actionModels) : null;
+    if (existing === undefined && actionModelCount >= MAX_ACTION_MODELS) {
+      const evictedToken = evictOldestTopLevelModel(memory.actionModels);
+      if (evictedToken === undefined) {
+        contractViolation('kernel learning has no evictable action model', {
+          field: `${field}.actionModels`,
+        });
+      }
+      actionModelCount -= 1;
+      existing = memory.actionModels[token];
+    }
+    if (existing === undefined && actionModelCount >= MAX_ACTION_MODELS) {
+      contractViolation('kernel learning would exceed the action-model limit', {
         field: `${field}.actionModels`,
       });
     }
-    actionModelCount -= 1;
-    existing = memory.actionModels[token];
-  }
-  if (existing === undefined && actionModelCount >= MAX_ACTION_MODELS) {
-    contractViolation('kernel learning would exceed the action-model limit', {
-      field: `${field}.actionModels`,
+    memory.actionModels[token] = updateActionModel(
+      existing ?? defaultActionModel(dimensions),
+      actualDelta,
+      errorMagnitude,
+      dimensions,
+      `${field}.actionModels.${token}`,
+      modelAgeFor(
+        memory,
+        existing,
+        `${field}.actionModels.${token}.modelAge`,
+        refreshModelAge,
+      ),
+    );
+    if (existing === undefined) {
+      TOP_LEVEL_MODEL_COUNTS.set(memory.actionModels, actionModelCount + 1);
+    }
+  } else {
+    recordProposalEvidence(memory, {
+      token,
+      proposal,
+      actualDelta,
+      errorMagnitude,
+      dimensions,
+      field,
+      refreshModelAge,
     });
   }
   if (memory.rejectionModels?.[token] !== undefined) {
@@ -2236,22 +2323,6 @@ function recordActionEvidence(memory, {
         refreshModelAge,
       ),
     );
-  }
-  memory.actionModels[token] = updateActionModel(
-    existing ?? defaultActionModel(dimensions),
-    actualDelta,
-    errorMagnitude,
-    dimensions,
-    `${field}.actionModels.${token}`,
-    modelAgeFor(
-      memory,
-      existing,
-      `${field}.actionModels.${token}.modelAge`,
-      refreshModelAge,
-    ),
-  );
-  if (existing === undefined) {
-    TOP_LEVEL_MODEL_COUNTS.set(memory.actionModels, actionModelCount + 1);
   }
   recordBeliefEvidence(memory, {
     token,
@@ -2325,6 +2396,62 @@ function recordActionEvidence(memory, {
   NESTED_MODEL_COUNTS.set(memory.relationModels, existingRelation === undefined
     ? relationModelCount + 1
     : countRelationModels(relationModels));
+}
+
+function recordProposalEvidence(memory, {
+  token,
+  proposal,
+  actualDelta,
+  errorMagnitude,
+  dimensions,
+  field,
+  refreshModelAge = false,
+}) {
+  const digest = candidateDigest({ token, proposal });
+  const proposalModels = memory.proposalModels ?? {};
+  let tokenModels = { ...(proposalModels[token] ?? {}) };
+  let existing = tokenModels[digest];
+  let modelCount = existing === undefined ? countProposalModels(proposalModels) : null;
+  if (existing === undefined && modelCount >= MAX_PROPOSAL_MODELS) {
+    const evicted = evictOldestNestedModel(proposalModels);
+    if (!evicted) {
+      contractViolation('kernel learning has no evictable proposal model', {
+        field: `${field}.proposalModels.${token}.${digest}`,
+      });
+    }
+    modelCount -= 1;
+    tokenModels = { ...(proposalModels[token] ?? {}) };
+    existing = tokenModels[digest];
+  }
+  if (existing === undefined && modelCount >= MAX_PROPOSAL_MODELS) {
+    contractViolation('kernel learning would exceed the proposal-model limit', {
+      field: `${field}.proposalModels.${token}.${digest}`,
+    });
+  }
+  tokenModels[digest] = updateActionModel(
+    existing ?? defaultActionModel(dimensions),
+    actualDelta,
+    errorMagnitude,
+    dimensions,
+    `${field}.proposalModels.${token}.${digest}`,
+    modelAgeFor(
+      memory,
+      existing,
+      `${field}.proposalModels.${token}.${digest}.modelAge`,
+      refreshModelAge,
+    ),
+  );
+  memory.proposalModels = { ...proposalModels, [token]: tokenModels };
+  NESTED_MODEL_COUNTS.set(memory.proposalModels, existing === undefined
+    ? modelCount + 1
+    : countProposalModels(proposalModels));
+}
+
+function countProposalModels(value) {
+  return cachedNestedModelCount(value, () => Object.values(value).reduce(
+    (sum, proposals) => sum + Object.keys(proposals).length,
+    0,
+  ));
 }
 
 function recordContextEvidence(memory, {
@@ -2688,6 +2815,7 @@ function normalizeExpectation(value, field) {
 
 function normalizeChoice(value, field) {
   const source = assertPlainRecord(value, field, CHOICE_KEYS, CHOICE_REQUIRED_KEYS);
+  const proposal = normalizeProposal(source.proposal, `${field}.proposal`);
 
   return {
     schemaVersion: requireSchemaVersion(source, field),
@@ -2697,8 +2825,29 @@ function normalizeChoice(value, field) {
     cost: assertNonNegativeFiniteNumber(source.cost, `${field}.cost`),
     allowed: assertBoolean(source.allowed, `${field}.allowed`),
     safe: assertBoolean(source.safe, `${field}.safe`),
+    ...(proposal === undefined ? {} : { proposal }),
     ...(source.contextProbe === undefined ? {} : { contextProbe: assertBoolean(source.contextProbe, `${field}.contextProbe`) }),
   };
+}
+
+function normalizeProposal(value, field) {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    contractViolation('kernel proposal must be a JSON object', { field });
+  }
+  try {
+    const json = canonicalJson(value);
+    if (Buffer.byteLength(json, 'utf8') > MAX_MODEL_PROPOSAL_BYTES) {
+      contractViolation('kernel proposal exceeds its size limit', {
+        field,
+        maxBytes: MAX_MODEL_PROPOSAL_BYTES,
+      });
+    }
+    return cloneJson(value);
+  } catch (error) {
+    if (error?.code === CONTRACT_ERROR_CODE) throw error;
+    contractViolation('kernel proposal must contain bounded JSON data', { field });
+  }
 }
 
 function normalizeReceipt(value, field) {
@@ -2813,7 +2962,7 @@ function assertIntentIsExecutable(intent, field) {
   }
 }
 
-function buildPredictions(input) {
+function buildPredictions(input, preference = null) {
   // 读取始终使用窗口 h2 基：旧记忆的累加器 h2 模型本就永不可读，行为无差异；
   // h0 键只在其模型存在时才会命中，旧账本记忆不含 h0 模型，同样无差异。
   const contextKeys = contextKeysForMemory(input.memory, {
@@ -2827,7 +2976,13 @@ function buildPredictions(input) {
     const rejectionModel = input.memory.rejectionModels?.[capability.token];
     const rejectedRecently = rejectionModel?.rejected === true &&
       rejectionModel.relationKey === relationKey;
-    const model =
+    const proposalDigest = preference?.token === capability.token && preference.proposal !== undefined
+      ? candidateDigest({ token: capability.token, proposal: preference.proposal })
+      : undefined;
+    const proposalModel = proposalDigest === undefined
+      ? undefined
+      : input.memory.proposalModels?.[capability.token]?.[proposalDigest];
+    const model = proposalModel ??
       contextKeys
         ?.map((contextKey) => input.memory.contextModels?.[contextKey]?.[capability.token])
         .find((candidate) => candidate !== undefined) ??
@@ -2887,6 +3042,7 @@ function buildPredictions(input) {
         cost: capability.cost,
         allowed: capability.allowed,
         safe: capability.safe,
+        ...(proposalDigest === undefined ? {} : { proposal: cloneJson(preference.proposal) }),
       },
       rejectedRecently,
       contextResolved,
@@ -3580,16 +3736,18 @@ function cloneRngState(value) {
 
 function compactModelAgeState(value) {
   const actionModels = compactTopLevelModelAges(value.actionModels);
+  const proposalModels = compactNestedModelAges(value.proposalModels);
   const relationModels = compactNestedModelAges(value.relationModels);
   const rejectionModels = compactTopLevelModelAges(value.rejectionModels);
   const beliefModels = compactNestedModelAges(value.beliefModels);
   const contextModels = compactNestedModelAges(value.contextModels);
-  const states = [actionModels, relationModels, rejectionModels, beliefModels, contextModels];
+  const states = [actionModels, proposalModels, relationModels, rejectionModels, beliefModels, contextModels];
   if (states.some((state) => state === null)) return undefined;
   if (value.modelClock === undefined && states.every((state) => state === undefined)) return undefined;
   return {
     schemaVersion: SCHEMA_VERSION,
     ...(actionModels === undefined ? {} : { actionModels }),
+    ...(proposalModels === undefined ? {} : { proposalModels }),
     ...(relationModels === undefined ? {} : { relationModels }),
     ...(rejectionModels === undefined ? {} : { rejectionModels }),
     ...(beliefModels === undefined ? {} : { beliefModels }),
@@ -3637,6 +3795,20 @@ function cloneMemory(
     actionModels,
   };
   TOP_LEVEL_MODEL_COUNTS.set(cloned.actionModels, Object.keys(actionModels).length);
+  if (value.proposalModels !== undefined) {
+    cloned.proposalModels = Object.fromEntries(
+      Object.entries(value.proposalModels).map(([token, proposals]) => [token,
+        Object.fromEntries(Object.entries(proposals).map(([digest, model]) => [digest, {
+          schemaVersion: SCHEMA_VERSION,
+          sampleCount: model.sampleCount,
+          meanDelta: cloneVector(model.meanDelta),
+          uncertainty: model.uncertainty,
+          ...(model.modelAge === undefined ? {} : { modelAge: model.modelAge }),
+        }])),
+      ]),
+    );
+    NESTED_MODEL_COUNTS.set(cloned.proposalModels, countProposalModels(value.proposalModels));
+  }
   if (value.modelClock !== undefined) cloned.modelClock = value.modelClock;
   if (value.contextKeyScale !== undefined) cloned.contextKeyScale = value.contextKeyScale;
   if (value.pendingCreditPolicy !== undefined) {
@@ -3677,6 +3849,7 @@ function cloneMemory(
       schemaVersion: SCHEMA_VERSION,
       executionNonce: credit.executionNonce,
       token: credit.token,
+      ...(credit.proposal === undefined ? {} : { proposal: cloneJson(credit.proposal) }),
       beforeStateVersion: credit.beforeStateVersion,
       beforeIntervalId: credit.beforeIntervalId,
       beforeVector: cloneVector(credit.beforeVector),
@@ -3800,6 +3973,7 @@ function compactPersistedModelAges(memory, ageByIdentity) {
   };
   const states = {
     actionModels: topLevel('action', memory.actionModels),
+    proposalModels: nested('proposal', memory.proposalModels),
     relationModels: nested('relation', memory.relationModels),
     rejectionModels: topLevel('rejection', memory.rejectionModels),
     beliefModels: nested('belief', memory.beliefModels),
@@ -3846,6 +4020,7 @@ function persistedModelCandidates(memory, { retentionMode = 'recency-v1' } = {})
 
   addTopLevel('action', memory.actionModels);
   addTopLevel('rejection', memory.rejectionModels);
+  addNested('proposal', memory.proposalModels);
   addNested('relation', memory.relationModels);
   addNested('belief', memory.beliefModels);
   addNested('context', memory.contextModels);
@@ -3886,7 +4061,7 @@ function markDominatedPredictionModels(candidates) {
 }
 
 function isComparablePredictionModel(candidate) {
-  return ['action', 'relation', 'context'].includes(candidate.family) &&
+  return ['action', 'proposal', 'relation', 'context'].includes(candidate.family) &&
     Number.isSafeInteger(candidate.model.sampleCount) &&
     Number.isFinite(candidate.model.uncertainty);
 }
@@ -3901,6 +4076,7 @@ function stripModelAges(memory) {
 
   stripTopLevel(memory.actionModels);
   stripTopLevel(memory.rejectionModels);
+  stripNested(memory.proposalModels);
   stripNested(memory.relationModels);
   stripNested(memory.beliefModels);
   stripNested(memory.contextModels);
@@ -3921,6 +4097,7 @@ function pruneOrphanedVerificationSteps(memory) {
 
 function hasReusableModelEvidence(memory, token) {
   return Object.hasOwn(memory.actionModels, token) ||
+    Object.keys(memory.proposalModels?.[token] ?? {}).length > 0 ||
     Object.keys(memory.relationModels?.[token] ?? {}).length > 0 ||
     Object.keys(memory.beliefModels?.[token] ?? {}).length > 0 ||
     Object.values(memory.contextModels ?? {}).some((models) => Object.hasOwn(models, token));
@@ -3969,6 +4146,7 @@ function cloneChoice(value) {
     cost: value.cost,
     allowed: value.allowed,
     safe: value.safe,
+    ...(value.proposal === undefined ? {} : { proposal: cloneJson(value.proposal) }),
     ...(value.contextProbe === undefined ? {} : { contextProbe: value.contextProbe }),
   };
 }

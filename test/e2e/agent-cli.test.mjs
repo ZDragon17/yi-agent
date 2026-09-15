@@ -88,6 +88,9 @@ test('a model proposal with an optional proposal field cannot reject built-in Wo
     // 不得携带 proposal 字段，否则封闭键集判 MALFORMED_REQUEST。
     assert.equal(run.stdout[0].data.metrics.rejected, 0, JSON.stringify(run.stdout[0].data));
     assert.equal(run.stdout[0].data.metrics.accepted, 2);
+    const current = (await (await LabStore.open({ labPath: lab })).inspect()).current;
+    assert.ok(Object.keys(current.memory.actionModels).length > 0);
+    assert.equal(Object.keys(current.memory.proposalModels ?? {}).length, 0);
     const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env);
     assert.equal(replay.code, 0);
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');

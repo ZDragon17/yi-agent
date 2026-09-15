@@ -1,0 +1,162 @@
+{
+  "experiment": "R24-proposal-conditioned-memory",
+  "sourceFingerprint": "875b0e857efd6f7f433ddc9d657c59275ff034204b7f66bb1ec92803cdf6ecfb",
+  "nodeVersion": "v26.7.0",
+  "design": {
+    "independentRuns": 8,
+    "stepsPerRun": 96,
+    "primaryOutcome": "each proposal digest learns only from occurrences of that exact token+proposal pair",
+    "replayRequired": true
+  },
+  "result": {
+    "runs": 8,
+    "allRunsSeparated": true,
+    "allReplayConsistent": true,
+    "actionModelKeyCounts": [
+      0
+    ],
+    "proposalModelKeyCounts": [
+      3
+    ],
+    "proposalSampleCounts": [
+      {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      }
+    ]
+  },
+  "runs": [
+    {
+      "seed": "r24-d6bc1ad2eb50ccdfb3a31b0540d5f5f44238afcb1247b238f584c03fffe2fcb9",
+      "steps": 96,
+      "actionModelKeyCount": 0,
+      "proposalModelKeyCount": 3,
+      "proposalSampleCounts": {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r24-80a437a67dd93fb89528b641b5064a8c5b8ce86320bf4215d67f8da243b1f600",
+      "steps": 96,
+      "actionModelKeyCount": 0,
+      "proposalModelKeyCount": 3,
+      "proposalSampleCounts": {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r24-7a8151b19fa1c6c5a4c6d290311a6a40e84ea472baace8bd28e43da03061d29a",
+      "steps": 96,
+      "actionModelKeyCount": 0,
+      "proposalModelKeyCount": 3,
+      "proposalSampleCounts": {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r24-cb620011ac7966af968a16ca4482724d93447742f52f83001e61b5f31ef0813e",
+      "steps": 96,
+      "actionModelKeyCount": 0,
+      "proposalModelKeyCount": 3,
+      "proposalSampleCounts": {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r24-5fb652e7ff7a443c5ca6378b5886201f389458d4c39dffa37cb4f61939a2b2d0",
+      "steps": 96,
+      "actionModelKeyCount": 0,
+      "proposalModelKeyCount": 3,
+      "proposalSampleCounts": {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r24-4184045dddf589fb41c53303a8ce22167b3fdd6f035e93d6b892488d65bcbbd3",
+      "steps": 96,
+      "actionModelKeyCount": 0,
+      "proposalModelKeyCount": 3,
+      "proposalSampleCounts": {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r24-7ea96f5e6e828f6123e41246da068ffad984cca2a2eef29707aed5ed2f2287e2",
+      "steps": 96,
+      "actionModelKeyCount": 0,
+      "proposalModelKeyCount": 3,
+      "proposalSampleCounts": {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      "replay": "CONSISTENT"
+    },
+    {
+      "seed": "r24-d687488a71cae43e5cb1cda34557780ce45b6ccfac9aa12c16f344a6bcc99a55",
+      "steps": 96,
+      "actionModelKeyCount": 0,
+      "proposalModelKeyCount": 3,
+      "proposalSampleCounts": {
+        "{\"powerKw\":50}": 29,
+        "{\"powerKw\":0}": 38,
+        "{\"powerKw\":-50}": 28
+      },
+      "replay": "CONSISTENT"
+    }
+  ]
+}
