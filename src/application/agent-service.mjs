@@ -4,7 +4,7 @@ import { candidateDigest, canonicalDigest, canonicalJson, cloneJson, MAX_CANDIDA
 import { buildCandidateOutcome } from '../runtime/candidate-evidence.mjs';
 import { annotateCandidateHistory } from '../runtime/candidate-history.mjs';
 import { acceptedSupersessionDigest } from '../runtime/candidate-lineage.mjs';
-import { contextKeysForMemory, KERNEL_LEARNING_VERSIONS, learn, mergeObservationFeedback, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
+import { contextKeysForMemory, KERNEL_LEARNING_VERSIONS, learn, mergeObservationFeedback, stepWithPreference, stepWithPreferences, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import { advanceChangeSupervisor, acknowledgeReplan, createChangeSupervisor, enableGoal, goalPlanForActivation, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan, startGoalEpoch } from '../agent/change-supervisor.mjs';
 import { replayRunStream } from '../runtime/replay.mjs';
 import {
@@ -1038,24 +1038,19 @@ function selectModelCandidate(stepInput, modelDecision, allowProposal) {
   const seen = new Set();
   for (const candidate of rawCandidates) {
     const preference = preferenceFor(candidate, true, allowProposal);
+    if (preference === null) continue;
     const digest = candidateDigest({ token: preference.token, proposal: preference.proposal ?? null });
     if (seen.has(digest)) continue;
     seen.add(digest);
     const capability = stepInput.capabilities.find((item) => item.token === candidate.token);
     if (capability?.allowed !== true || capability.safe !== true) continue;
-    const intent = stepWithPreference(stepInput, preference);
-    if (intent.status !== 'READY' || intent.choice.token !== preference.token ||
-        canonicalJson(intent.choice.proposal ?? null) !== canonicalJson(preference.proposal ?? null)) continue;
-    candidates.push({ candidate, intent });
+    candidates.push({ candidate, preference });
   }
   if (candidates.length === 0) return null;
-  candidates.sort((left, right) => {
-    if (left.intent.choice.score !== right.intent.choice.score) {
-      return right.intent.choice.score - left.intent.choice.score;
-    }
-    return candidateDigest(left.candidate).localeCompare(candidateDigest(right.candidate));
-  });
-  return candidates[0];
+  const intent = stepWithPreferences(stepInput, candidates.map(({ preference }) => preference));
+  const selected = candidates.find((item) => item.preference.token === intent.choice.token &&
+    canonicalJson(item.preference.proposal ?? null) === canonicalJson(intent.choice.proposal ?? null));
+  return selected === undefined ? null : { ...selected, intent };
 }
 
 function preferenceFor(modelDecision, required = false, allowProposal = true) {

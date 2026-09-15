@@ -1,0 +1,198 @@
+{
+  "experiment": "R28-kernel-candidate-quality",
+  "sourceFingerprint": "b4be479e8178329ec8a1ecf02624cdfdc7427692fec70fe7ecc89b3d9024e83b",
+  "nodeVersion": "v26.7.0",
+  "design": {
+    "independentPairedRuns": 8,
+    "stepsPerRun": 96,
+    "primaryOutcome": "whether a bounded model candidate set improves cumulative utility when the Kernel selects among it",
+    "lowerUtilityIsBetter": true,
+    "replayRequired": true
+  },
+  "result": {
+    "pairs": 8,
+    "allReplayConsistent": true,
+    "meanCandidateMinusSingleYuan": -16.5625,
+    "improvedPairs": 4,
+    "worsenedPairs": 4,
+    "equalPairs": 0
+  },
+  "runs": [
+    {
+      "seed": "r28-d343bd8b857a5eab3859552e6214505380bac59c71129cfaeb4b1810106c7cd1",
+      "single": {
+        "label": "single",
+        "seed": "r28-d343bd8b857a5eab3859552e6214505380bac59c71129cfaeb4b1810106c7cd1",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-d343bd8b857a5eab3859552e6214505380bac59c71129cfaeb4b1810106c7cd1",
+        "steps": 96,
+        "utilityYuan": 13712,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": 132.5
+    },
+    {
+      "seed": "r28-b5b5f12969a16a7276304474f46234053c26a8316ebabc918de84efc33a5f8e5",
+      "single": {
+        "label": "single",
+        "seed": "r28-b5b5f12969a16a7276304474f46234053c26a8316ebabc918de84efc33a5f8e5",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-b5b5f12969a16a7276304474f46234053c26a8316ebabc918de84efc33a5f8e5",
+        "steps": 96,
+        "utilityYuan": 13712,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": 132.5
+    },
+    {
+      "seed": "r28-f74e341e491da400f90c2d90334c63ffa2e22a6e4a47170f55944951928bc951",
+      "single": {
+        "label": "single",
+        "seed": "r28-f74e341e491da400f90c2d90334c63ffa2e22a6e4a47170f55944951928bc951",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-f74e341e491da400f90c2d90334c63ffa2e22a6e4a47170f55944951928bc951",
+        "steps": 96,
+        "utilityYuan": 13437,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": -142.5
+    },
+    {
+      "seed": "r28-ab87f0461bf3d44829fb94e68d914bdfbb0d2d4f29a51f56c3aae500594ade3b",
+      "single": {
+        "label": "single",
+        "seed": "r28-ab87f0461bf3d44829fb94e68d914bdfbb0d2d4f29a51f56c3aae500594ade3b",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-ab87f0461bf3d44829fb94e68d914bdfbb0d2d4f29a51f56c3aae500594ade3b",
+        "steps": 96,
+        "utilityYuan": 13437,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": -142.5
+    },
+    {
+      "seed": "r28-01be40d82e23d62cbf470936f5a69b97266ed39d763081b0ec2aa6e2d3c0c7f6",
+      "single": {
+        "label": "single",
+        "seed": "r28-01be40d82e23d62cbf470936f5a69b97266ed39d763081b0ec2aa6e2d3c0c7f6",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-01be40d82e23d62cbf470936f5a69b97266ed39d763081b0ec2aa6e2d3c0c7f6",
+        "steps": 96,
+        "utilityYuan": 13687,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": 107.5
+    },
+    {
+      "seed": "r28-a2c68bf8ce5b5feb2f9b832b5dc52c094357b0007e64082e42efe9f0e7a37b77",
+      "single": {
+        "label": "single",
+        "seed": "r28-a2c68bf8ce5b5feb2f9b832b5dc52c094357b0007e64082e42efe9f0e7a37b77",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-a2c68bf8ce5b5feb2f9b832b5dc52c094357b0007e64082e42efe9f0e7a37b77",
+        "steps": 96,
+        "utilityYuan": 13369.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": -210
+    },
+    {
+      "seed": "r28-d6d979b5ec125aa9fa2c409e950f572dad2e0203d69d148755aedb134efe9939",
+      "single": {
+        "label": "single",
+        "seed": "r28-d6d979b5ec125aa9fa2c409e950f572dad2e0203d69d148755aedb134efe9939",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-d6d979b5ec125aa9fa2c409e950f572dad2e0203d69d148755aedb134efe9939",
+        "steps": 96,
+        "utilityYuan": 13437,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": -142.5
+    },
+    {
+      "seed": "r28-72009e61a908b0866d5ecf5769573484309ff22deb657e1a6ee88617b497158c",
+      "single": {
+        "label": "single",
+        "seed": "r28-72009e61a908b0866d5ecf5769573484309ff22deb657e1a6ee88617b497158c",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-72009e61a908b0866d5ecf5769573484309ff22deb657e1a6ee88617b497158c",
+        "steps": 96,
+        "utilityYuan": 13712,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": 132.5
+    }
+  ]
+}

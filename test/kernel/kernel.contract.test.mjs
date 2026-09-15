@@ -86,6 +86,7 @@ test('kernel public entry exposes step and verify as the kernel contract seams',
 
   assert.equal(typeof kernel.step, 'function');
   assert.equal(typeof kernel.stepWithPreference, 'function');
+  assert.equal(typeof kernel.stepWithPreferences, 'function');
   assert.equal(typeof kernel.verify, 'function');
   assert.equal(typeof kernel.learn, 'function');
   assert.equal(Object.isFrozen(kernel.KERNEL_LEARNING_VERSIONS), true);
@@ -152,6 +153,26 @@ test('step ranks absolute distance to the target and does not reward overshoot',
 
   assert.equal(result.choice.token, TOKEN_B);
   assert.equal(result.choice.expectedValue, -0.5);
+});
+
+test('kernel compares a bounded candidate set at one deterministic decision boundary', async () => {
+  const { stepWithPreferences } = await loadKernel();
+  const result = stepWithPreferences(makeStepInput({
+    observation: observation([0, 0], 'state-candidates'),
+    valueSpec: { schemaVersion: 1, observationDimensions: 2, weights: [1, 1], target: [1, 1], tolerance: 0, valueMode: 'distance-v2' },
+    capabilities: [capability(TOKEN_A), capability(TOKEN_B)],
+    memory: memoryWithModels([
+      [TOKEN_A, { sampleCount: 4, meanDelta: [2, 2], uncertainty: 0 }],
+      [TOKEN_B, { sampleCount: 4, meanDelta: [0.5, 0.5], uncertainty: 0 }],
+    ]),
+  }), [
+    { schemaVersion: 1, token: TOKEN_A, required: true },
+    { schemaVersion: 1, token: TOKEN_B, required: true },
+  ]);
+
+  assert.equal(result.status, 'READY');
+  assert.equal(result.choice.token, TOKEN_B);
+  assert.deepEqual(result.expectation.expectedDelta, [0.5, 0.5]);
 });
 
 test('proposal preference selects a proposal-conditioned transition model', async () => {

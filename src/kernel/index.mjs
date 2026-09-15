@@ -25,6 +25,7 @@ const ADAPTATION_WINDOW = 8;
 const REVALIDATION_INTERVAL = 8;
 const MAX_PLANNING_HORIZON = 8;
 const MAX_PLANNING_CANDIDATES = 64;
+const MAX_PREFERENCE_CANDIDATES = 9;
 const PLANNING_INFORMATION_MODES = ['belief-v1', 'belief-v2', 'belief-v3', 'legacy-v1'];
 const PLANNING_CONTEXT_MODES = ['context-v1', 'legacy-v1'];
 const PLANNING_BRANCHING_MODES = ['tree-v1', 'recursive-v1', 'legacy-v1'];
@@ -300,6 +301,47 @@ export function validateObservationFeedback(memoryValue, observationValue) {
 export function stepWithPreference(input, preference = null) {
   const normalized = normalizeStepInput(input);
   const normalizedPreference = normalizePreference(preference);
+  return stepWithPreferenceNormalized(normalized, normalizedPreference);
+}
+
+// Candidate comparison belongs to the kernel: every proposal is evaluated from
+// the same normalized boundary and the same RNG state, so the model cannot
+// smuggle a preference outside the prediction, safety, and replay contract.
+export function stepWithPreferences(input, preferences = []) {
+  const normalized = normalizeStepInput(input);
+  if (!Array.isArray(preferences) || preferences.length > MAX_PREFERENCE_CANDIDATES) {
+    contractViolation('kernel preference candidates must be a bounded array', {
+      field: 'stepPreferences',
+      maximum: MAX_PREFERENCE_CANDIDATES,
+    });
+  }
+  const normalizedPreferences = preferences.map((preference, index) => {
+    try {
+      return normalizePreference(preference);
+    } catch (error) {
+      throw Object.assign(error, { context: { ...(error.context ?? {}), field: `stepPreferences[${index}]` } });
+    }
+  });
+  if (normalizedPreferences.length === 0) {
+    return stepWithPreferenceNormalized(normalized, null);
+  }
+  const evaluated = normalizedPreferences
+    .map((preference) => stepWithPreferenceNormalized(normalized, { ...preference, required: true }))
+    .filter((intent, index) => intent.status === 'READY' &&
+      intent.choice.token === normalizedPreferences[index].token &&
+      canonicalJson(intent.choice.proposal ?? null) === canonicalJson(normalizedPreferences[index].proposal ?? null));
+  if (evaluated.length === 0) {
+    return stepWithPreferenceNormalized(normalized, normalizedPreferences[0]);
+  }
+  evaluated.sort((left, right) => {
+    if (left.choice.score !== right.choice.score) return right.choice.score - left.choice.score;
+    return candidateDigest({ token: left.choice.token, proposal: left.choice.proposal ?? null })
+      .localeCompare(candidateDigest({ token: right.choice.token, proposal: right.choice.proposal ?? null }));
+  });
+  return evaluated[0];
+}
+
+function stepWithPreferenceNormalized(normalized, normalizedPreference) {
   const predictions = buildPredictions(normalized, normalizedPreference);
   const safePredictions = predictions.filter(
     (item) => item.choice.allowed && item.choice.safe,
