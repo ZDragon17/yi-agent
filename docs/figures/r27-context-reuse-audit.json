@@ -1,6 +1,6 @@
 {
   "experiment": "R27-context-reuse-audit",
-  "sourceFingerprint": "fc5af1b5fa09964f81dccbb3012b4a0112aaa495911ad3bf6be70b674927e7af",
+  "sourceFingerprint": "b0a8e48a61a726826a88191fa16e654cb513202a81f8d806012f43d1d2dec1f4",
   "nodeVersion": "v26.7.0",
   "design": {
     "independentRuns": 8,
@@ -12,249 +12,271 @@
   "result": {
     "runs": 8,
     "allReplayConsistent": true,
-    "averageProposalContextModelCount": 200.75,
-    "averageReusableModelCountAtTwoSamples": 38.25,
+    "averageProposalContextModelCount": 118,
+    "averageReusableModelCountAtTwoSamples": 57,
     "modelCountsBySampleCount": {
-      "1": 162,
-      "2": 25,
-      "3": 4,
-      "4": 4,
-      "5": 2,
+      "1": 61,
+      "2": 19,
+      "3": 21,
+      "4": 7,
+      "5": 1,
       "6": 1,
-      "7": 1,
+      "7": 2,
       "8": 1,
-      "10": 1
+      "9": 2,
+      "10": 2,
+      "20": 1
     },
     "modelsByScale": {
-      "h0": 37,
-      "h1": 73,
-      "h2": 91
+      "h0": 22,
+      "h1": 40,
+      "h2": 56
     },
     "reusableModelsByScaleAtTwoSamples": {
-      "h0": 21,
-      "h1": 16,
-      "h2": 2
+      "h0": 14,
+      "h1": 21,
+      "h2": 22
     }
   },
   "runs": [
     {
-      "seed": "r27-6055679947c28b50bbe493ecbf57899f77182801d94c658607a0747b4d00db17",
+      "seed": "r27-798c92a3834e760e04ffee2d5028bb005820429169c8b8fe1366c54ec6d0dff7",
       "steps": 96,
       "replay": "CONSISTENT",
-      "proposalContextModelCount": 201,
-      "reusableModelCountAtTwoSamples": 39,
+      "proposalContextModelCount": 118,
+      "reusableModelCountAtTwoSamples": 57,
       "modelCountsBySampleCount": {
-        "1": 162,
-        "2": 25,
-        "3": 4,
-        "4": 4,
-        "5": 2,
+        "1": 61,
+        "2": 19,
+        "3": 21,
+        "4": 7,
+        "5": 1,
         "6": 1,
-        "7": 1,
-        "8": 1,
-        "10": 1
-      },
-      "modelsByScale": {
-        "h0": 37,
-        "h1": 73,
-        "h2": 91
-      },
-      "reusableModelsByScaleAtTwoSamples": {
-        "h0": 21,
-        "h1": 16,
-        "h2": 2
-      }
-    },
-    {
-      "seed": "r27-1430c822130ad82bce8627e36aa5b750230d8c88f22d5e1041f42f3811427e24",
-      "steps": 96,
-      "replay": "CONSISTENT",
-      "proposalContextModelCount": 200,
-      "reusableModelCountAtTwoSamples": 39,
-      "modelCountsBySampleCount": {
-        "1": 161,
-        "2": 25,
-        "3": 4,
-        "4": 4,
-        "5": 3,
-        "8": 1,
-        "9": 1,
-        "10": 1
-      },
-      "modelsByScale": {
-        "h0": 37,
-        "h1": 72,
-        "h2": 91
-      },
-      "reusableModelsByScaleAtTwoSamples": {
-        "h0": 20,
-        "h1": 17,
-        "h2": 2
-      }
-    },
-    {
-      "seed": "r27-47e9fc827fd78f0b5a0e68b9ab1952874b6c1770c60aeb3885c3517c6d5404de",
-      "steps": 96,
-      "replay": "CONSISTENT",
-      "proposalContextModelCount": 202,
-      "reusableModelCountAtTwoSamples": 37,
-      "modelCountsBySampleCount": {
-        "1": 165,
-        "2": 23,
-        "3": 4,
-        "4": 4,
-        "5": 2,
         "7": 2,
         "8": 1,
-        "10": 1
+        "9": 2,
+        "10": 2,
+        "20": 1
       },
       "modelsByScale": {
-        "h0": 37,
-        "h1": 74,
-        "h2": 91
+        "h0": 22,
+        "h1": 40,
+        "h2": 56
       },
       "reusableModelsByScaleAtTwoSamples": {
-        "h0": 20,
-        "h1": 15,
-        "h2": 2
+        "h0": 14,
+        "h1": 21,
+        "h2": 22
       }
     },
     {
-      "seed": "r27-6df8e4320fa881a2596c2b2e4233df3bd22eee306ff5f9b7be5fd7acae314356",
+      "seed": "r27-1a9f64f2d5199e1efcdbce5227f19bcc12b9964ffc0c216053789a79cad506c2",
       "steps": 96,
       "replay": "CONSISTENT",
-      "proposalContextModelCount": 201,
-      "reusableModelCountAtTwoSamples": 37,
+      "proposalContextModelCount": 118,
+      "reusableModelCountAtTwoSamples": 57,
       "modelCountsBySampleCount": {
-        "1": 164,
-        "2": 23,
-        "3": 4,
-        "4": 4,
-        "5": 2,
+        "1": 61,
+        "2": 19,
+        "3": 21,
+        "4": 7,
+        "5": 1,
         "6": 1,
+        "7": 2,
         "8": 1,
-        "9": 1,
-        "10": 1
+        "9": 2,
+        "10": 2,
+        "20": 1
       },
       "modelsByScale": {
-        "h0": 37,
-        "h1": 73,
-        "h2": 91
+        "h0": 22,
+        "h1": 40,
+        "h2": 56
       },
       "reusableModelsByScaleAtTwoSamples": {
-        "h0": 19,
-        "h1": 16,
-        "h2": 2
+        "h0": 14,
+        "h1": 21,
+        "h2": 22
       }
     },
     {
-      "seed": "r27-0279d232e6644bd8c55e9f5163b3573ab0964f4c4f72496056028ce84a83c854",
+      "seed": "r27-3a07b76c94f2671ca2dd468a3c8704059181138642788f3a69360d8c16ac395d",
       "steps": 96,
       "replay": "CONSISTENT",
-      "proposalContextModelCount": 201,
-      "reusableModelCountAtTwoSamples": 37,
+      "proposalContextModelCount": 118,
+      "reusableModelCountAtTwoSamples": 57,
       "modelCountsBySampleCount": {
-        "1": 164,
-        "2": 23,
-        "3": 4,
-        "4": 4,
-        "5": 2,
+        "1": 61,
+        "2": 19,
+        "3": 21,
+        "4": 7,
+        "5": 1,
         "6": 1,
+        "7": 2,
         "8": 1,
-        "9": 1,
-        "10": 1
+        "9": 2,
+        "10": 2,
+        "20": 1
       },
       "modelsByScale": {
-        "h0": 37,
-        "h1": 73,
-        "h2": 91
+        "h0": 22,
+        "h1": 40,
+        "h2": 56
       },
       "reusableModelsByScaleAtTwoSamples": {
-        "h0": 19,
-        "h1": 16,
-        "h2": 2
+        "h0": 14,
+        "h1": 21,
+        "h2": 22
       }
     },
     {
-      "seed": "r27-5ac0a938f7a8311390ffb07a9974153fbe98a9f73456940bc09ab8b167883905",
+      "seed": "r27-8f55497d6fb713938c7ef3fa71afb4c8d22a410dd691361c053f3c988128abaf",
       "steps": 96,
       "replay": "CONSISTENT",
-      "proposalContextModelCount": 201,
-      "reusableModelCountAtTwoSamples": 39,
+      "proposalContextModelCount": 118,
+      "reusableModelCountAtTwoSamples": 57,
       "modelCountsBySampleCount": {
-        "1": 162,
-        "2": 25,
-        "3": 4,
-        "4": 4,
-        "5": 2,
+        "1": 61,
+        "2": 19,
+        "3": 21,
+        "4": 7,
+        "5": 1,
         "6": 1,
-        "7": 1,
+        "7": 2,
         "8": 1,
-        "10": 1
+        "9": 2,
+        "10": 2,
+        "20": 1
       },
       "modelsByScale": {
-        "h0": 37,
-        "h1": 73,
-        "h2": 91
+        "h0": 22,
+        "h1": 40,
+        "h2": 56
       },
       "reusableModelsByScaleAtTwoSamples": {
-        "h0": 21,
-        "h1": 16,
-        "h2": 2
+        "h0": 14,
+        "h1": 21,
+        "h2": 22
       }
     },
     {
-      "seed": "r27-8bb231b25eaa8287046c2146919753019ac40f725a7956aa2ed989b0780e6403",
+      "seed": "r27-990ab21351df324b1acd4e7d40a6cb0ffbeee195dad170ee840c75c299c5e5bf",
       "steps": 96,
       "replay": "CONSISTENT",
-      "proposalContextModelCount": 200,
-      "reusableModelCountAtTwoSamples": 39,
+      "proposalContextModelCount": 118,
+      "reusableModelCountAtTwoSamples": 57,
       "modelCountsBySampleCount": {
-        "1": 161,
-        "2": 25,
-        "3": 4,
-        "4": 4,
-        "5": 3,
+        "1": 61,
+        "2": 19,
+        "3": 21,
+        "4": 7,
+        "5": 1,
+        "6": 1,
+        "7": 2,
         "8": 1,
-        "9": 1,
-        "10": 1
+        "9": 2,
+        "10": 2,
+        "20": 1
       },
       "modelsByScale": {
-        "h0": 37,
-        "h1": 72,
-        "h2": 91
+        "h0": 22,
+        "h1": 40,
+        "h2": 56
       },
       "reusableModelsByScaleAtTwoSamples": {
-        "h0": 20,
-        "h1": 17,
-        "h2": 2
+        "h0": 14,
+        "h1": 21,
+        "h2": 22
       }
     },
     {
-      "seed": "r27-251cb8db49292d184fd9ab5021fbd9c185981d4e8b5b02148e37cc8c9418f428",
+      "seed": "r27-549121fcce2c03928ab16b278ffe9d87f4fceb64f33d883afe60211dfb49a4ee",
       "steps": 96,
       "replay": "CONSISTENT",
-      "proposalContextModelCount": 200,
-      "reusableModelCountAtTwoSamples": 39,
+      "proposalContextModelCount": 118,
+      "reusableModelCountAtTwoSamples": 57,
       "modelCountsBySampleCount": {
-        "1": 161,
-        "2": 25,
-        "3": 4,
-        "4": 4,
-        "5": 3,
+        "1": 61,
+        "2": 19,
+        "3": 21,
+        "4": 7,
+        "5": 1,
+        "6": 1,
+        "7": 2,
         "8": 1,
-        "9": 1,
-        "10": 1
+        "9": 2,
+        "10": 2,
+        "20": 1
       },
       "modelsByScale": {
-        "h0": 37,
-        "h1": 72,
-        "h2": 91
+        "h0": 22,
+        "h1": 40,
+        "h2": 56
       },
       "reusableModelsByScaleAtTwoSamples": {
-        "h0": 20,
-        "h1": 17,
-        "h2": 2
+        "h0": 14,
+        "h1": 21,
+        "h2": 22
+      }
+    },
+    {
+      "seed": "r27-464080f34c3272a1c0457759dc03033e5c8152f2f523b540bdf40a05557ea7d6",
+      "steps": 96,
+      "replay": "CONSISTENT",
+      "proposalContextModelCount": 118,
+      "reusableModelCountAtTwoSamples": 57,
+      "modelCountsBySampleCount": {
+        "1": 61,
+        "2": 19,
+        "3": 21,
+        "4": 7,
+        "5": 1,
+        "6": 1,
+        "7": 2,
+        "8": 1,
+        "9": 2,
+        "10": 2,
+        "20": 1
+      },
+      "modelsByScale": {
+        "h0": 22,
+        "h1": 40,
+        "h2": 56
+      },
+      "reusableModelsByScaleAtTwoSamples": {
+        "h0": 14,
+        "h1": 21,
+        "h2": 22
+      }
+    },
+    {
+      "seed": "r27-46359e0f46a00bf3bc36c8acac27397f5847782f4622f274f378bcfeb9fe1fb7",
+      "steps": 96,
+      "replay": "CONSISTENT",
+      "proposalContextModelCount": 118,
+      "reusableModelCountAtTwoSamples": 57,
+      "modelCountsBySampleCount": {
+        "1": 61,
+        "2": 19,
+        "3": 21,
+        "4": 7,
+        "5": 1,
+        "6": 1,
+        "7": 2,
+        "8": 1,
+        "9": 2,
+        "10": 2,
+        "20": 1
+      },
+      "modelsByScale": {
+        "h0": 22,
+        "h1": 40,
+        "h2": 56
+      },
+      "reusableModelsByScaleAtTwoSamples": {
+        "h0": 14,
+        "h1": 21,
+        "h2": 22
       }
     }
   ]

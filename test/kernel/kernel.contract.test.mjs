@@ -210,6 +210,15 @@ test('proposal preference selects the most specific proposal-context model', asy
   });
 
   assert.deepEqual(result.expectation.expectedDelta, [4, 0]);
+
+  input.memory.proposalContextModels[TOKEN_A][digest][contextKey].sampleCount = 1;
+  const sparseContext = stepWithPreference(input, {
+    schemaVersion: 1,
+    token: TOKEN_A,
+    proposal,
+    required: true,
+  });
+  assert.deepEqual(sparseContext.expectation.expectedDelta, [2, 0]);
 });
 
 test('learn keeps global and proposal-context evidence separate', async () => {

@@ -27,7 +27,7 @@ function proposalFor(context, token) {
     const digest = candidateDigest({ token, proposal: { powerKw } });
     const contextual = activeContextKeys
       .map((contextKey) => contextualModels[digest]?.[contextKey])
-      .find((model) => model !== undefined);
+      .find((model) => model !== undefined && model.sampleCount >= 2);
     return { powerKw, model: contextual ?? globalModels[digest] };
   }).filter((candidate) => candidate.model !== undefined);
   if (known.length < PROPOSALS.length) {

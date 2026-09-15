@@ -17,6 +17,7 @@ const MAX_CAPABILITIES = 4096;
 const MAX_ACTION_MODELS = 8192;
 const MAX_PROPOSAL_MODELS = 8192;
 const MAX_PROPOSAL_CONTEXT_MODELS = 8192;
+const MIN_PROPOSAL_CONTEXT_SAMPLES = 2;
 const PROPOSAL_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const MAX_RELATION_MODELS = 8192;
 const MAX_RELATION_KEY_LENGTH = MAX_VECTOR_DIMENSIONS + 3;
@@ -3187,7 +3188,7 @@ function buildPredictions(input, preference = null) {
       ? undefined
       : contextKeys
         ?.map((contextKey) => input.memory.proposalContextModels?.[capability.token]?.[proposalDigest]?.[contextKey])
-        .find((candidate) => candidate !== undefined);
+        .find((candidate) => candidate !== undefined && candidate.sampleCount >= MIN_PROPOSAL_CONTEXT_SAMPLES);
     const model = proposalContextModel ??
       proposalModel ??
       contextKeys
