@@ -741,7 +741,18 @@ yi-agent experiment counterfactual `
   --json
 ```
 
-报告是账本与策略的纯函数：不含时间戳，绑定 manifest/current 摘要与 `historyBasisDigest`，同一账本重复评估得到逐字节相同的自摘要报告；策略文件仍只允许引用父 Token map。该命令不运行世界、不调用模型、不创建分支 Lab，外部 adapter 的 Lab 同样可以离线评估。它回答的是“历史证据支持哪个策略”，不是轨迹仿真、规则自动发现或部署决策本身：UNEVALUABLE 比例高只说明账本还没有覆盖那些反事实，不说明策略好坏。该机制的定位与外部对照见 vision.md 线五（Dream-RSI：历史即模拟器）。
+报告是账本与策略的纯函数：不含时间戳，绑定 manifest/current 摘要与 `historyBasisDigest`，同一账本重复评估得到逐字节相同的自摘要报告；策略文件仍只允许引用父 Token map。该命令不运行世界、不调用模型、不创建分支 Lab，外部 adapter 的 Lab 同样可以离线评估。它回答的是“历史证据支持哪个策略”，不是轨迹仿真、规则自动发现或部署决策本身：UNEVALUABLE 比例高只说明账本还没有覆盖那些反事实，不说明策略好坏。
+
+### 与 Dream-RSI（dream-rsi.com）的关系
+
+本项目通过 `experiment counterfactual` 实践并延伸了 [Dream-RSI](https://dream-rsi.com/)（Google / Google DeepMind / 马里兰大学 / 弗吉尼亚大学，2026）提出的“历史即模拟器”思路：一次在线发现运行已经记录成带真实执行结果的探索结构，因此对备选探索策略的评估可以**零执行**地在已记录历史上重放。当前编译器 `counterfactual-replay.mjs` 严格按照“单步历史锚定”执行：它只用账本确实观测过的状态和结果，只替代单个步骤的候选选择，绝不编造账本从未见过的世界状态去推演多步反事实轨迹；因此它的评价范畴是“某条反事实选择在已记录证据下是否更好/更差/无法评估”，并且：
+
+- 当前已部署的策略自动是候选集之一，因此“改进”不会劣化；
+- 每次在线运行都会扩充候选历史，形成递归的“世界池”；
+- 离线反事实报告标记为 `historical-policy-replay`，**不是**真实反事实、现实世界因果或已验证的部署结果；
+- 该机制只验证评论/策略评估，**没有**进入 Kernel 的安全裁决或取代独立验证与 fail-closed 信任边界。
+
+这与 `vision.md` 第 5 条（“历史即模拟器，验证预算优先”）一致，但明确是较后的一个落点，不是完整 Meta-Evolution 编排层。
 
 F-222 增加有限的目标 epoch：前一个目标只有在 `COMPLETED` 或 `HALTED` 后，才能由新的 `goal` 或 `goal-plan` 开启下一目标周期。新周期保留 WorldPort 状态、Memory、RNG 和 kernelStep，只重置监督器的目标局部进度；前后连续性摘要写入 immutable run start，首个 STEP 写入新的 `goalActivation`。如果旧目标仍为 `ACTIVE` 或 `REPLAN_REQUIRED`，CLI 会拒绝替换。这样同一 Lab 可以在完成一个目标后继续推进另一个目标，同时不修改已完成 Run 的历史。这个机制只解决目标生命周期和持久化边界，不把目标文本自动变成可验证的现实意图，也不绕过外部 transition 的恢复与人工对账要求。当前本机定向应用回归为 `4/4`，内置 WorldPort 的 PowerShell-facing CLI E2E 与独立 JSONL adapter CLI E2E 各为 `1/1`。
 

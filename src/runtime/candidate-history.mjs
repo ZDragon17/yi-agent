@@ -40,8 +40,10 @@ export function createCandidateHistoryAnnotator({ relevance = null } = {}) {
         ? undefined
         : (() => {
             const { valueSpec: _valueSpec, beforeVector: _beforeVector, afterVector: _afterVector, ...publicEntry } = entry ?? {};
+            const beforeVectorDigest = vectorDigest(entry?.beforeVector);
             const enriched = {
               ...publicEntry,
+              ...(beforeVectorDigest === null ? {} : { beforeVectorDigest }),
               ...(quality === null ? {} : { quality }),
               ...(stepGap === null ? {} : { stepsSincePreviousCandidate: stepGap }),
               ...(supersededStepDistance === null ? {} : { stepsSinceSupersededCandidate: supersededStepDistance }),
@@ -199,6 +201,11 @@ function candidateReference(entry, quality) {
 
 function candidateReferenceKey(entry, value) {
   return JSON.stringify([...worldPortScopeKeys(entry), value]);
+}
+
+function vectorDigest(vector) {
+  if (!Array.isArray(vector) || vector.length === 0 || vector.some((value) => !Number.isFinite(value))) return null;
+  return canonicalDigest(vector);
 }
 
 function nestedMapGet(root, keys) {
