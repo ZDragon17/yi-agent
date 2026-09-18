@@ -1,10 +1,78 @@
-# 易闭环 Agent CLI
+# yi-agent：可验证的自演化 Agent 实验运行时
 
-这是一个可在 Windows PowerShell 中运行的、面向通用智能底座实验的 CLI。
+[![CI](https://github.com/ZDragon17/yi-agent/actions/workflows/test.yml/badge.svg)](https://github.com/ZDragon17/yi-agent/actions/workflows/test.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-它不是另一个“让大模型帮你改代码”的工具，而是尝试回答一个更底层的问题：
+**yi-agent** is an evidence-grounded runtime for studying **self-evolving AI agents**, **recursive self-improvement**, and **verifiable agent behavior**. It separates an untrusted model proposal from a domain-neutral `Kernel`, a constrained `WorldPort`, independent `verify → learn` evidence, and deterministic `replay`.
+
+这是一个可在 Windows PowerShell 中运行的、面向通用智能底座实验的 CLI。它不是另一个“让大模型帮你改代码”的工具，而是研究一个更底层的问题：
 
 > 一个系统要怎样观察世界、提出行动、验证结果、积累经验，并在下一次行动中真正改变自己？
+
+## 项目定位
+
+yi-agent 更准确的定位是**基于证据的 Agent 演化运行时**（Evidence-grounded Evolution Runtime）：一个可回放、可验证、可反证的自我进化 AI Agent 实验底座，而不是已经实现通用递归自我改进的成熟产品。
+
+它适合研究和验证：
+
+- **Self-evolving AI agents**：让已验证的反馈影响后续有限策略选择；
+- **Recursive self-improvement boundaries**：把“改进”拆成可观察、可反证的实验，而不是只依赖模型自述；
+- **Deterministic replay / durable execution**：跨进程保存事件账本、恢复状态并离线重放；
+- **Causal credit assignment**：对延迟反馈、动作链和受控反事实证据进行保守归因；
+- **WorldPort abstraction**：用同一套 Kernel 接入温控、库存、网格、队列、仓库和能源场景等受约束世界。
+
+```text
+WorldPort observation
+        ↓
+ModelAdvisor proposes bounded, untrusted candidates
+        ↓
+Kernel predicts, authorizes and selects one safe action
+        ↓
+WorldPort executes and returns a receipt
+        ↓
+verify → learn only from attributable evidence
+        ↓
+JSONL ledger → deterministic replay → falsifiable challenge
+```
+
+## 当前能证明什么，不能证明什么
+
+**已实现的工程边界**包括：领域中立 Kernel、受约束 WorldPort、事件账本、崩溃恢复、证据门控学习、外部 JSONL adapter、模型故障回退、EffectBroker 边界和不调用模型的确定性 Replay。
+
+**不能据此宣称**已经实现通用智能、现实世界因果真值、可信硬件证明、任意项目的安全自动修改，或模型能够递归改进自身。内置世界和 challenge 主要是可复现的实验装置；结论应理解为“在给定判据和证据范围内未被证伪”。
+
+## 快速开始
+
+要求 **Node.js 22+**。核心实验不需要 API key，可先使用 Kernel-only 模式：
+
+```powershell
+git clone https://github.com/ZDragon17/yi-agent.git
+cd yi-agent
+npm ci
+npm test
+
+# 初始化并运行一个内置世界
+$lab = Join-Path $PWD 'temperature-lab'
+node .\\bin\\yi-agent.mjs init --lab $lab --world temperature --seed demo --json
+node .\\bin\\yi-agent.mjs run --lab $lab --steps 8 --kernel-only --json
+node .\\bin\\yi-agent.mjs inspect --lab $lab --json
+node .\\bin\\yi-agent.mjs replay --lab $lab --chain --json
+```
+
+如果要接入 OpenAI-compatible 模型，可使用 `agent run`；模型只负责提出候选，Kernel 仍重新计算安全性、预期和最终选择。外部世界接入方式见 [README 中的外部 WorldPort 章节](#用一个外部世界验证通用性)，示例代码位于 [`examples/counter-world/`](examples/counter-world/)。
+
+## 文档与研究入口
+
+- [架构与设计契约](design.md)
+- [CLI 功能规格](spec.md)
+- [研究论文与实验结果](PAPER.md)
+- [项目现状、风险与下一步](vision.md)
+- [任务与反证记录](tasks.md)
+- [完整 README 实验记录](#当前已经实现什么)
+- [文档导航总览](docs/project-overview.md)
+
+---
+
+## 原始研究背景
 
 当前最小 API 接口采用 OpenAI-compatible Chat Completions 协议，核心实验能力仍可通过 `init`、`run`、`inspect`、`replay` 等命令使用。
 
@@ -186,12 +254,12 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 确定性 Replay：回放使用已记录的模型提议摘要，不重新请求模型；
 - Effect Broker：对明确声明的副作用提供计划、确认、执行、对账和补偿流程；
 - EffectJournal：跨进程 append 使用原子 writer lock，并在锁内重读账本；stale-lock 回收另有固定 reclaim reservation，避免并发回收者互删或误删新 owner；副作用执行/对账/补偿期间持有可恢复的 nonce 级操作锁；Broker 还以全局日志头摘要做 CAS，陈旧状态不会重复提交语义转换；CLI 重启或并发调用不会各自基于陈旧 sequence 写入；
-- 有界探索回合：变化监督器进入 `EXPLORATORY` 不再是单向闩锁——`acknowledgeReplan` 会记录进入周期、进入时最优距离与已验证步数；确认进展突破进入时最优距离（`exploration-improved`）或固定 12 个已验证步预算耗尽（`exploration-budget-exhausted`）即恢复 `BALANCED` 价值选择。周期-3 隐藏相位世界的反证显示，旧语义下一次早期停滞就会让 coverage 踏步与轨道耦合，60 步 20 次重规划后仍锁定 1/3 赢家率且 bestDistance 无改善；该反证同时证明旧账本监督器状态（无 exploration 记录）保持原语义；
-- 多尺度上下文与键规范化：`kernelLearningVersion: 25`（`multiScaleContext`）新增窗口-1 的 `h0:` 上下文键（读取链 h2→h1→h0→关系→总体，写入按版本门控，旧账本读取天然无差异），并新增 Memory `contextKeyScale` 把上下文键中的实际变化量化到固定十进制精度——`actualDelta = expectedDelta + error` 的浮点重构残差（如 -5.55e-17）不再把语义相同的历史分裂成不同键；内核探针同时证明 h2 累加器键因位置权重按构造永不复现，「长期上下文可读」的原始声明不再成立，h2 写入仅作为审计保留；
+- 有界探索回合：变化监督器进入 `EXPLORATORY` 不再是单向闩锁：`acknowledgeReplan` 会记录进入周期、进入时最优距离与已验证步数；确认进展突破进入时最优距离（`exploration-improved`）或固定 12 个已验证步预算耗尽（`exploration-budget-exhausted`）即恢复 `BALANCED` 价值选择。周期-3 隐藏相位世界的反证显示，旧语义下一次早期停滞就会让 coverage 踏步与轨道耦合，60 步 20 次重规划后仍锁定 1/3 赢家率且 bestDistance 无改善；该反证同时证明旧账本监督器状态（无 exploration 记录）保持原语义；
+- 多尺度上下文与键规范化：`kernelLearningVersion: 25`（`multiScaleContext`）新增窗口-1 的 `h0:` 上下文键（读取链 h2→h1→h0→关系→总体，写入按版本门控，旧账本读取天然无差异），并新增 Memory `contextKeyScale` 把上下文键中的实际变化量化到固定十进制精度，`actualDelta = expectedDelta + error` 的浮点重构残差（如 -5.55e-17）不再把语义相同的历史分裂成不同键；内核探针同时证明 h2 累加器键因位置权重按构造永不复现，「长期上下文可读」的原始声明不再成立，h2 写入仅作为审计保留；
 - 上下文反事实探测：当价值最优选择依赖本上下文证据而另一安全候选在本上下文零样本时，Kernel 按固定间隔有界地探一次该候选并在 `choice.contextProbe` 留痕，使「全局证据被早期混合样本毒化（如某候选关系均值 -0.78）且上下文证据从未取得」的候选仍能被本上下文检验；周期-3 反证的两 seed 在真实 CLI 跨进程 60 步后收尾窗口均达到预注册相位锁定阈值且全部 Run 重放一致；
 - 长窗口上下文：`kernelLearningVersion: 26`（`longContextWindow`）把 h2 键的基底由按构造永不复现的位置权重累加器改为最近 8 条已验证变化的窗口摘要（累加器字段仍按原样维护作审计），读取链变为 h2（窗口-8）→ h1（窗口-2）→ h0（窗口-1）→关系→总体，`recentHistory` 容量扩至 8 且写入按版本门控（v25 及更早 Replay 的记忆形状不变）；周期-7 碰撞世界（赢家调度 A,B,A,C,B,A,D，窗口-1/2 均存在相位碰撞，窗口-2 条件策略理论上限 ≈78.6%）的反证显示 v25 停留在盲选水平（28.6%），v26 在 ~150 步内收敛到 6/7 平台，双 seed 真实 CLI 跨进程 360 步的成熟窗口赢家率 87/120 与 ≥90/120，全部 Run 重放一致；
 - 周期再验证信念门控：`kernelLearningVersion: 26` 起，token 级强制重验只针对「信念上仍不劣于任何安全候选」的过期行动（隐藏漂移只能靠真实重验发现，这类候选仍会被强制重访）；全局证据已判劣的冷门候选改由上下文反事实探测层取证，freshness 不再为它们打破已收敛的上下文轨道；v25 及更早语义按学习版本原样保留，漂移 E2E（含 `--stagnation-limit 100000` 的纯新鲜度契约）原样通过；
-- 目标驻留（F-118 度量更正）：长跑中「6/7 平台在数百步后赢家率瓦解」经值曲线插桩证实为度量伪影——~650 步时值精确到达目标 400 并转入驻留（|v-400| ≤ 0.2 持续 500+ 步），越过目标后调度赢家不再是价值最优动作，调度赢家率失效。周期-7 碰撞世界的完整证据链：~150 步收敛到相位条件策略 → 值以接近理论上限的增速逼近目标 → 精确到达并无限期驻留（距离 0.0），全程重放一致；F-40 重验信念门控保留（v27 `revalidationBeliefGate`，动机更正为证据治理），同轮检验并回退了「饥饿上下文探测」假设（与既定学习契约 E2E 冲突）；
+- 目标驻留（F-118 度量更正）：长跑中「6/7 平台在数百步后赢家率瓦解」经值曲线插桩证实为度量伪影：~650 步时值精确到达目标 400 并转入驻留（|v-400| ≤ 0.2 持续 500+ 步），越过目标后调度赢家不再是价值最优动作，调度赢家率失效。周期-7 碰撞世界的完整证据链：~150 步收敛到相位条件策略 → 值以接近理论上限的增速逼近目标 → 精确到达并无限期驻留（距离 0.0），全程重放一致；F-40 重验信念门控保留（v27 `revalidationBeliefGate`，动机更正为证据治理），同轮检验并回退了「饥饿上下文探测」假设（与既定学习契约 E2E 冲突）；
 - Windows PowerShell CLI：所有核心实验可以脚本化运行。
 
 候选集不是让模型直接控制多个动作，也不是一次执行多个动作。它只把“提出一个答案”扩展为“提出有限假设集合”，再让同一个 Kernel 在同一观测、同一 Memory 和同一 RNG 边界上逐个比较。账本只固化最终选择；原始回答由 `responseDigest` 绑定，Replay 不重新请求模型。
@@ -401,7 +469,7 @@ F-92 新增 `challenge --case paired-candidates`：先提交一个已验证父 R
 - F-166 收紧持久 JSONL 会话的关闭边界：宿主调用 `registry.close()` 后，已经进入串行队列但尚未出队的请求会被拒绝，不会再启动运行期 adapter 子进程或产生外部请求；新增真实 persistent WorldPort E2E，并保持既有 nonce 恢复、辅助角色和 Replay 语义不变。这只证明本地会话生命周期收敛，不等于跨机器权限隔离或物理效果可信。
 - F-167 修复 CI 临时目录污染 repo WorldPort 的边界：GitHub Actions 的 `TEMP/TMP/TMPDIR` 改用 runner 专用临时区，不再把前序测试生成的文件放入被扫描 checkout。首次 Windows 全量 run 的 513/517 结果已定位为该环境耦合；本地 repo WorldPort 与 watchdog 联合回归为 `10/10`，下一次远端全量结果仍需单独确认。
 - F-168 收紧 watchdog 的 Windows 清理边界：`taskkill.exe` 最多等待 5 秒，清理命令自身悬挂时 test-gate 仍会返回有界失败结果。这个节点是对潜在清理失控路径的主动收敛，不把尚未证实的 runner 状态当作失败证据；本地 repo WorldPort 与 watchdog 联合回归为 `10/10`，远端完整顺序仍待新 run 证实。
-- F-169 修正 watchdog 回归夹具的 Windows 竞态：悬挂测试显式保持事件循环存活，确保用例验证的是 test-gate 的截止处理，而不是 node:test 子进程自行退出。上一轮远端 Windows 全量为 `516/517`，唯一失败是原夹具在 250ms 边界没有留下 timeout 诊断；本地 Windows Node 26.7.0 重复回归为 `3/3`，修复后的 Node 22 远端结果仍待确认。
+- F-169 修正 watchdog 回归夹具的 Windows 竞态：悬挂测试显式保持事件循环存活，用例验证的才是 test-gate 的截止处理，而不是 node:test 子进程自行退出。上一轮远端 Windows 全量为 `516/517`，唯一失败是原夹具在 250ms 边界没有留下 timeout 诊断；本地 Windows Node 26.7.0 重复回归为 `3/3`，修复后的 Node 22 远端结果仍待确认。
 - F-170 完成一次本机 Windows 全量门禁：当前提交在 Node 26.7.0 上按同一 `npm test` 顺序通过 `517/517`，总耗时约 52 分钟；其中第 210、224、225、358 个长实验分别耗时约 7 分钟、6 分 40 秒、11 分 29 秒和 1 分 40 秒。对应的远端 Windows runner 在启动后约 8 小时仍无更新时间，取消后没有产生终态测试摘要；这两类证据分开记录，Node 26 本机结果也不外推为 Node 22 兼容性证据。
 - F-171 闭合 Windows Node 22 在线门禁：提交 `fe9d5fe` 的 GitHub Actions run `34278445810` 在 Windows Node 22 上按完整 `npm test` 顺序通过 `517/517`，`# fail 0`，测试进程耗时 `2355824.3899ms`，作业耗时约 39 分 56 秒；同一 run 的 Ubuntu Node 22/24 兼容门禁也成功。F-170 的本机 Node 26 结果仍单独保留，不能把这次结果外推到任意 runner、低权限身份、真实供应商或物理设备。
 - F-172 修正本机缓存进入安装包的问题：`.npmignore` 现在显式排除 `.yi-agent/`，`npm pack --dry-run` 的 63 个文件中不再出现 CI/cache 路径；packaged CLI 回归继续覆盖安装、连续运行、外部效果恢复和 Replay。这个节点只收紧包内容，不改变运行时权限或发布到 npm 的状态。
@@ -661,6 +729,19 @@ F-96 增加 `experiment policy`，用 `candidate-policy` 文件表达一个受�
 ```
 
 该实验验证的是“同一底层观察边界下，策略能否根据新观测作出可审计、可重放的下一步选择”。它不是模型训练，也不是自动发现规则：规则仍由实验输入给出；如果两策略行为相同，结果仍会记录相同轨迹证据而不宣称能力差异。外部现实 WorldPort 仍禁止直接分叉。
+
+F-281 增加 `experiment counterfactual`：把账本候选历史当作模拟器，对任意 `candidate-policy` 做零执行的反事实评估。命令逐条读取最近一段已注释候选历史（当前上界 32 条），把每一步分为 matched（策略会选择与账本相同的 Token）、opaque（账本未记录 observationDigest 或 Token）与 diverged；对每个分歧点，只有当账本在同一个证据锚上真实执行过反事实 Token 且结果已验证时才打分，两侧都只接受 `verify` 判定为 ACTION 归因且 learnable 的结果。评估严格锚定在单步上：它不会编造账本从未观察过的世界状态去推演多步反事实轨迹；裁决词汇为 `COUNTERFACTUAL_BETTER`（有绑定证据且从不更差）、`TIE`、`COUNTERFACTUAL_WORSE` 与 `INSUFFICIENT_EVIDENCE`。
+
+证据锚分两级（`history-anchored-one-step-v2`）。STRICT 要求完全相同的 before 状态摘要；实测发现它在单 Lab 历史上永不出现，因为 before 摘要哈希了单调递增的 kernelStep，该级只对跨 Lab 语料有意义。VECTOR 级按"同 WorldPort 身份 + 同 scenario + 同 before 观测向量摘要"绑定，是真实单 Lab 历史上唯一可命中的锚；同因实测确认 world-port-base 每次 transition 递增 stateVersion，observationDigest 在任何世界上都不会重复，不能作为锚。候选历史的公开投影为此新增有界 `beforeVectorDigest`（定长摘要，不进入模型提示的字段白名单）。首次真实语料测量见 F-282：150 步 temperature 候选集运行中，32 条窗口内向量复现为 3 个取值，单 Token 策略各 16 次分歧里 11/5 条获得 VECTOR 证据，双策略裁决均为 TIE。
+
+```powershell
+yi-agent experiment counterfactual `
+  --lab E:\labs\temperature `
+  --policy E:\labs\policy.json `
+  --json
+```
+
+报告是账本与策略的纯函数：不含时间戳，绑定 manifest/current 摘要与 `historyBasisDigest`，同一账本重复评估得到逐字节相同的自摘要报告；策略文件仍只允许引用父 Token map。该命令不运行世界、不调用模型、不创建分支 Lab，外部 adapter 的 Lab 同样可以离线评估。它回答的是“历史证据支持哪个策略”，不是轨迹仿真、规则自动发现或部署决策本身：UNEVALUABLE 比例高只说明账本还没有覆盖那些反事实，不说明策略好坏。该机制的定位与外部对照见 vision.md 线五（Dream-RSI：历史即模拟器）。
 
 F-222 增加有限的目标 epoch：前一个目标只有在 `COMPLETED` 或 `HALTED` 后，才能由新的 `goal` 或 `goal-plan` 开启下一目标周期。新周期保留 WorldPort 状态、Memory、RNG 和 kernelStep，只重置监督器的目标局部进度；前后连续性摘要写入 immutable run start，首个 STEP 写入新的 `goalActivation`。如果旧目标仍为 `ACTIVE` 或 `REPLAN_REQUIRED`，CLI 会拒绝替换。这样同一 Lab 可以在完成一个目标后继续推进另一个目标，同时不修改已完成 Run 的历史。这个机制只解决目标生命周期和持久化边界，不把目标文本自动变成可验证的现实意图，也不绕过外部 transition 的恢复与人工对账要求。当前本机定向应用回归为 `4/4`，内置 WorldPort 的 PowerShell-facing CLI E2E 与独立 JSONL adapter CLI E2E 各为 `1/1`。
 

@@ -3,7 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "CLI v0.1 experiment runner",
+  "description": "Evidence-grounded runtime for self-evolving AI agents with a domain-neutral Kernel, WorldPort adapters, verification-gated learning, and deterministic replay",
+  "keywords": [
+    "ai-agent",
+    "self-evolving-ai",
+    "recursive-self-improvement",
+    "agent-runtime",
+    "deterministic-replay",
+    "causal-credit-assignment",
+    "worldport",
+    "verifiable-ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ZDragon17/yi-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ZDragon17/yi-agent/issues"
+  },
+  "homepage": "https://github.com/ZDragon17/yi-agent#readme",
   "bin": {
     "yi-agent": "./bin/yi-agent.mjs"
   },
