@@ -13,6 +13,7 @@ import {
 import { assertRecoveryRequired, createReplayWorld } from './external-world-registry.mjs';
 import { buildInspectView } from './inspect-view.mjs';
 import { projectModelObservation } from '../agent/observation-context.mjs';
+import { normalizeExperimentStrategy, projectExperimentMemory } from '../runtime/experiment-policy.mjs';
 
 const SNAPSHOT_INTERVAL = 32;
 const CHECKPOINT_SNAPSHOT_INTERVAL = 128;
@@ -84,6 +85,7 @@ export async function runLab(input) {
   const steps = requireSteps(source.steps);
   const runId = source.runId ?? randomUUID();
   const scenario = source.scenario ?? 'steady';
+  const experimentStrategy = normalizeExperimentStrategy(source.experimentStrategy);
   const registry = resolveRegistry(source.registry);
   let suppliedInitialState;
   if (source.initialState !== undefined) {
@@ -129,6 +131,12 @@ export async function runLab(input) {
   }
   const store = await LabStore.open({ labPath });
   const manifest = store.manifest;
+  if (manifest.experimentStrategy !== undefined && manifest.experimentStrategy !== experimentStrategy) {
+    throw new LabStoreError('CONFLICT', 'Experiment strategy cannot change within a lab.', {
+      expected: manifest.experimentStrategy,
+      actual: experimentStrategy,
+    });
+  }
   registry.assertManifest(manifest);
   const randomizedTrial = normalizeRandomizedTrial(source.randomizedTrial, manifest);
   const spec = registry.valueSpec(manifest.worldId);
@@ -377,6 +385,7 @@ export async function runLab(input) {
     const beforeModelObservation = source.advisor !== undefined || plannerRequested
       ? projectModelObservation(observedBefore)
       : null;
+    const effectiveMemory = projectExperimentMemory(state.memory, experimentStrategy);
     const capabilities = persistedRecoveryCapabilities ?? await world.actions(actionManifest, state.worldState);
     const randomization = recoveredDecisionBoundary?.randomization === undefined
       ? (randomizedTrial === null ? null : createRandomization(randomizedTrial, capabilities))
@@ -456,7 +465,7 @@ export async function runLab(input) {
           advisor: source.advisor,
           timeoutMs: modelTimeoutMs,
           observation: beforeObservation,
-          memory: state.memory,
+          memory: effectiveMemory,
           valueSpec: stepValueSpec,
           capabilities,
           manifest,
@@ -473,7 +482,7 @@ export async function runLab(input) {
       : null;
     const stepInput = {
       observation: beforeObservation,
-      memory: state.memory,
+      memory: effectiveMemory,
       valueSpec: stepValueSpec,
       capabilities,
       rngState: state.rngState,
@@ -611,13 +620,17 @@ export async function runLab(input) {
     const candidateOutcome = committedPolicyEvidence === null
       ? undefined
       : buildCandidateOutcome(committedPolicyEvidence, receipt, verification);
-    const update = learn({
-      memory: state.memory,
+    const learnedUpdate = learn({
+      memory: effectiveMemory,
       intent,
       receipt,
       postObservation,
       verification,
     });
+    const update = {
+      ...learnedUpdate,
+      nextMemory: projectExperimentMemory(learnedUpdate.nextMemory, experimentStrategy),
+    };
     const activeSupervisor = supervisor === null ? null : supervisor.status === 'ACTIVE'
       ? supervisor
       : resumeChangeSupervisor(supervisor, 'runtime-continuation', { trusted: true });
@@ -688,6 +701,7 @@ export async function runLab(input) {
           capabilities,
           afterCapabilities,
           ...(supervisor?.strategy === undefined ? {} : { strategy: supervisor.strategy }),
+          experimentStrategy,
           ...(goalActivation === null ? {} : { goalActivation }),
           ...(goalReplan === null ? {} : { goalReplan }),
           ...(randomization === null ? {} : { randomization }),

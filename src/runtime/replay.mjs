@@ -16,6 +16,7 @@ import {
 import { verifyExecutionAuthorityReceipt } from './execution-authority-attestation.mjs';
 import { verifyReconciliationAttestation } from './reconciliation-attestation.mjs';
 import { acknowledgeReplan, advanceChangeSupervisor, createChangeSupervisor, enableGoal, normalizeChangeSupervisorState, resumeChangeSupervisor, reviseGoalPlan } from '../agent/change-supervisor.mjs';
+import { normalizeExperimentStrategy, projectExperimentMemory } from './experiment-policy.mjs';
 
 const TERMINAL_KINDS = new Set(['RUN_COMPLETED', 'RUN_HALTED']);
 const REQUIRED_BOUNDARY_KEYS = ['schemaVersion', 'valueSpec'];
@@ -323,9 +324,10 @@ function replayStep({ event, state, manifest, adapter, world, kernel, worldId, s
               ? 'recursive-v1'
               : payload.boundary.planning.branchingMode ?? 'tree-v1',
         };
+      const experimentStrategy = normalizeExperimentStrategy(payload.boundary.experimentStrategy);
     const stepInput = {
       observation: beforeObservation,
-      memory: state.memory,
+      memory: projectExperimentMemory(state.memory, experimentStrategy),
       valueSpec,
       capabilities,
       rngState: state.rngState,
@@ -462,6 +464,11 @@ function replayStep({ event, state, manifest, adapter, world, kernel, worldId, s
       learningVersion,
     });
     const replayLearned = projectLearningForVersion(learned, learningVersion);
+    const experimentStrategy = normalizeExperimentStrategy(payload.boundary.experimentStrategy);
+    const projectedLearning = {
+      ...replayLearned,
+      nextMemory: projectExperimentMemory(replayLearned.nextMemory, experimentStrategy),
+    };
     update = payload.boundary.kernelLearningVersion === undefined &&
       payload.update?.status === 'SKIPPED' &&
       verification.attribution === 'EXECUTION_REJECTED'
@@ -471,7 +478,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel, worldId, s
           token: intent.choice.token,
           nextMemory: cloneJson(state.memory),
         }
-      : replayLearned;
+      : projectedLearning;
   } catch (error) {
     corrupt('Replay kernel verification or learning failed.', { sequence: event.sequence, cause: errorName(error) });
   }
@@ -488,7 +495,7 @@ function replayStep({ event, state, manifest, adapter, world, kernel, worldId, s
   }
   const nextState = {
     worldState: transition.nextWorldState,
-    memory: update.nextMemory,
+    memory: projectExperimentMemory(update.nextMemory, normalizeExperimentStrategy(payload.boundary.experimentStrategy)),
     rngState: intent.nextRngState,
     kernelStep: state.kernelStep + 1,
   };

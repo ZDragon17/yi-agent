@@ -14,6 +14,8 @@ import { createProcessModelClient, loadProcessModelConfig } from './agent/proces
 import { runPairedCandidates } from './application/paired-experiment-service.mjs';
 import { runPairedTrajectories } from './application/paired-trajectory-service.mjs';
 import { runPairedPolicies } from './application/paired-policy-service.mjs';
+import { evaluateLabCounterfactual } from './application/counterfactual-service.mjs';
+import { runExperimentCompare } from './application/experiment-compare-service.mjs';
 
 export async function main(argv, io = defaultIo()) {
   const json = argv.includes('--json');
@@ -70,6 +72,23 @@ async function dispatch(command, options) {
   if (command === 'ask') return askApi(options);
   if (command === 'effect') return dispatchEffect(options);
   if (command === 'experiment') {
+    if (options.experimentOperation === 'compare') {
+      return runExperimentCompare({
+        world: required(options, 'world'),
+        scenario: options.scenario,
+        seeds: options.seeds === undefined ? undefined : options.seeds.split(',').map((value) => value.trim()).filter(Boolean),
+        seedCount: options.seeds === undefined ? (options['seed-count'] === undefined ? undefined : parseBoundedInt(options['seed-count'], 1, 100, 'seed-count')) : undefined,
+        steps: options.steps === undefined ? undefined : parseBoundedInt(options.steps, 1, 10_000, 'steps'),
+        strategies: options.strategies === undefined ? undefined : options.strategies.split(',').map((value) => value.trim()).filter(Boolean),
+        outputPath: requiredAbsolute(options, 'output'),
+      });
+    }
+    if (options.experimentOperation === 'counterfactual') {
+      return evaluateLabCounterfactual({
+        labPath: required(options, 'lab'),
+        policy: await readCandidatePolicyFile(requiredAbsolute(options, 'policy'), 'policy'),
+      });
+    }
     if (options.experimentOperation === 'policy') {
       const policies = options.resume === true ? {} : {
         steps: parseBoundedInt(required(options, 'steps'), 1, 8, 'steps'),
@@ -393,7 +412,7 @@ function parseArguments(argv) {
   }
   if (command === 'experiment') {
     const operation = args.shift();
-    if (!['pair', 'trajectory', 'policy'].includes(operation)) {
+    if (!['pair', 'trajectory', 'policy', 'counterfactual', 'compare'].includes(operation)) {
       throw cliError('INVALID_INPUT', `Unsupported experiment operation: ${operation ?? '(missing)'}`, {}, 64);
     }
     options.experimentOperation = operation;
@@ -426,7 +445,7 @@ function parseArguments(argv) {
     recover: ['lab', 'confirm-lock-owner-dead'],
     challenge: ['lab', 'case'],
     effect: ['effectOperation', 'journal', 'sandbox-root', 'intent', 'nonce'],
-    experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'steps', 'scenario', 'resume'],
+    experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'policy', 'steps', 'scenario', 'resume', 'world', 'seeds', 'seed-count', 'strategies'],
     ui: ['lab', 'port', 'adapter'],
   }[command] ?? [];
   for (const name of Object.keys(options)) {
@@ -680,6 +699,7 @@ function helpText() {
     '  yi-agent experiment pair --lab PATH --output PATH --left-token TOK --right-token TOK [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment trajectory --lab PATH --output PATH --left-trajectory PATH --right-trajectory PATH [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment policy --lab PATH --output PATH --steps N --left-policy PATH --right-policy PATH [--scenario ID] [--resume] [--json]',
+    '  yi-agent experiment counterfactual --lab PATH --policy PATH [--json]   零执行反事实评估：只在账本候选历史上打分，不运行世界',
     '  yi-agent effect plan|confirm|execute|reconcile|compensate|inspect ...',
     '',
     'API 环境变量: YI_AGENT_PROVIDER, YI_AGENT_API_KEY/ZAI_API_KEY, YI_AGENT_API_BASE_URL, YI_AGENT_MODEL, YI_AGENT_API_TIMEOUT_MS',
