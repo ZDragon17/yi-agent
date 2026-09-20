@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -607,6 +607,62 @@ test('agent loop recovers a crashed process and preserves candidate history', as
   }
 });
 
+test('agent loop recovers after a persistent process model session dies between Runs', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-model-crash-e2e-'));
+  const firstMarker = path.join(root, 'first-model-requests.log');
+  const secondMarker = path.join(root, 'second-model-requests.log');
+  const firstConfig = path.join(root, 'first-model-adapter.json');
+  const secondConfig = path.join(root, 'second-model-adapter.json');
+  const config = (marker) => ({
+    executable: process.execPath,
+    args: [MODEL_ADAPTER, '--hang-after', '1', '--marker', marker],
+    model: 'fixture-process-model',
+    timeoutMs: 5_000,
+    transport: 'persistent-jsonl',
+  });
+  await writeFile(firstConfig, JSON.stringify(config(firstMarker)));
+  await writeFile(secondConfig, JSON.stringify(config(secondMarker)));
+  const lab = path.join(root, 'lab');
+  let activeChild = null;
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'inventory', '--seed', 'persistent-model-crash-seed', '--json'], process.env)).code, 0);
+
+    const firstPromise = invoke(
+      ['agent', 'loop', '--lab', lab, '--steps', '1', '--forever', '--model-adapter', firstConfig, '--json'],
+      process.env,
+      (child) => { activeChild = child; },
+    );
+    await waitForMarker(firstMarker, 2);
+    assert.equal(forceTerminate(activeChild), true);
+    await firstPromise;
+
+    const secondPromise = invoke(
+      ['agent', 'loop', '--lab', lab, '--resume', '--auto-recover', '--model-adapter', secondConfig, '--json'],
+      process.env,
+      (child) => { activeChild = child; },
+    );
+    await waitForMarker(secondMarker, 2);
+    assert.equal(forceTerminate(activeChild), true);
+    await secondPromise;
+
+    const store = await LabStore.open({ labPath: lab });
+    assert.equal((await store.inspect()).current.kernelStep, 2);
+    assert.equal((await store.readCandidateOutcomes()).length, 2);
+    await LabStore.recover({ labPath: lab, command: 'test-persistent-model-crash-cleanup' });
+    assert.equal((await store.readCurrentLoopContinuation()).status, 'ACTIVE');
+    const runs = await store.readAllRuns();
+    const terminalRuns = runs.filter((run) => run.end !== undefined);
+    assert.ok(terminalRuns.length >= 2);
+    for (const run of terminalRuns) {
+      assert.equal((await invoke(['replay', '--lab', lab, '--run', run.start.runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+    }
+    assert.equal((await invoke(['replay', '--lab', lab, '--chain', '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    forceTerminate(activeChild);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent loop accepts an explicit forever policy without confusing it with a run count', async () => {
   const help = await invoke(['agent', 'loop', '--lab', 'missing', '--steps', '1', '--forever', '--json'], {
     ...process.env,
@@ -1097,6 +1153,20 @@ function invoke(args, env, onChild) {
 
 function parseJsonLines(value) {
   return value.trim().length === 0 ? [] : value.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+}
+
+async function waitForMarker(marker, count) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      const lines = (await readFile(marker, 'utf8')).trim().split(/\r?\n/u).filter(Boolean);
+      if (lines.length >= count) return;
+    } catch {
+      // The adapter has not written its first request yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${count} model requests in ${marker}.`);
 }
 
 function forceTerminate(child) {
