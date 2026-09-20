@@ -101,6 +101,7 @@ test('paired policy accepts and persists an explicit WorldPort identity binding'
     const start = JSON.parse(await readFile(path.join(output, 'policy.start.json'), 'utf8'));
 
     assert.equal(result.verdict, 'PASS');
+    assert.equal(start.worldImplementationDigest, parentStore.manifest.worldImplementationDigest);
     assert.deepEqual(start.policies.left, leftPolicy);
     assert.deepEqual(start.policies.right, rightPolicy);
   });

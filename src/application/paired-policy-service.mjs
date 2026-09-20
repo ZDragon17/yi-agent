@@ -73,6 +73,7 @@ export async function runPairedPolicies(input) {
       parentCurrentDigest: parentInspection.current.selfDigest,
       worldId: parentStore.manifest.worldId,
       worldVersion: parentStore.manifest.worldVersion,
+      worldImplementationDigest: parentStore.manifest.worldImplementationDigest,
       tokenMapDigest: parentStore.manifest.tokenMap.digest,
       scenario,
       steps,
@@ -295,6 +296,7 @@ function validateStart(start, parentLabPath, manifest, current) {
   if (start.type !== POLICY_EXPERIMENT_TYPE || start.version !== 1 || start.mode !== POLICY_EXPERIMENT_MODE ||
       start.parentLabPath !== parentLabPath || start.parentManifestDigest !== manifest.selfDigest || start.parentCurrentDigest !== current.selfDigest ||
       start.worldId !== manifest.worldId || start.worldVersion !== manifest.worldVersion || start.tokenMapDigest !== manifest.tokenMap.digest ||
+      start.worldImplementationDigest !== manifest.worldImplementationDigest ||
       !DIGEST_PATTERN.test(start.initialStateDigest ?? '') || !Number.isSafeInteger(start.initialKernelStep) || start.initialKernelStep < 0 ||
       !Number.isSafeInteger(start.steps) || start.steps < 1 || start.steps > 8 || !scenarioAllowed(manifest, start.scenario) ||
       !policiesValid || canonicalDigest(start.policies.left) === canonicalDigest(start.policies.right) ||
