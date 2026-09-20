@@ -43,6 +43,9 @@ export function loadProcessModelConfig(configPath) {
 export function createProcessModelClient(config, { spawnImpl = spawn } = {}) {
   const normalized = normalizeConfig(config, { checkExecutable: false });
   let requestNumber = 0;
+  const persistentSession = normalized.transport === 'persistent-jsonl'
+    ? createPersistentSession(normalized, spawnImpl)
+    : null;
   return {
     async chat(prompt, { signal } = {}) {
       if (typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -52,18 +55,193 @@ export function createProcessModelClient(config, { spawnImpl = spawn } = {}) {
         throw new ModelAdapterError('INVALID_INPUT', 'Prompt exceeds the 128 KiB limit.', { field: 'prompt' });
       }
       requestNumber += 1;
+      const request = {
+        protocol: PROTOCOL,
+        version: PROTOCOL_VERSION,
+        id: String(requestNumber),
+        op: 'chat',
+        payload: { prompt },
+      };
+      if (persistentSession !== null) {
+        return persistentSession.invoke(request, signal);
+      }
       return invokeProcess({
         config: normalized,
         spawnImpl,
         signal,
-        request: {
-          protocol: PROTOCOL,
-          version: PROTOCOL_VERSION,
-          id: String(requestNumber),
-          op: 'chat',
-          payload: { prompt },
-        },
+        request,
       });
+    },
+    async close() {
+      await persistentSession?.close();
+    },
+  };
+}
+
+function createPersistentSession(config, spawnImpl) {
+  let child;
+  let closed = false;
+  let active;
+  const queue = [];
+  let stdout = '';
+  let stderr = '';
+  const stdoutDecoder = new StringDecoder('utf8');
+  const stderrDecoder = new StringDecoder('utf8');
+
+  const terminate = () => {
+    const current = child;
+    child = undefined;
+    if (current !== undefined && current.exitCode === null && current.signalCode === null) current.kill();
+  };
+
+  const rejectQueued = (error) => {
+    while (queue.length > 0) queue.shift().reject(error);
+  };
+
+  const settleActive = (error, value) => {
+    if (active === undefined) return;
+    const current = active;
+    active = undefined;
+    clearTimeout(current.timer);
+    current.signal?.removeEventListener('abort', current.onAbort);
+    if (error === undefined) current.resolve(value);
+    else current.reject(error);
+  };
+
+  const failSession = (error) => {
+    settleActive(error);
+    rejectQueued(new ModelAdapterError(
+      'MODEL_ADAPTER_SESSION',
+      'Model adapter session was closed before the request was sent.',
+      { causeCode: error.code },
+      { cause: error },
+    ));
+    terminate();
+    stdout = '';
+    stderr = '';
+  };
+
+  const onResponseLine = (line) => {
+    if (line.length === 0) return;
+    if (active === undefined) {
+      failSession(new ModelAdapterError('MODEL_ADAPTER_PROTOCOL', 'Model adapter sent a response without an active request.'));
+      return;
+    }
+    let response;
+    try {
+      response = JSON.parse(line);
+      resolveResponse(response, active.request);
+    } catch (error) {
+      failSession(new ModelAdapterError(
+        error.code ?? 'MODEL_ADAPTER_PROTOCOL',
+        error.message,
+        error.context,
+        error.cause === undefined ? {} : { cause: error.cause },
+      ));
+      return;
+    }
+    settleActive(undefined, response.result);
+    drain();
+  };
+
+  const onStdout = (chunk) => {
+    stdout += stdoutDecoder.write(chunk);
+    if (Buffer.byteLength(stdout, 'utf8') > MAX_STDOUT_BYTES) {
+      failSession(new ModelAdapterError('MODEL_ADAPTER_PROTOCOL', 'Model adapter stdout exceeded the output limit.', { maxBytes: MAX_STDOUT_BYTES }));
+      return;
+    }
+    const lines = stdout.split(/\r?\n/u);
+    stdout = lines.pop() ?? '';
+    for (const line of lines) onResponseLine(line);
+  };
+
+  const onStderr = (chunk) => {
+    stderr += stderrDecoder.write(chunk);
+    if (Buffer.byteLength(stderr, 'utf8') > MAX_STDERR_BYTES) {
+      failSession(new ModelAdapterError('MODEL_ADAPTER_PROTOCOL', 'Model adapter stderr exceeded the output limit.', { maxBytes: MAX_STDERR_BYTES }));
+    }
+  };
+
+  const start = () => {
+    if (child !== undefined || closed) return true;
+    try {
+      child = spawnImpl(config.executable, config.args, {
+        shell: false,
+        windowsHide: true,
+        detached: false,
+        env: modelAdapterEnvironment(config.env),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      failSession(new ModelAdapterError('MODEL_ADAPTER_START', 'Model adapter process could not be started.', {}, { cause: error }));
+      return false;
+    }
+    const current = child;
+    current.stdout.on('data', onStdout);
+    current.stderr.on('data', onStderr);
+    current.on('error', (error) => {
+      if (current !== child || closed) return;
+      failSession(new ModelAdapterError('MODEL_ADAPTER_START', 'Model adapter process failed.', {}, { cause: error }));
+    });
+    current.on('close', (code, signalCode) => {
+      if (current !== child) return;
+      child = undefined;
+      stdout += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
+      if (closed) return;
+      if (stdout.length > 0) onResponseLine(stdout);
+      stdout = '';
+      stderr = '';
+      if (active !== undefined) {
+        failSession(new ModelAdapterError('MODEL_ADAPTER_PROCESS', 'Model adapter process failed.', { status: code, signal: signalCode }));
+      }
+    });
+    current.stdin.on('error', (error) => {
+      if (current === child && !closed) failSession(new ModelAdapterError('MODEL_ADAPTER_PROCESS', 'Model adapter stdin failed.', {}, { cause: error }));
+    });
+    return true;
+  };
+
+  function drain() {
+    if (closed || active !== undefined || queue.length === 0) return;
+    if (!start() || child === undefined) return;
+    const item = queue.shift();
+    if (item.signal?.aborted === true) {
+      item.reject(new ModelAdapterError('MODEL_ADAPTER_CANCELLED', 'Model adapter request was cancelled.', { cancelled: true }));
+      drain();
+      return;
+    }
+    active = item;
+    item.onAbort = () => {
+      if (active !== item) return;
+      failSession(new ModelAdapterError('MODEL_ADAPTER_CANCELLED', 'Model adapter request was cancelled.', { cancelled: true }));
+    };
+    item.signal?.addEventListener('abort', item.onAbort, { once: true });
+    item.timer = setTimeout(() => {
+      if (active === item) failSession(new ModelAdapterError('MODEL_CALLBACK_TIMEOUT', 'Model adapter request timed out.', { timeoutMs: config.timeoutMs }));
+    }, config.timeoutMs);
+    try {
+      child.stdin.write(`${JSON.stringify(item.request)}\n`);
+    } catch (error) {
+      failSession(new ModelAdapterError('MODEL_ADAPTER_PROCESS', 'Model adapter stdin failed.', {}, { cause: error }));
+    }
+  }
+
+  return {
+    invoke(request, signal) {
+      if (closed) return Promise.reject(new ModelAdapterError('MODEL_ADAPTER_CLOSED', 'Model adapter client is closed.'));
+      return new Promise((resolve, reject) => {
+        queue.push({ request, signal, resolve, reject, timer: undefined, onAbort: undefined });
+        drain();
+      });
+    },
+    async close() {
+      if (closed) return;
+      closed = true;
+      const error = new ModelAdapterError('MODEL_ADAPTER_CLOSED', 'Model adapter client is closed.');
+      settleActive(error);
+      rejectQueued(error);
+      terminate();
     },
   };
 }
@@ -200,7 +378,7 @@ function normalizeConfig(value, { checkExecutable = true } = {}) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new ModelAdapterError('INVALID_INPUT', 'Model adapter config must be an object.', { field: 'model-adapter' });
   }
-  const allowed = new Set(['executable', 'args', 'model', 'timeoutMs', 'env']);
+  const allowed = new Set(['executable', 'args', 'model', 'timeoutMs', 'env', 'transport']);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new ModelAdapterError('INVALID_INPUT', 'Model adapter config contains an unsupported field.', { field: 'model-adapter' });
   }
@@ -229,12 +407,16 @@ function normalizeConfig(value, { checkExecutable = true } = {}) {
   if (value.env !== undefined && (!Array.isArray(value.env) || value.env.length > 64 || value.env.some((name) => typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)))) {
     throw new ModelAdapterError('INVALID_INPUT', 'Model adapter env must be a bounded environment-name array.', { field: 'model-adapter.env' });
   }
+  if (value.transport !== undefined && value.transport !== 'single-jsonl' && value.transport !== 'persistent-jsonl') {
+    throw new ModelAdapterError('INVALID_INPUT', 'Model adapter transport is invalid.', { field: 'model-adapter.transport' });
+  }
   return {
     executable: value.executable,
     args: [...value.args],
     model: value.model ?? 'process-model',
     timeoutMs,
     env: [...(value.env ?? [])],
+    transport: value.transport ?? 'single-jsonl',
   };
 }
 

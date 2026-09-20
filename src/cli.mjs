@@ -214,13 +214,14 @@ async function dispatchAgent(options) {
   let advisor;
   let planner;
   let modelTimeoutMs;
+  let client;
   if (options['kernel-only'] !== true) {
     try {
       const config = options['model-adapter'] === undefined
         ? loadApiConfig()
         : loadProcessModelConfig(requiredAbsolute(options, 'model-adapter'));
       modelTimeoutMs = config.timeoutMs;
-      const client = options['model-adapter'] === undefined
+      client = options['model-adapter'] === undefined
         ? createOpenAICompatibleClient(config)
         : createProcessModelClient(config);
       advisor = createModelAdvisor({
@@ -288,7 +289,11 @@ async function dispatchAgent(options) {
     } finally {
       process.removeListener('SIGINT', onSignal);
       process.removeListener('SIGTERM', onSignal);
-      await closeRegistry(registry);
+      try {
+        await closeRegistry(registry);
+      } finally {
+        await closeModelClient(client);
+      }
     }
   }
   if (options.agentOperation !== 'run') {
@@ -320,8 +325,16 @@ async function dispatchAgent(options) {
       stagnationLimit: options['stagnation-limit'] === undefined ? undefined : parseBoundedInt(options['stagnation-limit'], 1, 100_000, 'stagnation-limit'),
     });
   } finally {
-    await closeRegistry(registry);
+    try {
+      await closeRegistry(registry);
+    } finally {
+      await closeModelClient(client);
+    }
   }
+}
+
+async function closeModelClient(client) {
+  if (typeof client?.close === 'function') await client.close();
 }
 
 async function dispatchApi(options) {

@@ -99,3 +99,119 @@ test('process model client terminates a child when cancellation races with spawn
   await assert.rejects(client.chat('race', { signal: controller.signal }), { code: 'MODEL_ADAPTER_CANCELLED' });
   assert.equal(child.killed, true);
 });
+
+test('persistent process model client reuses one child and serializes JSONL requests', async () => {
+  const children = [];
+  const client = createProcessModelClient({
+    executable: process.execPath,
+    args: [],
+    transport: 'persistent-jsonl',
+    timeoutMs: 1000,
+  }, {
+    spawnImpl: () => {
+      const child = createFakeModelChild();
+      children.push(child);
+      return child;
+    },
+  });
+
+  const first = client.chat('first');
+  const second = client.chat('second');
+  const responses = await Promise.all([first, second]);
+
+  assert.equal(children.length, 1);
+  assert.deepEqual(responses.map((response) => response.content), [
+    '{"requestId":"1","prompt":"first"}',
+    '{"requestId":"2","prompt":"second"}',
+  ]);
+  await client.close();
+  assert.equal(children[0].killed, true);
+});
+
+test('persistent process model client rejects the session without replay after timeout', async () => {
+  const children = [];
+  const client = createProcessModelClient({
+    executable: process.execPath,
+    args: [],
+    transport: 'persistent-jsonl',
+    timeoutMs: 100,
+  }, {
+    spawnImpl: () => {
+      const child = createFakeModelChild({ respond: children.length > 0 });
+      children.push(child);
+      return child;
+    },
+  });
+
+  const first = client.chat('first');
+  const second = client.chat('second');
+  await assert.rejects(first, { code: 'MODEL_CALLBACK_TIMEOUT' });
+  await assert.rejects(second, { code: 'MODEL_ADAPTER_SESSION' });
+  assert.equal(children.length, 1);
+
+  const nextChildResponse = client.chat('next');
+  const next = await nextChildResponse;
+  assert.equal(children.length, 2);
+  assert.equal(next.content, '{"requestId":"3","prompt":"next"}');
+  await client.close();
+});
+
+test('closing a persistent process model client rejects queued work and prevents future spawn', async () => {
+  const children = [];
+  const client = createProcessModelClient({
+    executable: process.execPath,
+    args: [],
+    transport: 'persistent-jsonl',
+    timeoutMs: 1000,
+  }, {
+    spawnImpl: () => {
+      const child = createFakeModelChild({ respond: false });
+      children.push(child);
+      return child;
+    },
+  });
+
+  const first = client.chat('first');
+  const second = client.chat('second');
+  await client.close();
+  await assert.rejects(first, { code: 'MODEL_ADAPTER_CLOSED' });
+  await assert.rejects(second, { code: 'MODEL_ADAPTER_CLOSED' });
+  await assert.rejects(client.chat('after-close'), { code: 'MODEL_ADAPTER_CLOSED' });
+  assert.equal(children.length, 1);
+  assert.equal(children[0].killed, true);
+});
+
+function createFakeModelChild({ respond = true } = {}) {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = new PassThrough();
+  child.exitCode = null;
+  child.signalCode = null;
+  child.killed = false;
+  child.respond = respond;
+  child.kill = () => {
+    if (child.killed) return true;
+    child.killed = true;
+    child.signalCode = 'SIGTERM';
+    child.emit('close', null, 'SIGTERM');
+    return true;
+  };
+  child.stdin.on('data', (chunk) => {
+    if (!child.respond) return;
+    for (const line of chunk.toString('utf8').split(/\r?\n/u).filter(Boolean)) {
+      const request = JSON.parse(line);
+      setImmediate(() => child.stdout.write(`${JSON.stringify({
+        protocol: 'yi-model-cli',
+        version: 1,
+        id: request.id,
+        ok: true,
+        result: {
+          model: 'fixture-model',
+          content: JSON.stringify({ requestId: request.id, prompt: request.payload.prompt }),
+        },
+      })}\n`));
+    }
+  });
+  return child;
+}
