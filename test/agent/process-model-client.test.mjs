@@ -178,6 +178,31 @@ test('persistent process model client ignores late output from a terminated chil
   await client.close();
 });
 
+test('persistent process model client cancels queued requests immediately', async () => {
+  const children = [];
+  const client = createProcessModelClient({
+    executable: process.execPath,
+    args: [],
+    transport: 'persistent-jsonl',
+    timeoutMs: 100,
+  }, {
+    spawnImpl: () => {
+      const child = createFakeModelChild({ respond: false });
+      children.push(child);
+      return child;
+    },
+  });
+
+  const first = client.chat('first');
+  const controller = new AbortController();
+  const second = client.chat('second', { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(second, { code: 'MODEL_ADAPTER_CANCELLED' });
+  await assert.rejects(first, { code: 'MODEL_CALLBACK_TIMEOUT' });
+  assert.equal(children.length, 1);
+  await client.close();
+});
+
 test('closing a persistent process model client rejects queued work and prevents future spawn', async () => {
   const children = [];
   const client = createProcessModelClient({

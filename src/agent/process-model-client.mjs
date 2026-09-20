@@ -95,7 +95,11 @@ function createPersistentSession(config, spawnImpl) {
   };
 
   const rejectQueued = (error) => {
-    while (queue.length > 0) queue.shift().reject(error);
+    while (queue.length > 0) {
+      const item = queue.shift();
+      item.signal?.removeEventListener('abort', item.onAbort);
+      item.reject(error);
+    }
   };
 
   const settleActive = (error, value) => {
@@ -211,16 +215,12 @@ function createPersistentSession(config, spawnImpl) {
     if (!start() || child === undefined) return;
     const item = queue.shift();
     if (item.signal?.aborted === true) {
+      item.signal?.removeEventListener('abort', item.onAbort);
       item.reject(new ModelAdapterError('MODEL_ADAPTER_CANCELLED', 'Model adapter request was cancelled.', { cancelled: true }));
       drain();
       return;
     }
     active = item;
-    item.onAbort = () => {
-      if (active !== item) return;
-      failSession(new ModelAdapterError('MODEL_ADAPTER_CANCELLED', 'Model adapter request was cancelled.', { cancelled: true }));
-    };
-    item.signal?.addEventListener('abort', item.onAbort, { once: true });
     item.timer = setTimeout(() => {
       if (active === item) failSession(new ModelAdapterError('MODEL_CALLBACK_TIMEOUT', 'Model adapter request timed out.', { timeoutMs: config.timeoutMs }));
     }, config.timeoutMs);
@@ -235,7 +235,25 @@ function createPersistentSession(config, spawnImpl) {
     invoke(request, signal) {
       if (closed) return Promise.reject(new ModelAdapterError('MODEL_ADAPTER_CLOSED', 'Model adapter client is closed.'));
       return new Promise((resolve, reject) => {
-        queue.push({ request, signal, resolve, reject, timer: undefined, onAbort: undefined });
+        const item = { request, signal, resolve, reject, timer: undefined, onAbort: undefined };
+        item.onAbort = () => {
+          const cancelled = new ModelAdapterError('MODEL_ADAPTER_CANCELLED', 'Model adapter request was cancelled.', { cancelled: true });
+          if (active === item) {
+            failSession(cancelled);
+            return;
+          }
+          const index = queue.indexOf(item);
+          if (index === -1) return;
+          queue.splice(index, 1);
+          signal?.removeEventListener('abort', item.onAbort);
+          reject(cancelled);
+        };
+        if (signal?.aborted === true) {
+          item.onAbort();
+          return;
+        }
+        signal?.addEventListener('abort', item.onAbort, { once: true });
+        queue.push(item);
         drain();
       });
     },
