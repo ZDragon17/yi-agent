@@ -386,7 +386,12 @@ export async function runLab(input) {
     const beforeModelObservation = source.advisor !== undefined || plannerRequested
       ? projectModelObservation(observedBefore)
       : null;
-    const effectiveMemory = projectExperimentMemory(state.memory, experimentStrategy);
+    // The learned strategy does not project or mutate Memory. Reuse the
+    // already validated state object on this hot path; alternative experiment
+    // strategies still receive their isolated projection.
+    const effectiveMemory = experimentStrategy === 'learned'
+      ? state.memory
+      : projectExperimentMemory(state.memory, experimentStrategy);
     const capabilities = persistedRecoveryCapabilities ?? await world.actions(actionManifest, state.worldState);
     const randomization = recoveredDecisionBoundary?.randomization === undefined
       ? (randomizedTrial === null ? null : createRandomization(randomizedTrial, capabilities))
@@ -632,7 +637,9 @@ export async function runLab(input) {
     });
     const update = {
       ...learnedUpdate,
-      nextMemory: projectExperimentMemory(learnedUpdate.nextMemory, experimentStrategy),
+      nextMemory: experimentStrategy === 'learned'
+        ? learnedUpdate.nextMemory
+        : projectExperimentMemory(learnedUpdate.nextMemory, experimentStrategy),
     };
     const activeSupervisor = supervisor === null ? null : supervisor.status === 'ACTIVE'
       ? supervisor
