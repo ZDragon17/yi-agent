@@ -769,6 +769,8 @@ F-288 增加 `experiment counterfactual-corpus`。它读取多个已完成 Lab�
 
 F-289 增加 `experiment counterfactual-set`，用于在同一批历史上测量多个候选策略。它只在所有策略拥有相同的已验证证据锚时给出 `COMPARABLE_RANKING`；作用域混合、绑定证据不足或策略覆盖了不同锚集合时，报告分别返回 `MIXED_SCOPE`、`INSUFFICIENT_BINDING_EVIDENCE` 或 `DIFFERENT_EVIDENCE_ANCHORS`，不会选出一个看似更好的策略。排序只生成历史测量报告，不会自动改写策略、启动 WorldPort 或进入部署流程。
 
+F-290 在此命令上增加显式影子晋级门。传入 incumbent policy digest 后，`--min-bindings` 和 `--min-margin` 会要求当前策略与候选胜者都达到最低共同证据量，并且胜者优势达到最低幅度；满足时输出 `SHADOW_CANDIDATE` 和 `SHADOW_ONLY`，否则输出带原因的 `NO_CHANGE`。该结果仍是历史回放建议，不写入策略、不替换 incumbent、不启动 WorldPort；默认不传 incumbent 时完全不生成这项建议。这样“评估”“影子观察”“真正部署”保持三个可审计阶段，避免把零执行反事实误称为现实改进。
+
 Windows 下可以用分号传入多个策略文件，Unix 下使用冒号：
 
 ```powershell

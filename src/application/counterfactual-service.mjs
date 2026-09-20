@@ -6,6 +6,7 @@ import {
   evaluateCounterfactualPolicy,
   evaluateCounterfactualPolicyCorpus,
   evaluateCounterfactualPolicySet,
+  derivePolicyShadowDecision,
 } from '../runtime/counterfactual-replay.mjs';
 import { canonicalDigest, SCHEMA_VERSION, withSelfDigest } from '../runtime/schema.mjs';
 
@@ -218,6 +219,14 @@ export async function evaluateLabsCounterfactualSet(input) {
     scopeHints,
     ...(source.binding === undefined ? {} : { binding: source.binding }),
   });
+  const decision = source.incumbentPolicyDigest === undefined
+    ? undefined
+    : derivePolicyShadowDecision({
+      evaluation,
+      incumbentPolicyDigest: source.incumbentPolicyDigest,
+      ...(source.minBindingCount === undefined ? {} : { minBindingCount: source.minBindingCount }),
+      ...(source.minMargin === undefined ? {} : { minMargin: source.minMargin }),
+    });
   return withSelfDigest({
     schemaVersion: SCHEMA_VERSION,
     type: 'counterfactual-policy-set-evaluation',
@@ -229,6 +238,7 @@ export async function evaluateLabsCounterfactualSet(input) {
     policyDigests: policies.map((policy) => canonicalDigest(policy)),
     historySteps: loaded.reduce((total, item) => total + item.history.length, 0),
     evaluation,
+    ...(decision === undefined ? {} : { decision }),
   });
 }
 

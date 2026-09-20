@@ -107,6 +107,13 @@ async function dispatch(command, options) {
         policies: await Promise.all(requiredAbsoluteList(options, 'policies')
           .map((file) => readCandidatePolicyFile(file, 'policy'))),
         ...(options.binding === undefined ? {} : { binding: options.binding }),
+        ...(options['incumbent-policy'] === undefined ? {} : { incumbentPolicyDigest: options['incumbent-policy'] }),
+        ...(options['min-bindings'] === undefined ? {} : {
+          minBindingCount: parseBoundedInt(options['min-bindings'], 1, 1000, 'min-bindings'),
+        }),
+        ...(options['min-margin'] === undefined ? {} : {
+          minMargin: parseBoundedNumber(options['min-margin'], 0, 1_000_000, 'min-margin'),
+        }),
       });
     }
     if (options.experimentOperation === 'policy') {
@@ -483,7 +490,7 @@ function parseArguments(argv) {
     recover: ['lab', 'confirm-lock-owner-dead'],
     challenge: ['lab', 'case'],
     effect: ['effectOperation', 'journal', 'sandbox-root', 'intent', 'nonce'],
-    experiment: ['experimentOperation', 'lab', 'labs', 'policies', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'policy', 'steps', 'scenario', 'resume', 'world', 'seeds', 'seed-count', 'strategies', 'binding'],
+    experiment: ['experimentOperation', 'lab', 'labs', 'policies', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'policy', 'steps', 'scenario', 'resume', 'world', 'seeds', 'seed-count', 'strategies', 'binding', 'incumbent-policy', 'min-bindings', 'min-margin'],
     ui: ['lab', 'port', 'adapter'],
   }[command] ?? [];
   for (const name of Object.keys(options)) {
@@ -670,6 +677,17 @@ function parseBoundedInt(value, minimum, maximum, field) {
   return parsed;
 }
 
+function parseBoundedNumber(value, minimum, maximum, field) {
+  if (typeof value !== 'string' || value.trim() === '' || !/^(?:\d+(?:\.\d+)?|\.\d+)$/u.test(value)) {
+    throw cliError('INVALID_INPUT', `${field} must be a number from ${minimum} to ${maximum}.`, { field }, 64);
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum) {
+    throw cliError('INVALID_INPUT', `${field} must be a number from ${minimum} to ${maximum}.`, { field }, 64);
+  }
+  return parsed;
+}
+
 function required(options, name) {
   if (typeof options[name] !== 'string' || options[name].length === 0) {
     throw cliError('INVALID_INPUT', `Missing required option: --${name}`, { field: name }, 64);
@@ -749,7 +767,7 @@ function helpText() {
     '  yi-agent experiment policy --lab PATH --output PATH --steps N --left-policy PATH --right-policy PATH [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment counterfactual --lab PATH --policy PATH [--binding vector|strict] [--json]   零执行反事实评估：只在账本候选历史上打分，不运行世界',
     `  yi-agent experiment counterfactual-corpus --labs PATH${path.delimiter}PATH --policy PATH [--binding vector|strict] [--json]   独立 Lab 语料评估；混合 WorldPort 只保留分区证据`,
-    `  yi-agent experiment counterfactual-set --labs PATH${path.delimiter}PATH --policies PATH${path.delimiter}PATH [--binding vector|strict] [--json]   多策略历史测量；仅同证据锚允许排序`,
+    `  yi-agent experiment counterfactual-set --labs PATH${path.delimiter}PATH --policies PATH${path.delimiter}PATH [--binding vector|strict] [--incumbent-policy DIGEST] [--min-bindings N] [--min-margin N] [--json]   多策略历史测量；仅同证据锚允许排序，显式门控只生成影子建议`,
     '  yi-agent effect plan|confirm|execute|reconcile|compensate|inspect ...',
     '',
     'API 环境变量: YI_AGENT_PROVIDER, YI_AGENT_API_KEY/ZAI_API_KEY, YI_AGENT_API_BASE_URL, YI_AGENT_MODEL, YI_AGENT_API_TIMEOUT_MS',

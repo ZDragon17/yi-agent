@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  derivePolicyShadowDecision,
   evaluateCounterfactualPolicy,
   evaluateCounterfactualPolicyCorpus,
   evaluateCounterfactualPolicySet,
@@ -144,6 +145,87 @@ test('a policy set refuses to rank candidates with different evidence anchors', 
   assert.equal(result.comparison.verdict, 'INSUFFICIENT_EVIDENCE');
   assert.equal(result.comparison.reason, 'DIFFERENT_EVIDENCE_ANCHORS');
   assert.equal(result.comparison.winnerPolicyDigest, null);
+});
+
+test('a comparable winner becomes a shadow candidate only after the incumbent also meets the evidence floor', () => {
+  const tokenC = 'tok_CCCCCCCC';
+  const history = [
+    entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),
+    entry({ kernelStep: 2, observationDigest: OTHER_OBSERVATION, beforeStateDigest: BEFORE_TWO, beforeVector: VECTOR_ONE, token: TOKEN_B, goalDistanceAfter: 0.5 }),
+    entry({ kernelStep: 3, observationDigest: OTHER_OBSERVATION, beforeStateDigest: canonicalDigest({ state: 'before-3' }), beforeVector: VECTOR_ONE, token: tokenC, goalDistanceAfter: 0.2 }),
+  ];
+  const incumbent = policy(TOKEN_B);
+  const candidate = { ...policy(tokenC), rules: [{ observationDigest: OTHER_OBSERVATION, token: TOKEN_B }] };
+  const report = evaluateCounterfactualPolicySet({
+    histories: [history],
+    policies: [incumbent, candidate],
+  });
+  const decision = derivePolicyShadowDecision({
+    evaluation: report,
+    incumbentPolicyDigest: report.policies[0].policyDigest,
+    minBindingCount: 1,
+    minMargin: 0.1,
+  });
+
+  assert.equal(decision.verdict, 'SHADOW_CANDIDATE');
+  assert.equal(decision.action, 'SHADOW_ONLY');
+  assert.equal(decision.candidatePolicyDigest, report.comparison.winnerPolicyDigest);
+  assert.equal(decision.incumbentPolicyDigest, report.policies[0].policyDigest);
+  assert.equal(decision.evidenceBasisDigest, report.comparison.evidenceBasisDigest);
+});
+
+test('the shadow gate refuses a winner when the common evidence floor is not met', () => {
+  const tokenC = 'tok_CCCCCCCC';
+  const thirdObservation = canonicalDigest({ observation: 'context-3' });
+  const history = [
+    entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),
+    entry({ kernelStep: 2, observationDigest: OTHER_OBSERVATION, beforeStateDigest: BEFORE_TWO, beforeVector: VECTOR_ONE, token: TOKEN_B, goalDistanceAfter: 0.5 }),
+    entry({ kernelStep: 3, observationDigest: thirdObservation, beforeStateDigest: canonicalDigest({ state: 'before-3' }), beforeVector: VECTOR_ONE, token: tokenC, goalDistanceAfter: 0.2 }),
+  ];
+  const report = evaluateCounterfactualPolicySet({
+    histories: [history],
+    policies: [
+      { ...policy(TOKEN_B), rules: [{ observationDigest: OTHER_OBSERVATION, token: TOKEN_B }, { observationDigest: thirdObservation, token: tokenC }] },
+      { ...policy(tokenC), rules: [{ observationDigest: OTHER_OBSERVATION, token: TOKEN_B }, { observationDigest: thirdObservation, token: tokenC }] },
+    ],
+  });
+  const decision = derivePolicyShadowDecision({
+    evaluation: report,
+    incumbentPolicyDigest: report.policies[0].policyDigest,
+    minBindingCount: 2,
+    minMargin: 0,
+  });
+
+  assert.equal(decision.verdict, 'NO_CHANGE');
+  assert.equal(decision.reason, 'BELOW_MIN_BINDINGS');
+  assert.equal(decision.candidatePolicyDigest, null);
+  assert.equal(decision.action, 'NO_MUTATION');
+});
+
+test('the shadow gate never proposes replacing an incumbent that already wins', () => {
+  const tokenC = 'tok_CCCCCCCC';
+  const history = [
+    entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),
+    entry({ kernelStep: 2, observationDigest: OTHER_OBSERVATION, beforeStateDigest: BEFORE_TWO, beforeVector: VECTOR_ONE, token: TOKEN_B, goalDistanceAfter: 0.5 }),
+    entry({ kernelStep: 3, observationDigest: OTHER_OBSERVATION, beforeStateDigest: canonicalDigest({ state: 'before-3' }), beforeVector: VECTOR_ONE, token: tokenC, goalDistanceAfter: 0.2 }),
+  ];
+  const report = evaluateCounterfactualPolicySet({
+    histories: [history],
+    policies: [
+      { ...policy(tokenC), rules: [{ observationDigest: OTHER_OBSERVATION, token: TOKEN_B }] },
+      policy(TOKEN_B),
+    ],
+  });
+  const decision = derivePolicyShadowDecision({
+    evaluation: report,
+    incumbentPolicyDigest: report.policies[0].policyDigest,
+    minBindingCount: 1,
+    minMargin: 0,
+  });
+
+  assert.equal(decision.verdict, 'NO_CHANGE');
+  assert.equal(decision.reason, 'INCUMBENT_IS_WINNER');
+  assert.equal(decision.action, 'NO_MUTATION');
 });
 
 test('a policy corpus does not collapse different WorldPort identities into one verdict', () => {

@@ -7,6 +7,8 @@ const CORPUS_EVALUATION_TYPE = 'counterfactual-policy-corpus-evaluation';
 const CORPUS_EVALUATION_VERSION = 1;
 const POLICY_SET_EVALUATION_TYPE = 'counterfactual-policy-set-evaluation';
 const POLICY_SET_EVALUATION_VERSION = 1;
+const POLICY_SHADOW_DECISION_TYPE = 'counterfactual-policy-shadow-decision';
+const POLICY_SHADOW_DECISION_VERSION = 1;
 // Every counterfactual is anchored at one recorded step: we substitute only
 // the candidate choice of that single step. Anything beyond one step would
 // require world states the ledger never observed, which this module refuses
@@ -216,6 +218,70 @@ export function evaluateCounterfactualPolicySet({ histories, policies, binding =
     policyCount: reports.length,
     policies: reports,
     comparison,
+  };
+}
+
+// A historical ranking may inform a shadow candidate, but it must never mutate
+// the incumbent by itself. The gate requires the incumbent and the winner to
+// share the ranking's evidence floor and margin before emitting that advice.
+export function derivePolicyShadowDecision({
+  evaluation,
+  incumbentPolicyDigest,
+  minBindingCount = 2,
+  minMargin = 0,
+} = {}) {
+  if (!Number.isInteger(minBindingCount) || minBindingCount < 1) {
+    throw evaluationError('minBindingCount must be a positive integer.', { field: 'minBindingCount' });
+  }
+  if (!Number.isFinite(minMargin) || minMargin < 0) {
+    throw evaluationError('minMargin must be a non-negative finite number.', { field: 'minMargin' });
+  }
+
+  const base = {
+    schemaVersion: SCHEMA_VERSION,
+    type: POLICY_SHADOW_DECISION_TYPE,
+    version: POLICY_SHADOW_DECISION_VERSION,
+    action: 'NO_MUTATION',
+    verdict: 'NO_CHANGE',
+    reason: null,
+    incumbentPolicyDigest: isDigest(incumbentPolicyDigest) ? incumbentPolicyDigest : null,
+    candidatePolicyDigest: null,
+    evidenceBasisDigest: null,
+    bindingCount: 0,
+    margin: null,
+    requirements: { minBindingCount, minMargin },
+  };
+  if (!isRecord(evaluation) || evaluation.type !== POLICY_SET_EVALUATION_TYPE ||
+      !Array.isArray(evaluation.policies) || !isRecord(evaluation.comparison)) {
+    return { ...base, reason: 'INVALID_EVALUATION' };
+  }
+  const comparison = evaluation.comparison;
+  base.evidenceBasisDigest = isDigest(comparison.evidenceBasisDigest)
+    ? comparison.evidenceBasisDigest
+    : null;
+  if (!isDigest(incumbentPolicyDigest)) return { ...base, reason: 'INVALID_INCUMBENT' };
+  const incumbent = evaluation.policies.find((report) => report.policyDigest === incumbentPolicyDigest);
+  if (!incumbent) return { ...base, reason: 'INCUMBENT_NOT_IN_SET' };
+  if (comparison.verdict === 'TIE') return { ...base, reason: 'TIE' };
+  if (comparison.verdict !== 'COMPARABLE_RANKING') {
+    return { ...base, reason: 'INSUFFICIENT_EVIDENCE' };
+  }
+  const winner = evaluation.policies.find((report) => report.policyDigest === comparison.winnerPolicyDigest);
+  if (!winner || winner.policyDigest === incumbent.policyDigest) {
+    return { ...base, reason: winner ? 'INCUMBENT_IS_WINNER' : 'INVALID_COMPARISON' };
+  }
+  const incumbentBindingCount = bindingCount(incumbent);
+  const winnerBindingCount = bindingCount(winner);
+  base.bindingCount = Math.min(incumbentBindingCount, winnerBindingCount);
+  base.margin = Number.isFinite(comparison.margin) ? comparison.margin : null;
+  if (base.bindingCount < minBindingCount) return { ...base, reason: 'BELOW_MIN_BINDINGS' };
+  if (base.margin === null || base.margin < minMargin) return { ...base, reason: 'BELOW_MIN_MARGIN' };
+  return {
+    ...base,
+    action: 'SHADOW_ONLY',
+    verdict: 'SHADOW_CANDIDATE',
+    candidatePolicyDigest: winner.policyDigest,
+    reason: null,
   };
 }
 
@@ -591,4 +657,13 @@ function evaluationError(message, context = { field: 'policy' }) {
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isDigest(value) {
+  return typeof value === 'string' && DIGEST_PATTERN.test(value);
+}
+
+function bindingCount(report) {
+  const value = report?.outcome?.bindingCount;
+  return Number.isInteger(value) && value >= 0 ? value : 0;
 }

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
-import { canonicalDigest, canonicalJson, withSelfDigest } from '../../src/runtime/schema.mjs';
+import { canonicalDigest, canonicalJson, verifySelfDigest, withSelfDigest } from '../../src/runtime/schema.mjs';
 import { advanceChangeSupervisor } from '../../src/agent/change-supervisor.mjs';
 import { projectModelObservation } from '../../src/agent/observation-context.mjs';
 import { builtInWorldRegistry } from '../../src/application/world-registry.mjs';
@@ -2429,6 +2429,21 @@ test('CLI evaluates a counterfactual policy set without executing the Lab', asyn
     assert.equal(result.stdout[0].data.evaluation.policyCount, 2);
     assert.equal(result.stdout[0].data.evaluation.scope.status, 'UNIFORM');
     assert.equal(result.stdout[0].data.evaluation.comparison.verdict, 'INSUFFICIENT_EVIDENCE');
+
+    const incumbentPolicyDigest = result.stdout[0].data.evaluation.policies[0].policyDigest;
+    const gated = await invoke(
+      'experiment', 'counterfactual-set',
+      '--labs', lab,
+      '--policies', `${policyA};${policyB}`,
+      '--incumbent-policy', incumbentPolicyDigest,
+      '--min-bindings', '2',
+      '--min-margin', '0',
+      '--json',
+    );
+    assert.equal(gated.code, 0, JSON.stringify(gated));
+    assert.equal(verifySelfDigest(gated.stdout[0].data), true);
+    assert.equal(gated.stdout[0].data.decision.verdict, 'NO_CHANGE');
+    assert.equal(gated.stdout[0].data.decision.action, 'NO_MUTATION');
   });
 });
 
