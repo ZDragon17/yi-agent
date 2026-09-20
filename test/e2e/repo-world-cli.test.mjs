@@ -103,6 +103,7 @@ test('repo WorldPort uses the same continuous Run and Replay envelope as a built
 test('read-only repo WorldPort completes the shared loop without writing the repository', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-e2e-'));
   const requests = [];
+  let firstModelObservation = null;
   let modelCalls = 0;
   const server = createServer(async (request, response) => {
     const chunks = [];
@@ -111,6 +112,20 @@ test('read-only repo WorldPort completes the shared loop without writing the rep
     requests.push(body);
     const tokens = [...new Set(body.messages[0].content.match(/tok_[A-Z0-9]{8,128}/gu) ?? [])];
     assert.ok(tokens.length >= 2, 'the decision context must expose both repo capabilities');
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    const testPolicy = context.observationEvidence.find((item) => item.kind === 'repo-test-policy');
+    assert.deepEqual(testPolicy, {
+      kind: 'repo-test-policy',
+      testPath: TEST_PATH,
+      timeoutMs: 30000,
+      maxOutputBytes: 16 * 1024,
+    });
+    firstModelObservation ??= {
+      schemaVersion: 1,
+      observation: context.observation,
+      observationEvidence: context.observationEvidence,
+      observationEvidenceTruncated: context.observationEvidenceTruncated,
+    };
     const token = tokens[modelCalls++ % 2];
     response.setHeader('Content-Type', 'application/json');
     response.end(JSON.stringify({
@@ -167,6 +182,7 @@ test('read-only repo WorldPort completes the shared loop without writing the rep
     assert.equal(stepEvents[0].payload.afterState.worldState.lastReadPath, READ_PATH);
     assert.equal(stepEvents[1].payload.afterState.worldState.lastTestStatus, 'PASS');
     assert.match(stepEvents[1].payload.afterState.worldState.lastTestOutputDigest, /^sha256:[0-9a-f]{64}$/u);
+    assert.equal(stepEvents[0].payload.policyEvidence.observationDigest, canonicalDigest(firstModelObservation));
     assert.equal(stepEvents.every((event) => event.payload.policyEvidence?.applied === true), true);
 
     const replay = await invoke([

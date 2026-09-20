@@ -36,6 +36,7 @@ const MAX_FILES = 512;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_TREE_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 16 * 1024;
+const TEST_TIMEOUT_MS = 30_000;
 const MAX_PATCH_BYTES = 128 * 1024;
 const MAX_PROPOSAL_BYTES = 64 * 1024;
 const MAX_MODEL_READ_CONTENT = 2 * 1024;
@@ -217,6 +218,12 @@ function observation(state) {
     evidence: [
       { kind: 'repo-tree', rootDigest: state.rootDigest, fileCount: state.fileCount },
       {
+        kind: 'repo-test-policy',
+        testPath: normalizeRelative(testPath),
+        timeoutMs: TEST_TIMEOUT_MS,
+        maxOutputBytes: MAX_OUTPUT_BYTES,
+      },
+      {
         kind: 'repo-action',
         action: state.lastAction,
         readPath: state.lastReadPath,
@@ -305,7 +312,7 @@ function runTests() {
     encoding: 'utf8',
     maxBuffer: MAX_OUTPUT_BYTES,
     shell: false,
-    timeout: 30_000,
+    timeout: TEST_TIMEOUT_MS,
   });
   const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.slice(0, MAX_OUTPUT_BYTES);
   return {

@@ -748,6 +748,8 @@ yi-agent experiment counterfactual `
 
 F-284 为反事实证据增加目标函数作用域。候选历史的公开投影不再携带完整 `valueSpec`，只保留 `valueSpecDigest`；反事实评估把它和 WorldPort identity、seed、scenario、Token map 一起纳入证据锚。同一个 Lab 完成目标并切换到不同权重、目标向量或容差后，旧目标与新目标的距离不能混算；历史中出现多个目标摘要时，评估返回 `scope.status=MIXED` 和 `INSUFFICIENT_EVIDENCE`，不会给出跨目标的平均改善。报告的 `historyBasisDigest` 也绑定该摘要，避免只改目标后复用旧报告指纹。
 
+F-285 将 repo WorldPort 的测试验证契约显式化。每次观察都公开受限的 `repo-test-policy` evidence：相对测试路径、30 秒超时和 16 KiB 输出上限。它进入模型上下文，模型不再只能从“有一个 run-tests 能力”猜测验证对象；模型上下文的摘要通过 STEP `policyEvidence.observationDigest` 持久化，并由 Replay 重新校验。Runtime 不把原始任意 evidence 原样复制进 `postObservation`，避免文件内容或无界上下文绕过持久化边界。该证据描述的是 adapter 已声明的执行边界，不是 OS 沙箱或测试结果本身；测试进程仍需在独立低权限账户、容器或其他人工批准的部署边界中运行。
+
 ### 与 Dream-RSI（dream-rsi.com）的关系
 
 本项目通过 `experiment counterfactual` 实践并延伸了 [Dream-RSI](https://dream-rsi.com/)（Google / Google DeepMind / 马里兰大学 / 弗吉尼亚大学，2026）提出的“历史即模拟器”思路：一次在线发现运行已经记录成带真实执行结果的探索结构，因此对备选探索策略的评估可以**零执行**地在已记录历史上重放。当前编译器 `counterfactual-replay.mjs` 严格按照“单步历史锚定”执行：它只用账本确实观测过的状态和结果，只替代单个步骤的候选选择，绝不编造账本从未见过的世界状态去推演多步反事实轨迹；因此它的评价范畴是“某条反事实选择在已记录证据下是否更好/更差/无法评估”，并且：
