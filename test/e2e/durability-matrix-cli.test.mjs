@@ -7,6 +7,10 @@ import { test } from 'node:test';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const DURABLE_ADAPTER = path.resolve('test/fixtures/durable-counter-world-adapter.mjs');
+const DURABILITY_OBSERVATION_TIMEOUT_MS = configuredTimeout(
+  process.env.YI_AGENT_DURABILITY_OBSERVATION_TIMEOUT_MS,
+  180_000,
+);
 
 test('built-in WorldPorts keep a multi-Run kernel-only loop inspectable and replayable', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-durability-matrix-'));
@@ -182,6 +186,7 @@ test('durable-counter keeps a four-Run loop consistent across repeated crash, re
         stateFile,
         controlDir,
         effect,
+        DURABILITY_OBSERVATION_TIMEOUT_MS,
       );
       assert.notEqual(lost.code, 0, `effect ${effect} loss must interrupt its CLI: ${describeResult(lost)}`);
       assert.equal(lost.timedOut, false, `effect ${effect} loss process timed out: ${describeResult(lost)}`);
@@ -494,6 +499,15 @@ function waitForClose(child, timeoutMs) {
       resolve({ code, signal });
     });
   });
+}
+
+function configuredTimeout(value, fallback) {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1_000) {
+    throw new Error('YI_AGENT_DURABILITY_OBSERVATION_TIMEOUT_MS must be an integer >= 1000.');
+  }
+  return parsed;
 }
 
 async function waitFor(predicate, timeoutMs, label) {
