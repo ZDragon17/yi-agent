@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { evaluateCounterfactualPolicy } from '../../src/runtime/counterfactual-replay.mjs';
+import {
+  evaluateCounterfactualPolicy,
+  evaluateCounterfactualPolicyCorpus,
+} from '../../src/runtime/counterfactual-replay.mjs';
 import { canonicalDigest } from '../../src/runtime/schema.mjs';
 
 const TOKEN_A = 'tok_AAAAAAAA';
@@ -69,6 +72,94 @@ test('a divergence anchored only by the observable vector still binds the verdic
   assert.equal(result.samples[0].sameBeforeState, false);
   assert.equal(result.samples[0].counterfactualGoalDistanceAfter, 0.5);
   assert.equal(result.samples[0].delta, 0.8 - 0.5);
+});
+
+test('a policy corpus aggregates independent histories without mixing their evidence', () => {
+  const result = evaluateCounterfactualPolicyCorpus({
+    histories: [
+      [
+        entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),
+        entry({ kernelStep: 2, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_TWO, beforeVector: VECTOR_ONE, token: TOKEN_B, goalDistanceAfter: 0.5 }),
+      ],
+      [
+        entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.4 }),
+        entry({ kernelStep: 2, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_TWO, beforeVector: VECTOR_ONE, token: TOKEN_B, goalDistanceAfter: 0.6 }),
+      ],
+    ],
+    policy: policy(TOKEN_B),
+  });
+
+  assert.equal(result.type, 'counterfactual-policy-corpus-evaluation');
+  assert.equal(result.version, 1);
+  assert.equal(result.basis.historyCount, 2);
+  assert.equal(result.basis.steps, 4);
+  assert.equal(result.basis.evaluated, 2);
+  assert.equal(result.partitions.length, 2);
+  assert.deepEqual(result.partitions.map((partition) => partition.outcome.verdict), [
+    'COUNTERFACTUAL_BETTER',
+    'COUNTERFACTUAL_WORSE',
+  ]);
+  assert.equal(result.outcome.verdict, 'MIXED_EVIDENCE');
+  assert.equal(result.outcome.bindingCount, 2);
+  assert.ok(Math.abs(result.outcome.meanDelta - 0.05) < 1e-12);
+});
+
+test('a policy corpus does not collapse different WorldPort identities into one verdict', () => {
+  const result = evaluateCounterfactualPolicyCorpus({
+    histories: [
+      [
+        entry({
+          worldId: 'world-a',
+          worldImplementationDigest: `sha256:${'a'.repeat(64)}`,
+          kernelStep: 1,
+          observationDigest: CONTEXT_OBSERVATION,
+          beforeStateDigest: BEFORE_ONE,
+          beforeVector: VECTOR_ONE,
+          token: TOKEN_A,
+          goalDistanceAfter: 0.8,
+        }),
+        entry({
+          worldId: 'world-a',
+          worldImplementationDigest: `sha256:${'a'.repeat(64)}`,
+          kernelStep: 2,
+          observationDigest: CONTEXT_OBSERVATION,
+          beforeStateDigest: BEFORE_TWO,
+          beforeVector: VECTOR_ONE,
+          token: TOKEN_B,
+          goalDistanceAfter: 0.5,
+        }),
+      ],
+      [
+        entry({
+          worldId: 'world-b',
+          worldImplementationDigest: `sha256:${'b'.repeat(64)}`,
+          kernelStep: 1,
+          observationDigest: CONTEXT_OBSERVATION,
+          beforeStateDigest: BEFORE_ONE,
+          beforeVector: VECTOR_ONE,
+          token: TOKEN_A,
+          goalDistanceAfter: 0.8,
+        }),
+        entry({
+          worldId: 'world-b',
+          worldImplementationDigest: `sha256:${'b'.repeat(64)}`,
+          kernelStep: 2,
+          observationDigest: CONTEXT_OBSERVATION,
+          beforeStateDigest: BEFORE_TWO,
+          beforeVector: VECTOR_ONE,
+          token: TOKEN_B,
+          goalDistanceAfter: 0.5,
+        }),
+      ],
+    ],
+    policy: policy(TOKEN_B),
+  });
+
+  assert.equal(result.scope.status, 'MIXED');
+  assert.equal(result.scope.partitionCount, 2);
+  assert.equal(result.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.outcome.bindingCount, 0);
+  assert.equal(result.partitions.length, 2);
 });
 
 test('strict binding refuses vector-only evidence from a different hidden state', () => {

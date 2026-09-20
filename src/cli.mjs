@@ -14,7 +14,10 @@ import { createProcessModelClient, loadProcessModelConfig } from './agent/proces
 import { runPairedCandidates } from './application/paired-experiment-service.mjs';
 import { runPairedTrajectories } from './application/paired-trajectory-service.mjs';
 import { runPairedPolicies } from './application/paired-policy-service.mjs';
-import { evaluateLabCounterfactual } from './application/counterfactual-service.mjs';
+import {
+  evaluateLabCounterfactual,
+  evaluateLabsCounterfactual,
+} from './application/counterfactual-service.mjs';
 import { runExperimentCompare } from './application/experiment-compare-service.mjs';
 
 export async function main(argv, io = defaultIo()) {
@@ -86,6 +89,13 @@ async function dispatch(command, options) {
     if (options.experimentOperation === 'counterfactual') {
       return evaluateLabCounterfactual({
         labPath: required(options, 'lab'),
+        policy: await readCandidatePolicyFile(requiredAbsolute(options, 'policy'), 'policy'),
+        ...(options.binding === undefined ? {} : { binding: options.binding }),
+      });
+    }
+    if (options.experimentOperation === 'counterfactual-corpus') {
+      return evaluateLabsCounterfactual({
+        labPaths: requiredAbsoluteList(options, 'labs'),
         policy: await readCandidatePolicyFile(requiredAbsolute(options, 'policy'), 'policy'),
         ...(options.binding === undefined ? {} : { binding: options.binding }),
       });
@@ -431,7 +441,7 @@ function parseArguments(argv) {
   }
   if (command === 'experiment') {
     const operation = args.shift();
-    if (!['pair', 'trajectory', 'policy', 'counterfactual', 'compare'].includes(operation)) {
+    if (!['pair', 'trajectory', 'policy', 'counterfactual', 'counterfactual-corpus', 'compare'].includes(operation)) {
       throw cliError('INVALID_INPUT', `Unsupported experiment operation: ${operation ?? '(missing)'}`, {}, 64);
     }
     options.experimentOperation = operation;
@@ -464,7 +474,7 @@ function parseArguments(argv) {
     recover: ['lab', 'confirm-lock-owner-dead'],
     challenge: ['lab', 'case'],
     effect: ['effectOperation', 'journal', 'sandbox-root', 'intent', 'nonce'],
-    experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'policy', 'steps', 'scenario', 'resume', 'world', 'seeds', 'seed-count', 'strategies', 'binding'],
+    experiment: ['experimentOperation', 'lab', 'labs', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'policy', 'steps', 'scenario', 'resume', 'world', 'seeds', 'seed-count', 'strategies', 'binding'],
     ui: ['lab', 'port', 'adapter'],
   }[command] ?? [];
   for (const name of Object.keys(options)) {
@@ -598,6 +608,16 @@ function requiredAbsolute(options, name) {
   return path.normalize(value);
 }
 
+function requiredAbsoluteList(options, name) {
+  const raw = required(options, name);
+  const values = raw.split(path.delimiter).filter((value) => value.length > 0);
+  if (values.length === 0) throw cliError('INVALID_INPUT', `${name} must contain at least one path.`, { field: name }, 64);
+  return values.map((value) => {
+    if (!path.isAbsolute(value)) throw cliError('INVALID_INPUT', `${name} entries must be absolute paths.`, { field: name }, 64);
+    return path.normalize(value);
+  });
+}
+
 function inertExecutor() {
   return {
     async execute() { return { status: 'UNKNOWN' }; },
@@ -719,6 +739,7 @@ function helpText() {
     '  yi-agent experiment trajectory --lab PATH --output PATH --left-trajectory PATH --right-trajectory PATH [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment policy --lab PATH --output PATH --steps N --left-policy PATH --right-policy PATH [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment counterfactual --lab PATH --policy PATH [--binding vector|strict] [--json]   零执行反事实评估：只在账本候选历史上打分，不运行世界',
+    `  yi-agent experiment counterfactual-corpus --labs PATH${path.delimiter}PATH --policy PATH [--binding vector|strict] [--json]   独立 Lab 语料评估；混合 WorldPort 只保留分区证据`,
     '  yi-agent effect plan|confirm|execute|reconcile|compensate|inspect ...',
     '',
     'API 环境变量: YI_AGENT_PROVIDER, YI_AGENT_API_KEY/ZAI_API_KEY, YI_AGENT_API_BASE_URL, YI_AGENT_MODEL, YI_AGENT_API_TIMEOUT_MS',

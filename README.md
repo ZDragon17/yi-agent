@@ -744,6 +744,17 @@ yi-agent experiment counterfactual `
   --json
 ```
 
+需要比较同一 WorldPort 作用域下的多次独立运行时，可以按平台路径分隔符传入多个 Lab。Windows 使用分号，Unix 使用冒号：
+
+```powershell
+yi-agent experiment counterfactual-corpus `
+  --labs "E:\labs\run-a;E:\labs\run-b" `
+  --policy E:\labs\policy.json `
+  --json
+```
+
+每个 Lab 先独立完成单步反事实评估，再汇总已绑定的结果；一个 Lab 的记录不会填补另一个 Lab 的缺失证据。WorldPort identity、scenario、Token map 或目标作用域不一致时，报告保留各分区结果，但总体裁决为 `INSUFFICIENT_EVIDENCE`。
+
 报告是账本与策略的纯函数：不含时间戳，绑定 manifest/current 摘要与 `historyBasisDigest`，同一账本重复评估得到逐字节相同的自摘要报告；策略文件仍只允许引用父 Token map。该命令不运行世界、不调用模型、不创建分支 Lab，外部 adapter 的 Lab 同样可以离线评估。它回答的是“历史证据支持哪个策略”，不是轨迹仿真、规则自动发现或部署决策本身：UNEVALUABLE 比例高只说明账本还没有覆盖那些反事实，不说明策略好坏。
 
 F-284 为反事实证据增加目标函数作用域。候选历史的公开投影不再携带完整 `valueSpec`，只保留 `valueSpecDigest`；反事实评估把它和 WorldPort identity、seed、scenario、Token map 一起纳入证据锚。同一个 Lab 完成目标并切换到不同权重、目标向量或容差后，旧目标与新目标的距离不能混算；历史中出现多个目标摘要时，评估返回 `scope.status=MIXED` 和 `INSUFFICIENT_EVIDENCE`，不会给出跨目标的平均改善。报告的 `historyBasisDigest` 也绑定该摘要，避免只改目标后复用旧报告指纹。
@@ -753,6 +764,8 @@ F-285 将 repo WorldPort 的测试验证契约显式化。每次观察都公开�
 F-286 为 repo WorldPort 增加有界的 `repo-test-result` evidence。测试失败时，模型能看到 `PASS/FAIL`、退出码、超时/信号和最多 8 个失败测试名称；不会把原始 stdout、stderr、堆栈、源码行或环境变量放进观察证据。adapter 强制使用 TAP reporter，让不同 Node 版本的失败名称解析保持稳定；完整输出仍只保留摘要 digest。该信息是模型的诊断线索，不是执行授权或验证结论，最终动作仍需经过 Kernel、WorldPort 回执和 Replay。
 
 F-287 重跑 R28 候选质量实验：8 对同 seed、每对 96 步，单候选与有界候选集各自独立运行并 Replay。8 对全部 `CONSISTENT`，但候选集相对单候选的平均成本差为 `+53.75` 元（成本越低越好），只有 3 对改善、5 对变差。当前结论是 `INCONCLUSIVE_CANDIDATE_SET_QUALITY`：候选集已经进入可测量、可重放的闭环，但没有证据证明它改善结果；本次随机样本反而提醒我们，不能把“候选更多”当成“智能更强”。报告绑定源码指纹 `9224888085ba7cac4183d71f3d494a44d3d5e9fcf6a77c7e1dc1334ff51e0561`。
+
+F-288 增加 `experiment counterfactual-corpus`。它读取多个已完成 Lab，把每个 Lab 当作独立证据分区，再汇总已验证的单步 delta；不同 WorldPort identity、scenario 或目标作用域不会被压成一个分数。分区中同时出现改善与变差时，总体裁决为 `MIXED_EVIDENCE`，不会把平均值写成策略改进。该命令不运行世界、不调用模型，报告带自摘要，可重复生成。
 
 ### 与 Dream-RSI（dream-rsi.com）的关系
 

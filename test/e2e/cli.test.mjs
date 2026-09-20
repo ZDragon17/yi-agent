@@ -2372,6 +2372,40 @@ test('CLI converts non-canonical external input evidence into a protocol error',
   });
 });
 
+test('CLI evaluates a counterfactual policy corpus across repeated Labs', async () => {
+  await withTemp(async (root) => {
+    const labA = path.join(root, 'lab-a');
+    const labB = path.join(root, 'lab-b');
+    const policyFile = path.join(root, 'policy.json');
+    const initA = await invoke('init', '--lab', labA, '--lab-id', 'corpus-cli', '--world', 'temperature', '--seed', 'corpus-cli-seed', '--json');
+    const initB = await invoke('init', '--lab', labB, '--lab-id', 'corpus-cli', '--world', 'temperature', '--seed', 'corpus-cli-seed', '--json');
+    assert.equal(initA.code, 0);
+    assert.equal(initB.code, 0);
+    const token = initA.stdout[0].data.tokenMap.entries[0].token;
+    await writeFile(policyFile, JSON.stringify({
+      schemaVersion: 1,
+      type: 'candidate-policy',
+      version: 1,
+      defaultToken: token,
+      rules: [],
+    }));
+    assert.equal((await invoke('run', '--lab', labA, '--run-id', 'run-1', '--steps', '2', '--json')).code, 0);
+    assert.equal((await invoke('run', '--lab', labB, '--run-id', 'run-1', '--steps', '2', '--json')).code, 0);
+
+    const result = await invoke(
+      'experiment', 'counterfactual-corpus',
+      '--labs', `${labA};${labB}`,
+      '--policy', policyFile,
+      '--json',
+    );
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout[0].data.type, 'counterfactual-policy-corpus-evaluation');
+    assert.equal(result.stdout[0].data.evaluation.scope.status, 'UNIFORM');
+    assert.equal(result.stdout[0].data.evaluation.basis.historyCount, 2);
+    assert.equal(result.stdout[0].data.evaluation.partitions.length, 2);
+  });
+});
+
 async function invoke(...args) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });

@@ -3,6 +3,8 @@ import { canonicalDigest } from './schema.mjs';
 const SCHEMA_VERSION = 1;
 const EVALUATION_TYPE = 'counterfactual-policy-evaluation';
 const EVALUATION_VERSION = 2;
+const CORPUS_EVALUATION_TYPE = 'counterfactual-policy-corpus-evaluation';
+const CORPUS_EVALUATION_VERSION = 1;
 // Every counterfactual is anchored at one recorded step: we substitute only
 // the candidate choice of that single step. Anything beyond one step would
 // require world states the ledger never observed, which this module refuses
@@ -114,6 +116,124 @@ export function evaluateCounterfactualPolicy({ history, policy, binding = 'vecto
     },
     outcome: outcomeSummary(bindingDeltas),
     samples,
+  };
+}
+
+// A corpus is an evidence report over independent histories. It deliberately
+// evaluates each history in isolation, so one WorldPort or seed can never lend
+// an unverified outcome to another partition. The aggregate is only a summary
+// of deltas already established by the single-history evaluator.
+export function evaluateCounterfactualPolicyCorpus({ histories, policy, binding = 'vector', scopeHints } = {}) {
+  if (!Array.isArray(histories)) {
+    throw evaluationError('Counterfactual evaluation requires a history corpus array.', { field: 'histories' });
+  }
+  if (scopeHints !== undefined && (!Array.isArray(scopeHints) || scopeHints.length !== histories.length)) {
+    throw evaluationError('Counterfactual scope hints must match the history corpus.', { field: 'scopeHints' });
+  }
+  const normalizedPolicy = requirePolicy(policy);
+  const normalizedBinding = requireBinding(binding);
+  const partitions = histories.map((history, historyIndex) => ({
+    historyIndex,
+    ...evaluateCounterfactualPolicy({
+      history,
+      policy: normalizedPolicy,
+      binding: normalizedBinding,
+    }),
+  }));
+  const scope = corpusScope(partitions, scopeHints);
+  const basis = partitions.reduce((total, partition) => ({
+    historyCount: total.historyCount + 1,
+    steps: total.steps + partition.basis.steps,
+    opaque: total.opaque + partition.basis.opaque,
+    evaluated: total.evaluated + partition.divergence.evaluated,
+    strict: total.strict + partition.divergence.strict,
+    vector: total.vector + partition.divergence.vector,
+    unevaluable: total.unevaluable + partition.divergence.unevaluable,
+    recordedOutcomes: total.recordedOutcomes + partition.basis.recordedOutcomes,
+  }), {
+    historyCount: 0,
+    steps: 0,
+    opaque: 0,
+    evaluated: 0,
+    strict: 0,
+    vector: 0,
+    unevaluable: 0,
+    recordedOutcomes: 0,
+  });
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    type: CORPUS_EVALUATION_TYPE,
+    version: CORPUS_EVALUATION_VERSION,
+    binding: normalizedBinding,
+    policyDigest: canonicalDigest(normalizedPolicy),
+    scope,
+    basis,
+    outcome: scope.status === 'UNIFORM'
+      ? corpusOutcomeSummary(partitions)
+      : { verdict: 'INSUFFICIENT_EVIDENCE', bindingCount: 0 },
+    partitions,
+  };
+}
+
+function corpusScope(partitions, scopeHints) {
+  const scopes = partitions.map((partition) => partition.scope);
+  if (scopes.some((partitionScope) => partitionScope.status === 'INVALID')) {
+    return { status: 'INVALID', partitionCount: 0 };
+  }
+  if (scopes.some((partitionScope) => partitionScope.status !== 'UNIFORM')) {
+    return { status: 'MIXED', partitionCount: scopes.length };
+  }
+  const keys = scopeHints === undefined
+    ? new Set(scopes.map((partitionScope) => partitionScope.key))
+    : new Set(scopeHints.map((hint, index) => {
+      const key = historyScopeKey(hint);
+      if (key.invalid || (scopes[index].key !== null && scopes[index].key !== key.digest)) return null;
+      return key.digest;
+    }));
+  if (keys.has(null)) return { status: 'INVALID', partitionCount: 0 };
+  if (scopeHints !== undefined && scopeHints.some((hint, index) => {
+    const key = historyScopeKey(hint);
+    return key.invalid || (scopes[index].key !== null && scopes[index].key !== key.digest);
+  })) {
+    return { status: 'MIXED', partitionCount: scopes.length };
+  }
+  return {
+    status: keys.size > 1 ? 'MIXED' : 'UNIFORM',
+    partitionCount: keys.size,
+  };
+}
+
+function corpusOutcomeSummary(partitions) {
+  const evaluated = partitions.filter((partition) => partition.outcome.bindingCount > 0);
+  const bindingCount = evaluated.reduce((total, partition) => total + partition.outcome.bindingCount, 0);
+  if (bindingCount === 0) return { verdict: 'INSUFFICIENT_EVIDENCE', bindingCount: 0 };
+
+  let total = 0;
+  let min = Infinity;
+  let max = -Infinity;
+  let hasNegative = false;
+  let hasPositive = false;
+  for (const partition of evaluated) {
+    const outcome = partition.outcome;
+    total += outcome.meanDelta * outcome.bindingCount;
+    min = Math.min(min, outcome.minDelta);
+    max = Math.max(max, outcome.maxDelta);
+    hasNegative ||= outcome.minDelta < 0;
+    hasPositive ||= outcome.maxDelta > 0;
+  }
+  const verdict = hasNegative && hasPositive
+    ? 'MIXED_EVIDENCE'
+    : hasNegative
+      ? 'COUNTERFACTUAL_WORSE'
+      : hasPositive
+        ? 'COUNTERFACTUAL_BETTER'
+        : 'TIE';
+  return {
+    verdict,
+    bindingCount,
+    minDelta: min,
+    maxDelta: max,
+    meanDelta: total / bindingCount,
   };
 }
 
@@ -260,8 +380,12 @@ function requireHistory(history) {
 function historyScope(entries) {
   const keys = entries.map(historyScopeKey);
   const scopes = new Set(keys.map((key) => key.digest));
-  if (keys.some((key) => key.invalid)) return { status: 'INVALID', partitionCount: scopes.size };
-  return { status: scopes.size > 1 ? 'MIXED' : 'UNIFORM', partitionCount: scopes.size };
+  if (keys.some((key) => key.invalid)) return { status: 'INVALID', partitionCount: scopes.size, key: null };
+  return {
+    status: scopes.size > 1 ? 'MIXED' : 'UNIFORM',
+    partitionCount: scopes.size,
+    key: scopes.size === 1 ? keys[0].digest : null,
+  };
 }
 
 function insufficientScopeEvaluation({ normalizedPolicy, normalizedBinding, scope, historyLength }) {
@@ -289,6 +413,7 @@ function historyScopeKey(entry) {
       entry?.worldImplementationDigest,
       (value) => typeof value === 'string' && DIGEST_PATTERN.test(value),
     ),
+    scenario: scopeField(entry?.scenario, (value) => typeof value === 'string' && value.length > 0),
     tokenMapDigest: scopeField(
       entry?.tokenMapDigest,
       (value) => typeof value === 'string' && DIGEST_PATTERN.test(value),

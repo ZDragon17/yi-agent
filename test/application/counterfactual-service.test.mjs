@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { initLab, runLab } from '../../src/application/agent-service.mjs';
-import { evaluateLabCounterfactual } from '../../src/application/counterfactual-service.mjs';
+import {
+  evaluateLabCounterfactual,
+  evaluateLabsCounterfactual,
+} from '../../src/application/counterfactual-service.mjs';
 import { createCandidatePolicyAdvisor } from '../../src/runtime/candidate-policy.mjs';
 import { LabStore } from '../../src/runtime/lab-store.mjs';
 import { verifySelfDigest } from '../../src/runtime/schema.mjs';
@@ -162,6 +165,65 @@ test('an explicitly WorldPort-bound policy cannot be evaluated against another i
       }),
       (error) => error.code === 'INVALID_INPUT',
     );
+  });
+});
+
+test('a corpus report combines repeatable Lab partitions without executing either Lab', async () => {
+  await withTemp(async (root) => {
+    const labPaths = [path.join(root, 'lab-a'), path.join(root, 'lab-b')];
+    const policies = [];
+    for (const [index, labPath] of labPaths.entries()) {
+      await initLab({ labPath, labId: 'counterfactual-corpus', worldId: 'temperature', seed: 'corpus-seed' });
+      const store = await LabStore.open({ labPath });
+      const token = store.manifest.tokenMap.entries[0].token;
+      policies.push({ schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: token, rules: [] });
+      await runLab({
+        labPath,
+        runId: 'run-1',
+        steps: 2,
+        scenario: 'steady',
+        advisor: createCandidatePolicyAdvisor(policies[index]),
+      });
+    }
+
+    const report = await evaluateLabsCounterfactual({ labPaths, policy: policies[0] });
+    assert.equal(verifySelfDigest(report), true);
+    assert.equal(report.type, 'counterfactual-policy-corpus-evaluation');
+    assert.equal(report.labPaths.length, 2);
+    assert.equal(report.evaluation.scope.status, 'UNIFORM');
+    assert.equal(report.evaluation.scope.partitionCount, 1);
+    assert.equal(report.evaluation.basis.historyCount, 2);
+    assert.equal(report.evaluation.partitions.length, 2);
+    assert.equal(report.evaluation.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+
+    const repeated = await evaluateLabsCounterfactual({ labPaths, policy: policies[0] });
+    assert.deepEqual(repeated, report);
+  });
+});
+
+test('a corpus keeps an incompatible Token map as mixed evidence instead of borrowing it', async () => {
+  await withTemp(async (root) => {
+    const temperatureLab = path.join(root, 'temperature-lab');
+    const inventoryLab = path.join(root, 'inventory-lab');
+    await initLab({ labPath: temperatureLab, labId: 'corpus-temperature', worldId: 'temperature', seed: 'corpus-seed' });
+    await initLab({ labPath: inventoryLab, labId: 'corpus-inventory', worldId: 'inventory', seed: 'corpus-seed' });
+    const temperatureStore = await LabStore.open({ labPath: temperatureLab });
+    const policy = {
+      schemaVersion: 1,
+      type: 'candidate-policy',
+      version: 1,
+      defaultToken: temperatureStore.manifest.tokenMap.entries[0].token,
+      rules: [],
+    };
+
+    const report = await evaluateLabsCounterfactual({
+      labPaths: [temperatureLab, inventoryLab],
+      policy,
+    });
+    assert.equal(report.evaluation.scope.status, 'MIXED');
+    assert.equal(report.evaluation.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+    assert.equal(report.evaluation.outcome.bindingCount, 0);
+    assert.equal(report.evaluation.partitions.length, 2);
   });
 });
 
