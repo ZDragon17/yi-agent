@@ -249,6 +249,19 @@ test('writable repo WorldPort applies a digest-bound patch and verifies the reta
       assert.equal(actionEvidence.readFileContent, buggySource);
       assert.equal(actionEvidence.readFileDigest, canonicalDigest({ bytes: buggySource.length, content: buggySource }));
     }
+    if (modelCalls === 2) {
+      assert.deepEqual(
+        context.observationEvidence.find((item) => item.kind === 'repo-test-result'),
+        {
+          kind: 'repo-test-result',
+          status: 'FAIL',
+          exitCode: 1,
+          timedOut: false,
+          signal: null,
+          failedTests: ['add returns the sum'],
+        },
+      );
+    }
     modelCalls += 1;
     response.setHeader('Content-Type', 'application/json');
     const patchPolicy = context.observationEvidence.find((item) => item.kind === 'repo-patch-policy');

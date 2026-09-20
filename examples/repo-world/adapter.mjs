@@ -40,6 +40,8 @@ const TEST_TIMEOUT_MS = 30_000;
 const MAX_PATCH_BYTES = 128 * 1024;
 const MAX_PROPOSAL_BYTES = 64 * 1024;
 const MAX_MODEL_READ_CONTENT = 2 * 1024;
+const MAX_FAILED_TESTS = 8;
+const MAX_FAILED_TEST_NAME_BYTES = 256;
 const MAX_NONCE_JOURNAL_BYTES = 2 * 1024 * 1024;
 const BEFORE_DIGEST_MODES = new Set(['fixed', 'current']);
 
@@ -149,6 +151,7 @@ function transition(previous, request, manifest) {
     next.lastTestStatus = result.status;
     next.lastTestExitCode = result.exitCode;
     next.lastTestOutputDigest = canonicalDigest(result.output);
+    next.lastTestDiagnostic = result.diagnostic;
   } else {
     next = makeState(previous.revision + 1, null, request.executionNonce, previous.usedExecutionNonces, testCount);
     next.lastPatchPath = patchSpec.targetPath;
@@ -203,6 +206,7 @@ function makeState(revision, repository, executionNonce = null, previousNonces =
     lastTestStatus: 'NOT_RUN',
     lastTestExitCode: null,
     lastTestOutputDigest: null,
+    lastTestDiagnostic: null,
     lastPatchPath: null,
     lastPatchBeforeDigest: null,
     lastPatchAfterDigest: null,
@@ -246,6 +250,10 @@ function observation(state) {
           replacementEncoding: 'utf8',
           maxReplacementBytes: MAX_FILE_BYTES,
         },
+      }]),
+      ...(state.lastTestDiagnostic === null ? [] : [{
+        kind: 'repo-test-result',
+        ...state.lastTestDiagnostic,
       }]),
     ],
   };
@@ -306,7 +314,7 @@ function runTests() {
   const status = lstatSync(target);
   if (!status.isFile() || status.isSymbolicLink()) throw new Error('run-tests only permits a regular test file');
   const relativeTestPath = path.relative(rootRealPath, target);
-  const result = spawnSync(process.execPath, ['--test', relativeTestPath], {
+  const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', relativeTestPath], {
     cwd: rootRealPath,
     env: safeEnvironment(),
     encoding: 'utf8',
@@ -315,11 +323,32 @@ function runTests() {
     timeout: TEST_TIMEOUT_MS,
   });
   const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.slice(0, MAX_OUTPUT_BYTES);
+  const timedOut = result.error?.code === 'ETIMEDOUT';
+  const testStatus = result.status === 0 && result.signal === null && result.error === undefined ? 'PASS' : 'FAIL';
   return {
-    status: result.status === 0 && result.signal === null && result.error === undefined ? 'PASS' : 'FAIL',
+    status: testStatus,
     exitCode: Number.isInteger(result.status) ? result.status : null,
     output,
+    diagnostic: {
+      status: testStatus,
+      exitCode: Number.isInteger(result.status) ? result.status : null,
+      timedOut,
+      signal: result.signal ?? null,
+      failedTests: testStatus === 'PASS' ? [] : failedTestNames(output),
+    },
   };
+}
+
+function failedTestNames(output) {
+  const names = [];
+  for (const line of output.split(/\r?\n/u)) {
+    const match = /^not ok \d+ - (.+)$/u.exec(line);
+    if (match === null) continue;
+    const name = match[1].replaceAll(/[\u0000-\u001f\u007f]/gu, '').trim().slice(0, MAX_FAILED_TEST_NAME_BYTES);
+    if (name.length > 0 && !names.includes(name)) names.push(name);
+    if (names.length >= MAX_FAILED_TESTS) break;
+  }
+  return names;
 }
 
 function readPatchSpec(filePath) {
