@@ -2377,7 +2377,7 @@ function normalizePlanningEvidence(value) {
 function validateExternalPolicyEvidence(value, runId) {
   if (
     value === null || typeof value !== 'object' || Array.isArray(value) ||
-    value.schemaVersion !== SCHEMA_VERSION || value.source !== 'model' ||
+    value.schemaVersion !== SCHEMA_VERSION || !['model', 'candidate-policy'].includes(value.source) ||
     typeof value.model !== 'string' || value.model.length === 0 || value.model.length > 4096 ||
     (value.token !== null && (typeof value.token !== 'string' || !TOKEN_PATTERN.test(value.token))) ||
     typeof value.responseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.responseDigest) ||

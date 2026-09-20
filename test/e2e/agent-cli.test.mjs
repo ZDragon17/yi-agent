@@ -1008,6 +1008,56 @@ test('agent loop persists the candidate policy identity across Run boundaries', 
   }
 });
 
+test('candidate policy loop preserves identity across an opaque WorldPort', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-policy-opaque-loop-e2e-'));
+  const worldConfig = path.join(root, 'world-adapter.json');
+  const policyPath = path.join(root, 'policy.json');
+  const lab = path.join(root, 'lab');
+  await writeFile(worldConfig, JSON.stringify({
+    executable: process.execPath,
+    args: [OPAQUE_VECTOR_ADAPTER],
+    adapterId: 'opaque-vector-adapter-v1',
+    worldId: 'opaque-vector',
+    timeoutMs: 5_000,
+  }));
+  try {
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'opaque-vector', '--seed', 'policy-opaque-loop-seed',
+      '--adapter', worldConfig, '--json',
+    ], process.env);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const tokens = init.stdout[0].data.tokenMap.entries.map((entry) => entry.token);
+    await writeFile(policyPath, JSON.stringify({
+      schemaVersion: 1,
+      type: 'candidate-policy',
+      version: 1,
+      defaultToken: tokens[0],
+      rules: [],
+    }));
+
+    const loop = await invoke([
+      'agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '2', '--adapter', worldConfig,
+      '--policy', policyPath, '--json',
+    ], { ...process.env, YI_AGENT_API_KEY: undefined, ZAI_API_KEY: undefined });
+    assert.equal(loop.code, 0, JSON.stringify(loop));
+    assert.equal(loop.stdout[0].data.status, 'COMPLETED');
+    assert.equal(loop.stdout[0].data.runs, 2);
+    const store = await LabStore.open({ labPath: lab });
+    const runs = await store.readAllRuns();
+    const steps = runs.flatMap((run) => run.events.filter((event) => event.kind === 'STEP'));
+    assert.equal(steps.length, 2);
+    assert.equal(steps.every((event) => event.payload.policyEvidence?.source === 'candidate-policy'), true);
+    assert.equal(steps.every((event) => event.payload.policyEvidence?.model === 'candidate-policy-v1'), true);
+    const chain = await invoke([
+      'replay', '--lab', lab, '--chain', '--adapter', worldConfig, '--json',
+    ], process.env);
+    assert.equal(chain.code, 0, JSON.stringify(chain));
+    assert.equal(chain.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent loop refuses a different candidate policy on resume', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-policy-resume-e2e-'));
   const lab = path.join(root, 'lab');
