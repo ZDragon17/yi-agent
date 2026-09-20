@@ -53,7 +53,7 @@ npm test
 # 初始化并运行一个内置世界
 $lab = Join-Path $PWD 'temperature-lab'
 node .\\bin\\yi-agent.mjs init --lab $lab --world temperature --seed demo --json
-node .\\bin\\yi-agent.mjs run --lab $lab --steps 8 --kernel-only --json
+node .\\bin\\yi-agent.mjs agent run --lab $lab --steps 8 --kernel-only --json
 node .\\bin\\yi-agent.mjs inspect --lab $lab --json
 node .\\bin\\yi-agent.mjs replay --lab $lab --chain --json
 ```
