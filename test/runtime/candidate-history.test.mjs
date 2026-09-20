@@ -64,6 +64,33 @@ test('candidate history isolates same visible contracts with different WorldPort
   assert.notEqual(history[0].candidateScopeDigest, history[1].candidateScopeDigest);
 });
 
+test('candidate history isolates same WorldPort contract across different seeds', () => {
+  const history = annotateCandidateHistory([
+    {
+      worldId: 'temperature',
+      worldVersion: 'temperature-v1',
+      worldImplementationDigest: `sha256:${'a'.repeat(64)}`,
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      seed: 'seed-a',
+      candidateOutcome: { candidateDigest: CANDIDATE_DIGEST },
+    },
+    {
+      worldId: 'temperature',
+      worldVersion: 'temperature-v1',
+      worldImplementationDigest: `sha256:${'a'.repeat(64)}`,
+      tokenMapDigest: `sha256:${'1'.repeat(64)}`,
+      scenario: 'steady',
+      seed: 'seed-b',
+      candidateOutcome: { candidateDigest: CANDIDATE_DIGEST },
+    },
+  ]);
+
+  assert.equal(history[0].attempt, 1);
+  assert.equal(history[1].attempt, 1);
+  assert.notEqual(history[0].candidateScopeDigest, history[1].candidateScopeDigest);
+});
+
 test('candidate history derives prediction quality without calling it task success', () => {
   const history = annotateCandidateHistory([
     {

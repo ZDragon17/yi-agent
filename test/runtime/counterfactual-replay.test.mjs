@@ -118,6 +118,41 @@ test('vector binding refuses evidence from a different WorldPort implementation'
   assert.equal(result.samples[0].reason, 'NO_RECORDED_OUTCOME');
 });
 
+test('vector binding refuses evidence from a different WorldPort seed', () => {
+  const history = [
+    entry({
+      ...WORLD,
+      worldId: 'temperature',
+      worldImplementationDigest: `sha256:${'a'.repeat(64)}`,
+      seed: 'seed-a',
+      kernelStep: 1,
+      observationDigest: CONTEXT_OBSERVATION,
+      beforeStateDigest: BEFORE_ONE,
+      beforeVector: VECTOR_ONE,
+      token: TOKEN_A,
+      goalDistanceAfter: 0.8,
+    }),
+    entry({
+      ...WORLD,
+      worldId: 'temperature',
+      worldImplementationDigest: `sha256:${'a'.repeat(64)}`,
+      seed: 'seed-b',
+      kernelStep: 2,
+      observationDigest: CONTEXT_OBSERVATION,
+      beforeStateDigest: BEFORE_TWO,
+      beforeVector: VECTOR_ONE,
+      token: TOKEN_B,
+      goalDistanceAfter: 0.5,
+    }),
+  ];
+  const result = evaluateCounterfactualPolicy({ history, policy: policy(TOKEN_B) });
+
+  assert.equal(result.divergence.vector, 0);
+  assert.equal(result.divergence.unevaluable, 1);
+  assert.equal(result.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.samples[0].reason, 'NO_RECORDED_OUTCOME');
+});
+
 test('a counterfactual token recorded only at another observable vector stays unevaluable', () => {
   const history = [
     entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),
@@ -263,11 +298,13 @@ function entry({
   verified = true,
   worldId,
   worldImplementationDigest,
+  seed,
 }) {
   return {
     ...WORLD,
     ...(worldId === undefined ? {} : { worldId }),
     ...(worldImplementationDigest === undefined ? {} : { worldImplementationDigest }),
+    ...(seed === undefined ? {} : { seed }),
     runId: `run-${Math.ceil(kernelStep / 2)}`,
     sequence: kernelStep,
     kernelStep,

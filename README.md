@@ -152,7 +152,7 @@ learn 只吸收有证据的结果
 JSONL 账本记录完整因果链
 ```
 
-候选集的数量和摘要指纹会进入策略证据，便于重启后的审计；完整候选内容仍不进入权限边界，也不被 Replay 当作新的事实。
+候选集的数量、内容和摘要指纹会进入策略证据，便于重启后的审计；候选内容仍不进入权限边界，也不被 Replay 当作新的事实。若候选集触发上下文探测，Replay 会使用账本中的有界候选集重建同一选择分支，不再依赖模型响应。
 
 核心原则是：
 
@@ -263,7 +263,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 目标驻留（F-118 度量更正）：长跑中「6/7 平台在数百步后赢家率瓦解」经值曲线插桩证实为度量伪影：~650 步时值精确到达目标 400 并转入驻留（|v-400| ≤ 0.2 持续 500+ 步），越过目标后调度赢家不再是价值最优动作，调度赢家率失效。周期-7 碰撞世界的完整证据链：~150 步收敛到相位条件策略 → 值以接近理论上限的增速逼近目标 → 精确到达并无限期驻留（距离 0.0），全程重放一致；F-40 重验信念门控保留（v27 `revalidationBeliefGate`，动机更正为证据治理），同轮检验并回退了「饥饿上下文探测」假设（与既定学习契约 E2E 冲突）；
 - Windows PowerShell CLI：所有核心实验可以脚本化运行。
 
-候选集不是让模型直接控制多个动作，也不是一次执行多个动作。它只把“提出一个答案”扩展为“提出有限假设集合”，再让同一个 Kernel 在同一观测、同一 Memory 和同一 RNG 边界上逐个比较。账本只固化最终选择；原始回答由 `responseDigest` 绑定，Replay 不重新请求模型。
+候选集不是让模型直接控制多个动作，也不是一次执行多个动作。它只把“提出一个答案”扩展为“提出有限假设集合”，再让同一个 Kernel 在同一观测、同一 Memory 和同一 RNG 边界上逐个比较。账本固化最终选择和有界候选集证据；原始回答由 `responseDigest` 绑定，Replay 不重新请求模型。
 
 候选集已经在四个内置 WorldPort（temperature、virtual-desktop、inventory、queue）上验证了传输、unsafe 过滤、账本记录和 Replay；随后又通过独立 CLI 子进程的 HTTP 模型入口，以及四维 opaque 外部 WorldPort 的两次独立运行和重启恢复。每个 STEP 只执行一个最终安全动作，候选集大小和摘要指纹用于审计。F-276 至 F-278 证明的是协议和恢复边界，不是候选质量、跨领域收益、真实模型长期改进或现实副作用安全。
 
@@ -733,7 +733,7 @@ F-96 增加 `experiment policy`，用 `candidate-policy` 文件表达一个受�
 
 F-281 增加 `experiment counterfactual`：把账本候选历史当作模拟器，对任意 `candidate-policy` 做零执行的反事实评估。命令逐条读取最近一段已注释候选历史（当前上界 32 条），把每一步分为 matched（策略会选择与账本相同的 Token）、opaque（账本未记录 observationDigest 或 Token）与 diverged；对每个分歧点，只有当账本在同一个证据锚上真实执行过反事实 Token 且结果已验证时才打分，两侧都只接受 `verify` 判定为 ACTION 归因且 learnable 的结果。评估严格锚定在单步上：它不会编造账本从未观察过的世界状态去推演多步反事实轨迹；裁决词汇为 `COUNTERFACTUAL_BETTER`（有绑定证据且从不更差）、`TIE`、`COUNTERFACTUAL_WORSE` 与 `INSUFFICIENT_EVIDENCE`。
 
-证据锚分两级（`history-anchored-one-step-v2`）。STRICT 要求完全相同的 before 状态摘要；实测发现它在单 Lab 历史上永不出现，因为 before 摘要哈希了单调递增的 kernelStep，该级只对跨 Lab 语料有意义。VECTOR 级按"同 WorldPort 身份 + 同 scenario + 同 before 观测向量摘要"绑定，是真实单 Lab 历史上唯一可命中的锚；同因实测确认 world-port-base 每次 transition 递增 stateVersion，observationDigest 在任何世界上都不会重复，不能作为锚。候选历史的公开投影为此新增有界 `beforeVectorDigest`（定长摘要，不进入模型提示的字段白名单）。首次真实语料测量见 F-282：150 步 temperature 候选集运行中，32 条窗口内向量复现为 3 个取值，单 Token 策略各 16 次分歧里 11/5 条获得 VECTOR 证据，双策略裁决均为 TIE。
+证据锚分两级（`history-anchored-one-step-v2`）。STRICT 要求完全相同的 before 状态摘要；实测发现它在单 Lab 历史上永不出现，因为 before 摘要哈希了单调递增的 kernelStep，该级只对跨 Lab 语料有意义。VECTOR 级按"同 WorldPort 身份 + 同 seed + 同 scenario + 同 before 观测向量摘要"绑定，是真实单 Lab 历史上唯一可命中的锚；不同 seed 的相同向量不会互相借用反事实结果。同因实测确认 world-port-base 每次 transition 递增 stateVersion，observationDigest 在任何世界上都不会重复，不能作为锚。候选历史的公开投影为此新增有界 `beforeVectorDigest`（定长摘要，不进入模型提示的字段白名单）。首次真实语料测量见 F-282：150 步 temperature 候选集运行中，32 条窗口内向量复现为 3 个取值，单 Token 策略各 16 次分歧里 11/5 条获得 VECTOR 证据，双策略裁决均为 TIE。
 
 策略文件可以附带 `worldId`、`worldVersion`、`worldImplementationDigest` 和 `tokenMapDigest`。提供这些字段时，`experiment counterfactual` 与 `experiment policy` 会校验目标 Lab 的 WorldPort 身份；旧的无绑定 v1 文件仍按兼容路径读取。
 

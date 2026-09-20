@@ -753,6 +753,7 @@ export async function runLab(input) {
       candidateHistory = annotateCandidateHistory([...candidateHistory, {
         runId,
         worldId: manifest.worldId,
+        seed: manifest.seed,
         scenario,
         worldVersion: manifest.worldVersion,
         ...(typeof manifest.worldImplementationDigest === 'string'
@@ -1455,6 +1456,7 @@ function policyEvidence(modelDecision, intent, capabilities, {
     ...(supersedesCandidateDigest === null ? {} : { supersedesCandidateDigest }),
     ...(modelDecision.errorContext === undefined ? {} : { errorContext: cloneJson(modelDecision.errorContext) }),
     ...(candidateSet === null ? {} : {
+      candidateSet: cloneJson(candidateSet),
       candidateSetSize: candidateSet.length,
       candidateSetDigest: canonicalDigest(candidateSet),
     }),

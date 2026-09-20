@@ -93,7 +93,7 @@ function compareWithPreviousPairedCandidate(previous, entry) {
   return previous === undefined ? null : comparePairedCandidates(previous, entry);
 }
 
-export function candidateScopeDigest({ worldId, worldVersion, worldImplementationDigest, tokenMapDigest, scenario, candidateDigest } = {}) {
+export function candidateScopeDigest({ worldId, worldVersion, worldImplementationDigest, tokenMapDigest, scenario, candidateDigest, seed } = {}) {
   if (typeof worldVersion !== 'string' || worldVersion.length === 0 ||
       typeof tokenMapDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(tokenMapDigest) ||
       typeof scenario !== 'string' || scenario.length === 0 ||
@@ -102,6 +102,7 @@ export function candidateScopeDigest({ worldId, worldVersion, worldImplementatio
   }
   return canonicalDigest({
     ...worldPortIdentity({ worldId, worldImplementationDigest }),
+    ...seedIdentity(seed),
     worldVersion,
     tokenMapDigest,
     scenario,
@@ -109,7 +110,7 @@ export function candidateScopeDigest({ worldId, worldVersion, worldImplementatio
   });
 }
 
-export function decisionContextDigest({ worldId, worldVersion, worldImplementationDigest, tokenMapDigest, scenario, observationDigest } = {}) {
+export function decisionContextDigest({ worldId, worldVersion, worldImplementationDigest, tokenMapDigest, scenario, observationDigest, seed } = {}) {
   if (typeof worldVersion !== 'string' || worldVersion.length === 0 ||
       typeof tokenMapDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(tokenMapDigest) ||
       typeof scenario !== 'string' || scenario.length === 0 ||
@@ -118,6 +119,7 @@ export function decisionContextDigest({ worldId, worldVersion, worldImplementati
   }
   return canonicalDigest({
     ...worldPortIdentity({ worldId, worldImplementationDigest }),
+    ...seedIdentity(seed),
     worldVersion,
     tokenMapDigest,
     scenario,
@@ -132,6 +134,7 @@ function candidateScope(entry) {
     worldId: entry.worldId,
     worldVersion: entry.worldVersion,
     worldImplementationDigest: entry.worldImplementationDigest,
+    seed: entry.seed,
     tokenMapDigest: entry.tokenMapDigest,
     scenario: entry.scenario,
     candidateDigest: outcome?.candidateDigest,
@@ -204,6 +207,7 @@ function rememberPairedCandidate(candidates, entry, quality, relevance) {
 function candidateReference(entry, quality) {
   return {
     ...(worldPortIdentity(entry)),
+    ...(seedIdentity(entry.seed)),
     worldVersion: entry.worldVersion,
     tokenMapDigest: entry.tokenMapDigest,
     scenario: entry.scenario,
@@ -243,9 +247,20 @@ function nestedMapSet(root, keys, value) {
 
 function worldPortScopeKeys(entry) {
   const identity = worldPortIdentity(entry);
+  const seed = seedValue(entry?.seed);
+  const seedKeys = seed === null ? [] : ['seed', seed];
   return identity === null
-    ? [entry.worldVersion, entry.tokenMapDigest, entry.scenario]
-    : [identity.worldId, identity.worldImplementationDigest, entry.worldVersion, entry.tokenMapDigest, entry.scenario];
+    ? [entry.worldVersion, entry.tokenMapDigest, entry.scenario, ...seedKeys]
+    : [identity.worldId, identity.worldImplementationDigest, entry.worldVersion, entry.tokenMapDigest, entry.scenario, ...seedKeys];
+}
+
+function seedIdentity(value) {
+  const seed = seedValue(value);
+  return seed === null ? {} : { seed };
+}
+
+function seedValue(value) {
+  return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
 function worldPortIdentity(entry) {

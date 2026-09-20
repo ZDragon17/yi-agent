@@ -615,6 +615,7 @@ export class LabStore {
           chunk.push({
             runId,
             worldId: run.start.worldId,
+            seed: run.manifest.seed,
             scenario: run.start.scenario,
             worldVersion: run.manifest.worldVersion,
             tokenMapDigest: run.manifest.tokenMap.digest,
@@ -3073,10 +3074,25 @@ function validatePolicyEvidence(value, field, corruptOnFailure) {
 function isValidCandidateSetEvidence(value) {
   const hasSize = value.candidateSetSize !== undefined;
   const hasDigest = value.candidateSetDigest !== undefined;
-  return (!hasSize && !hasDigest) ||
-    (hasSize && hasDigest && Number.isSafeInteger(value.candidateSetSize) &&
+  const hasSet = value.candidateSet !== undefined;
+  if (!hasSize && !hasDigest && !hasSet) return true;
+  if (!hasSet) {
+    return hasSize && hasDigest && Number.isSafeInteger(value.candidateSetSize) &&
       value.candidateSetSize >= 1 && value.candidateSetSize <= MAX_CANDIDATE_SET_SIZE &&
-      typeof value.candidateSetDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.candidateSetDigest));
+      typeof value.candidateSetDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.candidateSetDigest);
+  }
+  if (!hasSize || !hasDigest || !Number.isSafeInteger(value.candidateSetSize) ||
+      value.candidateSetSize < 1 || value.candidateSetSize > MAX_CANDIDATE_SET_SIZE ||
+      !Array.isArray(value.candidateSet) || value.candidateSet.length !== value.candidateSetSize ||
+      typeof value.candidateSetDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.candidateSetDigest) ||
+      value.candidateSetDigest !== canonicalDigest(value.candidateSet)) return false;
+  return value.candidateSet.every((candidate) => isValidCandidateSetEntry(candidate));
+}
+
+function isValidCandidateSetEntry(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    typeof value.token === 'string' && TOKEN_PATTERN.test(value.token) &&
+    (value.proposal === undefined || isValidModelProposal(value.proposal));
 }
 
 function isValidErrorContext(value) {

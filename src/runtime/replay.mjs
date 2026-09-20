@@ -1,4 +1,4 @@
-import { KERNEL_LEARNING_VERSIONS, learn, mergeObservationFeedback, step, stepWithPreference, validateObservationFeedback, verify } from '../kernel/index.mjs';
+import { KERNEL_LEARNING_VERSIONS, learn, mergeObservationFeedback, step, stepWithPreference, stepWithPreferences, validateObservationFeedback, verify } from '../kernel/index.mjs';
 import {
   SCHEMA_VERSION,
   MAX_MODEL_PROPOSAL_BYTES,
@@ -335,8 +335,13 @@ function replayStep({ event, state, manifest, adapter, world, kernel, worldId, s
       ...(state.changeSupervisor?.strategy === undefined ? {} : { strategy: state.changeSupervisor.strategy }),
       ...(planning === undefined ? {} : { planning }),
     };
+    const recordedCandidateSet = Array.isArray(decision?.candidateSet)
+      ? decision.candidateSet.map((candidate) => ({ ...cloneJson(candidate), schemaVersion: SCHEMA_VERSION, required: true }))
+      : null;
     intent = decision === undefined && randomization === null
       ? kernel.step(stepInput)
+      : recordedCandidateSet !== null
+        ? stepWithPreferences(stepInput, recordedCandidateSet)
       : kernel.stepWithPreference(
           stepInput,
             decision?.applied && payload.choice?.proposal !== undefined
@@ -790,10 +795,25 @@ function validatePolicyEvidence(value, sequence) {
 function isValidCandidateSetEvidence(value) {
   const hasSize = value.candidateSetSize !== undefined;
   const hasDigest = value.candidateSetDigest !== undefined;
-  return (!hasSize && !hasDigest) ||
-    (hasSize && hasDigest && Number.isSafeInteger(value.candidateSetSize) &&
+  const hasSet = value.candidateSet !== undefined;
+  if (!hasSize && !hasDigest && !hasSet) return true;
+  if (!hasSet) {
+    return hasSize && hasDigest && Number.isSafeInteger(value.candidateSetSize) &&
       value.candidateSetSize >= 1 && value.candidateSetSize <= MAX_CANDIDATE_SET_SIZE &&
-      typeof value.candidateSetDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.candidateSetDigest));
+      typeof value.candidateSetDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(value.candidateSetDigest);
+  }
+  if (!hasSize || !hasDigest || !Number.isSafeInteger(value.candidateSetSize) ||
+      value.candidateSetSize < 1 || value.candidateSetSize > MAX_CANDIDATE_SET_SIZE ||
+      !Array.isArray(value.candidateSet) || value.candidateSet.length !== value.candidateSetSize ||
+      typeof value.candidateSetDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value.candidateSetDigest) ||
+      value.candidateSetDigest !== canonicalDigest(value.candidateSet)) return false;
+  return value.candidateSet.every((candidate) => isValidCandidateSetEntry(candidate));
+}
+
+function isValidCandidateSetEntry(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    typeof value.token === 'string' && TOKEN_PATTERN.test(value.token) &&
+    (value.proposal === undefined || isValidModelProposal(value.proposal));
 }
 
 function isValidErrorContext(value) {

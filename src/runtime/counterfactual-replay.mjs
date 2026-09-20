@@ -140,6 +140,7 @@ function observableVectorKey(entry) {
   // the same numeric vector under different dynamics is not the same state.
   const scoped = canonicalDigest({
     ...worldPortIdentity(entry),
+    ...seedIdentity(entry?.seed),
     worldVersion: typeof entry?.worldVersion === 'string' ? entry.worldVersion : null,
     tokenMapDigest: typeof entry?.tokenMapDigest === 'string' ? entry.tokenMapDigest : null,
     scenario: typeof entry?.scenario === 'string' ? entry.scenario : null,
@@ -156,6 +157,10 @@ function worldPortIdentity(entry) {
     : null;
   if (worldId === null && worldImplementationDigest === null) return {};
   return { worldId, worldImplementationDigest };
+}
+
+function seedIdentity(value) {
+  return typeof value === 'string' && value.length > 0 ? { seed: value } : {};
 }
 
 function rawVectorDigest(vector) {

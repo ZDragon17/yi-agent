@@ -1029,6 +1029,35 @@ test('application evaluates model candidates with the kernel and replays the sel
   });
 });
 
+test('application persists the candidate set needed to replay a contextual probe', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'context-probe-lab', worldId: 'temperature', seed: 'steady-2' });
+    const store = await LabStore.open({ labPath: lab });
+    const [primary, alternative] = store.manifest.tokenMap.entries.map((entry) => entry.token);
+    await runLab({
+      labPath: lab,
+      runId: 'run-1',
+      steps: 6,
+      scenario: 'steady',
+      advisor: async () => ({
+        model: 'context-probe-advisor',
+        responseDigest: `sha256:${'d'.repeat(64)}`,
+        token: primary,
+        candidates: [{ token: alternative }],
+      }),
+    });
+
+    const run = await (await LabStore.open({ labPath: lab })).readRun('run-1');
+    const steps = run.events.filter((event) => event.kind === 'STEP');
+    assert.ok(steps.some((event) => event.payload.choice.contextProbe === true));
+    assert.deepEqual(steps[0].payload.policyEvidence.candidateSet, [
+      { token: primary },
+      { token: alternative },
+    ]);
+    assert.equal((await replayLab({ labPath: lab, runId: 'run-1' })).verdict, 'CONSISTENT');
+  });
+});
+
 test('application carries candidate-set evidence across built-in WorldPorts', async () => {
   await withLab(async (root) => {
     for (const worldId of ['temperature', 'virtual-desktop', 'inventory', 'queue']) {
