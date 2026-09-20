@@ -52,8 +52,8 @@ export async function runPairedPolicies(input) {
     requireTerminalParent(parentInspection.current);
     const steps = requireSteps(source.steps);
     const allowedTokens = new Set(parentStore.manifest.tokenMap.entries.map((entry) => entry.token));
-    const leftPolicy = normalizeCandidatePolicy(source.leftPolicy, allowedTokens);
-    const rightPolicy = normalizeCandidatePolicy(source.rightPolicy, allowedTokens);
+    const leftPolicy = normalizeCandidatePolicy(source.leftPolicy, allowedTokens, parentStore.manifest);
+    const rightPolicy = normalizeCandidatePolicy(source.rightPolicy, allowedTokens, parentStore.manifest);
     if (canonicalDigest(leftPolicy) === canonicalDigest(rightPolicy)) {
       throw new LabStoreError('INVALID_INPUT', 'Paired policies must differ.', { fields: ['leftPolicy', 'rightPolicy'] });
     }
@@ -288,7 +288,7 @@ function validateStart(start, parentLabPath, manifest, current) {
   const allowedTokens = new Set(manifest.tokenMap.entries.map((entry) => entry.token));
   let policiesValid = false;
   try {
-    policiesValid = ['left', 'right'].every((side) => canonicalJson(normalizeCandidatePolicy(start.policies?.[side], allowedTokens)) === canonicalJson(start.policies[side]));
+    policiesValid = ['left', 'right'].every((side) => canonicalJson(normalizeCandidatePolicy(start.policies?.[side], allowedTokens, manifest)) === canonicalJson(start.policies[side]));
   } catch {
     policiesValid = false;
   }

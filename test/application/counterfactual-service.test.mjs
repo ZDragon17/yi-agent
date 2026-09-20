@@ -133,6 +133,34 @@ test('policies are bound to the parent token map and existing labs', async () =>
   });
 });
 
+test('an explicitly WorldPort-bound policy cannot be evaluated against another implementation', async () => {
+  await withTemp(async (root) => {
+    const labPath = path.join(root, 'lab');
+    await initLab({ labPath, labId: 'counterfactual-identity-lab', worldId: 'temperature', seed: 'counterfactual-identity-seed' });
+    const store = await LabStore.open({ labPath });
+    const token = store.manifest.tokenMap.entries[0].token;
+    const bound = {
+      schemaVersion: 1,
+      type: 'candidate-policy',
+      version: 1,
+      worldId: store.manifest.worldId,
+      worldVersion: store.manifest.worldVersion,
+      worldImplementationDigest: store.manifest.worldImplementationDigest,
+      tokenMapDigest: store.manifest.tokenMap.digest,
+      defaultToken: token,
+      rules: [],
+    };
+
+    await assert.rejects(
+      () => evaluateLabCounterfactual({
+        labPath,
+        policy: { ...bound, worldImplementationDigest: `sha256:${'f'.repeat(64)}` },
+      }),
+      (error) => error.code === 'INVALID_INPUT',
+    );
+  });
+});
+
 async function withTemp(callback) {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-counterfactual-test-'));
   try {

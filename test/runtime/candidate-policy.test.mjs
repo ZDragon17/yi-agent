@@ -55,6 +55,44 @@ test('candidate policy rejects duplicate contexts and tokens outside the capabil
   );
 });
 
+test('candidate policy preserves an optional WorldPort identity and rejects a mismatched binding', () => {
+  const identity = {
+    worldId: 'temperature',
+    worldVersion: 'temperature.v1',
+    worldImplementationDigest: `sha256:${'a'.repeat(64)}`,
+    tokenMapDigest: `sha256:${'b'.repeat(64)}`,
+  };
+  const policy = normalizeCandidatePolicy({
+    schemaVersion: 1,
+    type: 'candidate-policy',
+    version: 1,
+    ...identity,
+    defaultToken: TOKENS[0],
+    rules: [],
+  }, new Set(TOKENS), identity);
+
+  assert.deepEqual(policy, {
+    schemaVersion: 1,
+    type: 'candidate-policy',
+    version: 1,
+    ...identity,
+    defaultToken: TOKENS[0],
+    rules: [],
+  });
+  assert.throws(
+    () => normalizeCandidatePolicy({
+      schemaVersion: 1,
+      type: 'candidate-policy',
+      version: 1,
+      ...identity,
+      worldImplementationDigest: `sha256:${'c'.repeat(64)}`,
+      defaultToken: TOKENS[0],
+      rules: [],
+    }, new Set(TOKENS), identity),
+    (error) => error.code === 'INVALID_INPUT',
+  );
+});
+
 test('paired policy comparison keeps policy identity and trace evidence separate', () => {
   const digest = (letter) => `sha256:${letter.repeat(64)}`;
   assert.deepEqual(comparePairedPolicies({

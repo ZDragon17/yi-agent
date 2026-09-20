@@ -26,7 +26,12 @@ export async function evaluateLabCounterfactual(input) {
     throw new LabStoreError('CONFLICT', 'A counterfactual evaluation requires a lab without an active or corrupt run.', { field: 'labPath', status: current.status });
   }
   const allowedTokens = new Set(store.manifest.tokenMap.entries.map((entry) => entry.token));
-  const policy = normalizeCandidatePolicy(requireRecord(source.policy, 'policy'), allowedTokens);
+  const policy = normalizeCandidatePolicy(requireRecord(source.policy, 'policy'), allowedTokens, {
+    worldId: store.manifest.worldId,
+    worldVersion: store.manifest.worldVersion,
+    worldImplementationDigest: store.manifest.worldImplementationDigest,
+    tokenMapDigest: store.manifest.tokenMap.digest,
+  });
   const history = await store.readCandidateOutcomes();
   const evaluation = evaluateCounterfactualPolicy({
     history,

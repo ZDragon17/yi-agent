@@ -8,7 +8,7 @@ const MAX_POLICY_RULES = 8;
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
-export function normalizeCandidatePolicy(input, allowedTokens) {
+export function normalizeCandidatePolicy(input, allowedTokens, worldPort = null) {
   if (!isRecord(input) || input.schemaVersion !== SCHEMA_VERSION || input.type !== POLICY_TYPE ||
       input.version !== POLICY_VERSION || !(allowedTokens instanceof Set)) {
     throw policyError('Candidate policy has an invalid envelope.');
@@ -17,6 +17,7 @@ export function normalizeCandidatePolicy(input, allowedTokens) {
   if (!Array.isArray(input.rules) || input.rules.length > MAX_POLICY_RULES) {
     throw policyError(`Candidate policy rules must contain 0 to ${MAX_POLICY_RULES} entries.`);
   }
+  const binding = normalizeWorldPortBinding(input, worldPort);
   const seen = new Set();
   const rules = input.rules.map((rule, index) => {
     if (!isRecord(rule) || !DIGEST_PATTERN.test(rule.observationDigest ?? '')) {
@@ -34,11 +35,39 @@ export function normalizeCandidatePolicy(input, allowedTokens) {
     schemaVersion: SCHEMA_VERSION,
     type: POLICY_TYPE,
     version: POLICY_VERSION,
+    ...(binding === null ? {} : binding),
     defaultToken: input.defaultToken,
     rules,
   };
   canonicalJson(normalized);
   return normalized;
+}
+
+function normalizeWorldPortBinding(input, worldPort) {
+  const fields = ['worldId', 'worldVersion', 'worldImplementationDigest', 'tokenMapDigest'];
+  const hasBinding = fields.some((field) => Object.hasOwn(input, field));
+  if (!hasBinding) return null;
+  const binding = {
+    worldId: input.worldId,
+    worldVersion: input.worldVersion,
+    worldImplementationDigest: input.worldImplementationDigest,
+    tokenMapDigest: input.tokenMapDigest,
+  };
+  if (typeof binding.worldId !== 'string' || binding.worldId.length === 0 ||
+      typeof binding.worldVersion !== 'string' || binding.worldVersion.length === 0 ||
+      !DIGEST_PATTERN.test(binding.worldImplementationDigest ?? '') ||
+      !DIGEST_PATTERN.test(binding.tokenMapDigest ?? '')) {
+    throw policyError('Candidate policy WorldPort identity is invalid.');
+  }
+  if (worldPort !== null && (
+    worldPort.worldId !== binding.worldId ||
+    worldPort.worldVersion !== binding.worldVersion ||
+    worldPort.worldImplementationDigest !== binding.worldImplementationDigest ||
+    worldPort.tokenMapDigest !== binding.tokenMapDigest
+  )) {
+    throw policyError('Candidate policy WorldPort identity differs from the target lab.');
+  }
+  return binding;
 }
 
 export function createCandidatePolicyAdvisor(policy) {

@@ -735,6 +735,8 @@ F-281 增加 `experiment counterfactual`：把账本候选历史当作模拟器�
 
 证据锚分两级（`history-anchored-one-step-v2`）。STRICT 要求完全相同的 before 状态摘要；实测发现它在单 Lab 历史上永不出现，因为 before 摘要哈希了单调递增的 kernelStep，该级只对跨 Lab 语料有意义。VECTOR 级按"同 WorldPort 身份 + 同 scenario + 同 before 观测向量摘要"绑定，是真实单 Lab 历史上唯一可命中的锚；同因实测确认 world-port-base 每次 transition 递增 stateVersion，observationDigest 在任何世界上都不会重复，不能作为锚。候选历史的公开投影为此新增有界 `beforeVectorDigest`（定长摘要，不进入模型提示的字段白名单）。首次真实语料测量见 F-282：150 步 temperature 候选集运行中，32 条窗口内向量复现为 3 个取值，单 Token 策略各 16 次分歧里 11/5 条获得 VECTOR 证据，双策略裁决均为 TIE。
 
+策略文件可以附带 `worldId`、`worldVersion`、`worldImplementationDigest` 和 `tokenMapDigest`。提供这些字段时，`experiment counterfactual` 与 `experiment policy` 会校验目标 Lab 的 WorldPort 身份；旧的无绑定 v1 文件仍按兼容路径读取。
+
 ```powershell
 yi-agent experiment counterfactual `
   --lab E:\labs\temperature `
