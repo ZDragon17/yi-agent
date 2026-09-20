@@ -833,11 +833,13 @@ export class LabStore {
 
       const previousCurrent = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
       validateCurrentShape(previousCurrent);
+      let previousStart = null;
+      let previousContinuity = null;
       if (previousCurrent.lastRunId !== null) {
         const previousRunId = requireSafeSegment(previousCurrent.lastRunId, 'runId');
-        const previousStart = await readVerifiedObject(childPath(this.root, 'runs', previousRunId, 'start.json'), 'run start');
+        previousStart = await readVerifiedObject(childPath(this.root, 'runs', previousRunId, 'start.json'), 'run start');
         validateStart(previousStart, this.manifest, previousRunId);
-        await validateRunContinuityStream(
+        previousContinuity = await validateRunContinuityStream(
           this.root,
           previousRunId,
           previousStart,
@@ -851,10 +853,32 @@ export class LabStore {
       }
       if (previousCurrent.status === 'CORRUPT') corrupt('A corrupt lab cannot start a run.', {});
       let existingContinuation = null;
-      try {
-        existingContinuation = await this.readCurrentLoopContinuation();
-      } catch (error) {
-        if (error?.code !== 'NOT_FOUND') throw error;
+      if (previousStart?.continuation !== undefined &&
+          previousStart.continuation.planningBranchingMode !== undefined &&
+          previousContinuity?.terminal !== null) {
+        const previousLoopRun = {
+          start: previousStart,
+          terminal: previousContinuity.terminal,
+          planningBranchingModes: previousContinuity.planningBranchingModes,
+        };
+        const planningBranchingMode = inferLoopPlanningBranchingMode({
+          continuation: previousStart.continuation,
+          runs: [previousLoopRun],
+        });
+        existingContinuation = summarizeLatestLoopRun(
+          previousStart.continuation,
+          planningBranchingMode,
+          previousLoopRun,
+        );
+      } else if (previousStart?.continuation !== undefined) {
+        // Legacy continuations have no declared planning mode; preserve the
+        // historical full-group scan so older conflicting ledgers remain
+        // rejected exactly as before.
+        try {
+          existingContinuation = await this.readCurrentLoopContinuation();
+        } catch (error) {
+          if (error?.code !== 'NOT_FOUND') throw error;
+        }
       }
       if (continuation !== undefined &&
           (existingContinuation === null || existingContinuation.loopId !== continuation.loopId) &&
@@ -1878,14 +1902,32 @@ async function readLedgerSummary(root, runId, start, manifest, options, current)
 }
 
 async function validateRunContinuityStream(root, runId, start, manifest, current) {
-  const summary = { eventCount: 0, first: null, referenced: null };
+  const summary = {
+    eventCount: 0,
+    first: null,
+    referenced: null,
+    terminal: null,
+    planningBranchingModes: new Set(),
+  };
   for await (const event of readLedgerStream(root, runId, start, manifest, { requireTerminal: false })) {
     summary.eventCount += 1;
     summary.first ??= event;
     if (event.sequence === current.lastRunSequence) summary.referenced = event;
+    if (event.kind === 'STEP') {
+      const planningMode = planningBranchingModeForStep(event);
+      if (planningMode !== null) summary.planningBranchingModes.add(planningMode);
+    } else if (TERMINAL_KINDS.has(event.kind)) {
+      summary.terminal = event;
+      const planningMode = planningBranchingModeForTerminal(event);
+      if (planningMode !== null) summary.planningBranchingModes.add(planningMode);
+    }
   }
   validateCurrentReference(current, runId, summary);
   validateCurrentProjection(current, start, summary);
+  return {
+    ...summary,
+    planningBranchingModes: [...summary.planningBranchingModes],
+  };
 }
 
 async function hasTrailingNewline(filePath, size) {
