@@ -13,7 +13,7 @@ import { projectModelObservation } from '../../src/agent/observation-context.mjs
 import { builtInWorldRegistry } from '../../src/application/world-registry.mjs';
 import { loadExternalWorldRegistry } from '../../src/application/external-world-registry.mjs';
 import { runContinuous } from '../../src/application/agent-service.mjs';
-import { LabStore } from '../../src/runtime/lab-store.mjs';
+import { LEDGER_COMPRESSION_DICTIONARY, LabStore } from '../../src/runtime/lab-store.mjs';
 import { ED25519_PUBLIC_KEY, verifyAttestation } from '../fixtures/ed25519-proof.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
@@ -2842,8 +2842,16 @@ function withoutModelAge(memory) {
 function decodeStoredEvent(event) {
   return {
     ...event,
-    payload: JSON.parse(inflateRawSync(Buffer.from(event.payload, 'base64')).toString('utf8')),
+    payload: JSON.parse(inflateStoredPayload(Buffer.from(event.payload, 'base64')).toString('utf8')),
   };
+}
+
+function inflateStoredPayload(value) {
+  try {
+    return inflateRawSync(value, { dictionary: LEDGER_COMPRESSION_DICTIONARY });
+  } catch {
+    return inflateRawSync(value);
+  }
 }
 
 function encodeStoredEvent(event) {

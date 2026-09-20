@@ -49,6 +49,13 @@ const MAX_JSON_BYTES = MAX_PERSISTED_EVENT_BYTES;
 // 格式的 10,000 步模拟 Run，事件级 1 MiB 与 Memory 768 KiB 预算保持不变。
 const MAX_LEDGER_BYTES = 40 * 1024 * 1024;
 const MAX_EVENT_LINE_BYTES = MAX_PERSISTED_EVENT_BYTES;
+// Compact STEP payloads repeat these JSON fragments on every event. Keep the
+// dictionary stable so ledgers written by this version remain decodable after
+// restart; the decoder still accepts legacy payloads without a dictionary.
+export const LEDGER_COMPRESSION_DICTIONARY = Buffer.from(
+  '"afterDigest":"afterState":"changeSupervisor":"bestDistance":"cycle":"enabled":"goal":"lastChange":"afterDistance":"afterStateVersion":"beforeDistance":"beforeStateVersion":"confirmed":"decision":"evidence":"improved":"progress":"schemaVersion":"stopReason":"maxCycles":"objective":"observationDimensions":"target":"tolerance":"weights":"plan":"activeStageId":"revision":"rootGoal":"stages":"attempts":"id":"status":"plannerEnabled":"replanCount":"stagnation":"stagnationLimit":"strategy":"explorationMode":"mode":"reason":"kernelStep":"memory":"actionModels":"meanDelta":"sampleCount":"uncertainty":"beliefModels":"r1:0":"samples":"contextKeyMode":"contextKeyScale":"contextModels":"historyAccumulator":"historyClock":"lastProbeSteps":"lastVerifiedSteps":"modelAges":"relationModels":"modelClock":"pendingCreditPolicy":"maxAge":"pendingCredits":"proposalContextModels":"recentHistory":"actualDelta":"historyOrder":"token":"rejectionModels":"settledFeedback":"rngState":"algorithm":"state":"worldState":"regime":"stateVersion":"temperatureC":"usedExecutionNonces":"beforeDigest":"beforeObservation":"intervalId":"vector":"boundary":"afterCapabilities":"allowed":"cost":"safe":"capabilities":"experimentStrategy":"externalInputsDigest":"kernelLearningVersion":"planning":"horizon":"valueSpec":"valueMode":"choice":"expectedValue":"score":"expectation":"expectedDelta":"predictedObservation":"relationKey":"verificationAge":"externalInputs":"memoryEvidenceProjection":"postObservation":"receipt":"attributionWindowComplete":"basedOnVersion":"confounderCount":"constraintsDigest":"effectDigest":"executionNonce":"policyVersion":"rejectionReason":"recordedAt":"rngAfter":"rngBefore":"update":"nextMemory":"verification":"attribution":"confidence":"error":"learnable":"CONTINUE""CONFIRMED_ACTION""root""ACTIVE""coverage-v1""BALANCED""direction-v1""1""2""3""4""xorshift32""baseline""learned""distance-v2""r1:0""ACCEPTED""UPDATED""ACTION"',
+  'utf8',
+);
 const MAX_RECENT_COMMITTED_STEPS = 32;
 const EXECUTION_NONCE_FILTER_BYTES = 256 * 1024;
 const EXECUTION_NONCE_FILTER_HASHES = 4;
@@ -1667,7 +1674,10 @@ function encodeStoredLedgerEvent(event, payloadJson) {
   }
   // Long runs favor bounded CPU per step; the ledger size guard remains the
   // hard limit, and the payload is still losslessly encoded.
-  const compressedPayload = deflateRawSync(rawPayload, { level: 4 });
+  const compressedPayload = deflateRawSync(rawPayload, {
+    level: 1,
+    dictionary: LEDGER_COMPRESSION_DICTIONARY,
+  });
   return {
     ...event,
     payload: compressedPayload.toString('base64'),
@@ -1685,7 +1695,7 @@ function decodeStoredLedgerEvent(event, runId, sequence) {
   if (event.payload.length === 0) corrupt('Ledger event payload encoding is unsupported.', { runId, sequence });
   let payload;
   try {
-    const raw = inflateRawSync(Buffer.from(event.payload, 'base64'), { maxOutputLength: MAX_JSON_BYTES });
+    const raw = inflateStoredPayload(Buffer.from(event.payload, 'base64'));
     payload = JSON.parse(raw.toString('utf8'));
     canonicalJson(payload);
   } catch (cause) {
@@ -1693,6 +1703,22 @@ function decodeStoredLedgerEvent(event, runId, sequence) {
   }
   const decoded = { ...event, payload };
   return decoded;
+}
+
+function inflateStoredPayload(value) {
+  try {
+    return inflateRawSync(value, {
+      dictionary: LEDGER_COMPRESSION_DICTIONARY,
+      maxOutputLength: MAX_JSON_BYTES,
+    });
+  } catch (cause) {
+    // Ledgers written before the fixed dictionary was introduced remain valid.
+    try {
+      return inflateRawSync(value, { maxOutputLength: MAX_JSON_BYTES });
+    } catch {
+      throw cause;
+    }
+  }
 }
 
 async function* readLedgerStream(root, runId, start, manifest, options = {}) {
