@@ -35,6 +35,31 @@ test('agent CLI can use an isolated process model adapter without API configurat
   }
 });
 
+test('agent CLI can reuse an explicit persistent process model adapter session', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-process-model-e2e-'));
+  const config = path.join(root, 'model-adapter.json');
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [MODEL_ADAPTER],
+    model: 'fixture-process-model',
+    timeoutMs: 5000,
+    transport: 'persistent-jsonl',
+  }));
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'persistent-process-model-seed', '--json'], process.env)).code, 0);
+    const run = await invoke(['agent', 'run', '--lab', lab, '--steps', '2', '--model-adapter', config, '--json'], process.env);
+    assert.equal(run.code, 0);
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    const events = (await (await LabStore.open({ labPath: lab })).readRun(run.stdout[0].data.runId)).events;
+    assert.equal(events.filter((event) => event.kind === 'STEP').length, 2);
+    assert.equal(events.filter((event) => event.kind === 'STEP').every((event) => event.payload.policyEvidence?.model === 'fixture-process-model'), true);
+    assert.equal((await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent CLI turns an uncooperative process model into a bounded fallback', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-process-model-timeout-e2e-'));
   const config = path.join(root, 'model-adapter.json');
