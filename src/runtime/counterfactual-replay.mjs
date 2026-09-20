@@ -26,6 +26,10 @@ export function evaluateCounterfactualPolicy({ history, policy, binding = 'vecto
   const normalizedPolicy = requirePolicy(policy);
   const entries = requireHistory(history);
   const normalizedBinding = requireBinding(binding);
+  const scope = historyScope(entries);
+  if (scope.status === 'MIXED') {
+    return insufficientScopeEvaluation({ normalizedPolicy, normalizedBinding, scope, historyLength: entries.length });
+  }
   const rules = new Map(normalizedPolicy.rules.map((rule) => [rule.observationDigest, rule.token]));
   const index = buildOutcomeIndex(entries);
   const counters = { steps: 0, matched: 0, opaque: 0, diverged: 0, strict: 0, vector: 0, unevaluable: 0 };
@@ -94,6 +98,7 @@ export function evaluateCounterfactualPolicy({ history, policy, binding = 'vecto
     version: EVALUATION_VERSION,
     mode: EVALUATION_MODE,
     binding: normalizedBinding,
+    scope,
     policyDigest: canonicalDigest(normalizedPolicy),
     basis: { steps: counters.steps, opaque: counters.opaque, vectorStates: index.size, recordedOutcomes: outcomeCount(index) },
     agreement: {
@@ -251,8 +256,46 @@ function requireHistory(history) {
   return history;
 }
 
-function evaluationError(message) {
-  return Object.assign(new Error(message), { code: 'INVALID_INPUT', context: { field: 'policy' } });
+function historyScope(entries) {
+  const scopes = new Set(entries.map(historyScopeKey));
+  return { status: scopes.size > 1 ? 'MIXED' : 'UNIFORM', partitionCount: scopes.size };
+}
+
+function insufficientScopeEvaluation({ normalizedPolicy, normalizedBinding, scope, historyLength }) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    type: EVALUATION_TYPE,
+    version: EVALUATION_VERSION,
+    mode: EVALUATION_MODE,
+    binding: normalizedBinding,
+    scope,
+    policyDigest: canonicalDigest(normalizedPolicy),
+    basis: { steps: 0, opaque: historyLength, vectorStates: 0, recordedOutcomes: 0 },
+    agreement: { matched: 0, diverged: 0, agreementRate: null },
+    divergence: { evaluated: 0, strict: 0, vector: 0, unevaluable: 0 },
+    outcome: { verdict: 'INSUFFICIENT_EVIDENCE', bindingCount: 0 },
+    samples: [],
+  };
+}
+
+function historyScopeKey(entry) {
+  return canonicalDigest({
+    worldId: typeof entry?.worldId === 'string' && entry.worldId.length > 0 ? entry.worldId : null,
+    worldVersion: typeof entry?.worldVersion === 'string' && entry.worldVersion.length > 0
+      ? entry.worldVersion
+      : null,
+    worldImplementationDigest: typeof entry?.worldImplementationDigest === 'string' &&
+      DIGEST_PATTERN.test(entry.worldImplementationDigest)
+      ? entry.worldImplementationDigest
+      : null,
+    tokenMapDigest: typeof entry?.tokenMapDigest === 'string' && DIGEST_PATTERN.test(entry.tokenMapDigest)
+      ? entry.tokenMapDigest
+      : null,
+  });
+}
+
+function evaluationError(message, context = { field: 'policy' }) {
+  return Object.assign(new Error(message), { code: 'INVALID_INPUT', context });
 }
 
 function isRecord(value) {

@@ -85,7 +85,7 @@ test('strict binding refuses vector-only evidence from a different hidden state'
   assert.equal(result.samples[0].reason, 'NO_STRICT_OUTCOME');
 });
 
-test('vector binding refuses evidence from a different WorldPort implementation', () => {
+test('counterfactual evaluation rejects a history from different WorldPort identities', () => {
   const history = [
     entry({
       ...WORLD,
@@ -111,11 +111,40 @@ test('vector binding refuses evidence from a different WorldPort implementation'
     }),
   ];
   const result = evaluateCounterfactualPolicy({ history, policy: policy(TOKEN_B) });
-
-  assert.equal(result.divergence.vector, 0);
-  assert.equal(result.divergence.unevaluable, 1);
+  assert.equal(result.scope.status, 'MIXED');
+  assert.equal(result.scope.partitionCount, 2);
   assert.equal(result.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
-  assert.equal(result.samples[0].reason, 'NO_RECORDED_OUTCOME');
+  assert.equal(result.divergence.evaluated, 0);
+});
+
+test('counterfactual evaluation rejects a history from different Token maps', () => {
+  const history = [
+    entry({
+      ...WORLD,
+      tokenMapDigest: canonicalDigest({ tokenMap: 'seed-a' }),
+      kernelStep: 1,
+      observationDigest: CONTEXT_OBSERVATION,
+      beforeStateDigest: BEFORE_ONE,
+      beforeVector: VECTOR_ONE,
+      token: TOKEN_A,
+      goalDistanceAfter: 0.8,
+    }),
+    entry({
+      ...WORLD,
+      tokenMapDigest: canonicalDigest({ tokenMap: 'seed-b' }),
+      kernelStep: 2,
+      observationDigest: CONTEXT_OBSERVATION,
+      beforeStateDigest: BEFORE_TWO,
+      beforeVector: VECTOR_ONE,
+      token: TOKEN_B,
+      goalDistanceAfter: 0.5,
+    }),
+  ];
+  const result = evaluateCounterfactualPolicy({ history, policy: policy(TOKEN_B) });
+  assert.equal(result.scope.status, 'MIXED');
+  assert.equal(result.scope.partitionCount, 2);
+  assert.equal(result.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.divergence.evaluated, 0);
 });
 
 test('vector binding refuses evidence from a different WorldPort seed', () => {
@@ -298,10 +327,12 @@ function entry({
   verified = true,
   worldId,
   worldImplementationDigest,
+  tokenMapDigest,
   seed,
 }) {
   return {
     ...WORLD,
+    ...(tokenMapDigest === undefined ? {} : { tokenMapDigest }),
     ...(worldId === undefined ? {} : { worldId }),
     ...(worldImplementationDigest === undefined ? {} : { worldImplementationDigest }),
     ...(seed === undefined ? {} : { seed }),

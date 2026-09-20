@@ -731,7 +731,7 @@ F-96 增加 `experiment policy`，用 `candidate-policy` 文件表达一个受�
 
 该实验验证的是“同一底层观察边界下，策略能否根据新观测作出可审计、可重放的下一步选择”。它不是模型训练，也不是自动发现规则：规则仍由实验输入给出；如果两策略行为相同，结果仍会记录相同轨迹证据而不宣称能力差异。外部现实 WorldPort 仍禁止直接分叉。
 
-F-281 增加 `experiment counterfactual`：把账本候选历史当作模拟器，对任意 `candidate-policy` 做零执行的反事实评估。命令逐条读取最近一段已注释候选历史（当前上界 32 条），把每一步分为 matched（策略会选择与账本相同的 Token）、opaque（账本未记录 observationDigest 或 Token）与 diverged；对每个分歧点，只有当账本在同一个证据锚上真实执行过反事实 Token 且结果已验证时才打分，两侧都只接受 `verify` 判定为 ACTION 归因且 learnable 的结果。评估严格锚定在单步上：它不会编造账本从未观察过的世界状态去推演多步反事实轨迹；裁决词汇为 `COUNTERFACTUAL_BETTER`（有绑定证据且从不更差）、`TIE`、`COUNTERFACTUAL_WORSE` 与 `INSUFFICIENT_EVIDENCE`。
+F-281 增加 `experiment counterfactual`：把账本候选历史当作模拟器，对任意 `candidate-policy` 做零执行的反事实评估。命令逐条读取最近一段已注释候选历史（当前上界 32 条），把每一步分为 matched（策略会选择与账本相同的 Token）、opaque（账本未记录 observationDigest 或 Token）与 diverged；对每个分歧点，只有当账本在同一个证据锚上真实执行过反事实 Token 且结果已验证时才打分，两侧都只接受 `verify` 判定为 ACTION 归因且 learnable 的结果。评估严格锚定在单步上：它不会编造账本从未观察过的世界状态去推演多步反事实轨迹；裁决词汇为 `COUNTERFACTUAL_BETTER`（有绑定证据且从不更差）、`TIE`、`COUNTERFACTUAL_WORSE` 与 `INSUFFICIENT_EVIDENCE`。一组历史只能属于同一个 WorldPort identity 和 Token map；混合不同实现或 Token map 的语料会返回 `scope.status=MIXED` 和 `INSUFFICIENT_EVIDENCE`，不会生成看似有效的 pooled 分数。
 
 证据锚分两级（`history-anchored-one-step-v2`）。STRICT 要求完全相同的 before 状态摘要；实测发现它在单 Lab 历史上永不出现，因为 before 摘要哈希了单调递增的 kernelStep，该级只对跨 Lab 语料有意义。VECTOR 级按"同 WorldPort 身份 + 同 seed + 同 scenario + 同 before 观测向量摘要"绑定，是真实单 Lab 历史上唯一可命中的锚；不同 seed 的相同向量不会互相借用反事实结果。同因实测确认 world-port-base 每次 transition 递增 stateVersion，observationDigest 在任何世界上都不会重复，不能作为锚。候选历史的公开投影为此新增有界 `beforeVectorDigest`（定长摘要，不进入模型提示的字段白名单）。首次真实语料测量见 F-282：150 步 temperature 候选集运行中，32 条窗口内向量复现为 3 个取值，单 Token 策略各 16 次分歧里 11/5 条获得 VECTOR 证据，双策略裁决均为 TIE。
 
