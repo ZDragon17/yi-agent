@@ -47,6 +47,12 @@ function normalizeWorldPortBinding(input, worldPort) {
   const fields = ['worldId', 'worldVersion', 'worldImplementationDigest', 'tokenMapDigest'];
   const hasBinding = fields.some((field) => Object.hasOwn(input, field));
   if (!hasBinding) return null;
+  const target = worldPort === null ? null : {
+    worldId: worldPort.worldId,
+    worldVersion: worldPort.worldVersion,
+    worldImplementationDigest: worldPort.worldImplementationDigest,
+    tokenMapDigest: worldPort.tokenMapDigest ?? worldPort.tokenMap?.digest,
+  };
   const binding = {
     worldId: input.worldId,
     worldVersion: input.worldVersion,
@@ -59,11 +65,11 @@ function normalizeWorldPortBinding(input, worldPort) {
       !DIGEST_PATTERN.test(binding.tokenMapDigest ?? '')) {
     throw policyError('Candidate policy WorldPort identity is invalid.');
   }
-  if (worldPort !== null && (
-    worldPort.worldId !== binding.worldId ||
-    worldPort.worldVersion !== binding.worldVersion ||
-    worldPort.worldImplementationDigest !== binding.worldImplementationDigest ||
-    worldPort.tokenMapDigest !== binding.tokenMapDigest
+  if (target !== null && (
+    target.worldId !== binding.worldId ||
+    target.worldVersion !== binding.worldVersion ||
+    target.worldImplementationDigest !== binding.worldImplementationDigest ||
+    target.tokenMapDigest !== binding.tokenMapDigest
   )) {
     throw policyError('Candidate policy WorldPort identity differs from the target lab.');
   }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -70,6 +70,39 @@ test('paired policy resumes after a committed branch step without repeating its 
     assert.equal(resumed.verdict, 'PASS');
     assert.deepEqual(resumed.replayVerdicts.left, ['CONSISTENT', 'CONSISTENT']);
     assert.deepEqual(resumed.replayVerdicts.right, ['CONSISTENT', 'CONSISTENT']);
+  });
+});
+
+test('paired policy accepts and persists an explicit WorldPort identity binding', async () => {
+  await withTemp(async (root) => {
+    const parent = path.join(root, 'parent');
+    const output = path.join(root, 'policy');
+    await initLab({ labPath: parent, labId: 'policy-identity-lab', worldId: 'temperature', seed: 'policy-identity-seed' });
+    const parentStore = await LabStore.open({ labPath: parent });
+    const tokens = parentStore.manifest.tokenMap.entries.map((entry) => entry.token);
+    await runLab({ labPath: parent, runId: 'run-1', steps: 1 });
+    const binding = {
+      worldId: parentStore.manifest.worldId,
+      worldVersion: parentStore.manifest.worldVersion,
+      worldImplementationDigest: parentStore.manifest.worldImplementationDigest,
+      tokenMapDigest: parentStore.manifest.tokenMap.digest,
+    };
+    const leftPolicy = { schemaVersion: 1, type: 'candidate-policy', version: 1, ...binding, defaultToken: tokens[0], rules: [] };
+    const rightPolicy = { schemaVersion: 1, type: 'candidate-policy', version: 1, ...binding, defaultToken: tokens[1], rules: [] };
+
+    const result = await runPairedPolicies({
+      labPath: parent,
+      outputPath: output,
+      steps: 1,
+      leftPolicy,
+      rightPolicy,
+      scenario: 'steady',
+    });
+    const start = JSON.parse(await readFile(path.join(output, 'policy.start.json'), 'utf8'));
+
+    assert.equal(result.verdict, 'PASS');
+    assert.deepEqual(start.policies.left, leftPolicy);
+    assert.deepEqual(start.policies.right, rightPolicy);
   });
 });
 
