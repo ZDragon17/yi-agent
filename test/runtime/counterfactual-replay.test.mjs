@@ -147,6 +147,22 @@ test('counterfactual evaluation rejects a history from different Token maps', ()
   assert.equal(result.divergence.evaluated, 0);
 });
 
+test('counterfactual evaluation refuses an invalid WorldPort identity', () => {
+  const history = [entry({
+    worldImplementationDigest: 'sha256:not-a-valid-digest',
+    kernelStep: 1,
+    observationDigest: CONTEXT_OBSERVATION,
+    beforeStateDigest: BEFORE_ONE,
+    beforeVector: VECTOR_ONE,
+    token: TOKEN_A,
+    goalDistanceAfter: 0.8,
+  })];
+  const result = evaluateCounterfactualPolicy({ history, policy: policy(TOKEN_B) });
+  assert.equal(result.scope.status, 'INVALID');
+  assert.equal(result.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.divergence.evaluated, 0);
+});
+
 test('vector binding refuses evidence from a different WorldPort seed', () => {
   const history = [
     entry({

@@ -27,7 +27,7 @@ export function evaluateCounterfactualPolicy({ history, policy, binding = 'vecto
   const entries = requireHistory(history);
   const normalizedBinding = requireBinding(binding);
   const scope = historyScope(entries);
-  if (scope.status === 'MIXED') {
+  if (scope.status !== 'UNIFORM') {
     return insufficientScopeEvaluation({ normalizedPolicy, normalizedBinding, scope, historyLength: entries.length });
   }
   const rules = new Map(normalizedPolicy.rules.map((rule) => [rule.observationDigest, rule.token]));
@@ -257,7 +257,9 @@ function requireHistory(history) {
 }
 
 function historyScope(entries) {
-  const scopes = new Set(entries.map(historyScopeKey));
+  const keys = entries.map(historyScopeKey);
+  const scopes = new Set(keys.map((key) => key.digest));
+  if (keys.some((key) => key.invalid)) return { status: 'INVALID', partitionCount: scopes.size };
   return { status: scopes.size > 1 ? 'MIXED' : 'UNIFORM', partitionCount: scopes.size };
 }
 
@@ -279,19 +281,28 @@ function insufficientScopeEvaluation({ normalizedPolicy, normalizedBinding, scop
 }
 
 function historyScopeKey(entry) {
-  return canonicalDigest({
-    worldId: typeof entry?.worldId === 'string' && entry.worldId.length > 0 ? entry.worldId : null,
-    worldVersion: typeof entry?.worldVersion === 'string' && entry.worldVersion.length > 0
-      ? entry.worldVersion
-      : null,
-    worldImplementationDigest: typeof entry?.worldImplementationDigest === 'string' &&
-      DIGEST_PATTERN.test(entry.worldImplementationDigest)
-      ? entry.worldImplementationDigest
-      : null,
-    tokenMapDigest: typeof entry?.tokenMapDigest === 'string' && DIGEST_PATTERN.test(entry.tokenMapDigest)
-      ? entry.tokenMapDigest
-      : null,
-  });
+  const fields = {
+    worldId: scopeField(entry?.worldId, (value) => typeof value === 'string' && value.length > 0),
+    worldVersion: scopeField(entry?.worldVersion, (value) => typeof value === 'string' && value.length > 0),
+    worldImplementationDigest: scopeField(
+      entry?.worldImplementationDigest,
+      (value) => typeof value === 'string' && DIGEST_PATTERN.test(value),
+    ),
+    tokenMapDigest: scopeField(
+      entry?.tokenMapDigest,
+      (value) => typeof value === 'string' && DIGEST_PATTERN.test(value),
+    ),
+  };
+  return {
+    digest: canonicalDigest(fields),
+    invalid: Object.values(fields).some((field) => field.status === 'invalid'),
+  };
+}
+
+function scopeField(value, isValid) {
+  if (value === undefined) return { status: 'missing', value: null };
+  if (isValid(value)) return { status: 'valid', value };
+  return { status: 'invalid', value: typeof value === 'string' ? value : typeof value };
 }
 
 function evaluationError(message, context = { field: 'policy' }) {
