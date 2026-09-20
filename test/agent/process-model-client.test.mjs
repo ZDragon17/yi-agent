@@ -156,6 +156,28 @@ test('persistent process model client rejects the session without replay after t
   await client.close();
 });
 
+test('persistent process model client ignores late output from a terminated child', async () => {
+  const children = [];
+  const client = createProcessModelClient({
+    executable: process.execPath,
+    args: [],
+    transport: 'persistent-jsonl',
+    timeoutMs: 100,
+  }, {
+    spawnImpl: () => {
+      const child = createFakeModelChild({ respond: children.length > 0, lateResponseOnKill: children.length === 0 });
+      children.push(child);
+      return child;
+    },
+  });
+
+  await assert.rejects(client.chat('first'), { code: 'MODEL_CALLBACK_TIMEOUT' });
+  const next = await client.chat('next');
+  assert.equal(next.content, '{"requestId":"2","prompt":"next"}');
+  assert.equal(children.length, 2);
+  await client.close();
+});
+
 test('closing a persistent process model client rejects queued work and prevents future spawn', async () => {
   const children = [];
   const client = createProcessModelClient({
@@ -181,7 +203,7 @@ test('closing a persistent process model client rejects queued work and prevents
   assert.equal(children[0].killed, true);
 });
 
-function createFakeModelChild({ respond = true } = {}) {
+function createFakeModelChild({ respond = true, lateResponseOnKill = false } = {}) {
   const child = new EventEmitter();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
@@ -194,6 +216,15 @@ function createFakeModelChild({ respond = true } = {}) {
     if (child.killed) return true;
     child.killed = true;
     child.signalCode = 'SIGTERM';
+    if (lateResponseOnKill) {
+      setImmediate(() => child.stdout.write(`${JSON.stringify({
+        protocol: 'yi-model-cli',
+        version: 1,
+        id: '1',
+        ok: true,
+        result: { model: 'late-fixture-model', content: '{"late":true}' },
+      })}\n`));
+    }
     child.emit('close', null, 'SIGTERM');
     return true;
   };

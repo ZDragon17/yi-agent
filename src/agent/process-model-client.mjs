@@ -177,8 +177,12 @@ function createPersistentSession(config, spawnImpl) {
       return false;
     }
     const current = child;
-    current.stdout.on('data', onStdout);
-    current.stderr.on('data', onStderr);
+    current.stdout.on('data', (chunk) => {
+      if (current === child && !closed) onStdout(chunk);
+    });
+    current.stderr.on('data', (chunk) => {
+      if (current === child && !closed) onStderr(chunk);
+    });
     current.on('error', (error) => {
       if (current !== child || closed) return;
       failSession(new ModelAdapterError('MODEL_ADAPTER_START', 'Model adapter process failed.', {}, { cause: error }));
