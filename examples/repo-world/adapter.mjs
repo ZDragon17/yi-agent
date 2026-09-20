@@ -261,7 +261,9 @@ function scanRepository() {
 
 function walk(currentPath, rootPath, files, countByte) {
   for (const entry of readdirSync(currentPath, { withFileTypes: true })) {
-    if (entry.name === '.git' || entry.name === 'node_modules') continue;
+    // The agent's own ledger is runtime state, not repository source. Scanning
+    // it would make the adapter observe or reject its own growing history.
+    if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.yi-agent') continue;
     const fullPath = path.join(currentPath, entry.name);
     const relativePath = path.relative(rootPath, fullPath).replaceAll(path.sep, '/');
     if (entry.isDirectory()) {

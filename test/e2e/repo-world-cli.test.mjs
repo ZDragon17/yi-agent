@@ -14,6 +14,29 @@ const REPOSITORY_ROOT = path.resolve('.');
 const READ_PATH = 'README.md';
 const TEST_PATH = 'test/agent/model-advisor.test.mjs';
 
+test('repo WorldPort ignores its own runtime directory while scanning a repository', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-runtime-boundary-e2e-'));
+  const repository = path.join(root, 'repository');
+  try {
+    await mkdir(path.join(repository, '.yi-agent'), { recursive: true });
+    await writeFile(path.join(repository, READ_PATH), 'repository source\n');
+    for (let index = 0; index < 520; index += 1) {
+      await writeFile(path.join(repository, '.yi-agent', `runtime-${index}.json`), '{}\n');
+    }
+
+    const response = invokeAdapterOnce([
+      ADAPTER,
+      repository,
+      READ_PATH,
+      READ_PATH,
+    ], 'initialState', {});
+    assert.equal(response.ok, true, JSON.stringify(response));
+    assert.equal(response.result.state.fileCount, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('repo WorldPort uses the same continuous Run and Replay envelope as a built-in WorldPort', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-matrix-e2e-'));
   const adapterConfig = path.join(root, 'adapter.json');
