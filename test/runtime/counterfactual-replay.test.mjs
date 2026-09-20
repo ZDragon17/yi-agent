@@ -71,6 +71,20 @@ test('a divergence anchored only by the observable vector still binds the verdic
   assert.equal(result.samples[0].delta, 0.8 - 0.5);
 });
 
+test('strict binding refuses vector-only evidence from a different hidden state', () => {
+  const history = [
+    entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),
+    entry({ kernelStep: 2, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_TWO, beforeVector: VECTOR_ONE, token: TOKEN_B, goalDistanceAfter: 0.5 }),
+  ];
+  const result = evaluateCounterfactualPolicy({ history, policy: policy(TOKEN_B), binding: 'strict' });
+  assert.equal(result.binding, 'strict');
+  assert.equal(result.divergence.strict, 0);
+  assert.equal(result.divergence.vector, 0);
+  assert.equal(result.divergence.unevaluable, 1);
+  assert.equal(result.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.samples[0].reason, 'NO_STRICT_OUTCOME');
+});
+
 test('a counterfactual token recorded only at another observable vector stays unevaluable', () => {
   const history = [
     entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),
@@ -196,6 +210,7 @@ test('divergence samples are capped to keep reports bounded', () => {
 test('invalid inputs fail closed', () => {
   assert.throws(() => evaluateCounterfactualPolicy({ history: [], policy: null }), (error) => error.code === 'INVALID_INPUT');
   assert.throws(() => evaluateCounterfactualPolicy({ history: [], policy: { schemaVersion: 2, type: 'candidate-policy', version: 1, defaultToken: TOKEN_A, rules: [] } }), (error) => error.code === 'INVALID_INPUT');
+  assert.throws(() => evaluateCounterfactualPolicy({ history: [], policy: policy(TOKEN_A), binding: 'guess' }), (error) => error.code === 'INVALID_INPUT');
   assert.throws(() => evaluateCounterfactualPolicy({ history: [], policy: { schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: 'nope', rules: [] } }), (error) => error.code === 'INVALID_INPUT');
   assert.throws(() => evaluateCounterfactualPolicy({ history: null, policy: policy(TOKEN_A) }), (error) => error.code === 'INVALID_INPUT');
   assert.throws(() => evaluateCounterfactualPolicy({ history: [], policy: { ...policy(TOKEN_A), rules: [{ observationDigest: 'sha256:not-a-digest', token: TOKEN_B }] } }), (error) => error.code === 'INVALID_INPUT');

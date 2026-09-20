@@ -87,6 +87,7 @@ async function dispatch(command, options) {
       return evaluateLabCounterfactual({
         labPath: required(options, 'lab'),
         policy: await readCandidatePolicyFile(requiredAbsolute(options, 'policy'), 'policy'),
+        ...(options.binding === undefined ? {} : { binding: options.binding }),
       });
     }
     if (options.experimentOperation === 'policy') {
@@ -463,7 +464,7 @@ function parseArguments(argv) {
     recover: ['lab', 'confirm-lock-owner-dead'],
     challenge: ['lab', 'case'],
     effect: ['effectOperation', 'journal', 'sandbox-root', 'intent', 'nonce'],
-    experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'policy', 'steps', 'scenario', 'resume', 'world', 'seeds', 'seed-count', 'strategies'],
+    experiment: ['experimentOperation', 'lab', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'policy', 'steps', 'scenario', 'resume', 'world', 'seeds', 'seed-count', 'strategies', 'binding'],
     ui: ['lab', 'port', 'adapter'],
   }[command] ?? [];
   for (const name of Object.keys(options)) {
@@ -717,7 +718,7 @@ function helpText() {
     '  yi-agent experiment pair --lab PATH --output PATH --left-token TOK --right-token TOK [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment trajectory --lab PATH --output PATH --left-trajectory PATH --right-trajectory PATH [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment policy --lab PATH --output PATH --steps N --left-policy PATH --right-policy PATH [--scenario ID] [--resume] [--json]',
-    '  yi-agent experiment counterfactual --lab PATH --policy PATH [--json]   零执行反事实评估：只在账本候选历史上打分，不运行世界',
+    '  yi-agent experiment counterfactual --lab PATH --policy PATH [--binding vector|strict] [--json]   零执行反事实评估：只在账本候选历史上打分，不运行世界',
     '  yi-agent effect plan|confirm|execute|reconcile|compensate|inspect ...',
     '',
     'API 环境变量: YI_AGENT_PROVIDER, YI_AGENT_API_KEY/ZAI_API_KEY, YI_AGENT_API_BASE_URL, YI_AGENT_MODEL, YI_AGENT_API_TIMEOUT_MS',

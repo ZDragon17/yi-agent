@@ -28,7 +28,11 @@ export async function evaluateLabCounterfactual(input) {
   const allowedTokens = new Set(store.manifest.tokenMap.entries.map((entry) => entry.token));
   const policy = normalizeCandidatePolicy(requireRecord(source.policy, 'policy'), allowedTokens);
   const history = await store.readCandidateOutcomes();
-  const evaluation = evaluateCounterfactualPolicy({ history, policy });
+  const evaluation = evaluateCounterfactualPolicy({
+    history,
+    policy,
+    ...(source.binding === undefined ? {} : { binding: source.binding }),
+  });
   return withSelfDigest({
     schemaVersion: SCHEMA_VERSION,
     type: REPORT_TYPE,

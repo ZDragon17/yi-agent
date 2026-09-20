@@ -17,13 +17,15 @@ const EVALUATION_MODE = 'history-anchored-one-step-v2';
 // can actually occur.
 const POLICY_TYPE = 'candidate-policy';
 const POLICY_VERSION = 1;
+const BINDING_MODES = ['vector', 'strict'];
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const MAX_DIVERGENCE_SAMPLES = 16;
 
-export function evaluateCounterfactualPolicy({ history, policy } = {}) {
+export function evaluateCounterfactualPolicy({ history, policy, binding = 'vector' } = {}) {
   const normalizedPolicy = requirePolicy(policy);
   const entries = requireHistory(history);
+  const normalizedBinding = requireBinding(binding);
   const rules = new Map(normalizedPolicy.rules.map((rule) => [rule.observationDigest, rule.token]));
   const index = buildOutcomeIndex(entries);
   const counters = { steps: 0, matched: 0, opaque: 0, diverged: 0, strict: 0, vector: 0, unevaluable: 0 };
@@ -64,7 +66,12 @@ export function evaluateCounterfactualPolicy({ history, policy } = {}) {
       continue;
     }
     const sameState = lastOutcomeAtState(recorded, entry?.beforeStateDigest);
-    const counterfactual = sameState ?? recorded.at(-1);
+    const counterfactual = sameState ?? (normalizedBinding === 'vector' ? recorded.at(-1) : undefined);
+    if (counterfactual === undefined) {
+      counters.unevaluable += 1;
+      pushSample(samples, { ...sample, classification: 'UNEVALUABLE', reason: 'NO_STRICT_OUTCOME' });
+      continue;
+    }
     const delta = recordedDistance - counterfactual.goalDistanceAfter;
     bindingDeltas.push(delta);
     if (sameState !== null) {
@@ -86,6 +93,7 @@ export function evaluateCounterfactualPolicy({ history, policy } = {}) {
     type: EVALUATION_TYPE,
     version: EVALUATION_VERSION,
     mode: EVALUATION_MODE,
+    binding: normalizedBinding,
     policyDigest: canonicalDigest(normalizedPolicy),
     basis: { steps: counters.steps, opaque: counters.opaque, vectorStates: index.size, recordedOutcomes: outcomeCount(index) },
     agreement: {
@@ -211,6 +219,13 @@ function requirePolicy(policy) {
     }
   }
   return policy;
+}
+
+function requireBinding(value) {
+  if (!BINDING_MODES.includes(value)) {
+    throw evaluationError('Counterfactual binding must be vector or strict.');
+  }
+  return value;
 }
 
 function requireHistory(history) {

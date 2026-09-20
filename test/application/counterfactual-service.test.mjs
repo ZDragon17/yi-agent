@@ -71,6 +71,15 @@ test('a different default token surfaces divergences without executing anything'
       assert.equal(sample.recordedToken, tokens[0]);
       assert.equal(sample.counterfactualToken, tokens[1]);
     }
+
+    const strict = await evaluateLabCounterfactual({
+      labPath,
+      binding: 'strict',
+      policy: { schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[1], rules: [] },
+    });
+    assert.equal(strict.evaluation.binding, 'strict');
+    assert.equal(strict.evaluation.divergence.vector, 0);
+    assert.equal(strict.evaluation.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
   });
 });
 
