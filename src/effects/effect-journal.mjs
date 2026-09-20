@@ -325,6 +325,9 @@ async function acquireJournalLock(filePath, lockPath = `${filePath}${JOURNAL_LOC
         } catch (error) {
           if (error instanceof EffectJournalError && error.code === 'IO_ERROR' && error.cause?.code === 'ENOENT') {
             currentOwner = null;
+          } else if (isTransientJournalLockRead(error)) {
+            await waitForJournalLock(attempt);
+            continue;
           } else {
             throw error;
           }
@@ -378,6 +381,7 @@ async function reclaimDeadJournalReservation(reclaimPath) {
     if (error instanceof EffectJournalError && error.code === 'IO_ERROR' && error.cause?.code === 'ENOENT') {
       return true;
     }
+    if (isTransientJournalLockRead(error)) return false;
     throw error;
   }
   if (isProcessAlive(owner.pid)) return false;
@@ -411,6 +415,11 @@ async function waitForJournalLock(attempt) {
   if (attempt + 1 < JOURNAL_LOCK_ATTEMPTS) {
     await new Promise((resolve) => setTimeout(resolve, JOURNAL_LOCK_WAIT_MS * (attempt + 1)));
   }
+}
+
+function isTransientJournalLockRead(error) {
+  return error instanceof EffectJournalError && error.code === 'IO_ERROR' &&
+    ['EAGAIN', 'EBUSY', 'EPERM'].includes(error.cause?.code);
 }
 
 function assertJournalLock(journalLock) {
