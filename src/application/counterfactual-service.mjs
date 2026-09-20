@@ -5,6 +5,7 @@ import { normalizeCandidatePolicy } from '../runtime/candidate-policy.mjs';
 import {
   evaluateCounterfactualPolicy,
   evaluateCounterfactualPolicyCorpus,
+  evaluateCounterfactualPolicySet,
 } from '../runtime/counterfactual-replay.mjs';
 import { canonicalDigest, SCHEMA_VERSION, withSelfDigest } from '../runtime/schema.mjs';
 
@@ -146,6 +147,86 @@ export async function evaluateLabsCounterfactual(input) {
     labPaths,
     manifestDigests: loaded.map((item) => item.store.manifest.selfDigest),
     currentDigests: loaded.map((item) => item.current.selfDigest),
+    historySteps: loaded.reduce((total, item) => total + item.history.length, 0),
+    evaluation,
+  });
+}
+
+// Measure several policy candidates over the same completed Lab corpus. The
+// runtime comparator refuses to rank candidates whose verified evidence does
+// not cover the same anchors, so this report cannot silently turn coverage
+// differences into a learning claim.
+export async function evaluateLabsCounterfactualSet(input) {
+  const source = requireRecord(input, 'counterfactual policy set input');
+  if (!Array.isArray(source.labPaths) || source.labPaths.length === 0 || source.labPaths.length > 32) {
+    throw new LabStoreError('INVALID_INPUT', 'labPaths must contain 1 to 32 Lab paths.', { field: 'labPaths' });
+  }
+  if (!Array.isArray(source.policies) || source.policies.length < 2 || source.policies.length > 16) {
+    throw new LabStoreError('INVALID_INPUT', 'policies must contain 2 to 16 policies.', { field: 'policies' });
+  }
+  const labPaths = [];
+  const seenPaths = new Set();
+  for (const [index, value] of source.labPaths.entries()) {
+    const labPath = await existingPath(requireText(value, `labPaths[${index}]`), `labPaths[${index}]`);
+    if (seenPaths.has(labPath)) {
+      throw new LabStoreError('INVALID_INPUT', 'labPaths must not contain duplicates.', { field: 'labPaths', index });
+    }
+    seenPaths.add(labPath);
+    labPaths.push(labPath);
+  }
+
+  const loaded = [];
+  for (const labPath of labPaths) {
+    const store = await LabStore.open({ labPath });
+    const inspection = await store.inspect();
+    const current = inspection.current;
+    if (current.status === 'RUNNING' || current.status === 'CORRUPT') {
+      throw new LabStoreError('CONFLICT', 'A counterfactual policy set requires Labs without active or corrupt runs.', { field: 'labPaths', labPath, status: current.status });
+    }
+    loaded.push({
+      labPath,
+      store,
+      current,
+      history: await store.readCandidateOutcomes(),
+    });
+  }
+
+  const first = loaded[0].store;
+  const allowedTokens = new Set(first.manifest.tokenMap.entries.map((entry) => entry.token));
+  const worldPort = {
+    worldId: first.manifest.worldId,
+    worldVersion: first.manifest.worldVersion,
+    worldImplementationDigest: first.manifest.worldImplementationDigest,
+    tokenMapDigest: first.manifest.tokenMap.digest,
+  };
+  const policies = source.policies.map((value, index) => normalizeCandidatePolicy(
+    requireRecord(value, `policies[${index}]`),
+    allowedTokens,
+    worldPort,
+  ));
+  const scopeHints = loaded.map((item) => ({
+    worldId: item.store.manifest.worldId,
+    worldVersion: item.store.manifest.worldVersion,
+    worldImplementationDigest: item.store.manifest.worldImplementationDigest,
+    tokenMapDigest: item.store.manifest.tokenMap.digest,
+    scenario: item.history[0]?.scenario,
+    valueSpecDigest: item.history[0]?.valueSpecDigest,
+  }));
+  const evaluation = evaluateCounterfactualPolicySet({
+    histories: loaded.map((item) => item.history),
+    policies,
+    scopeHints,
+    ...(source.binding === undefined ? {} : { binding: source.binding }),
+  });
+  return withSelfDigest({
+    schemaVersion: SCHEMA_VERSION,
+    type: 'counterfactual-policy-set-evaluation',
+    version: 1,
+    epistemicLabel: EPISTEMIC_LABEL,
+    labPaths,
+    manifestDigests: loaded.map((item) => item.store.manifest.selfDigest),
+    currentDigests: loaded.map((item) => item.current.selfDigest),
+    policyDigests: policies.map((policy) => canonicalDigest(policy)),
     historySteps: loaded.reduce((total, item) => total + item.history.length, 0),
     evaluation,
   });

@@ -2406,6 +2406,32 @@ test('CLI evaluates a counterfactual policy corpus across repeated Labs', async 
   });
 });
 
+test('CLI evaluates a counterfactual policy set without executing the Lab', async () => {
+  await withTemp(async (root) => {
+    const lab = path.join(root, 'lab');
+    const policyA = path.join(root, 'policy-a.json');
+    const policyB = path.join(root, 'policy-b.json');
+    const init = await invoke('init', '--lab', lab, '--world', 'temperature', '--seed', 'policy-set-cli-seed', '--json');
+    assert.equal(init.code, 0);
+    const tokens = init.stdout[0].data.tokenMap.entries.map((entry) => entry.token);
+    await writeFile(policyA, JSON.stringify({ schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[0], rules: [] }));
+    await writeFile(policyB, JSON.stringify({ schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[1], rules: [] }));
+    assert.equal((await invoke('run', '--lab', lab, '--run-id', 'run-1', '--steps', '2', '--json')).code, 0);
+
+    const result = await invoke(
+      'experiment', 'counterfactual-set',
+      '--labs', lab,
+      '--policies', `${policyA};${policyB}`,
+      '--json',
+    );
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout[0].data.type, 'counterfactual-policy-set-evaluation');
+    assert.equal(result.stdout[0].data.evaluation.policyCount, 2);
+    assert.equal(result.stdout[0].data.evaluation.scope.status, 'UNIFORM');
+    assert.equal(result.stdout[0].data.evaluation.comparison.verdict, 'INSUFFICIENT_EVIDENCE');
+  });
+});
+
 async function invoke(...args) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], { windowsHide: true });

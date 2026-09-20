@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   evaluateCounterfactualPolicy,
   evaluateCounterfactualPolicyCorpus,
+  evaluateCounterfactualPolicySet,
 } from '../../src/runtime/counterfactual-replay.mjs';
 import { canonicalDigest } from '../../src/runtime/schema.mjs';
 
@@ -102,6 +103,47 @@ test('a policy corpus aggregates independent histories without mixing their evid
   assert.equal(result.outcome.verdict, 'MIXED_EVIDENCE');
   assert.equal(result.outcome.bindingCount, 2);
   assert.ok(Math.abs(result.outcome.meanDelta - 0.05) < 1e-12);
+});
+
+test('a policy set ranks candidates only when every policy shares the same evidence anchors', () => {
+  const tokenC = 'tok_CCCCCCCC';
+  const otherObservation = canonicalDigest({ observation: 'context-3' });
+  const history = [
+    entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),
+    entry({ kernelStep: 2, observationDigest: OTHER_OBSERVATION, beforeStateDigest: BEFORE_TWO, beforeVector: VECTOR_ONE, token: TOKEN_B, goalDistanceAfter: 0.5 }),
+    entry({ kernelStep: 3, observationDigest: otherObservation, beforeStateDigest: canonicalDigest({ state: 'before-3' }), beforeVector: VECTOR_ONE, token: tokenC, goalDistanceAfter: 0.2 }),
+  ];
+  const result = evaluateCounterfactualPolicySet({
+    histories: [history],
+    policies: [
+      { ...policy(TOKEN_B), rules: [{ observationDigest: OTHER_OBSERVATION, token: TOKEN_B }, { observationDigest: otherObservation, token: tokenC }] },
+      { ...policy(tokenC), rules: [{ observationDigest: OTHER_OBSERVATION, token: TOKEN_B }, { observationDigest: otherObservation, token: tokenC }] },
+    ],
+  });
+
+  assert.equal(result.type, 'counterfactual-policy-set-evaluation');
+  assert.equal(result.policies.length, 2);
+  assert.equal(result.comparison.verdict, 'COMPARABLE_RANKING');
+  assert.equal(result.comparison.winnerPolicyDigest, result.policies[1].policyDigest);
+  assert.ok(result.comparison.margin > 0);
+  assert.equal(result.comparison.evidenceBasisDigest, result.policies[0].outcome.evidenceBasisDigest);
+});
+
+test('a policy set refuses to rank candidates with different evidence anchors', () => {
+  const tokenC = 'tok_CCCCCCCC';
+  const history = [
+    entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),
+    entry({ kernelStep: 2, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_TWO, beforeVector: VECTOR_ONE, token: TOKEN_B, goalDistanceAfter: 0.5 }),
+    entry({ kernelStep: 3, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: canonicalDigest({ state: 'before-3' }), beforeVector: VECTOR_ONE, token: tokenC, goalDistanceAfter: 0.2 }),
+  ];
+  const result = evaluateCounterfactualPolicySet({
+    histories: [history],
+    policies: [policy(TOKEN_B), policy(tokenC)],
+  });
+
+  assert.equal(result.comparison.verdict, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.comparison.reason, 'DIFFERENT_EVIDENCE_ANCHORS');
+  assert.equal(result.comparison.winnerPolicyDigest, null);
 });
 
 test('a policy corpus does not collapse different WorldPort identities into one verdict', () => {

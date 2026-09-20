@@ -767,6 +767,17 @@ F-287 重跑 R28 候选质量实验：8 对同 seed、每对 96 步，单候选�
 
 F-288 增加 `experiment counterfactual-corpus`。它读取多个已完成 Lab，按 WorldPort identity、scenario、Token map 和目标作用域分组；同一组里的已验证单步结果可以互补，其他组不会参与该组的证据计算。同一向量和 Token 有多条已验证结果时，VECTOR 证据取它们的均值，输入顺序不会改变结果。分区中同时出现改善与变差时，总体裁决为 `MIXED_EVIDENCE`，不会把平均值写成策略改进。该命令不运行世界、不调用模型，报告带自摘要，可重复生成。
 
+F-289 增加 `experiment counterfactual-set`，用于在同一批历史上测量多个候选策略。它只在所有策略拥有相同的已验证证据锚时给出 `COMPARABLE_RANKING`；作用域混合、绑定证据不足或策略覆盖了不同锚集合时，报告分别返回 `MIXED_SCOPE`、`INSUFFICIENT_BINDING_EVIDENCE` 或 `DIFFERENT_EVIDENCE_ANCHORS`，不会选出一个看似更好的策略。排序只生成历史测量报告，不会自动改写策略、启动 WorldPort 或进入部署流程。
+
+Windows 下可以用分号传入多个策略文件，Unix 下使用冒号：
+
+```powershell
+yi-agent experiment counterfactual-set `
+  --labs "E:\labs\run-a;E:\labs\run-b" `
+  --policies "E:\labs\policy-a.json;E:\labs\policy-b.json" `
+  --json
+```
+
 ### 与 Dream-RSI（dream-rsi.com）的关系
 
 本项目通过 `experiment counterfactual` 实践并延伸了 [Dream-RSI](https://dream-rsi.com/)（Google / Google DeepMind / 马里兰大学 / 弗吉尼亚大学，2026）提出的“历史即模拟器”思路：一次在线发现运行已经记录成带真实执行结果的探索结构，因此对备选探索策略的评估可以**零执行**地在已记录历史上重放。当前编译器 `counterfactual-replay.mjs` 严格按照“单步历史锚定”执行：它只用账本确实观测过的状态和结果，只替代单个步骤的候选选择，绝不编造账本从未见过的世界状态去推演多步反事实轨迹；因此它的评价范畴是“某条反事实选择在已记录证据下是否更好/更差/无法评估”，并且：

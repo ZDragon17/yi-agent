@@ -17,6 +17,7 @@ import { runPairedPolicies } from './application/paired-policy-service.mjs';
 import {
   evaluateLabCounterfactual,
   evaluateLabsCounterfactual,
+  evaluateLabsCounterfactualSet,
 } from './application/counterfactual-service.mjs';
 import { runExperimentCompare } from './application/experiment-compare-service.mjs';
 
@@ -97,6 +98,14 @@ async function dispatch(command, options) {
       return evaluateLabsCounterfactual({
         labPaths: requiredAbsoluteList(options, 'labs'),
         policy: await readCandidatePolicyFile(requiredAbsolute(options, 'policy'), 'policy'),
+        ...(options.binding === undefined ? {} : { binding: options.binding }),
+      });
+    }
+    if (options.experimentOperation === 'counterfactual-set') {
+      return evaluateLabsCounterfactualSet({
+        labPaths: requiredAbsoluteList(options, 'labs'),
+        policies: await Promise.all(requiredAbsoluteList(options, 'policies')
+          .map((file) => readCandidatePolicyFile(file, 'policy'))),
         ...(options.binding === undefined ? {} : { binding: options.binding }),
       });
     }
@@ -441,7 +450,7 @@ function parseArguments(argv) {
   }
   if (command === 'experiment') {
     const operation = args.shift();
-    if (!['pair', 'trajectory', 'policy', 'counterfactual', 'counterfactual-corpus', 'compare'].includes(operation)) {
+    if (!['pair', 'trajectory', 'policy', 'counterfactual', 'counterfactual-corpus', 'counterfactual-set', 'compare'].includes(operation)) {
       throw cliError('INVALID_INPUT', `Unsupported experiment operation: ${operation ?? '(missing)'}`, {}, 64);
     }
     options.experimentOperation = operation;
@@ -474,7 +483,7 @@ function parseArguments(argv) {
     recover: ['lab', 'confirm-lock-owner-dead'],
     challenge: ['lab', 'case'],
     effect: ['effectOperation', 'journal', 'sandbox-root', 'intent', 'nonce'],
-    experiment: ['experimentOperation', 'lab', 'labs', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'policy', 'steps', 'scenario', 'resume', 'world', 'seeds', 'seed-count', 'strategies', 'binding'],
+    experiment: ['experimentOperation', 'lab', 'labs', 'policies', 'output', 'left-token', 'right-token', 'left-trajectory', 'right-trajectory', 'left-policy', 'right-policy', 'policy', 'steps', 'scenario', 'resume', 'world', 'seeds', 'seed-count', 'strategies', 'binding'],
     ui: ['lab', 'port', 'adapter'],
   }[command] ?? [];
   for (const name of Object.keys(options)) {
@@ -740,6 +749,7 @@ function helpText() {
     '  yi-agent experiment policy --lab PATH --output PATH --steps N --left-policy PATH --right-policy PATH [--scenario ID] [--resume] [--json]',
     '  yi-agent experiment counterfactual --lab PATH --policy PATH [--binding vector|strict] [--json]   零执行反事实评估：只在账本候选历史上打分，不运行世界',
     `  yi-agent experiment counterfactual-corpus --labs PATH${path.delimiter}PATH --policy PATH [--binding vector|strict] [--json]   独立 Lab 语料评估；混合 WorldPort 只保留分区证据`,
+    `  yi-agent experiment counterfactual-set --labs PATH${path.delimiter}PATH --policies PATH${path.delimiter}PATH [--binding vector|strict] [--json]   多策略历史测量；仅同证据锚允许排序`,
     '  yi-agent effect plan|confirm|execute|reconcile|compensate|inspect ...',
     '',
     'API 环境变量: YI_AGENT_PROVIDER, YI_AGENT_API_KEY/ZAI_API_KEY, YI_AGENT_API_BASE_URL, YI_AGENT_MODEL, YI_AGENT_API_TIMEOUT_MS',

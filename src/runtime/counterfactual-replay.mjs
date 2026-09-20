@@ -5,6 +5,8 @@ const EVALUATION_TYPE = 'counterfactual-policy-evaluation';
 const EVALUATION_VERSION = 2;
 const CORPUS_EVALUATION_TYPE = 'counterfactual-policy-corpus-evaluation';
 const CORPUS_EVALUATION_VERSION = 1;
+const POLICY_SET_EVALUATION_TYPE = 'counterfactual-policy-set-evaluation';
+const POLICY_SET_EVALUATION_VERSION = 1;
 // Every counterfactual is anchored at one recorded step: we substitute only
 // the candidate choice of that single step. Anything beyond one step would
 // require world states the ledger never observed, which this module refuses
@@ -23,6 +25,7 @@ const BINDING_MODES = ['vector', 'strict'];
 const TOKEN_PATTERN = /^tok_[A-Z0-9]{8,128}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const MAX_DIVERGENCE_SAMPLES = 16;
+const MAX_POLICY_SET_SIZE = 16;
 
 export function evaluateCounterfactualPolicy({ history, policy, binding = 'vector' } = {}) {
   const normalizedPolicy = requirePolicy(policy);
@@ -36,6 +39,7 @@ export function evaluateCounterfactualPolicy({ history, policy, binding = 'vecto
   const index = buildOutcomeIndex(entries);
   const counters = { steps: 0, matched: 0, opaque: 0, diverged: 0, strict: 0, vector: 0, unevaluable: 0 };
   const bindingDeltas = [];
+  const bindingAnchors = [];
   const samples = [];
   for (const entry of entries) {
     const recordedToken = entry?.candidateOutcome?.token;
@@ -80,6 +84,7 @@ export function evaluateCounterfactualPolicy({ history, policy, binding = 'vecto
     }
     const delta = recordedDistance - counterfactual.goalDistanceAfter;
     bindingDeltas.push(delta);
+    bindingAnchors.push(evidenceAnchor(entry));
     if (sameState !== null) {
       counters.strict += 1;
       pushSample(samples, { ...sample, classification: 'STRICT', sameBeforeState: true, delta });
@@ -114,7 +119,7 @@ export function evaluateCounterfactualPolicy({ history, policy, binding = 'vecto
       vector: counters.vector,
       unevaluable: counters.unevaluable,
     },
-    outcome: outcomeSummary(bindingDeltas),
+    outcome: outcomeSummary(bindingDeltas, bindingAnchors),
     samples,
   };
 }
@@ -176,6 +181,44 @@ export function evaluateCounterfactualPolicyCorpus({ histories, policy, binding 
   };
 }
 
+// Compare policy measurements only when every policy was evaluated against
+// the same evidence anchors. A higher delta is better because delta is
+// recorded distance minus counterfactual distance. This is a historical
+// ranking report, never an instruction to deploy a policy.
+export function evaluateCounterfactualPolicySet({ histories, policies, binding = 'vector', scopeHints } = {}) {
+  if (!Array.isArray(policies) || policies.length < 2 || policies.length > MAX_POLICY_SET_SIZE) {
+    throw evaluationError(`Counterfactual policy sets must contain 2 to ${MAX_POLICY_SET_SIZE} policies.`, { field: 'policies' });
+  }
+  const normalizedPolicies = policies.map(requirePolicy);
+  const policyDigests = normalizedPolicies.map((value) => canonicalDigest(value));
+  if (new Set(policyDigests).size !== policyDigests.length) {
+    throw evaluationError('Counterfactual policy sets must not contain duplicate policies.', { field: 'policies' });
+  }
+  const evaluations = normalizedPolicies.map((policy) => evaluateCounterfactualPolicyCorpus({
+    histories,
+    policy,
+    binding,
+    scopeHints,
+  }));
+  const reports = evaluations.map((evaluation, index) => ({
+    policyIndex: index,
+    policyDigest: policyDigests[index],
+    ...evaluation,
+  }));
+  const scope = reports[0]?.scope ?? { status: 'INVALID', partitionCount: 0 };
+  const comparison = comparePolicyReports(reports, scope);
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    type: POLICY_SET_EVALUATION_TYPE,
+    version: POLICY_SET_EVALUATION_VERSION,
+    binding: requireBinding(binding),
+    scope,
+    policyCount: reports.length,
+    policies: reports,
+    comparison,
+  };
+}
+
 function evaluateScopeGroups({ histories, partitions, policy, binding, scopeHints }) {
   const groups = new Map();
   for (let index = 0; index < histories.length; index += 1) {
@@ -227,7 +270,7 @@ function corpusScope(partitions, scopeHints) {
 function corpusOutcomeSummary(partitions) {
   const evaluated = partitions.filter((partition) => partition.outcome.bindingCount > 0);
   const bindingCount = evaluated.reduce((total, partition) => total + partition.outcome.bindingCount, 0);
-  if (bindingCount === 0) return { verdict: 'INSUFFICIENT_EVIDENCE', bindingCount: 0 };
+  if (bindingCount === 0) return { verdict: 'INSUFFICIENT_EVIDENCE', bindingCount: 0, evidenceBasisDigest: null };
 
   let total = 0;
   let min = Infinity;
@@ -252,9 +295,59 @@ function corpusOutcomeSummary(partitions) {
   return {
     verdict,
     bindingCount,
+    evidenceBasisDigest: combinedEvidenceBasisDigest(evaluated),
     minDelta: min,
     maxDelta: max,
     meanDelta: total / bindingCount,
+  };
+}
+
+function comparePolicyReports(reports, scope) {
+  if (scope.status !== 'UNIFORM') {
+    return insufficientPolicyComparison(scope.status === 'MIXED' ? 'MIXED_SCOPE' : 'INVALID_SCOPE');
+  }
+  if (reports.some((report) => report.outcome.bindingCount === 0 || report.outcome.evidenceBasisDigest === null)) {
+    return insufficientPolicyComparison('INSUFFICIENT_BINDING_EVIDENCE');
+  }
+  const basisDigests = new Set(reports.map((report) => report.outcome.evidenceBasisDigest));
+  if (basisDigests.size !== 1) return insufficientPolicyComparison('DIFFERENT_EVIDENCE_ANCHORS');
+
+  const ordered = [...reports].sort((left, right) =>
+    right.outcome.meanDelta - left.outcome.meanDelta || left.policyDigest.localeCompare(right.policyDigest));
+  const winner = ordered[0];
+  const runnerUp = ordered[1];
+  const margin = winner.outcome.meanDelta - runnerUp.outcome.meanDelta;
+  if (margin === 0) {
+    return {
+      verdict: 'TIE',
+      reason: 'EQUAL_MEAN_DELTA',
+      evidenceBasisDigest: [...basisDigests][0],
+      orderedPolicyDigests: ordered.map((report) => report.policyDigest),
+      winnerPolicyDigest: null,
+      runnerUpPolicyDigest: null,
+      margin: 0,
+    };
+  }
+  return {
+    verdict: 'COMPARABLE_RANKING',
+    reason: null,
+    evidenceBasisDigest: [...basisDigests][0],
+    orderedPolicyDigests: ordered.map((report) => report.policyDigest),
+    winnerPolicyDigest: winner.policyDigest,
+    runnerUpPolicyDigest: runnerUp.policyDigest,
+    margin,
+  };
+}
+
+function insufficientPolicyComparison(reason) {
+  return {
+    verdict: 'INSUFFICIENT_EVIDENCE',
+    reason,
+    evidenceBasisDigest: null,
+    orderedPolicyDigests: [],
+    winnerPolicyDigest: null,
+    runnerUpPolicyDigest: null,
+    margin: null,
   };
 }
 
@@ -315,8 +408,9 @@ function rawVectorDigest(vector) {
   return canonicalDigest(vector);
 }
 
-function outcomeSummary(bindingDeltas) {
+function outcomeSummary(bindingDeltas, bindingAnchors = []) {
   const summary = { verdict: bindingDeltas.length === 0 ? 'INSUFFICIENT_EVIDENCE' : bindingVerdict(bindingDeltas), bindingCount: bindingDeltas.length };
+  summary.evidenceBasisDigest = bindingDeltas.length === 0 ? null : evidenceBasisDigest(bindingAnchors);
   if (bindingDeltas.length === 0) return summary;
   let total = 0;
   let min = bindingDeltas[0];
@@ -330,6 +424,32 @@ function outcomeSummary(bindingDeltas) {
   summary.maxDelta = max;
   summary.meanDelta = total / bindingDeltas.length;
   return summary;
+}
+
+function evidenceBasisDigest(anchors) {
+  if (!Array.isArray(anchors) || anchors.length === 0) return null;
+  return canonicalDigest(anchors
+    .map((anchor) => canonicalDigest(anchor))
+    .sort()
+    .map((digest) => ({ digest })));
+}
+
+function combinedEvidenceBasisDigest(partitions) {
+  const digests = partitions
+    .map((partition) => partition.outcome.evidenceBasisDigest)
+    .filter((digest) => typeof digest === 'string');
+  return digests.length === 0 ? null : canonicalDigest([...digests].sort());
+}
+
+function evidenceAnchor(entry) {
+  return {
+    runId: typeof entry?.runId === 'string' ? entry.runId : null,
+    sequence: Number.isSafeInteger(entry?.sequence) ? entry.sequence : null,
+    kernelStep: kernelStep(entry),
+    beforeStateDigest: typeof entry?.beforeStateDigest === 'string' ? entry.beforeStateDigest : null,
+    beforeVectorDigest: rawVectorDigest(entry?.beforeVector),
+    observationDigest: typeof entry?.observationDigest === 'string' ? entry.observationDigest : null,
+  };
 }
 
 function bindingVerdict(bindingDeltas) {
@@ -430,7 +550,7 @@ function insufficientScopeEvaluation({ normalizedPolicy, normalizedBinding, scop
     basis: { steps: 0, opaque: historyLength, vectorStates: 0, recordedOutcomes: 0 },
     agreement: { matched: 0, diverged: 0, agreementRate: null },
     divergence: { evaluated: 0, strict: 0, vector: 0, unevaluable: 0 },
-    outcome: { verdict: 'INSUFFICIENT_EVIDENCE', bindingCount: 0 },
+    outcome: { verdict: 'INSUFFICIENT_EVIDENCE', bindingCount: 0, evidenceBasisDigest: null },
     samples: [],
   };
 }

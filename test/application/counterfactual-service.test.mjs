@@ -7,6 +7,7 @@ import { initLab, runLab } from '../../src/application/agent-service.mjs';
 import {
   evaluateLabCounterfactual,
   evaluateLabsCounterfactual,
+  evaluateLabsCounterfactualSet,
 } from '../../src/application/counterfactual-service.mjs';
 import { createCandidatePolicyAdvisor } from '../../src/runtime/candidate-policy.mjs';
 import { LabStore } from '../../src/runtime/lab-store.mjs';
@@ -224,6 +225,30 @@ test('a corpus keeps an incompatible Token map as mixed evidence instead of borr
     assert.equal(report.evaluation.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
     assert.equal(report.evaluation.outcome.bindingCount, 0);
     assert.equal(report.evaluation.partitions.length, 2);
+  });
+});
+
+test('a policy set report evaluates multiple policies without executing the Lab', async () => {
+  await withTemp(async (root) => {
+    const labPath = path.join(root, 'lab');
+    await initLab({ labPath, labId: 'counterfactual-policy-set', worldId: 'temperature', seed: 'policy-set-seed' });
+    const store = await LabStore.open({ labPath });
+    const tokens = store.manifest.tokenMap.entries.map((entry) => entry.token);
+    const recorded = { schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[0], rules: [] };
+    const alternative = { schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken: tokens[1], rules: [] };
+    await runLab({ labPath, runId: 'run-1', steps: 2, scenario: 'steady', advisor: createCandidatePolicyAdvisor(recorded) });
+    const before = await store.inspect();
+
+    const report = await evaluateLabsCounterfactualSet({ labPaths: [labPath], policies: [recorded, alternative] });
+    assert.equal(verifySelfDigest(report), true);
+    assert.equal(report.type, 'counterfactual-policy-set-evaluation');
+    assert.equal(report.evaluation.policyCount, 2);
+    assert.equal(report.evaluation.scope.status, 'UNIFORM');
+    assert.equal((await store.inspect()).current.selfDigest, before.current.selfDigest);
+    assert.deepEqual(
+      await evaluateLabsCounterfactualSet({ labPaths: [labPath], policies: [recorded, alternative] }),
+      report,
+    );
   });
 });
 
