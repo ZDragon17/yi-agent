@@ -162,6 +162,48 @@ test('a policy corpus does not collapse different WorldPort identities into one 
   assert.equal(result.partitions.length, 2);
 });
 
+test('a same-scope corpus can reuse verified evidence across repeated histories', () => {
+  const histories = [
+    [entry({
+      seed: 'same-seed',
+      kernelStep: 1,
+      observationDigest: CONTEXT_OBSERVATION,
+      beforeStateDigest: BEFORE_ONE,
+      beforeVector: VECTOR_ONE,
+      token: TOKEN_A,
+      goalDistanceAfter: 0.8,
+    })],
+    [entry({
+      seed: 'same-seed',
+      kernelStep: 1,
+      observationDigest: CONTEXT_OBSERVATION,
+      beforeStateDigest: BEFORE_TWO,
+      beforeVector: VECTOR_ONE,
+      token: TOKEN_B,
+      goalDistanceAfter: 0.5,
+    })],
+  ];
+  const result = evaluateCounterfactualPolicyCorpus({
+    histories,
+    policy: policy(TOKEN_B),
+  });
+
+  assert.equal(result.scope.status, 'UNIFORM');
+  assert.equal(result.partitions[0].outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.partitions[1].outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.scopeEvaluations.length, 1);
+  assert.equal(result.scopeEvaluations[0].divergence.vector, 1);
+  assert.equal(result.outcome.verdict, 'COUNTERFACTUAL_BETTER');
+  assert.equal(result.outcome.bindingCount, 1);
+
+  const reversed = evaluateCounterfactualPolicyCorpus({
+    histories: [histories[1], histories[0]],
+    policy: policy(TOKEN_B),
+  });
+  assert.equal(reversed.outcome.verdict, 'COUNTERFACTUAL_BETTER');
+  assert.ok(Math.abs(reversed.outcome.meanDelta - result.outcome.meanDelta) < 1e-12);
+});
+
 test('strict binding refuses vector-only evidence from a different hidden state', () => {
   const history = [
     entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),

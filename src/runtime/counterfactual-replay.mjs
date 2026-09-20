@@ -72,7 +72,7 @@ export function evaluateCounterfactualPolicy({ history, policy, binding = 'vecto
       continue;
     }
     const sameState = lastOutcomeAtState(recorded, entry?.beforeStateDigest);
-    const counterfactual = sameState ?? (normalizedBinding === 'vector' ? recorded.at(-1) : undefined);
+    const counterfactual = sameState ?? (normalizedBinding === 'vector' ? meanOutcome(recorded) : undefined);
     if (counterfactual === undefined) {
       counters.unevaluable += 1;
       pushSample(samples, { ...sample, classification: 'UNEVALUABLE', reason: 'NO_STRICT_OUTCOME' });
@@ -119,10 +119,9 @@ export function evaluateCounterfactualPolicy({ history, policy, binding = 'vecto
   };
 }
 
-// A corpus is an evidence report over independent histories. It deliberately
-// evaluates each history in isolation, so one WorldPort or seed can never lend
-// an unverified outcome to another partition. The aggregate is only a summary
-// of deltas already established by the single-history evaluator.
+// A corpus is an evidence report over independent histories. Histories may
+// share verified outcomes only after they resolve to the same WorldPort scope;
+// a different scope is kept in its own group and cannot affect the verdict.
 export function evaluateCounterfactualPolicyCorpus({ histories, policy, binding = 'vector', scopeHints } = {}) {
   if (!Array.isArray(histories)) {
     throw evaluationError('Counterfactual evaluation requires a history corpus array.', { field: 'histories' });
@@ -141,17 +140,18 @@ export function evaluateCounterfactualPolicyCorpus({ histories, policy, binding 
     }),
   }));
   const scope = corpusScope(partitions, scopeHints);
-  const basis = partitions.reduce((total, partition) => ({
-    historyCount: total.historyCount + 1,
-    steps: total.steps + partition.basis.steps,
-    opaque: total.opaque + partition.basis.opaque,
-    evaluated: total.evaluated + partition.divergence.evaluated,
-    strict: total.strict + partition.divergence.strict,
-    vector: total.vector + partition.divergence.vector,
-    unevaluable: total.unevaluable + partition.divergence.unevaluable,
-    recordedOutcomes: total.recordedOutcomes + partition.basis.recordedOutcomes,
+  const scopeEvaluations = evaluateScopeGroups({ histories, partitions, policy: normalizedPolicy, binding: normalizedBinding, scopeHints });
+  const basis = scopeEvaluations.reduce((total, evaluation) => ({
+    historyCount: total.historyCount,
+    steps: total.steps + evaluation.basis.steps,
+    opaque: total.opaque + evaluation.basis.opaque,
+    evaluated: total.evaluated + evaluation.divergence.evaluated,
+    strict: total.strict + evaluation.divergence.strict,
+    vector: total.vector + evaluation.divergence.vector,
+    unevaluable: total.unevaluable + evaluation.divergence.unevaluable,
+    recordedOutcomes: total.recordedOutcomes + evaluation.basis.recordedOutcomes,
   }), {
-    historyCount: 0,
+    historyCount: partitions.length,
     steps: 0,
     opaque: 0,
     evaluated: 0,
@@ -169,10 +169,41 @@ export function evaluateCounterfactualPolicyCorpus({ histories, policy, binding 
     scope,
     basis,
     outcome: scope.status === 'UNIFORM'
-      ? corpusOutcomeSummary(partitions)
+      ? corpusOutcomeSummary(scopeEvaluations)
       : { verdict: 'INSUFFICIENT_EVIDENCE', bindingCount: 0 },
     partitions,
+    scopeEvaluations,
   };
+}
+
+function evaluateScopeGroups({ histories, partitions, policy, binding, scopeHints }) {
+  const groups = new Map();
+  for (let index = 0; index < histories.length; index += 1) {
+    const keyInfo = scopeKeyInfo(partitions[index], index, scopeHints);
+    const groupKey = keyInfo.key ?? `partition:${index}`;
+    const group = groups.get(groupKey) ?? { scopeKey: keyInfo.key, historyIndexes: [], histories: [] };
+    group.historyIndexes.push(index);
+    group.histories.push(histories[index]);
+    groups.set(groupKey, group);
+  }
+  return [...groups.values()].map((group) => ({
+    scopeKey: group.scopeKey,
+    historyIndexes: group.historyIndexes,
+    ...evaluateCounterfactualPolicy({
+      history: group.histories.flat(),
+      policy,
+      binding,
+    }),
+  }));
+}
+
+function scopeKeyInfo(partition, index, scopeHints) {
+  if (partition.scope.status !== 'UNIFORM') return { key: null, invalid: false };
+  if (scopeHints === undefined) return { key: partition.scope.key, invalid: partition.scope.key === null };
+  const hintKey = historyScopeKey(scopeHints[index]);
+  if (hintKey.invalid) return { key: null, invalid: true };
+  if (partition.scope.key !== null && partition.scope.key !== hintKey.digest) return { key: null, invalid: false };
+  return { key: hintKey.digest, invalid: false };
 }
 
 function corpusScope(partitions, scopeHints) {
@@ -183,20 +214,10 @@ function corpusScope(partitions, scopeHints) {
   if (scopes.some((partitionScope) => partitionScope.status !== 'UNIFORM')) {
     return { status: 'MIXED', partitionCount: scopes.length };
   }
-  const keys = scopeHints === undefined
-    ? new Set(scopes.map((partitionScope) => partitionScope.key))
-    : new Set(scopeHints.map((hint, index) => {
-      const key = historyScopeKey(hint);
-      if (key.invalid || (scopes[index].key !== null && scopes[index].key !== key.digest)) return null;
-      return key.digest;
-    }));
-  if (keys.has(null)) return { status: 'INVALID', partitionCount: 0 };
-  if (scopeHints !== undefined && scopeHints.some((hint, index) => {
-    const key = historyScopeKey(hint);
-    return key.invalid || (scopes[index].key !== null && scopes[index].key !== key.digest);
-  })) {
-    return { status: 'MIXED', partitionCount: scopes.length };
-  }
+  const keyInfos = partitions.map((partition, index) => scopeKeyInfo(partition, index, scopeHints));
+  if (keyInfos.some((info) => info.invalid)) return { status: 'INVALID', partitionCount: 0 };
+  if (keyInfos.some((info) => info.key === null)) return { status: 'MIXED', partitionCount: scopes.length };
+  const keys = new Set(keyInfos.map((info) => info.key));
   return {
     status: keys.size > 1 ? 'MIXED' : 'UNIFORM',
     partitionCount: keys.size,
@@ -331,6 +352,15 @@ function lastOutcomeAtState(recorded, beforeStateDigest) {
     if (outcome.beforeStateDigest === beforeStateDigest) found = outcome;
   }
   return found;
+}
+
+function meanOutcome(recorded) {
+  if (recorded.length === 1) return recorded[0];
+  const total = recorded.reduce((sum, outcome) => sum + outcome.goalDistanceAfter, 0);
+  return {
+    beforeStateDigest: null,
+    goalDistanceAfter: total / recorded.length,
+  };
 }
 
 function pushSample(samples, sample) {

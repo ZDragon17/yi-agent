@@ -71,8 +71,8 @@ export async function evaluateLabCounterfactual(input) {
 }
 
 // Evaluate several completed Labs as independent evidence partitions. No
-// WorldPort is stepped and no history from one Lab is used to fill another's
-// missing counterfactual outcome.
+// WorldPort is stepped; only verified outcomes from the same resolved scope
+// may fill another Lab's missing counterfactual outcome.
 export async function evaluateLabsCounterfactual(input) {
   const source = requireRecord(input, 'counterfactual corpus input');
   if (!Array.isArray(source.labPaths) || source.labPaths.length === 0 || source.labPaths.length > 32) {
