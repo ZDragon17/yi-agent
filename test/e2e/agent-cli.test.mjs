@@ -930,6 +930,40 @@ test('kernel-only agent run works without model configuration and remains replay
   }
 });
 
+test('agent run can execute an explicitly supplied candidate policy without model configuration', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-policy-run-e2e-'));
+  const lab = path.join(root, 'lab');
+  const policyPath = path.join(root, 'policy.json');
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'policy-run-seed', '--json'], process.env);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const tokens = init.stdout[0].data.tokenMap.entries.map((entry) => entry.token);
+    await writeFile(policyPath, JSON.stringify({
+      schemaVersion: 1,
+      type: 'candidate-policy',
+      version: 1,
+      defaultToken: tokens[1],
+      rules: [],
+    }));
+
+    const run = await invoke([
+      'agent', 'run', '--lab', lab, '--steps', '2', '--policy', policyPath, '--json',
+    ], { ...process.env, YI_AGENT_API_KEY: undefined, ZAI_API_KEY: undefined });
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    const events = (await (await LabStore.open({ labPath: lab })).readRun(run.stdout[0].data.runId)).events;
+    const steps = events.filter((event) => event.kind === 'STEP');
+    assert.equal(steps.length, 2);
+    assert.equal(steps.every((event) => event.payload.policyEvidence?.source === 'candidate-policy'), true);
+    assert.equal(steps.every((event) => event.payload.policyEvidence?.model === 'candidate-policy-v1'), true);
+    const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent run rejects the loop-only forever policy', async () => {
   const result = await invoke(['agent', 'run', '--lab', 'missing', '--steps', '1', '--forever', '--json'], {
     ...process.env,

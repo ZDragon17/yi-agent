@@ -11,6 +11,8 @@ import { createOpenAICompatibleClient, loadApiConfig } from './api/openai-compat
 import { createModelAdvisor } from './agent/model-advisor.mjs';
 import { createModelPlanner } from './agent/model-planner.mjs';
 import { createProcessModelClient, loadProcessModelConfig } from './agent/process-model-client.mjs';
+import { createCandidatePolicyAdvisor, normalizeCandidatePolicy } from './runtime/candidate-policy.mjs';
+import { LabStore } from './runtime/lab-store.mjs';
 import { runPairedCandidates } from './application/paired-experiment-service.mjs';
 import { runPairedTrajectories } from './application/paired-trajectory-service.mjs';
 import { runPairedPolicies } from './application/paired-policy-service.mjs';
@@ -238,11 +240,26 @@ async function dispatchAgent(options) {
   if (options['kernel-only'] === true && options['model-adapter'] !== undefined) {
     throw cliError('INVALID_INPUT', '--kernel-only and --model-adapter are mutually exclusive.', { fields: ['kernel-only', 'model-adapter'] }, 64);
   }
+  if (options.policy !== undefined && options['kernel-only'] === true) {
+    throw cliError('INVALID_INPUT', '--policy and --kernel-only are mutually exclusive.', { fields: ['policy', 'kernel-only'] }, 64);
+  }
+  if (options.policy !== undefined && options['model-adapter'] !== undefined) {
+    throw cliError('INVALID_INPUT', '--policy and --model-adapter are mutually exclusive.', { fields: ['policy', 'model-adapter'] }, 64);
+  }
+  if (options.policy !== undefined && (
+    options.goal !== undefined || options['goal-plan'] !== undefined || options['auto-plan'] === true
+  )) {
+    throw cliError('INVALID_INPUT', '--policy cannot be combined with goal planning options.', {
+      fields: ['policy', 'goal', 'goal-plan', 'auto-plan'],
+    }, 64);
+  }
   let advisor;
   let planner;
   let modelTimeoutMs;
   let client;
-  if (options['kernel-only'] !== true) {
+  if (options.policy !== undefined) {
+    advisor = await loadCandidatePolicyAdvisor(options);
+  } else if (options['kernel-only'] !== true) {
     try {
       const config = options['model-adapter'] === undefined
         ? loadApiConfig()
@@ -274,7 +291,7 @@ async function dispatchAgent(options) {
       options['auto-plan'] === true || options['run-id'] !== undefined ||
       options['max-cycles'] !== undefined || options['stagnation-limit'] !== undefined ||
       options['randomized-trial'] !== undefined ||
-      options['planning-horizon'] !== undefined
+      options['planning-horizon'] !== undefined || options.policy !== undefined
     )) {
       throw cliError('INVALID_INPUT', '--resume cannot be combined with loop configuration options.', {
         field: 'resume',
@@ -479,7 +496,7 @@ function parseArguments(argv) {
     index += 1;
   }
   const allowed = {
-    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'require-recovery', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'goal', 'goal-plan', 'randomized-trial', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
+    agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'require-recovery', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'policy', 'goal', 'goal-plan', 'randomized-trial', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     api: ['apiOperation'],
     adapter: ['adapterOperation', 'adapter', 'require-recovery'],
     ask: ['prompt', 'prompt-file'],
@@ -616,6 +633,24 @@ async function readCandidatePolicyFile(filePath, field) {
     throw cliError('INVALID_INPUT', 'Candidate policy file has an invalid envelope.', { filePath, field }, 64);
   }
   return value;
+}
+
+async function loadCandidatePolicyAdvisor(options) {
+  const labPath = required(options, 'lab');
+  const store = await LabStore.open({ labPath });
+  const policy = await readCandidatePolicyFile(requiredAbsolute(options, 'policy'), 'policy');
+  const manifest = store.manifest;
+  const normalized = normalizeCandidatePolicy(
+    policy,
+    new Set(manifest.tokenMap.entries.map((entry) => entry.token)),
+    {
+      worldId: manifest.worldId,
+      worldVersion: manifest.worldVersion,
+      worldImplementationDigest: manifest.worldImplementationDigest,
+      tokenMapDigest: manifest.tokenMap.digest,
+    },
+  );
+  return createCandidatePolicyAdvisor(normalized);
 }
 
 function requiredAbsolute(options, name) {
@@ -755,7 +790,7 @@ function helpText() {
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
-    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--planning-horizon N] [--kernel-only] [--model-adapter CONFIG] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--randomized-trial PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
+    '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--planning-horizon N] [--kernel-only] [--model-adapter CONFIG] [--policy PATH] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--randomized-trial PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
     '  yi-agent agent loop --lab PATH --resume [--auto-recover] [--require-recovery] [--kernel-only] [--adapter CONFIG] [--json]',
     '',
     '实验室:',

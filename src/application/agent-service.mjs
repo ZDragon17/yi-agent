@@ -1201,6 +1201,7 @@ function normalizedAdvice(result, fallbackReason, errorContext = null) {
     const model = typeof result.model === 'string' && result.model.length > 0 && result.model.length <= 4096
       ? result.model
       : 'unknown';
+    const source = result.source === 'candidate-policy' ? 'candidate-policy' : 'model';
     const hasToken = Object.hasOwn(result, 'token');
     const token = result.token;
     const tokenValid = hasToken && (token === null || (typeof token === 'string' && TOKEN_PATTERN.test(token)));
@@ -1217,7 +1218,7 @@ function normalizedAdvice(result, fallbackReason, errorContext = null) {
     const observationDigest = validDigest(result.observationDigest) ? result.observationDigest : null;
     return {
       schemaVersion: SCHEMA_VERSION,
-      source: 'model',
+      source,
       model,
       token: valid ? token : null,
       responseDigest,
@@ -1446,7 +1447,7 @@ function policyEvidence(modelDecision, intent, capabilities, {
   });
   return {
     schemaVersion: SCHEMA_VERSION,
-    source: 'model',
+    source: modelDecision.source ?? 'model',
     model: modelDecision.model,
     token: appliedCandidate.token,
     responseDigest: modelDecision.responseDigest,
