@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { inflateRawSync } from 'node:zlib';
+import { LEDGER_COMPRESSION_DICTIONARY } from '../../src/runtime/lab-store.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const FIXTURE = path.resolve('test/fixtures/idempotent-transition-world-adapter.mjs');
@@ -530,8 +531,17 @@ function parseJsonLines(value) {
 
 function decodeStoredEvent(event) {
   return typeof event.payload === 'string'
-    ? { ...event, payload: JSON.parse(inflateRawSync(Buffer.from(event.payload, 'base64')).toString('utf8')) }
+    ? { ...event, payload: JSON.parse(inflateStoredPayload(Buffer.from(event.payload, 'base64')).toString('utf8')) }
     : event;
+}
+
+function inflateStoredPayload(value) {
+  try {
+    return inflateRawSync(value, { dictionary: LEDGER_COMPRESSION_DICTIONARY });
+  } catch {
+    // Keep the fixture compatible with ledgers written before dictionary compression.
+    return inflateRawSync(value);
+  }
 }
 
 function invokeUntilEffectThenKill(args, effectFile, releaseFile, timeoutMs = 20_000) {
