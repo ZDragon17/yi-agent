@@ -752,6 +752,8 @@ F-285 将 repo WorldPort 的测试验证契约显式化。每次观察都公开�
 
 F-286 为 repo WorldPort 增加有界的 `repo-test-result` evidence。测试失败时，模型能看到 `PASS/FAIL`、退出码、超时/信号和最多 8 个失败测试名称；不会把原始 stdout、stderr、堆栈、源码行或环境变量放进观察证据。adapter 强制使用 TAP reporter，让不同 Node 版本的失败名称解析保持稳定；完整输出仍只保留摘要 digest。该信息是模型的诊断线索，不是执行授权或验证结论，最终动作仍需经过 Kernel、WorldPort 回执和 Replay。
 
+F-287 重跑 R28 候选质量实验：8 对同 seed、每对 96 步，单候选与有界候选集各自独立运行并 Replay。8 对全部 `CONSISTENT`，但候选集相对单候选的平均成本差为 `+53.75` 元（成本越低越好），只有 3 对改善、5 对变差。当前结论是 `INCONCLUSIVE_CANDIDATE_SET_QUALITY`：候选集已经进入可测量、可重放的闭环，但没有证据证明它改善结果；本次随机样本反而提醒我们，不能把“候选更多”当成“智能更强”。报告绑定源码指纹 `9224888085ba7cac4183d71f3d494a44d3d5e9fcf6a77c7e1dc1334ff51e0561`。
+
 ### 与 Dream-RSI（dream-rsi.com）的关系
 
 本项目通过 `experiment counterfactual` 实践并延伸了 [Dream-RSI](https://dream-rsi.com/)（Google / Google DeepMind / 马里兰大学 / 弗吉尼亚大学，2026）提出的“历史即模拟器”思路：一次在线发现运行已经记录成带真实执行结果的探索结构，因此对备选探索策略的评估可以**零执行**地在已记录历史上重放。当前编译器 `counterfactual-replay.mjs` 严格按照“单步历史锚定”执行：它只用账本确实观测过的状态和结果，只替代单个步骤的候选选择，绝不编造账本从未见过的世界状态去推演多步反事实轨迹；因此它的评价范畴是“某条反事实选择在已记录证据下是否更好/更差/无法评估”，并且：

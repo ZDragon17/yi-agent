@@ -1,6 +1,6 @@
 {
   "experiment": "R28-kernel-candidate-quality",
-  "sourceFingerprint": "8be5f73acede715f0fd35b2551b02e3499dfe056c3ea9a90f841a45421dc8459",
+  "sourceFingerprint": "9224888085ba7cac4183d71f3d494a44d3d5e9fcf6a77c7e1dc1334ff51e0561",
   "nodeVersion": "v26.7.0",
   "design": {
     "independentPairedRuns": 8,
@@ -12,17 +12,17 @@
   "result": {
     "pairs": 8,
     "allReplayConsistent": true,
-    "meanCandidateMinusSingleYuan": -45,
-    "improvedPairs": 5,
-    "worsenedPairs": 3,
+    "meanCandidateMinusSingleYuan": 53.75,
+    "improvedPairs": 3,
+    "worsenedPairs": 5,
     "equalPairs": 0
   },
   "runs": [
     {
-      "seed": "r28-0ba74263783b8c122bd7e8ab2dd57030160e81ccb128152df37d6e2a21ac4b46",
+      "seed": "r28-bc9d7fe4e8cb1537aad4f860ac5d61185b7be2e1d202171295e56ed1f7410bdd",
       "single": {
         "label": "single",
-        "seed": "r28-0ba74263783b8c122bd7e8ab2dd57030160e81ccb128152df37d6e2a21ac4b46",
+        "seed": "r28-bc9d7fe4e8cb1537aad4f860ac5d61185b7be2e1d202171295e56ed1f7410bdd",
         "steps": 96,
         "utilityYuan": 13579.5,
         "replay": "CONSISTENT",
@@ -31,51 +31,7 @@
       },
       "candidate": {
         "label": "candidate",
-        "seed": "r28-0ba74263783b8c122bd7e8ab2dd57030160e81ccb128152df37d6e2a21ac4b46",
-        "steps": 96,
-        "utilityYuan": 13489.5,
-        "replay": "CONSISTENT",
-        "proposalSetSteps": 96,
-        "learnedProposalModelCount": 3
-      },
-      "utilityDifferenceYuan": -90
-    },
-    {
-      "seed": "r28-b2a2fa12f6465ae1dc73efdcd4ee8f981314bcc95547475b5d6b0ec87799519c",
-      "single": {
-        "label": "single",
-        "seed": "r28-b2a2fa12f6465ae1dc73efdcd4ee8f981314bcc95547475b5d6b0ec87799519c",
-        "steps": 96,
-        "utilityYuan": 13579.5,
-        "replay": "CONSISTENT",
-        "proposalSetSteps": 0,
-        "learnedProposalModelCount": 3
-      },
-      "candidate": {
-        "label": "candidate",
-        "seed": "r28-b2a2fa12f6465ae1dc73efdcd4ee8f981314bcc95547475b5d6b0ec87799519c",
-        "steps": 96,
-        "utilityYuan": 13602,
-        "replay": "CONSISTENT",
-        "proposalSetSteps": 96,
-        "learnedProposalModelCount": 3
-      },
-      "utilityDifferenceYuan": 22.5
-    },
-    {
-      "seed": "r28-e0888fa15ea25c3553211d15096b4fc18ce35939aa390e69d9c066b1700ce576",
-      "single": {
-        "label": "single",
-        "seed": "r28-e0888fa15ea25c3553211d15096b4fc18ce35939aa390e69d9c066b1700ce576",
-        "steps": 96,
-        "utilityYuan": 13579.5,
-        "replay": "CONSISTENT",
-        "proposalSetSteps": 0,
-        "learnedProposalModelCount": 3
-      },
-      "candidate": {
-        "label": "candidate",
-        "seed": "r28-e0888fa15ea25c3553211d15096b4fc18ce35939aa390e69d9c066b1700ce576",
+        "seed": "r28-bc9d7fe4e8cb1537aad4f860ac5d61185b7be2e1d202171295e56ed1f7410bdd",
         "steps": 96,
         "utilityYuan": 13409.5,
         "replay": "CONSISTENT",
@@ -85,10 +41,10 @@
       "utilityDifferenceYuan": -170
     },
     {
-      "seed": "r28-dcb4b17e5a996418445c4a3540b0965d6bb60b1137f35d975656f04e1a370315",
+      "seed": "r28-bc8336f603dcb50d171aa31475e1f0ad36191d6242b9395e305b2afe7c977353",
       "single": {
         "label": "single",
-        "seed": "r28-dcb4b17e5a996418445c4a3540b0965d6bb60b1137f35d975656f04e1a370315",
+        "seed": "r28-bc8336f603dcb50d171aa31475e1f0ad36191d6242b9395e305b2afe7c977353",
         "steps": 96,
         "utilityYuan": 13579.5,
         "replay": "CONSISTENT",
@@ -97,20 +53,20 @@
       },
       "candidate": {
         "label": "candidate",
-        "seed": "r28-dcb4b17e5a996418445c4a3540b0965d6bb60b1137f35d975656f04e1a370315",
+        "seed": "r28-bc8336f603dcb50d171aa31475e1f0ad36191d6242b9395e305b2afe7c977353",
         "steps": 96,
-        "utilityYuan": 13599.5,
+        "utilityYuan": 13649.5,
         "replay": "CONSISTENT",
         "proposalSetSteps": 96,
         "learnedProposalModelCount": 3
       },
-      "utilityDifferenceYuan": 20
+      "utilityDifferenceYuan": 70
     },
     {
-      "seed": "r28-002f12586ff08cffb94fb0ec3861093cf14443604adcdd0c50728d82d98b900c",
+      "seed": "r28-869d81e357ffa468ed9fa356add4ef6a2341b89398f3bd12d6b2b079d5df0bc6",
       "single": {
         "label": "single",
-        "seed": "r28-002f12586ff08cffb94fb0ec3861093cf14443604adcdd0c50728d82d98b900c",
+        "seed": "r28-869d81e357ffa468ed9fa356add4ef6a2341b89398f3bd12d6b2b079d5df0bc6",
         "steps": 96,
         "utilityYuan": 13579.5,
         "replay": "CONSISTENT",
@@ -119,7 +75,95 @@
       },
       "candidate": {
         "label": "candidate",
-        "seed": "r28-002f12586ff08cffb94fb0ec3861093cf14443604adcdd0c50728d82d98b900c",
+        "seed": "r28-869d81e357ffa468ed9fa356add4ef6a2341b89398f3bd12d6b2b079d5df0bc6",
+        "steps": 96,
+        "utilityYuan": 13807,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": 227.5
+    },
+    {
+      "seed": "r28-37e4e3ac38f5565f14c9a09436a639455e6fd46164057fc83409940074c0a03c",
+      "single": {
+        "label": "single",
+        "seed": "r28-37e4e3ac38f5565f14c9a09436a639455e6fd46164057fc83409940074c0a03c",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-37e4e3ac38f5565f14c9a09436a639455e6fd46164057fc83409940074c0a03c",
+        "steps": 96,
+        "utilityYuan": 13699.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": 120
+    },
+    {
+      "seed": "r28-1d881dd80f4a69c8f8d19e0b19a1d9310d00bd89f88948052b42d652e07d1c33",
+      "single": {
+        "label": "single",
+        "seed": "r28-1d881dd80f4a69c8f8d19e0b19a1d9310d00bd89f88948052b42d652e07d1c33",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-1d881dd80f4a69c8f8d19e0b19a1d9310d00bd89f88948052b42d652e07d1c33",
+        "steps": 96,
+        "utilityYuan": 13687,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": 107.5
+    },
+    {
+      "seed": "r28-dcf9bf198d4298c52afde6a00db0cc9f643faca834b4fca2e5083f00507a330f",
+      "single": {
+        "label": "single",
+        "seed": "r28-dcf9bf198d4298c52afde6a00db0cc9f643faca834b4fca2e5083f00507a330f",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-dcf9bf198d4298c52afde6a00db0cc9f643faca834b4fca2e5083f00507a330f",
+        "steps": 96,
+        "utilityYuan": 13564.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 96,
+        "learnedProposalModelCount": 3
+      },
+      "utilityDifferenceYuan": -15
+    },
+    {
+      "seed": "r28-05794c4f4c0c8b796c1840f991dfb9cc9b8de348019ab2306a8eef2a32c5d275",
+      "single": {
+        "label": "single",
+        "seed": "r28-05794c4f4c0c8b796c1840f991dfb9cc9b8de348019ab2306a8eef2a32c5d275",
+        "steps": 96,
+        "utilityYuan": 13579.5,
+        "replay": "CONSISTENT",
+        "proposalSetSteps": 0,
+        "learnedProposalModelCount": 3
+      },
+      "candidate": {
+        "label": "candidate",
+        "seed": "r28-05794c4f4c0c8b796c1840f991dfb9cc9b8de348019ab2306a8eef2a32c5d275",
         "steps": 96,
         "utilityYuan": 13529.5,
         "replay": "CONSISTENT",
@@ -129,10 +173,10 @@
       "utilityDifferenceYuan": -50
     },
     {
-      "seed": "r28-8a653860135ae62f5e93fadc06bcc909171536c134b8de3a785cffd486320fd3",
+      "seed": "r28-19341433635ffc51ec769b0014005fd81be87a0b27ef001bf27e87a1be4e206a",
       "single": {
         "label": "single",
-        "seed": "r28-8a653860135ae62f5e93fadc06bcc909171536c134b8de3a785cffd486320fd3",
+        "seed": "r28-19341433635ffc51ec769b0014005fd81be87a0b27ef001bf27e87a1be4e206a",
         "steps": 96,
         "utilityYuan": 13579.5,
         "replay": "CONSISTENT",
@@ -141,58 +185,14 @@
       },
       "candidate": {
         "label": "candidate",
-        "seed": "r28-8a653860135ae62f5e93fadc06bcc909171536c134b8de3a785cffd486320fd3",
+        "seed": "r28-19341433635ffc51ec769b0014005fd81be87a0b27ef001bf27e87a1be4e206a",
         "steps": 96,
-        "utilityYuan": 13409.5,
+        "utilityYuan": 13719.5,
         "replay": "CONSISTENT",
         "proposalSetSteps": 96,
         "learnedProposalModelCount": 3
       },
-      "utilityDifferenceYuan": -170
-    },
-    {
-      "seed": "r28-c2201d0f9bb50c40815bc1d0382271c3f3715c0e021f8c860842ae5345843064",
-      "single": {
-        "label": "single",
-        "seed": "r28-c2201d0f9bb50c40815bc1d0382271c3f3715c0e021f8c860842ae5345843064",
-        "steps": 96,
-        "utilityYuan": 13579.5,
-        "replay": "CONSISTENT",
-        "proposalSetSteps": 0,
-        "learnedProposalModelCount": 3
-      },
-      "candidate": {
-        "label": "candidate",
-        "seed": "r28-c2201d0f9bb50c40815bc1d0382271c3f3715c0e021f8c860842ae5345843064",
-        "steps": 96,
-        "utilityYuan": 13492,
-        "replay": "CONSISTENT",
-        "proposalSetSteps": 96,
-        "learnedProposalModelCount": 3
-      },
-      "utilityDifferenceYuan": -87.5
-    },
-    {
-      "seed": "r28-df33dac433d121c160bbd01e07357cfad176ffca1d2467debdb7ad0a4e011384",
-      "single": {
-        "label": "single",
-        "seed": "r28-df33dac433d121c160bbd01e07357cfad176ffca1d2467debdb7ad0a4e011384",
-        "steps": 96,
-        "utilityYuan": 13579.5,
-        "replay": "CONSISTENT",
-        "proposalSetSteps": 0,
-        "learnedProposalModelCount": 3
-      },
-      "candidate": {
-        "label": "candidate",
-        "seed": "r28-df33dac433d121c160bbd01e07357cfad176ffca1d2467debdb7ad0a4e011384",
-        "steps": 96,
-        "utilityYuan": 13744.5,
-        "replay": "CONSISTENT",
-        "proposalSetSteps": 96,
-        "learnedProposalModelCount": 3
-      },
-      "utilityDifferenceYuan": 165
+      "utilityDifferenceYuan": 140
     }
   ]
 }
