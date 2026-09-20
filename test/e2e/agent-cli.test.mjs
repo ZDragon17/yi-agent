@@ -701,6 +701,69 @@ test('agent loop recovers after a persistent process model session dies between 
   }
 });
 
+test('agent loop recovers a persistent model crash across an opaque WorldPort', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-opaque-model-crash-e2e-'));
+  const firstMarker = path.join(root, 'first-model-requests.log');
+  const secondMarker = path.join(root, 'second-model-requests.log');
+  const firstConfig = path.join(root, 'first-model-adapter.json');
+  const secondConfig = path.join(root, 'second-model-adapter.json');
+  const worldConfig = path.join(root, 'world-adapter.json');
+  const config = (marker) => ({
+    executable: process.execPath,
+    args: [MODEL_ADAPTER, '--hang-after', '1', '--marker', marker],
+    model: 'fixture-process-model',
+    timeoutMs: 5_000,
+    transport: 'persistent-jsonl',
+  });
+  await writeFile(firstConfig, JSON.stringify(config(firstMarker)));
+  await writeFile(secondConfig, JSON.stringify(config(secondMarker)));
+  await writeFile(worldConfig, JSON.stringify({
+    executable: process.execPath,
+    args: [OPAQUE_VECTOR_ADAPTER],
+    adapterId: 'opaque-vector-adapter-v1',
+    worldId: 'opaque-vector',
+    timeoutMs: 5_000,
+  }));
+  const lab = path.join(root, 'lab');
+  let activeChild = null;
+  try {
+    assert.equal((await invoke([
+      'init', '--lab', lab, '--world', 'opaque-vector', '--seed', 'persistent-opaque-model-crash-seed',
+      '--adapter', worldConfig, '--json',
+    ], process.env)).code, 0);
+
+    const firstPromise = invoke(
+      ['agent', 'loop', '--lab', lab, '--steps', '1', '--forever', '--adapter', worldConfig, '--model-adapter', firstConfig, '--json'],
+      process.env,
+      (child) => { activeChild = child; },
+    );
+    await waitForMarker(firstMarker, 2);
+    assert.equal(forceTerminate(activeChild), true);
+    await firstPromise;
+
+    const secondPromise = invoke(
+      ['agent', 'loop', '--lab', lab, '--resume', '--auto-recover', '--adapter', worldConfig, '--model-adapter', secondConfig, '--json'],
+      process.env,
+      (child) => { activeChild = child; },
+    );
+    await waitForMarker(secondMarker, 2);
+    assert.equal(forceTerminate(activeChild), true);
+    await secondPromise;
+
+    const store = await LabStore.open({ labPath: lab });
+    assert.equal((await store.inspect()).current.kernelStep, 2);
+    assert.equal((await store.readCandidateOutcomes()).length, 2);
+    await LabStore.recover({ labPath: lab, command: 'test-persistent-opaque-model-crash-cleanup' });
+    assert.equal((await store.readCurrentLoopContinuation()).status, 'ACTIVE');
+    const chain = await invoke(['replay', '--lab', lab, '--chain', '--adapter', worldConfig, '--json'], process.env);
+    assert.equal(chain.code, 0, JSON.stringify(chain));
+    assert.equal(chain.stdout[0].data.verdict, 'CONSISTENT', JSON.stringify(chain));
+  } finally {
+    forceTerminate(activeChild);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent loop accepts an explicit forever policy without confusing it with a run count', async () => {
   const help = await invoke(['agent', 'loop', '--lab', 'missing', '--steps', '1', '--forever', '--json'], {
     ...process.env,
