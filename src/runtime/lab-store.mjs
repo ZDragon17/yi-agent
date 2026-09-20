@@ -481,15 +481,12 @@ export class LabStore {
       const safeRunId = requireSafeSegment(runId, 'runId');
       const start = await readVerifiedObject(childPath(this.root, 'runs', safeRunId, 'start.json'), 'run start');
       validateStart(start, this.manifest, safeRunId);
-      runIds.push({ runId: safeRunId, kernelStep: start.initialState.kernelStep });
+      runIds.push({ runId: safeRunId, kernelStep: start.initialState.kernelStep, startedAt: start.startedAt });
     }
     assertChainCurrentStable(current, await this.readChainCurrent());
     return {
       current,
-      runIds: runIds.sort((left, right) => (
-        left.kernelStep - right.kernelStep ||
-        left.runId.localeCompare(right.runId)
-      )),
+      runIds: runIds.sort(compareChainRunRecords).map(({ runId, kernelStep }) => ({ runId, kernelStep })),
     };
   }
 
@@ -521,7 +518,7 @@ export class LabStore {
         const safeRunId = requireSafeSegment(runId, 'runId');
         const start = await readVerifiedObject(childPath(this.root, 'runs', safeRunId, 'start.json'), 'run start');
         validateStart(start, this.manifest, safeRunId);
-        chunk.push({ runId: safeRunId, kernelStep: start.initialState.kernelStep });
+        chunk.push({ runId: safeRunId, kernelStep: start.initialState.kernelStep, startedAt: start.startedAt });
         if (chunk.length >= MAX_CHAIN_SORT_CHUNK) await flushChunk();
       }
       const ordered = sortRoot === null
@@ -533,9 +530,12 @@ export class LabStore {
           await flushChunk();
           yield* iterateSortedJsonlChunks(chunkPaths, compareChainRunRecords, readChainRunChunk);
         })();
+      const publicOrdered = (async function* () {
+        for await (const record of ordered) yield { runId: record.runId, kernelStep: record.kernelStep };
+      })();
       assertChainCurrentStable(current, await this.readChainCurrent());
       handedOff = true;
-      return { current, runIds: withCleanup(ordered, sortRoot) };
+      return { current, runIds: withCleanup(publicOrdered, sortRoot) };
     } finally {
       if (!handedOff && sortRoot !== null) await rm(sortRoot, { recursive: true, force: true });
     }
@@ -2587,7 +2587,9 @@ function compareLoopContinuationRecords(left, right) {
 }
 
 function compareChainRunRecords(left, right) {
-  return left.kernelStep - right.kernelStep || left.runId.localeCompare(right.runId);
+  return left.kernelStep - right.kernelStep ||
+    left.startedAt.localeCompare(right.startedAt) ||
+    left.runId.localeCompare(right.runId);
 }
 
 async function forEachLoopContinuationInOrder(chunkPaths, consume) {

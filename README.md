@@ -268,7 +268,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 
 `agent loop` 也会在多个持久化 Run 间复用同一候选集契约：模型上下文重新读取 current 和有界候选历史，Kernel 每步重新检查权限与安全性，Replay 仍只使用已落盘的最终选择。F-279 的三 Run 测试证明了这条连续 Runner 路径，但不等于无限运行、长期收益或模型自我改进已经成立。
 
-模型进程适配器是可选的可靠性边界，不是权限沙箱。配置格式为 `{ "executable": "绝对路径", "args": [], "model": "名称", "timeoutMs": 5000, "env": ["显式允许传递的环境变量名"], "transport": "single-jsonl" }`；`transport` 默认是 `single-jsonl`，也可以显式设为 `persistent-jsonl`，让同一次 CLI 运行中的 Advisor/Planner 请求复用一个子进程并严格串行。适配器从 stdin 读取 `yi-model-cli` JSONL 请求，并返回 `{protocol,version,id,ok,result:{model,content}}` 回包。排队请求收到调用方取消信号时会立即移除；持久会话发生超时、取消、协议错误或子进程异常时，当前请求和排队请求都会失败，不会自动重放；下一次显式请求才会启动新会话。`test/e2e/agent-cli.test.mjs` 还覆盖了持久模型进程在两个 Run 之间死亡后的 `auto-recover → resume → Replay`。它解决的是“不合作的模型回调不能永久占住 CLI”这一 liveness 问题，不证明模型安全、不会访问网络，也不撤销已经发生的副作用。
+模型进程适配器是可选的可靠性边界，不是权限沙箱。配置格式为 `{ "executable": "绝对路径", "args": [], "model": "名称", "timeoutMs": 5000, "env": ["显式允许传递的环境变量名"], "transport": "single-jsonl" }`；`transport` 默认是 `single-jsonl`，也可以显式设为 `persistent-jsonl`，让同一次 CLI 运行中的 Advisor/Planner 请求复用一个子进程并严格串行。适配器从 stdin 读取 `yi-model-cli` JSONL 请求，并返回 `{protocol,version,id,ok,result:{model,content}}` 回包。排队请求收到调用方取消信号时会立即移除；持久会话发生超时、取消、协议错误或子进程异常时，当前请求和排队请求都会失败，不会自动重放；下一次显式请求才会启动新会话。`test/e2e/agent-cli.test.mjs` 还覆盖了持久模型进程在两个 Run 之间死亡后的 `auto-recover → resume → Replay`，以及同一协议穿过六维 opaque WorldPort 后的连续 chain Replay。它解决的是“不合作的模型回调不能永久占住 CLI”这一 liveness 问题，不证明模型安全、不会访问网络，也不撤销已经发生的副作用。
 
 ### 内置世界的测试面
 

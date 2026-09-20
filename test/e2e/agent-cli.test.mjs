@@ -93,6 +93,43 @@ test('agent loop reuses a persistent process model session across Run boundaries
   }
 });
 
+test('persistent process model loop remains replayable across an opaque WorldPort', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-opaque-loop-e2e-'));
+  const modelConfig = path.join(root, 'model-adapter.json');
+  const worldConfig = path.join(root, 'world-adapter.json');
+  await writeFile(modelConfig, JSON.stringify({
+    executable: process.execPath,
+    args: [MODEL_ADAPTER],
+    model: 'fixture-process-model',
+    timeoutMs: 5_000,
+    transport: 'persistent-jsonl',
+  }));
+  await writeFile(worldConfig, JSON.stringify({
+    executable: process.execPath,
+    args: [OPAQUE_VECTOR_ADAPTER],
+    adapterId: 'opaque-vector-adapter-v1',
+    worldId: 'opaque-vector',
+    timeoutMs: 5_000,
+  }));
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'opaque-vector', '--seed', 'persistent-opaque-loop-seed', '--adapter', worldConfig, '--json'], process.env)).code, 0);
+    const loop = await invoke([
+      'agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '2',
+      '--adapter', worldConfig, '--model-adapter', modelConfig, '--json',
+    ], process.env);
+    assert.equal(loop.code, 0, JSON.stringify(loop));
+    assert.equal(loop.stdout[0].data.status, 'COMPLETED');
+    assert.equal(loop.stdout[0].data.runs, 2);
+    const chain = await invoke(['replay', '--lab', lab, '--chain', '--adapter', worldConfig, '--json'], process.env);
+    assert.equal(chain.code, 0, JSON.stringify(chain));
+    assert.equal(chain.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal(chain.stdout[0].data.checkedRuns, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent CLI turns an uncooperative process model into a bounded fallback', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-process-model-timeout-e2e-'));
   const config = path.join(root, 'model-adapter.json');
@@ -656,7 +693,8 @@ test('agent loop recovers after a persistent process model session dies between 
     for (const run of terminalRuns) {
       assert.equal((await invoke(['replay', '--lab', lab, '--run', run.start.runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
     }
-    assert.equal((await invoke(['replay', '--lab', lab, '--chain', '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+    const chain = await invoke(['replay', '--lab', lab, '--chain', '--json'], process.env);
+    assert.equal(chain.stdout[0].data.verdict, 'CONSISTENT', JSON.stringify(chain));
   } finally {
     forceTerminate(activeChild);
     await rm(root, { recursive: true, force: true });
