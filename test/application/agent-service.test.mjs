@@ -1474,6 +1474,48 @@ test('continuous runner can stop a forever policy only between committed runs', 
   });
 });
 
+test('continuous runner cancels an in-flight model request and leaves a resumable ledger', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'cancelled-model-loop-lab', worldId: 'temperature', seed: 'cancelled-model-loop-seed' });
+    const controller = new AbortController();
+    const advisor = async (_input, signal) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(Object.assign(new Error('model cancelled'), {
+        code: 'MODEL_ADAPTER_CANCELLED',
+      })), { once: true });
+    });
+    setTimeout(() => controller.abort(), 25);
+
+    const interrupted = await runContinuous({
+      labPath: lab,
+      stepsPerRun: 1,
+      forever: true,
+      advisor,
+      modelTimeoutMs: 5_000,
+      stopSignal: controller.signal,
+    });
+    assert.equal(interrupted.stopReason, 'INTERRUPTED');
+    assert.equal(interrupted.runs, 1);
+    assert.equal(interrupted.metrics.executed, 0);
+
+    const store = await LabStore.open({ labPath: lab });
+    const continuation = await store.readCurrentLoopContinuation();
+    assert.equal(continuation.status, 'ACTIVE');
+    assert.equal(continuation.nextRunIndex, 0);
+    assert.equal((await inspectLab({ labPath: lab })).current.kernelStep, 0);
+    assert.equal((await replayLab({ labPath: lab, runId: interrupted.results[0].runId })).verdict, 'CONSISTENT');
+
+    let stopChecks = 0;
+    const resumed = await runContinuous({
+      labPath: lab,
+      resume: true,
+      shouldStop: () => stopChecks++ > 0,
+    });
+    assert.equal(resumed.runs, 1);
+    assert.equal((await inspectLab({ labPath: lab })).current.kernelStep, 1);
+    assert.equal((await replayLab({ labPath: lab, runId: resumed.results[0].runId })).verdict, 'CONSISTENT');
+  });
+});
+
 test('forever runner keeps in-memory result retention bounded across many run boundaries', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'forever-retention-lab', worldId: 'temperature', seed: 'forever-retention-seed' });

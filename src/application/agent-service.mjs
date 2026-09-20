@@ -81,6 +81,7 @@ export async function runLab(input) {
   if (source.planner !== undefined && typeof source.planner !== 'function') {
     throw new LabStoreError('INVALID_INPUT', 'planner must be a function.', { field: 'planner' });
   }
+  assertAbortSignal(source.stopSignal, 'stopSignal');
   const labPath = requireText(source.labPath, 'labPath');
   const steps = requireSteps(source.steps);
   const runId = source.runId ?? randomUUID();
@@ -406,6 +407,7 @@ export async function runLab(input) {
     } else if (plannerRequested && previousSupervisor?.enabled !== true) {
       const plannerResult = await requestPlan({
         planner: source.planner,
+        stopSignal: source.stopSignal,
         timeoutMs: modelTimeoutMs,
         goal: requestedGoal,
         observation: beforeObservation,
@@ -463,6 +465,7 @@ export async function runLab(input) {
       source.advisor !== undefined && capabilities.some((capability) => capability.allowed && capability.safe)
       ? await requestAdvice({
           advisor: source.advisor,
+          stopSignal: source.stopSignal,
           timeoutMs: modelTimeoutMs,
           observation: beforeObservation,
           memory: effectiveMemory,
@@ -646,6 +649,7 @@ export async function runLab(input) {
       if (plannerRequested) {
         const plannerResult = await requestPlan({
           planner: source.planner,
+          stopSignal: source.stopSignal,
           timeoutMs: modelTimeoutMs,
           goal: requestedGoal,
           observation: postObservation,
@@ -830,6 +834,21 @@ export async function runLab(input) {
       supervision: state.changeSupervisor,
     });
   } catch (error) {
+    if (error?.code === 'MODEL_CALLBACK_CANCELLED' && source.stopSignal?.aborted === true &&
+        !terminalRequested && !run.terminalEvidence && !run.needsLedgerReconcile &&
+        canonicalJson(run.expectedState) === canonicalJson(state)) {
+      terminalRequested = true;
+      try {
+        await run.finish({ terminalStatus: 'HALTED', reason: 'INTERRUPTED', finalState: state });
+        return runSummary(runId, 'HALTED', 'INTERRUPTED', executed, {
+          executed,
+          accepted,
+          rejected: 0,
+        });
+      } catch {
+        // Preserve the cancellation error if the terminal marker cannot be committed.
+      }
+    }
     if (!terminalRequested && !run.terminalEvidence && !run.needsLedgerReconcile &&
         canonicalJson(run.expectedState) === canonicalJson(state)) {
       try {
@@ -853,6 +872,7 @@ export async function runContinuous(input) {
   if (source.shouldStop !== undefined && typeof source.shouldStop !== 'function') {
     throw new LabStoreError('INVALID_INPUT', 'shouldStop must be a function.', { field: 'shouldStop' });
   }
+  assertAbortSignal(source.stopSignal, 'stopSignal');
   const forever = source.forever === true;
   if (source.resume !== undefined && typeof source.resume !== 'boolean') {
     throw new LabStoreError('INVALID_INPUT', 'resume must be a boolean.', { field: 'resume' });
@@ -991,7 +1011,7 @@ export async function runContinuous(input) {
   let completedRuns = 0;
   const metrics = { executed: 0, accepted: 0, rejected: 0 };
   let interrupted = false;
-  const shouldStop = () => source.shouldStop?.() === true;
+  const shouldStop = () => source.stopSignal?.aborted === true || source.shouldStop?.() === true;
 
   for (let index = startIndex; index < runLimit; index += 1) {
     if (shouldStop()) {
@@ -1011,6 +1031,7 @@ export async function runContinuous(input) {
       planningHorizon: continuation.planningHorizon,
       planningBranchingMode: continuation.planningBranchingMode,
       candidateHistory,
+      stopSignal: source.stopSignal,
       ...(randomizedTrial === null ? {} : { randomizedTrial }),
       stepsPerRun: undefined,
       runs: undefined,
@@ -1022,7 +1043,10 @@ export async function runContinuous(input) {
     metrics.rejected += result.metrics?.rejected ?? 0;
     if (longLived) lastResult = result;
     else results.push(result);
-    if (result.status === 'HALTED' || result.stopReason === 'OBJECTIVE_REACHED') break;
+    if (result.status === 'HALTED' || result.stopReason === 'OBJECTIVE_REACHED') {
+      if (result.stopReason === 'INTERRUPTED') interrupted = true;
+      break;
+    }
     if (shouldStop()) {
       interrupted = true;
       break;
@@ -1035,7 +1059,7 @@ export async function runContinuous(input) {
     : results;
   return {
     schemaVersion: SCHEMA_VERSION,
-    status: last?.status ?? 'COMPLETED',
+    status: interrupted ? 'COMPLETED' : (last?.status ?? 'COMPLETED'),
     stopReason: interrupted ? 'INTERRUPTED' : (last?.stopReason ?? 'COMPLETED'),
     continuationId: continuation.loopId,
     runs: completedRuns,
@@ -1094,11 +1118,12 @@ function preferenceFor(modelDecision, required = false, allowProposal = true) {
       };
 }
 
-async function requestAdvice({ advisor, timeoutMs, ...input }) {
+async function requestAdvice({ advisor, stopSignal, timeoutMs, ...input }) {
   let result;
   try {
-    result = await invokeModelCallback(advisor, cloneJson(input), timeoutMs);
+    result = await invokeModelCallback(advisor, cloneJson(input), timeoutMs, stopSignal);
   } catch (error) {
+    if (error?.code === 'MODEL_CALLBACK_CANCELLED') throw error;
     return normalizedAdvice(null, error?.code === 'MODEL_CALLBACK_TIMEOUT'
       ? 'MODEL_TIMEOUT'
       : 'MODEL_UNAVAILABLE', errorContextFrom(error));
@@ -1121,9 +1146,10 @@ function errorContextFrom(error) {
   return { code, message };
 }
 
-async function invokeModelCallback(callback, input, timeoutMs) {
+async function invokeModelCallback(callback, input, timeoutMs, stopSignal) {
   const controller = new AbortController();
   let timer;
+  let stopHandler;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
@@ -1132,13 +1158,25 @@ async function invokeModelCallback(callback, input, timeoutMs) {
       }));
     }, timeoutMs);
   });
+  const cancellation = new Promise((_, reject) => {
+    stopHandler = () => {
+      controller.abort();
+      reject(Object.assign(new Error('Model callback cancelled.'), {
+        code: 'MODEL_CALLBACK_CANCELLED',
+      }));
+    };
+    if (stopSignal?.aborted === true) stopHandler();
+    else stopSignal?.addEventListener('abort', stopHandler, { once: true });
+  });
   try {
     return await Promise.race([
       Promise.resolve().then(() => callback(input, controller.signal)),
       timeout,
+      cancellation,
     ]);
   } finally {
     clearTimeout(timer);
+    stopSignal?.removeEventListener('abort', stopHandler);
   }
 }
 
@@ -1252,7 +1290,7 @@ function assertExternalTransitionRetry(unresolved, request, state, planningHoriz
   }
 }
 
-async function requestPlan({ planner, timeoutMs, goal, observation, observationEvidence, observationEvidenceTruncated, expectedObservationDigest, valueSpec, memory, manifest, plan = null, reason = null, step }) {
+async function requestPlan({ planner, stopSignal, timeoutMs, goal, observation, observationEvidence, observationEvidenceTruncated, expectedObservationDigest, valueSpec, memory, manifest, plan = null, reason = null, step }) {
   let result;
   try {
     result = await invokeModelCallback(planner, cloneJson({
@@ -1266,8 +1304,9 @@ async function requestPlan({ planner, timeoutMs, goal, observation, observationE
       plan,
       reason,
       step,
-    }), timeoutMs);
+    }), timeoutMs, stopSignal);
   } catch (error) {
+    if (error?.code === 'MODEL_CALLBACK_CANCELLED') throw error;
     return {
       plan: undefined,
       evidence: plannerEvidence(null, false, error?.code === 'MODEL_CALLBACK_TIMEOUT'
@@ -1976,6 +2015,14 @@ function requireRecord(value, field) {
     throw new LabStoreError('INVALID_INPUT', `${field} must be an object.`, { field });
   }
   return value;
+}
+
+function assertAbortSignal(value, field) {
+  if (value === undefined) return;
+  if (value === null || typeof value !== 'object' || typeof value.aborted !== 'boolean' ||
+      typeof value.addEventListener !== 'function' || typeof value.removeEventListener !== 'function') {
+    throw new LabStoreError('INVALID_INPUT', `${field} must be an AbortSignal.`, { field });
+  }
 }
 
 function requireText(value, field) {

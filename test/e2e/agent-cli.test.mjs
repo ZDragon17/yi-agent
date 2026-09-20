@@ -1045,6 +1045,43 @@ test('agent loop handles SIGINT at a committed run boundary', async () => {
   }
 });
 
+test('agent loop cancels a hanging process model on SIGINT before a timeout', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-signal-model-cancel-e2e-'));
+  const config = path.join(root, 'model-adapter.json');
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [MODEL_ADAPTER, '--hang'],
+    model: 'fixture-process-model',
+    timeoutMs: 5_000,
+    transport: 'persistent-jsonl',
+  }));
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'inventory', '--seed', 'signal-model-cancel-seed', '--json'], process.env)).code, 0);
+    const stdout = [];
+    const stderr = [];
+    const startedAt = Date.now();
+    const signalTimer = setTimeout(() => process.emit('SIGINT'), 50);
+    const code = await main(['agent', 'loop', '--lab', lab, '--steps', '1', '--forever', '--model-adapter', config, '--json'], {
+      stdout: (value) => stdout.push(JSON.parse(value)),
+      stderr: (value) => stderr.push(value),
+    });
+    clearTimeout(signalTimer);
+    assert.equal(code, 0);
+    assert.ok(Date.now() - startedAt < 2_000);
+    assert.equal(stderr.length, 0);
+    assert.equal(stdout[0].data.stopReason, 'INTERRUPTED');
+    assert.equal(stdout[0].data.runs, 1);
+    assert.equal((await invoke(['inspect', '--lab', lab, '--json'], process.env)).stdout[0].data.current.kernelStep, 0);
+    const store = await LabStore.open({ labPath: lab });
+    const runId = stdout[0].data.results[0].runId;
+    assert.equal((await invoke(['replay', '--lab', lab, '--run', runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal((await store.readCurrentLoopContinuation()).status, 'ACTIVE');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function invoke(args, env, onChild) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });

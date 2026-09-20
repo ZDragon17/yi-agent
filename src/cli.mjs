@@ -255,7 +255,11 @@ async function dispatchAgent(options) {
     }
     const registry = await loadRegistry(options);
     let interrupted = false;
-    const onSignal = () => { interrupted = true; };
+    const stopController = new AbortController();
+    const onSignal = () => {
+      interrupted = true;
+      stopController.abort();
+    };
     process.once('SIGINT', onSignal);
     process.once('SIGTERM', onSignal);
     try {
@@ -269,6 +273,7 @@ async function dispatchAgent(options) {
         ...(options.forever === true ? { forever: true } : {}),
         resume: options.resume === true,
         shouldStop: () => interrupted,
+        ...(options['model-adapter'] === undefined ? {} : { stopSignal: stopController.signal }),
         runId: options['run-id'],
         scenario: options.scenario,
         registry,

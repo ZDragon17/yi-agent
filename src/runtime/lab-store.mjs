@@ -2714,7 +2714,7 @@ function summarizeLatestLoopRun(continuation, planningBranchingMode, last) {
 }
 
 function isRecoverableLoopAttempt(run) {
-  return ['CRASH_HALTED', 'EXTERNAL_TRANSITION_UNKNOWN'].includes(
+  return ['CRASH_HALTED', 'EXTERNAL_TRANSITION_UNKNOWN', 'INTERRUPTED'].includes(
     (run.terminal ?? run.events.at(-1))?.payload?.reason,
   );
 }
