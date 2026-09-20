@@ -1620,7 +1620,13 @@ async function replayLabChain({ store, registry }) {
       if (run.start.goalEpoch !== undefined) goalEpochs += 1;
     }
     previous = { runId: run.start.runId, finalState: result.finalState };
-    lastRun = { start: { runId: run.start.runId }, end: run.end };
+    lastRun = {
+      start: {
+        runId: run.start.runId,
+        ...(run.start.runOrdinal === undefined ? {} : { runOrdinal: run.start.runOrdinal }),
+      },
+      end: run.end,
+    };
   }
   if (checkedRuns === 0) {
     throw new LabStoreError('NOT_FOUND', 'No terminal runs exist for chain replay.', {});
@@ -1664,6 +1670,16 @@ function chainCurrentContinuityDifference(current, lastRun, lastReplay) {
       expected: lastRun.start.runId,
       actual: current.lastRunId,
       message: 'Current does not point to the last terminal Run in the chain.',
+    };
+  }
+  if (current.runOrdinal !== undefined && lastRun.start.runOrdinal !== undefined &&
+      current.runOrdinal !== lastRun.start.runOrdinal) {
+    return {
+      kind: 'CURRENT_CONTINUITY',
+      field: 'runOrdinal',
+      expected: lastRun.start.runOrdinal,
+      actual: current.runOrdinal,
+      message: 'Current does not point to the last terminal Run ordinal in the chain.',
     };
   }
   const expectedStatus = lastRun.end.terminalStatus === 'COMPLETED' ? 'READY' : 'HALTED';

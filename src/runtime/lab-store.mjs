@@ -230,6 +230,7 @@ export class LabStore {
         kernelStep: 0,
         lastRunId: null,
         lastRunSequence: 0,
+        runOrdinal: 0,
         status: 'READY',
         eventsDigest: null,
       });
@@ -481,7 +482,12 @@ export class LabStore {
       const safeRunId = requireSafeSegment(runId, 'runId');
       const start = await readVerifiedObject(childPath(this.root, 'runs', safeRunId, 'start.json'), 'run start');
       validateStart(start, this.manifest, safeRunId);
-      runIds.push({ runId: safeRunId, kernelStep: start.initialState.kernelStep, startedAt: start.startedAt });
+      runIds.push({
+        runId: safeRunId,
+        kernelStep: start.initialState.kernelStep,
+        ...(start.runOrdinal === undefined ? {} : { runOrdinal: start.runOrdinal }),
+        startedAt: start.startedAt,
+      });
     }
     assertChainCurrentStable(current, await this.readChainCurrent());
     return {
@@ -518,7 +524,12 @@ export class LabStore {
         const safeRunId = requireSafeSegment(runId, 'runId');
         const start = await readVerifiedObject(childPath(this.root, 'runs', safeRunId, 'start.json'), 'run start');
         validateStart(start, this.manifest, safeRunId);
-        chunk.push({ runId: safeRunId, kernelStep: start.initialState.kernelStep, startedAt: start.startedAt });
+        chunk.push({
+          runId: safeRunId,
+          kernelStep: start.initialState.kernelStep,
+          ...(start.runOrdinal === undefined ? {} : { runOrdinal: start.runOrdinal }),
+          startedAt: start.startedAt,
+        });
         if (chunk.length >= MAX_CHAIN_SORT_CHUNK) await flushChunk();
       }
       const ordered = sortRoot === null
@@ -861,6 +872,12 @@ export class LabStore {
         throw new LabStoreError('BUSY', 'The current run requires recovery.', { phase: 'current-running' });
       }
       if (previousCurrent.status === 'CORRUPT') corrupt('A corrupt lab cannot start a run.', {});
+      const runOrdinal = previousCurrent.runOrdinal === undefined
+        ? undefined
+        : previousCurrent.runOrdinal + 1;
+      if (runOrdinal !== undefined && !Number.isSafeInteger(runOrdinal)) {
+        conflict('Run ordinal exhausted.', { field: 'runOrdinal' });
+      }
       let existingContinuation = null;
       if (previousStart?.continuation !== undefined &&
           previousStart.continuation.planningBranchingMode !== undefined &&
@@ -961,6 +978,7 @@ export class LabStore {
         initialState,
         ...(continuation === undefined ? {} : { continuation }),
         ...(goalEpoch === undefined ? {} : { goalEpoch }),
+        ...(runOrdinal === undefined ? {} : { runOrdinal }),
         startedAt: now(),
       });
       if (start.continuation !== undefined && start.continuation.scenario !== scenario) {
@@ -983,6 +1001,7 @@ export class LabStore {
       const current = currentFromState(initialState, {
         lastRunId: runId,
         lastRunSequence: startedEvent.sequence,
+        ...(runOrdinal === undefined ? {} : { runOrdinal }),
         status: 'RUNNING',
         eventsDigest: startedEvent.digest,
       });
@@ -1154,14 +1173,21 @@ class ActiveRun {
         ledgerSequence: this.lastEvent.sequence,
       });
     }
-    const allowed = new Set(['worldState', 'memory', 'rngState', 'kernelStep', 'changeSupervisor', 'lastRunId', 'lastRunSequence', 'eventsDigest', 'status']);
+    const allowed = new Set(['worldState', 'memory', 'rngState', 'kernelStep', 'changeSupervisor', 'lastRunId', 'lastRunSequence', 'runOrdinal', 'eventsDigest', 'status']);
     if (source.status !== 'RUNNING' || Object.keys(source).some((key) => !allowed.has(key))) {
       throw new LabStoreError('INVALID_INPUT', 'Snapshot shape or status is invalid.', { field: 'snapshot' });
+    }
+    if (this.start.runOrdinal !== undefined && source.runOrdinal !== undefined && source.runOrdinal !== this.start.runOrdinal) {
+      conflict('Snapshot run ordinal differs from the immutable run start.', { runId: this.start.runId });
     }
     if (this.lastStepState === null || canonicalJson(stateProjection(source, source)) !== canonicalJson(this.lastStepState)) {
       conflict('Snapshot continuity state differs from the ledger STEP.', { runId: this.start.runId });
     }
-    const current = withSelfDigest({ ...source, schemaVersion: SCHEMA_VERSION });
+    const current = withSelfDigest({
+      ...source,
+      ...(this.start.runOrdinal === undefined ? {} : { runOrdinal: this.start.runOrdinal }),
+      schemaVersion: SCHEMA_VERSION,
+    });
     const failpoint = options.failpoint ?? this.failpoint;
     if (this.durability === 'checkpoint') {
       try {
@@ -1258,6 +1284,7 @@ class ActiveRun {
     const current = currentFromState(finalState, {
       lastRunId: this.start.runId,
       lastRunSequence: terminalEvent.sequence,
+      ...(this.start.runOrdinal === undefined ? {} : { runOrdinal: this.start.runOrdinal }),
       status: terminalStatus === 'COMPLETED' ? 'READY' : 'HALTED',
       eventsDigest: terminalEvent.digest,
     });
@@ -1609,6 +1636,7 @@ async function recoverRun(root, manifest) {
   const finalCurrent = currentFromState(terminal.payload.finalState, {
     lastRunId: runId,
     lastRunSequence: terminal.sequence,
+    ...(start.runOrdinal === undefined ? {} : { runOrdinal: start.runOrdinal }),
     status: terminal.payload.terminalStatus === 'COMPLETED' ? 'READY' : 'HALTED',
     eventsDigest: terminal.digest,
   });
@@ -2421,6 +2449,7 @@ function validateStart(start, manifest, runId) {
     !scenarioAllowed(manifest, start.scenario) ||
     (start.manifestDigest !== undefined && start.manifestDigest !== manifest.selfDigest) ||
     start.tokenMapDigest !== manifest.tokenMap.digest ||
+    (start.runOrdinal !== undefined && (!Number.isSafeInteger(start.runOrdinal) || start.runOrdinal < 1)) ||
     !start.initialState
   ) {
     corrupt('Immutable run start is invalid.', { runId });
@@ -2587,7 +2616,11 @@ function compareLoopContinuationRecords(left, right) {
 }
 
 function compareChainRunRecords(left, right) {
+  const ordinalDifference = Number.isSafeInteger(left.runOrdinal) && Number.isSafeInteger(right.runOrdinal)
+    ? left.runOrdinal - right.runOrdinal
+    : 0;
   return left.kernelStep - right.kernelStep ||
+    ordinalDifference ||
     left.startedAt.localeCompare(right.startedAt) ||
     left.runId.localeCompare(right.runId);
 }
@@ -2764,6 +2797,9 @@ function validateCurrentReference(current, runId, events) {
 }
 
 function validateCurrentProjection(current, start, events) {
+  if (current.runOrdinal !== undefined && start.runOrdinal !== undefined && current.runOrdinal !== start.runOrdinal) {
+    corrupt('Current run ordinal differs from its immutable run start.', { runId: start.runId });
+  }
   const referenced = currentLedgerView(events, current).referenced;
   if (!referenced) corrupt('Current has no referenced event state.', { runId: start.runId });
   let expectedState;
@@ -2801,14 +2837,16 @@ function validateCurrentShape(current) {
   if (
     current.schemaVersion !== SCHEMA_VERSION ||
     !['READY', 'RUNNING', 'HALTED', 'CORRUPT'].includes(current.status) ||
-    !Number.isInteger(current.lastRunSequence)
+    !Number.isInteger(current.lastRunSequence) ||
+    (current.runOrdinal !== undefined && (!Number.isSafeInteger(current.runOrdinal) || current.runOrdinal < 0))
   ) {
     corrupt('Current state is invalid.', {});
   }
   if (current.lastRunId === null) {
     if (
       current.status !== 'READY' || current.lastRunSequence !== 0 || current.eventsDigest !== null ||
-      current.worldState !== null || current.rngState !== null || canonicalJson(current.memory) !== '{}'
+      current.worldState !== null || current.rngState !== null || canonicalJson(current.memory) !== '{}' ||
+      (current.runOrdinal !== undefined && current.runOrdinal !== 0)
     ) corrupt('Empty current state is invalid.', {});
   } else {
     validateContinuityState(stateProjection(current, current), 'current', true);

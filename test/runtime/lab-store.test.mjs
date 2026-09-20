@@ -1530,6 +1530,47 @@ test('chain snapshot stream preserves the ordered run identity contract', async 
   assert.deepEqual(runIds.at(-1), { runId: 'run-129', kernelStep: 129 });
 }));
 
+test('chain snapshots persist a monotonic run order across reopened stores', async () => withLab(async ({ lab }) => {
+  const { LabStore } = await loadRuntime();
+  const firstStore = await LabStore.init(initOptions(lab));
+  const realDate = globalThis.Date;
+  const fixedTime = '2026-01-01T00:00:00.000Z';
+  globalThis.Date = class extends realDate {
+    constructor(...args) {
+      super(args.length === 0 ? fixedTime : args[0]);
+    }
+
+    static now() {
+      return realDate.parse(fixedTime);
+    }
+  };
+  try {
+    const first = await firstStore.startRun(runInput({ runId: 'run-z' }));
+    await first.finish({ terminalStatus: 'HALTED', reason: 'CRASH_HALTED', finalState: runInput().initialState });
+
+    const reopenedStore = await LabStore.open({ labPath: lab });
+    const second = await reopenedStore.startRun({
+      ...runInput({ runId: 'run-a' }),
+      initialState: runInput().initialState,
+    });
+    await second.finish({ terminalStatus: 'COMPLETED', finalState: runInput().initialState });
+
+    const firstStart = await readJson(path.join(lab, 'runs/run-z/start.json'));
+    const secondStart = await readJson(path.join(lab, 'runs/run-a/start.json'));
+    assert.equal(firstStart.startedAt, fixedTime);
+    assert.equal(secondStart.startedAt, fixedTime);
+    assert.equal(firstStart.runOrdinal, 1);
+    assert.equal(secondStart.runOrdinal, 2);
+    const snapshot = await reopenedStore.readChainSnapshot();
+    assert.deepEqual(snapshot.runIds, [
+      { runId: 'run-z', kernelStep: 0 },
+      { runId: 'run-a', kernelStep: 0 },
+    ]);
+  } finally {
+    globalThis.Date = realDate;
+  }
+}));
+
 test('recovery truncates a torn trailing ledger line after the last complete event', async () => withLab(async ({ lab }) => {
   const { LabStore } = await loadRuntime();
   const store = await LabStore.init(initOptions(lab));

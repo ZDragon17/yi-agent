@@ -227,6 +227,7 @@ Prompt 和模型只是提出假设的组件；真正决定系统是否在现实�
 - 监督器证据对齐：`kernelLearningVersion: 9` 的新 STEP 当本步先结算了新的延迟 feedback 时，变化监督器不会把合并观测中的旧动作进步记成当前动作的确认进步；已结算收据仍按 nonce 学习，当前动作和目标监督各自保守处理；旧版本 Replay 保持原监督语义；
 - 变化监督器：用同一套目标距离、确认进步、停滞、重规划和停止判定约束不同世界；状态随 STEP、快照、终态和恢复账本连续保存，跨进程 CLI 可继续运行；
 - 连续 Runner：`agent loop` 把有限 STEP 批次串成多个已提交 Run；每个边界都可独立 Replay，进程重启后从同一个 current 继续；每个子 Run 的 `loopId/runIndex/scenario/budget/planningBranchingMode` 都写入 immutable start，使用 `--resume` 时从账本重建剩余预算和规划语义，不重复已提交 Run；旧 v17/v16 continuation 缺少该字段时从已提交 STEP 或终态 `externalTransition` 证据推断，无法推断则保守使用 legacy；
+- 重试顺序持久化：新 Lab 在 current 和 immutable start 中保存单调 `runOrdinal`。chain Replay 在同一 `kernelStep` 的崩溃重试之间先按这个序号排序，不依赖只有毫秒精度的 `startedAt` 或随机 `runId`；旧 Lab 没有该字段时继续使用 `startedAt → runId` 兼容路径，当前水位还会核对链尾序号；
 - 恢复要求持久化：以 `agent loop --require-recovery` 启动的 continuation 会把要求写入每个 Run 的 immutable start 和 loop contract；后续 `--resume` 即使省略参数，也会在第一个恢复 Run 前重新检查外部 adapter，避免恢复策略因换进程或漏传参数而降级；旧 continuation 没有该字段时保持兼容，不自动补写；
 - `forever` 长运行边界：新 Run 在唯一 writer lock 内从 verified current 指向的最近 terminal Run 重建 continuation，不重复扫描全部历史；显式恢复和审计仍保留全量扫描，1000 个单步 Run 的连续运行回归已覆盖该边界；
 - 当前 loop 恢复的流式边界：`--resume` 读取 current 指向的 Run 时也逐事件校验，只保留 immutable start、terminal 和规划模式摘要；现代 continuation 不再为恢复物化完整事件数组，旧 continuation 仍在需要历史推断时扫描全部轻量摘要，兼容 `end.json` 终态一致性检查；

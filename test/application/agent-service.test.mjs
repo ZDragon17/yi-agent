@@ -1478,14 +1478,15 @@ test('continuous runner cancels an in-flight model request and leaves a resumabl
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'cancelled-model-loop-lab', worldId: 'temperature', seed: 'cancelled-model-loop-seed' });
     const controller = new AbortController();
+    let advisorStartedResolve;
+    const advisorStarted = new Promise((resolve) => { advisorStartedResolve = resolve; });
     const advisor = async (_input, signal) => new Promise((resolve, reject) => {
+      advisorStartedResolve();
       signal.addEventListener('abort', () => reject(Object.assign(new Error('model cancelled'), {
         code: 'MODEL_ADAPTER_CANCELLED',
       })), { once: true });
     });
-    setTimeout(() => controller.abort(), 25);
-
-    const interrupted = await runContinuous({
+    const interruptedPromise = runContinuous({
       labPath: lab,
       stepsPerRun: 1,
       forever: true,
@@ -1493,6 +1494,9 @@ test('continuous runner cancels an in-flight model request and leaves a resumabl
       modelTimeoutMs: 5_000,
       stopSignal: controller.signal,
     });
+    await advisorStarted;
+    controller.abort();
+    const interrupted = await interruptedPromise;
     assert.equal(interrupted.stopReason, 'INTERRUPTED');
     assert.equal(interrupted.runs, 1);
     assert.equal(interrupted.metrics.executed, 0);
