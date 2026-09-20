@@ -40,6 +40,24 @@ test('accepts only an existing candidate from the same WorldPort scope', () => {
   }), null);
 });
 
+test('rejects a candidate from another WorldPort implementation', () => {
+  const target = `sha256:${'a'.repeat(64)}`;
+  const history = [historyEntry(target, {
+    worldId: 'latent-choice',
+    worldImplementationDigest: `sha256:${'b'.repeat(64)}`,
+  })];
+
+  assert.equal(acceptedSupersessionDigest({
+    requestedDigest: target,
+    history,
+    worldId: 'latent-choice',
+    worldVersion: WORLD_VERSION,
+    worldImplementationDigest: `sha256:${'a'.repeat(64)}`,
+    tokenMapDigest: TOKEN_MAP_DIGEST,
+    scenario: 'working-tree',
+  }), null);
+});
+
 test('rejects malformed, missing, and self-absent candidate references', () => {
   const history = [historyEntry(`sha256:${'a'.repeat(64)}`)];
   const context = { history, worldVersion: WORLD_VERSION, tokenMapDigest: TOKEN_MAP_DIGEST, scenario: 'working-tree' };

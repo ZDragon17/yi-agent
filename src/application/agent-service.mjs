@@ -548,7 +548,9 @@ export async function runLab(input) {
     const committedPolicyEvidence = retryPolicyEvidence ??
       (modelDecision === null ? null : policyEvidence(modelDecision, intent, capabilities, {
         candidateHistory,
+        worldId: manifest.worldId,
         worldVersion: manifest.worldVersion,
+        worldImplementationDigest: manifest.worldImplementationDigest,
         tokenMapDigest: manifest.tokenMap.digest,
         scenario,
         proposalEnabled: manifest.adapter !== undefined,
@@ -753,6 +755,9 @@ export async function runLab(input) {
         worldId: manifest.worldId,
         scenario,
         worldVersion: manifest.worldVersion,
+        ...(typeof manifest.worldImplementationDigest === 'string'
+          ? { worldImplementationDigest: manifest.worldImplementationDigest }
+          : {}),
         tokenMapDigest: manifest.tokenMap.digest,
         sequence: event.sequence,
         recordedAt: event.payload.recordedAt,
@@ -1405,7 +1410,9 @@ function plannerEvidence(result, applied, reason, expectedObservationDigest) {
 
 function policyEvidence(modelDecision, intent, capabilities, {
   candidateHistory,
+  worldId,
   worldVersion,
+  worldImplementationDigest,
   tokenMapDigest,
   scenario,
   proposalEnabled,
@@ -1430,7 +1437,9 @@ function policyEvidence(modelDecision, intent, capabilities, {
   const supersedesCandidateDigest = acceptedSupersessionDigest({
     requestedDigest: modelDecision.supersedesCandidateDigest,
     history: candidateHistory,
+    worldId,
     worldVersion,
+    worldImplementationDigest,
     tokenMapDigest,
     scenario,
   });

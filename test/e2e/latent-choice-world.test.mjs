@@ -45,6 +45,11 @@ test('verified feedback changes hidden-world choices across independent CLI rest
       }
       assert.equal(JSON.parse(await readFile(world.stateFile, 'utf8')).effects.length, 5);
     }
+
+    const manifests = await Promise.all(worlds.map(async (world) => (
+      (await LabStore.open({ labPath: world.lab })).manifest
+    )));
+    assert.notEqual(manifests[0].worldImplementationDigest, manifests[1].worldImplementationDigest);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

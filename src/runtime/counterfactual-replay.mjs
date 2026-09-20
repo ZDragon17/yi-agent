@@ -139,12 +139,23 @@ function observableVectorKey(entry) {
   // The vector equivalence is scoped to one WorldPort identity and scenario:
   // the same numeric vector under different dynamics is not the same state.
   const scoped = canonicalDigest({
+    ...worldPortIdentity(entry),
     worldVersion: typeof entry?.worldVersion === 'string' ? entry.worldVersion : null,
     tokenMapDigest: typeof entry?.tokenMapDigest === 'string' ? entry.tokenMapDigest : null,
     scenario: typeof entry?.scenario === 'string' ? entry.scenario : null,
     beforeVectorDigest: digest,
   });
   return scoped;
+}
+
+function worldPortIdentity(entry) {
+  const worldId = typeof entry?.worldId === 'string' && entry.worldId.length > 0 ? entry.worldId : null;
+  const worldImplementationDigest = typeof entry?.worldImplementationDigest === 'string' &&
+    DIGEST_PATTERN.test(entry.worldImplementationDigest)
+    ? entry.worldImplementationDigest
+    : null;
+  if (worldId === null && worldImplementationDigest === null) return {};
+  return { worldId, worldImplementationDigest };
 }
 
 function rawVectorDigest(vector) {

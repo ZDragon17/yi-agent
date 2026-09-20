@@ -85,6 +85,39 @@ test('strict binding refuses vector-only evidence from a different hidden state'
   assert.equal(result.samples[0].reason, 'NO_STRICT_OUTCOME');
 });
 
+test('vector binding refuses evidence from a different WorldPort implementation', () => {
+  const history = [
+    entry({
+      ...WORLD,
+      worldId: 'latent-choice',
+      worldImplementationDigest: `sha256:${'a'.repeat(64)}`,
+      kernelStep: 1,
+      observationDigest: CONTEXT_OBSERVATION,
+      beforeStateDigest: BEFORE_ONE,
+      beforeVector: VECTOR_ONE,
+      token: TOKEN_A,
+      goalDistanceAfter: 0.8,
+    }),
+    entry({
+      ...WORLD,
+      worldId: 'latent-choice',
+      worldImplementationDigest: `sha256:${'b'.repeat(64)}`,
+      kernelStep: 2,
+      observationDigest: CONTEXT_OBSERVATION,
+      beforeStateDigest: BEFORE_TWO,
+      beforeVector: VECTOR_ONE,
+      token: TOKEN_B,
+      goalDistanceAfter: 0.5,
+    }),
+  ];
+  const result = evaluateCounterfactualPolicy({ history, policy: policy(TOKEN_B) });
+
+  assert.equal(result.divergence.vector, 0);
+  assert.equal(result.divergence.unevaluable, 1);
+  assert.equal(result.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.samples[0].reason, 'NO_RECORDED_OUTCOME');
+});
+
 test('a counterfactual token recorded only at another observable vector stays unevaluable', () => {
   const history = [
     entry({ kernelStep: 1, observationDigest: CONTEXT_OBSERVATION, beforeStateDigest: BEFORE_ONE, beforeVector: VECTOR_ONE, token: TOKEN_A, goalDistanceAfter: 0.8 }),
@@ -220,9 +253,21 @@ function policy(defaultToken) {
   return { schemaVersion: 1, type: 'candidate-policy', version: 1, defaultToken, rules: [] };
 }
 
-function entry({ kernelStep, observationDigest, beforeStateDigest, beforeVector = VECTOR_ONE, token, goalDistanceAfter, verified = true }) {
+function entry({
+  kernelStep,
+  observationDigest,
+  beforeStateDigest,
+  beforeVector = VECTOR_ONE,
+  token,
+  goalDistanceAfter,
+  verified = true,
+  worldId,
+  worldImplementationDigest,
+}) {
   return {
     ...WORLD,
+    ...(worldId === undefined ? {} : { worldId }),
+    ...(worldImplementationDigest === undefined ? {} : { worldImplementationDigest }),
     runId: `run-${Math.ceil(kernelStep / 2)}`,
     sequence: kernelStep,
     kernelStep,

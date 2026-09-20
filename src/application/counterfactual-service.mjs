@@ -49,6 +49,8 @@ export async function evaluateLabCounterfactual(input) {
       sequence: entry?.sequence ?? null,
       kernelStep: entry?.kernelStep ?? null,
       beforeStateDigest: entry?.beforeStateDigest ?? null,
+      worldId: entry?.worldId ?? null,
+      worldImplementationDigest: entry?.worldImplementationDigest ?? null,
       candidateDigest: entry?.candidateOutcome?.candidateDigest ?? null,
       token: entry?.candidateOutcome?.token ?? null,
       ...(typeof entry?.observationDigest === 'string' ? { observationDigest: entry.observationDigest } : {}),

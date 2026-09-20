@@ -3,7 +3,9 @@ const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 export function acceptedSupersessionDigest({
   requestedDigest,
   history,
+  worldId,
   worldVersion,
+  worldImplementationDigest,
   tokenMapDigest,
   scenario,
 } = {}) {
@@ -19,8 +21,16 @@ export function acceptedSupersessionDigest({
     entry.worldVersion === worldVersion &&
     entry.tokenMapDigest === tokenMapDigest &&
     entry.scenario === scenario &&
+    sameWorldPort(entry, { worldId, worldImplementationDigest }) &&
     entry.candidateOutcome !== null && typeof entry.candidateOutcome === 'object' &&
     !Array.isArray(entry.candidateOutcome) &&
     entry.candidateOutcome.candidateDigest === requestedDigest,
   ) ? requestedDigest : null;
+}
+
+function sameWorldPort(left, right) {
+  const hasIdentity = Object.hasOwn(left, 'worldId') || Object.hasOwn(left, 'worldImplementationDigest') ||
+    right.worldId !== undefined || right.worldImplementationDigest !== undefined;
+  return !hasIdentity ||
+    left.worldId === right.worldId && left.worldImplementationDigest === right.worldImplementationDigest;
 }

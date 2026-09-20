@@ -618,6 +618,9 @@ export class LabStore {
             scenario: run.start.scenario,
             worldVersion: run.manifest.worldVersion,
             tokenMapDigest: run.manifest.tokenMap.digest,
+            ...(typeof run.manifest.worldImplementationDigest === 'string'
+              ? { worldImplementationDigest: run.manifest.worldImplementationDigest }
+              : {}),
             sequence: event.sequence,
             recordedAt: event.payload.recordedAt,
             kernelStep: event.payload.afterState.kernelStep,

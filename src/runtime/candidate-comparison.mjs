@@ -6,6 +6,7 @@ export function comparePairedCandidates(left, right) {
       left.worldVersion !== right.worldVersion ||
       left.tokenMapDigest !== right.tokenMapDigest ||
       left.scenario !== right.scenario ||
+      !sameWorldPort(left, right) ||
       left.beforeStateDigest !== right.beforeStateDigest) {
     return null;
   }
@@ -24,6 +25,13 @@ export function comparePairedCandidates(left, right) {
     delta,
     verdict: delta < 0 ? 'LEFT_BETTER' : delta > 0 ? 'RIGHT_BETTER' : 'TIE',
   };
+}
+
+function sameWorldPort(left, right) {
+  const hasIdentity = Object.hasOwn(left, 'worldId') || Object.hasOwn(left, 'worldImplementationDigest') ||
+    Object.hasOwn(right, 'worldId') || Object.hasOwn(right, 'worldImplementationDigest');
+  return !hasIdentity ||
+    left.worldId === right.worldId && left.worldImplementationDigest === right.worldImplementationDigest;
 }
 
 function isCandidateEntry(value) {
