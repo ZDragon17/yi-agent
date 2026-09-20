@@ -384,8 +384,7 @@ export class LabStore {
 
   async inspect() {
     await assertDirectoryIsCanonical(this.root, this.root);
-    const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
-    validateCurrentShape(current);
+    const current = await this.readCurrentSnapshot();
     if (current.lastRunId !== null) {
       const runId = requireSafeSegment(current.lastRunId, 'runId');
       const start = await readVerifiedObject(childPath(this.root, 'runs', runId, 'start.json'), 'run start');
@@ -399,6 +398,16 @@ export class LabStore {
       validateCurrentProjection(current, start, ledger);
     }
     return { manifest: cloneJson(this.manifest), current };
+  }
+
+  // The caller still needs startRun to perform the authoritative ledger check.
+  // This shape-only read avoids validating the same terminal ledger twice when
+  // application code needs the current state before acquiring the run lock.
+  async readCurrentSnapshot() {
+    await assertDirectoryIsCanonical(this.root, this.root);
+    const current = await readVerifiedObject(childPath(this.root, 'state', 'current.json'), 'current');
+    validateCurrentShape(current);
+    return cloneJson(current);
   }
 
   async readWriterLock() {

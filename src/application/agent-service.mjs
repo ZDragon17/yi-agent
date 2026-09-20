@@ -142,7 +142,7 @@ export async function runLab(input) {
   const spec = registry.valueSpec(manifest.worldId);
   const world = registry.createWorld(manifest, scenario);
   const actionManifest = worldManifest(manifest);
-  const current = (await store.inspect()).current;
+  const current = await store.readCurrentSnapshot();
   if (suppliedInitialState !== undefined && current.lastRunId !== null) {
     throw new LabStoreError('CONFLICT', 'initialState is only valid when starting an isolated fresh Run.', {
       field: 'initialState',
