@@ -13,6 +13,7 @@ import { createModelPlanner } from './agent/model-planner.mjs';
 import { createProcessModelClient, loadProcessModelConfig } from './agent/process-model-client.mjs';
 import { createCandidatePolicyAdvisor, normalizeCandidatePolicy } from './runtime/candidate-policy.mjs';
 import { LabStore } from './runtime/lab-store.mjs';
+import { canonicalDigest } from './runtime/schema.mjs';
 import { runPairedCandidates } from './application/paired-experiment-service.mjs';
 import { runPairedTrajectories } from './application/paired-trajectory-service.mjs';
 import { runPairedPolicies } from './application/paired-policy-service.mjs';
@@ -257,8 +258,11 @@ async function dispatchAgent(options) {
   let planner;
   let modelTimeoutMs;
   let client;
+  let candidatePolicyDigest;
   if (options.policy !== undefined) {
-    advisor = await loadCandidatePolicyAdvisor(options);
+    const policyRuntime = await loadCandidatePolicyAdvisor(options);
+    advisor = policyRuntime.advisor;
+    candidatePolicyDigest = policyRuntime.digest;
   } else if (options['kernel-only'] !== true) {
     try {
       const config = options['model-adapter'] === undefined
@@ -291,7 +295,7 @@ async function dispatchAgent(options) {
       options['auto-plan'] === true || options['run-id'] !== undefined ||
       options['max-cycles'] !== undefined || options['stagnation-limit'] !== undefined ||
       options['randomized-trial'] !== undefined ||
-      options['planning-horizon'] !== undefined || options.policy !== undefined
+      options['planning-horizon'] !== undefined
     )) {
       throw cliError('INVALID_INPUT', '--resume cannot be combined with loop configuration options.', {
         field: 'resume',
@@ -324,6 +328,7 @@ async function dispatchAgent(options) {
         ...(modelTimeoutMs === undefined ? {} : { modelTimeoutMs }),
         advisor,
         planner,
+        ...(candidatePolicyDigest === undefined ? {} : { candidatePolicyDigest }),
         autoPlan: options['auto-plan'] === true,
         autoRecover: options['auto-recover'] === true,
         requireRecovery: options['require-recovery'] === true,
@@ -650,7 +655,10 @@ async function loadCandidatePolicyAdvisor(options) {
       tokenMapDigest: manifest.tokenMap.digest,
     },
   );
-  return createCandidatePolicyAdvisor(normalized);
+  return {
+    advisor: createCandidatePolicyAdvisor(normalized),
+    digest: canonicalDigest(normalized),
+  };
 }
 
 function requiredAbsolute(options, name) {
@@ -791,7 +799,7 @@ function helpText() {
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
     '  yi-agent agent run|loop --lab PATH --steps N [--runs N|--forever] [--planning-horizon N] [--kernel-only] [--model-adapter CONFIG] [--policy PATH] [--goal TEXT] [--auto-plan|--goal-plan PATH] [--randomized-trial PATH] [--max-cycles N] [--stagnation-limit N] [--json]',
-    '  yi-agent agent loop --lab PATH --resume [--auto-recover] [--require-recovery] [--kernel-only] [--adapter CONFIG] [--json]',
+    '  yi-agent agent loop --lab PATH --resume [--auto-recover] [--require-recovery] [--kernel-only] [--policy PATH] [--adapter CONFIG] [--json]',
     '',
     '实验室:',
     '  yi-agent init|run|inspect|replay|recover|challenge ...',

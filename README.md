@@ -620,6 +620,7 @@ yi-agent agent run --lab E:\labs\temperature --steps 10 --goal-plan E:\plans\sta
 yi-agent agent run --lab E:\labs\temperature --steps 10 --goal "自动维持温度" --auto-plan --json
 yi-agent agent run --lab E:\labs\temperature --steps 10 --planning-horizon 3 --kernel-only --json
 yi-agent agent run --lab E:\labs\temperature --steps 10 --policy E:\policies\candidate.json --json
+yi-agent agent loop --lab E:\labs\temperature --steps 2 --runs 10 --policy E:\policies\candidate.json --json
 Get-Content .\prompt.txt -Raw | yi-agent ask --prompt - --json
 yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 ```
@@ -628,7 +629,7 @@ yi-agent ask --prompt-file E:\path\to\prompt.txt --json
 
 `agent run` 会在每一步把当前观测和可用能力交给模型提出一个 token，再由 Kernel 独立计算预期、复核安全性、执行、验证和学习。模型不能直接执行动作；每一步只保存结构化提议摘要，`replay` 不会再次调用模型。
 
-`--policy PATH` 用于显式运行一个已经绑定到当前 Lab 的 `candidate-policy`。CLI 会校验策略引用的 Token、WorldPort identity 和 Token map digest，然后让它经过同一条 Kernel—WorldPort—verify—learn 链；策略来源会以 `candidate-policy` 写入 `policyEvidence`，Replay 会校验这份来源和结果。它不会自动采用反事实实验生成的影子建议，也不能与 `--kernel-only`、`--model-adapter` 或目标规划参数混用；这一步是人工或外部门控后的实际运行入口，不是自动晋级。
+`--policy PATH` 用于显式运行一个已经绑定到当前 Lab 的 `candidate-policy`。CLI 会校验策略引用的 Token、WorldPort identity 和 Token map digest，然后让它经过同一条 Kernel—WorldPort—verify—learn 链；策略来源会以 `candidate-policy` 写入 `policyEvidence`，Replay 会校验这份来源和结果。用于 `agent loop` 时，规范化策略的 digest 会写入不可变 continuation；`--resume` 必须再次提供同一策略，缺失或更换都会返回 `CONFLICT`。它不会自动采用反事实实验生成的影子建议，也不能与 `--kernel-only`、`--model-adapter` 或目标规划参数混用；这一步是人工或外部门控后的实际运行入口，不是自动晋级。
 
 `inspect` 的 `inspectView.stopReason` 直接读取所选终态 Run 的账本终止原因，例如 `NO_SAFE_ACTION`、`EXECUTION_REJECTED`、`OBJECTIVE_REACHED`、`MAX_CYCLES`、`CRASH_HALTED` 或 `EXTERNAL_TRANSITION_UNKNOWN`；没有终态 Run 时返回 `null`，不靠最后一步的表面状态猜测原因。
 
@@ -774,7 +775,7 @@ F-289 增加 `experiment counterfactual-set`，用于在同一批历史上测量
 
 F-290 在此命令上增加显式影子晋级门。传入 incumbent policy digest 后，`--min-bindings` 和 `--min-margin` 会要求当前策略与候选胜者都达到最低共同证据量，并且胜者优势达到最低幅度；满足时输出 `SHADOW_CANDIDATE` 和 `SHADOW_ONLY`，否则输出带原因的 `NO_CHANGE`。该结果仍是历史回放建议，不写入策略、不替换 incumbent、不启动 WorldPort；默认不传 incumbent 时完全不生成这项建议。这样“评估”“影子观察”“真正部署”保持三个可审计阶段，避免把零执行反事实误称为现实改进。
 
-F-291 增加 `agent run --policy PATH` 的显式候选策略运行入口。它不需要 API Key，策略必须绑定当前 Lab 的 WorldPort identity 和 Token map；运行账本保留 `candidate-policy-v1` 来源，普通模型路径仍保留 `source: model`。候选策略不会因为反事实排名、影子建议或历史优势而自动替换 incumbent，只有显式传入文件才会运行。
+F-291 增加 `agent run|loop --policy PATH` 的显式候选策略运行入口。它不需要 API Key，策略必须绑定当前 Lab 的 WorldPort identity 和 Token map；运行账本保留 `candidate-policy-v1` 来源，普通模型路径仍保留 `source: model`。连续 Loop 还会把规范化策略 digest 固化到 continuation，重启恢复时不允许静默替换。候选策略不会因为反事实排名、影子建议或历史优势而自动替换 incumbent，只有显式传入文件才会运行。
 
 Windows 下可以用分号传入多个策略文件，Unix 下使用冒号：
 

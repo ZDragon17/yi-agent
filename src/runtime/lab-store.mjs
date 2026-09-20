@@ -76,6 +76,7 @@ const GOAL_EPOCH_KEYS = [
 const PLANNING_BRANCHING_MODES = ['tree-v1', 'recursive-v1', 'legacy-v1'];
 const MAX_WORLD_VERSION_LENGTH = 4096;
 const WORLD_IMPLEMENTATION_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const POLICY_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
 class ExecutionNonceFilter {
   constructor(byteLength = EXECUTION_NONCE_FILTER_BYTES, hashCount = EXECUTION_NONCE_FILTER_HASHES) {
@@ -2477,6 +2478,7 @@ function validateLoopContinuation(value, field, corruptOnFailure = false) {
       (value.planningHorizon !== undefined && (!Number.isSafeInteger(value.planningHorizon) || value.planningHorizon < 1 || value.planningHorizon > MAX_PLANNING_HORIZON)) ||
       (value.planningBranchingMode !== undefined && !PLANNING_BRANCHING_MODES.includes(value.planningBranchingMode)) ||
       (value.requireRecovery !== undefined && typeof value.requireRecovery !== 'boolean') ||
+      (value.candidatePolicyDigest !== undefined && !POLICY_DIGEST_PATTERN.test(value.candidatePolicyDigest)) ||
       (value.randomizedTrial !== undefined && !isValidRandomizedTrialContinuation(value.randomizedTrial)) ||
       (value.mode !== 'finite' && value.mode !== 'forever') ||
       (value.mode === 'finite' && (!Number.isSafeInteger(value.maxRuns) || value.maxRuns < 1 || value.maxRuns > 10_000 || value.runIndex >= value.maxRuns)) ||
@@ -2492,6 +2494,7 @@ function validateLoopContinuation(value, field, corruptOnFailure = false) {
     ...(value.planningHorizon === undefined ? {} : { planningHorizon: value.planningHorizon }),
     ...(value.planningBranchingMode === undefined ? {} : { planningBranchingMode: value.planningBranchingMode }),
     ...(value.requireRecovery === undefined ? {} : { requireRecovery: value.requireRecovery }),
+    ...(value.candidatePolicyDigest === undefined ? {} : { candidatePolicyDigest: value.candidatePolicyDigest }),
     ...(value.randomizedTrial === undefined ? {} : { randomizedTrial: cloneJson(value.randomizedTrial) }),
     mode: value.mode,
     ...(value.maxRuns === undefined ? {} : { maxRuns: value.maxRuns }),
@@ -2728,6 +2731,7 @@ function loopContract(continuation, fallbackPlanningBranchingMode = 'legacy-v1')
     ...(continuation.planningHorizon === undefined ? {} : { planningHorizon: continuation.planningHorizon }),
     planningBranchingMode: continuation.planningBranchingMode ?? fallbackPlanningBranchingMode,
     ...(continuation.requireRecovery === undefined ? {} : { requireRecovery: continuation.requireRecovery }),
+    ...(continuation.candidatePolicyDigest === undefined ? {} : { candidatePolicyDigest: continuation.candidatePolicyDigest }),
     ...(continuation.randomizedTrial === undefined ? {} : { randomizedTrial: cloneJson(continuation.randomizedTrial) }),
     mode: continuation.mode,
     ...(continuation.maxRuns === undefined ? {} : { maxRuns: continuation.maxRuns }),

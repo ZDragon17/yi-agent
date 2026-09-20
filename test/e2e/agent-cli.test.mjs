@@ -7,6 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { LabStore } from '../../src/runtime/lab-store.mjs';
 import { main } from '../../src/cli.mjs';
+import { canonicalDigest } from '../../src/runtime/schema.mjs';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 const MODEL_ADAPTER = path.resolve('test/fixtures/model-adapter.mjs');
@@ -959,6 +960,99 @@ test('agent run can execute an explicitly supplied candidate policy without mode
     const replay = await invoke(['replay', '--lab', lab, '--run', run.stdout[0].data.runId, '--json'], process.env);
     assert.equal(replay.code, 0, JSON.stringify(replay));
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('agent loop persists the candidate policy identity across Run boundaries', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-policy-loop-e2e-'));
+  const lab = path.join(root, 'lab');
+  const policyPath = path.join(root, 'policy.json');
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'policy-loop-seed', '--json'], process.env);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const tokens = init.stdout[0].data.tokenMap.entries.map((entry) => entry.token);
+    const policy = {
+      schemaVersion: 1,
+      type: 'candidate-policy',
+      version: 1,
+      defaultToken: tokens[1],
+      rules: [],
+    };
+    await writeFile(policyPath, JSON.stringify(policy));
+
+    const loop = await invoke([
+      'agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '2', '--policy', policyPath, '--json',
+    ], { ...process.env, YI_AGENT_API_KEY: undefined, ZAI_API_KEY: undefined });
+    assert.equal(loop.code, 0, JSON.stringify(loop));
+    assert.equal(loop.stdout[0].data.status, 'COMPLETED');
+    assert.equal(loop.stdout[0].data.runs, 2);
+    const expectedDigest = canonicalDigest({
+      schemaVersion: 1,
+      type: 'candidate-policy',
+      version: 1,
+      defaultToken: tokens[1],
+      rules: [],
+    });
+    const store = await LabStore.open({ labPath: lab });
+    const runs = await store.readAllRuns();
+    const loopRuns = runs.filter((run) => run.start.continuation !== undefined);
+    assert.equal(loopRuns.length, 2);
+    assert.equal(loopRuns.every((run) => run.start.continuation.candidatePolicyDigest === expectedDigest), true);
+    const chain = await invoke(['replay', '--lab', lab, '--chain', '--json'], process.env);
+    assert.equal(chain.code, 0, JSON.stringify(chain));
+    assert.equal(chain.stdout[0].data.verdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('agent loop refuses a different candidate policy on resume', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-policy-resume-e2e-'));
+  const lab = path.join(root, 'lab');
+  const firstPolicyPath = path.join(root, 'first-policy.json');
+  const secondPolicyPath = path.join(root, 'second-policy.json');
+  try {
+    const init = await invoke(['init', '--lab', lab, '--world', 'temperature', '--seed', 'policy-resume-seed', '--json'], process.env);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const tokens = init.stdout[0].data.tokenMap.entries.map((entry) => entry.token);
+    await writeFile(firstPolicyPath, JSON.stringify({
+      schemaVersion: 1,
+      type: 'candidate-policy',
+      version: 1,
+      defaultToken: tokens[0],
+      rules: [],
+    }));
+    await writeFile(secondPolicyPath, JSON.stringify({
+      schemaVersion: 1,
+      type: 'candidate-policy',
+      version: 1,
+      defaultToken: tokens[1],
+      rules: [],
+    }));
+
+    const stdout = [];
+    const stderr = [];
+    const signalTimer = setTimeout(() => process.emit('SIGINT'), 30);
+    const code = await main([
+      'agent', 'loop', '--lab', lab, '--steps', '1', '--forever', '--policy', firstPolicyPath, '--json',
+    ], {
+      stdout: (value) => stdout.push(JSON.parse(value)),
+      stderr: (value) => stderr.push(value),
+    });
+    clearTimeout(signalTimer);
+    assert.equal(code, 0);
+    assert.equal(stderr.length, 0);
+    assert.equal(stdout[0].data.stopReason, 'INTERRUPTED');
+    const store = await LabStore.open({ labPath: lab });
+    assert.equal((await store.readCurrentLoopContinuation()).status, 'ACTIVE');
+
+    const mismatch = await invoke([
+      'agent', 'loop', '--lab', lab, '--resume', '--policy', secondPolicyPath, '--json',
+    ], { ...process.env, YI_AGENT_API_KEY: undefined, ZAI_API_KEY: undefined });
+    assert.equal(mismatch.code, 65, JSON.stringify(mismatch));
+    assert.equal(mismatch.stdout[0].error.message, 'Candidate policy identity differs from the persisted loop continuation.');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

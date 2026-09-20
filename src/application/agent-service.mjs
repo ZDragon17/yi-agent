@@ -899,6 +899,9 @@ export async function runContinuous(input) {
   if (source.requireRecovery !== undefined && typeof source.requireRecovery !== 'boolean') {
     throw new LabStoreError('INVALID_INPUT', 'requireRecovery must be a boolean.', { field: 'requireRecovery' });
   }
+  if (source.candidatePolicyDigest !== undefined && !validDigest(source.candidatePolicyDigest)) {
+    throw new LabStoreError('INVALID_INPUT', 'candidatePolicyDigest must be a sha256 digest.', { field: 'candidatePolicyDigest' });
+  }
   if (source.resume === true && (
     source.runs !== undefined || source.forever !== undefined || source.stepsPerRun !== undefined || source.steps !== undefined ||
     source.runId !== undefined || source.scenario !== undefined || source.goal !== undefined || source.goalPlan !== undefined ||
@@ -935,6 +938,13 @@ export async function runContinuous(input) {
       });
     }
     continuation = await store.readCurrentLoopContinuation();
+    if ((continuation.candidatePolicyDigest ?? null) !== (source.candidatePolicyDigest ?? null)) {
+      throw new LabStoreError(
+        'CONFLICT',
+        'Candidate policy identity differs from the persisted loop continuation.',
+        { field: 'candidatePolicyDigest', continuationId: continuation.loopId },
+      );
+    }
     if (continuation.status !== 'ACTIVE') {
       return {
         schemaVersion: SCHEMA_VERSION,
@@ -987,6 +997,7 @@ export async function runContinuous(input) {
       planningHorizon: requireBoundedOptional(source.planningHorizon, 1, MAX_PLANNING_HORIZON, 'planningHorizon') ?? 1,
       planningBranchingMode: source.planningBranchingMode ?? 'tree-v1',
       ...(requireRecovery ? { requireRecovery: true } : {}),
+      ...(source.candidatePolicyDigest === undefined ? {} : { candidatePolicyDigest: source.candidatePolicyDigest }),
       ...(persistedRandomizedTrial === null ? {} : { randomizedTrial: persistedRandomizedTrial }),
       ...(forever ? {} : { maxRuns: requestedRuns }),
     };
