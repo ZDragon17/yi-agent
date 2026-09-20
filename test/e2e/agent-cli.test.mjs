@@ -60,6 +60,39 @@ test('agent CLI can reuse an explicit persistent process model adapter session',
   }
 });
 
+test('agent loop reuses a persistent process model session across Run boundaries', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-persistent-process-loop-e2e-'));
+  const config = path.join(root, 'model-adapter.json');
+  await writeFile(config, JSON.stringify({
+    executable: process.execPath,
+    args: [MODEL_ADAPTER],
+    model: 'fixture-process-model',
+    timeoutMs: 5000,
+    transport: 'persistent-jsonl',
+  }));
+  const lab = path.join(root, 'lab');
+  try {
+    assert.equal((await invoke(['init', '--lab', lab, '--world', 'inventory', '--seed', 'persistent-process-loop-seed', '--json'], process.env)).code, 0);
+    const loop = await invoke([
+      'agent', 'loop', '--lab', lab, '--steps', '1', '--runs', '2',
+      '--model-adapter', config, '--json',
+    ], process.env);
+    assert.equal(loop.code, 0, JSON.stringify(loop));
+    assert.equal(loop.stdout[0].data.status, 'COMPLETED');
+    assert.equal(loop.stdout[0].data.runs, 2);
+    assert.equal(loop.stdout[0].data.results.length, 2);
+    for (const result of loop.stdout[0].data.results) {
+      assert.equal((await invoke(['replay', '--lab', lab, '--run', result.runId, '--json'], process.env)).stdout[0].data.verdict, 'CONSISTENT');
+    }
+    const chain = await invoke(['replay', '--lab', lab, '--chain', '--json'], process.env);
+    assert.equal(chain.code, 0, JSON.stringify(chain));
+    assert.equal(chain.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal(chain.stdout[0].data.checkedRuns, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('agent CLI turns an uncooperative process model into a bounded fallback', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-process-model-timeout-e2e-'));
   const config = path.join(root, 'model-adapter.json');
