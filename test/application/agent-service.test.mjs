@@ -43,6 +43,22 @@ test('application service runs a real closed loop and replays it without changin
   });
 });
 
+test('runLab does not fully inspect the current ledger before startRun', async () => {
+  await withLab(async (lab) => {
+    await initLab({ labPath: lab, labId: 'run-snapshot-lab', worldId: 'temperature', seed: 'run-snapshot-seed' });
+    const originalInspect = LabStore.prototype.inspect;
+    LabStore.prototype.inspect = async () => {
+      throw new Error('runLab must not duplicate the full current-ledger inspection');
+    };
+    try {
+      const result = await runLab({ labPath: lab, runId: 'run-1', steps: 1 });
+      assert.equal(result.status, 'COMPLETED');
+    } finally {
+      LabStore.prototype.inspect = originalInspect;
+    }
+  });
+});
+
 test('inspect uses the validated Run stream instead of array materialization', async () => {
   await withLab(async (lab) => {
     await initLab({ labPath: lab, labId: 'stream-inspect-lab', worldId: 'temperature', seed: 'stream-inspect-seed' });
