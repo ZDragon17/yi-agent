@@ -36,6 +36,10 @@ test('the driving policy itself replays to full agreement on the recorded histor
     assert.equal(report.evaluation.agreement.agreementRate, 1);
     assert.equal(report.evaluation.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
 
+    const history = await store.readCandidateOutcomes();
+    assert.ok(history.length >= 1);
+    assert.ok(history.every((entry) => /^sha256:[0-9a-f]{64}$/u.test(entry.valueSpecDigest)));
+
     const repeated = await evaluateLabCounterfactual({ labPath, policy: recorded });
     assert.equal(repeated.evaluation.policyDigest, report.evaluation.policyDigest);
     assert.deepEqual(repeated, report);

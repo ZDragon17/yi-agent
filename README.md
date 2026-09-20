@@ -746,6 +746,8 @@ yi-agent experiment counterfactual `
 
 报告是账本与策略的纯函数：不含时间戳，绑定 manifest/current 摘要与 `historyBasisDigest`，同一账本重复评估得到逐字节相同的自摘要报告；策略文件仍只允许引用父 Token map。该命令不运行世界、不调用模型、不创建分支 Lab，外部 adapter 的 Lab 同样可以离线评估。它回答的是“历史证据支持哪个策略”，不是轨迹仿真、规则自动发现或部署决策本身：UNEVALUABLE 比例高只说明账本还没有覆盖那些反事实，不说明策略好坏。
 
+F-284 为反事实证据增加目标函数作用域。候选历史的公开投影不再携带完整 `valueSpec`，只保留 `valueSpecDigest`；反事实评估把它和 WorldPort identity、seed、scenario、Token map 一起纳入证据锚。同一个 Lab 完成目标并切换到不同权重、目标向量或容差后，旧目标与新目标的距离不能混算；历史中出现多个目标摘要时，评估返回 `scope.status=MIXED` 和 `INSUFFICIENT_EVIDENCE`，不会给出跨目标的平均改善。报告的 `historyBasisDigest` 也绑定该摘要，避免只改目标后复用旧报告指纹。
+
 ### 与 Dream-RSI（dream-rsi.com）的关系
 
 本项目通过 `experiment counterfactual` 实践并延伸了 [Dream-RSI](https://dream-rsi.com/)（Google / Google DeepMind / 马里兰大学 / 弗吉尼亚大学，2026）提出的“历史即模拟器”思路：一次在线发现运行已经记录成带真实执行结果的探索结构，因此对备选探索策略的评估可以**零执行**地在已记录历史上重放。当前编译器 `counterfactual-replay.mjs` 严格按照“单步历史锚定”执行：它只用账本确实观测过的状态和结果，只替代单个步骤的候选选择，绝不编造账本从未见过的世界状态去推演多步反事实轨迹；因此它的评价范畴是“某条反事实选择在已记录证据下是否更好/更差/无法评估”，并且：

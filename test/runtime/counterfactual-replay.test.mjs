@@ -147,6 +147,34 @@ test('counterfactual evaluation rejects a history from different Token maps', ()
   assert.equal(result.divergence.evaluated, 0);
 });
 
+test('counterfactual evaluation rejects a history from different value objectives', () => {
+  const history = [
+    entry({
+      valueSpecDigest: `sha256:${'a'.repeat(64)}`,
+      kernelStep: 1,
+      observationDigest: CONTEXT_OBSERVATION,
+      beforeStateDigest: BEFORE_ONE,
+      beforeVector: VECTOR_ONE,
+      token: TOKEN_A,
+      goalDistanceAfter: 0.8,
+    }),
+    entry({
+      valueSpecDigest: `sha256:${'b'.repeat(64)}`,
+      kernelStep: 2,
+      observationDigest: CONTEXT_OBSERVATION,
+      beforeStateDigest: BEFORE_TWO,
+      beforeVector: VECTOR_ONE,
+      token: TOKEN_B,
+      goalDistanceAfter: 0.5,
+    }),
+  ];
+  const result = evaluateCounterfactualPolicy({ history, policy: policy(TOKEN_B) });
+  assert.equal(result.scope.status, 'MIXED');
+  assert.equal(result.scope.partitionCount, 2);
+  assert.equal(result.outcome.verdict, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(result.divergence.evaluated, 0);
+});
+
 test('counterfactual evaluation refuses an invalid WorldPort identity', () => {
   const history = [entry({
     worldImplementationDigest: 'sha256:not-a-valid-digest',
@@ -344,6 +372,7 @@ function entry({
   worldId,
   worldImplementationDigest,
   tokenMapDigest,
+  valueSpecDigest,
   seed,
 }) {
   return {
@@ -352,6 +381,7 @@ function entry({
     ...(worldId === undefined ? {} : { worldId }),
     ...(worldImplementationDigest === undefined ? {} : { worldImplementationDigest }),
     ...(seed === undefined ? {} : { seed }),
+    ...(valueSpecDigest === undefined ? {} : { valueSpecDigest }),
     runId: `run-${Math.ceil(kernelStep / 2)}`,
     sequence: kernelStep,
     kernelStep,

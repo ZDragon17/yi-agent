@@ -17,6 +17,7 @@ export function createCandidateHistoryAnnotator({ relevance = null } = {}) {
     push(entry, { emit = true } = {}) {
       const scope = candidateScope(entry);
       const decisionContext = decisionContextDigest(entry);
+      const valueSpecDigest = valueObjectiveDigest(entry);
       const quality = predictionQuality(entry?.candidateOutcome, entry);
       const referenceQuality = quality ?? entry?.quality ?? null;
       const previousSuperseded = findLatestSupersededCandidate(supersededCandidates, entry);
@@ -44,6 +45,7 @@ export function createCandidateHistoryAnnotator({ relevance = null } = {}) {
             const enriched = {
               ...publicEntry,
               ...(beforeVectorDigest === null ? {} : { beforeVectorDigest }),
+              ...(valueSpecDigest === null ? {} : { valueSpecDigest }),
               ...(quality === null ? {} : { quality }),
               ...(stepGap === null ? {} : { stepsSincePreviousCandidate: stepGap }),
               ...(supersededStepDistance === null ? {} : { stepsSinceSupersededCandidate: supersededStepDistance }),
@@ -62,6 +64,13 @@ export function createCandidateHistoryAnnotator({ relevance = null } = {}) {
       return result;
     },
   };
+}
+
+function valueObjectiveDigest(entry) {
+  if (entry?.valueSpec !== undefined) return canonicalDigest(entry.valueSpec);
+  return typeof entry?.valueSpecDigest === 'string' && /^sha256:[0-9a-f]{64}$/u.test(entry.valueSpecDigest)
+    ? entry.valueSpecDigest
+    : null;
 }
 
 export function candidateHistoryRelevance(history) {

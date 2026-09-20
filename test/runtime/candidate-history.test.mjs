@@ -9,6 +9,26 @@ import {
 const CANDIDATE_DIGEST = `sha256:${'a'.repeat(64)}`;
 const OTHER_CANDIDATE_DIGEST = `sha256:${'b'.repeat(64)}`;
 
+test('candidate history exposes only a digest for the value objective', () => {
+  const valueSpec = {
+    schemaVersion: 1,
+    observationDimensions: 1,
+    weights: [1],
+    target: [0],
+    tolerance: 0,
+    valueMode: 'distance-v2',
+  };
+  const [entry] = annotateCandidateHistory([{
+    valueSpec,
+    beforeVector: [1],
+    afterVector: [0.5],
+    candidateOutcome: { candidateDigest: CANDIDATE_DIGEST },
+  }]);
+
+  assert.equal(entry.valueSpec, undefined);
+  assert.match(entry.valueSpecDigest, /^sha256:[0-9a-f]{64}$/u);
+});
+
 test('candidate history counts attempts only inside one WorldPort scope', () => {
   const history = annotateCandidateHistory([
     {

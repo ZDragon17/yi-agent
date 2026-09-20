@@ -149,6 +149,7 @@ function observableVectorKey(entry) {
     worldVersion: typeof entry?.worldVersion === 'string' ? entry.worldVersion : null,
     tokenMapDigest: typeof entry?.tokenMapDigest === 'string' ? entry.tokenMapDigest : null,
     scenario: typeof entry?.scenario === 'string' ? entry.scenario : null,
+    valueSpecDigest: typeof entry?.valueSpecDigest === 'string' ? entry.valueSpecDigest : null,
     beforeVectorDigest: digest,
   });
   return scoped;
@@ -290,6 +291,10 @@ function historyScopeKey(entry) {
     ),
     tokenMapDigest: scopeField(
       entry?.tokenMapDigest,
+      (value) => typeof value === 'string' && DIGEST_PATTERN.test(value),
+    ),
+    valueSpecDigest: scopeField(
+      entry?.valueSpecDigest,
       (value) => typeof value === 'string' && DIGEST_PATTERN.test(value),
     ),
   };
