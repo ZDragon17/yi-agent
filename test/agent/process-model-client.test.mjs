@@ -203,6 +203,29 @@ test('persistent process model client cancels queued requests immediately', asyn
   await client.close();
 });
 
+test('persistent process model client resets buffers when a child exits after a response', async () => {
+  const children = [];
+  const client = createProcessModelClient({
+    executable: process.execPath,
+    args: [],
+    transport: 'persistent-jsonl',
+    timeoutMs: 1000,
+  }, {
+    spawnImpl: () => {
+      const child = createFakeModelChild({ closeAfterResponse: children.length === 0 });
+      children.push(child);
+      return child;
+    },
+  });
+
+  const first = await client.chat('first');
+  const second = await client.chat('second');
+  assert.equal(first.content, '{"requestId":"1","prompt":"first"}');
+  assert.equal(second.content, '{"requestId":"2","prompt":"second"}');
+  assert.equal(children.length, 2);
+  await client.close();
+});
+
 test('closing a persistent process model client rejects queued work and prevents future spawn', async () => {
   const children = [];
   const client = createProcessModelClient({
@@ -228,7 +251,7 @@ test('closing a persistent process model client rejects queued work and prevents
   assert.equal(children[0].killed, true);
 });
 
-function createFakeModelChild({ respond = true, lateResponseOnKill = false } = {}) {
+function createFakeModelChild({ respond = true, lateResponseOnKill = false, closeAfterResponse = false } = {}) {
   const child = new EventEmitter();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
@@ -237,6 +260,7 @@ function createFakeModelChild({ respond = true, lateResponseOnKill = false } = {
   child.signalCode = null;
   child.killed = false;
   child.respond = respond;
+  child.closeAfterResponse = closeAfterResponse;
   child.kill = () => {
     if (child.killed) return true;
     child.killed = true;
@@ -257,16 +281,23 @@ function createFakeModelChild({ respond = true, lateResponseOnKill = false } = {
     if (!child.respond) return;
     for (const line of chunk.toString('utf8').split(/\r?\n/u).filter(Boolean)) {
       const request = JSON.parse(line);
-      setImmediate(() => child.stdout.write(`${JSON.stringify({
-        protocol: 'yi-model-cli',
-        version: 1,
-        id: request.id,
-        ok: true,
-        result: {
-          model: 'fixture-model',
-          content: JSON.stringify({ requestId: request.id, prompt: request.payload.prompt }),
-        },
-      })}\n`));
+      setImmediate(() => {
+        const response = JSON.stringify({
+          protocol: 'yi-model-cli',
+          version: 1,
+          id: request.id,
+          ok: true,
+          result: {
+            model: 'fixture-model',
+            content: JSON.stringify({ requestId: request.id, prompt: request.payload.prompt }),
+          },
+        });
+        child.stdout.write(`${response}${child.closeAfterResponse ? '' : '\n'}`);
+        if (child.closeAfterResponse) {
+          child.exitCode = 0;
+          child.emit('close', 0, null);
+        }
+      });
     }
   });
   return child;

@@ -85,8 +85,15 @@ function createPersistentSession(config, spawnImpl) {
   const queue = [];
   let stdout = '';
   let stderr = '';
-  const stdoutDecoder = new StringDecoder('utf8');
-  const stderrDecoder = new StringDecoder('utf8');
+  let stdoutDecoder = new StringDecoder('utf8');
+  let stderrDecoder = new StringDecoder('utf8');
+
+  const resetOutputState = () => {
+    stdout = '';
+    stderr = '';
+    stdoutDecoder = new StringDecoder('utf8');
+    stderrDecoder = new StringDecoder('utf8');
+  };
 
   const terminate = () => {
     const current = child;
@@ -121,8 +128,7 @@ function createPersistentSession(config, spawnImpl) {
       { cause: error },
     ));
     terminate();
-    stdout = '';
-    stderr = '';
+    resetOutputState();
   };
 
   const onResponseLine = (line) => {
@@ -194,13 +200,13 @@ function createPersistentSession(config, spawnImpl) {
     current.on('close', (code, signalCode) => {
       if (current !== child) return;
       child = undefined;
-      stdout += stdoutDecoder.end();
+      const pending = active;
+      const trailingStdout = stdout + stdoutDecoder.end();
       stderr += stderrDecoder.end();
+      resetOutputState();
       if (closed) return;
-      if (stdout.length > 0) onResponseLine(stdout);
-      stdout = '';
-      stderr = '';
-      if (active !== undefined) {
+      if (trailingStdout.length > 0) onResponseLine(trailingStdout);
+      if (pending !== undefined && active === pending) {
         failSession(new ModelAdapterError('MODEL_ADAPTER_PROCESS', 'Model adapter process failed.', { status: code, signal: signalCode }));
       }
     });
