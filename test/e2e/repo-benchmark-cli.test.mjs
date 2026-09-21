@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -68,6 +68,81 @@ test('RTA-1 six-task baseline keeps each repository isolated and replayable', as
       );
     }
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('RTA-1 twelve-task corpus completes through the bounded public loop', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-long-run-e2e-'));
+  const manifestPath = path.resolve('examples/rta-1/long-run-12.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, Object.fromEntries(
+      manifest.tasks.map((task) => [task.goal, task.expected.files['src/math.mjs']]),
+    ));
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    const report = result.stdout[0].data;
+    assert.equal(report.status, 'PASS');
+    assert.equal(report.taskResults.length, 12);
+    assert.deepEqual(report.taskResults.map((task) => task.status), Array(12).fill('PASS'));
+    assert.deepEqual(report.taskResults.map((task) => task.replayVerdict), Array(12).fill('CONSISTENT'));
+    assert.equal(new Set(report.taskResults.map((task) => task.repositoryPath)).size, 12);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('RTA-1 twelve-task benchmark resumes after three forced process kills', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-three-kills-e2e-'));
+  const manifestPath = path.resolve('examples/rta-1/long-run-12.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  const reportPath = path.join(outputPath, 'report.json');
+  let activeChild = null;
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, Object.fromEntries(
+      manifest.tasks.map((task) => [task.goal, task.expected.files['src/math.mjs']]),
+    ), undefined, undefined, 150);
+    const benchmarkArgs = [
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ];
+
+    activeChild = spawnBenchmarkProcess(benchmarkArgs);
+    for (const [completedBeforeKill, resumeUntil] of [[3, 6], [6, 9], [9, 12]]) {
+      await waitForTaskCount(reportPath, completedBeforeKill);
+      await sleep(250);
+      const killed = await killProcessTree(activeChild);
+      assert.notEqual(killed.code, 0, `forced kill ${completedBeforeKill} must interrupt the benchmark`);
+      activeChild = null;
+
+      activeChild = spawnBenchmarkProcess([
+        ...benchmarkArgs,
+        '--resume',
+      ]);
+      await waitForTaskCount(reportPath, resumeUntil);
+    }
+
+    const completed = await waitForChild(activeChild);
+    activeChild = null;
+    assert.equal(completed.code, 0, `final resumed benchmark must pass: ${JSON.stringify(completed)}`);
+    const report = JSON.parse(await readFile(reportPath, 'utf8'));
+    assert.equal(report.status, 'PASS');
+    assert.deepEqual(report.taskResults.map((task) => task.status), Array(12).fill('PASS'));
+    assert.deepEqual(report.taskResults.map((task) => task.replayVerdict), Array(12).fill('CONSISTENT'));
+  } finally {
+    if (activeChild !== null && activeChild.exitCode === null) await killProcessTree(activeChild);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -284,6 +359,7 @@ function modelSource() {
     'const defaultSequence = [\'repo.list-files\', \'repo.read-file\', \'repo.run-tests\', \'repo.apply-patch\', \'repo.run-tests\'];',
     'const fastGoal = process.argv[3] || null;',
     'const trailingGoal = process.argv[4] || null;',
+    'const delayMs = Number(process.argv[5] ?? \'0\');',
     'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
     'rl.on(\'line\', (line) => {',
     '  const request = JSON.parse(line);',
@@ -300,19 +376,65 @@ function modelSource() {
     '          expectedBeforeDigest: context.observationEvidence.find((item) => item.kind === \'repo-patch-policy\').allowedPaths[0].expectedBeforeDigest,',
     '          replacement: replacements[context.goal],',
     '        } : undefined;',
-    '  process.stdout.write(JSON.stringify({ protocol: \'yi-model-cli\', version: 1, id: request.id, ok: true,',
-    '    result: { model: \'repo-benchmark-fixture\', content: JSON.stringify({ token: capability.token, ...(proposal === undefined ? {} : { proposal }) }) } }) + \'\\n\');',
+    '  const response = JSON.stringify({ protocol: \'yi-model-cli\', version: 1, id: request.id, ok: true,',
+    '    result: { model: \'repo-benchmark-fixture\', content: JSON.stringify({ token: capability.token, ...(proposal === undefined ? {} : { proposal }) }) } }) + \'\\n\';',
+    '  if (delayMs > 0) setTimeout(() => process.stdout.write(response), delayMs);',
+    '  else process.stdout.write(response);',
     '});',
   ].join('\n');
 }
 
-async function writeModelConfig(filePath, modelPath, replacements, fastGoal = undefined, trailingGoal = undefined) {
+async function writeModelConfig(filePath, modelPath, replacements, fastGoal = undefined, trailingGoal = undefined, delayMs = 0) {
   await writeFile(filePath, JSON.stringify({
     executable: process.execPath,
-    args: [modelPath, JSON.stringify(replacements), fastGoal ?? '', trailingGoal ?? ''],
+    args: [modelPath, JSON.stringify(replacements), fastGoal ?? '', trailingGoal ?? '', String(delayMs)],
     model: 'repo-benchmark-fixture',
     timeoutMs: 30000,
   }), 'utf8');
+}
+
+function spawnBenchmarkProcess(args) {
+  return spawn(process.execPath, [CLI, ...args], {
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+}
+
+async function waitForTaskCount(reportPath, minimum) {
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    try {
+      const report = JSON.parse(await readFile(reportPath, 'utf8'));
+      if (Array.isArray(report.taskResults) && report.taskResults.length >= minimum) return report;
+    } catch {}
+    await sleep(100);
+  }
+  throw new Error(`benchmark did not reach ${minimum} completed tasks before timeout`);
+}
+
+async function killProcessTree(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return waitForChild(child);
+  if (process.platform === 'win32') {
+    const killer = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    if (killer.error !== undefined) throw killer.error;
+  } else if (!child.kill('SIGKILL')) {
+    throw new Error('failed to signal benchmark process');
+  }
+  return waitForChild(child);
+}
+
+function waitForChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function invoke(args) {

@@ -425,7 +425,7 @@ yi-agent repo benchmark `
   --resume --json
 ```
 
-清单使用 `schemaVersion: 1`、`type: "repo-benchmark"`。每个任务声明 `id`、`goal`、`seed`、初始 `files`、`readPath`、`testPath`、`patch.allowedPaths`、`expected.files`、`expected.lastTestStatus`、`steps` 和 `maxTests`。`steps` 不能超过 24，`maxTests` 不能超过 4；adapter 会在第 5 次测试前拒绝请求。路径必须是相对路径，补丁目标必须来自任务文件集合，任务和文件数量、文本大小都有上限。输出目录必须是新目录；这样一次 Benchmark 的证据不会覆盖上一轮结果。仓库内的 `examples/rta-1/baseline-6.json` 提供六个独立 Node.js 修复任务，作为 T0 基线的固定入口。
+清单使用 `schemaVersion: 1`、`type: "repo-benchmark"`。每个任务声明 `id`、`goal`、`seed`、初始 `files`、`readPath`、`testPath`、`patch.allowedPaths`、`expected.files`、`expected.lastTestStatus`、`steps` 和 `maxTests`。`steps` 不能超过 24，`maxTests` 不能超过 4；adapter 会在第 5 次测试前拒绝请求。路径必须是相对路径，补丁目标必须来自任务文件集合，任务和文件数量、文本大小都有上限。输出目录必须是新目录；这样一次 Benchmark 的证据不会覆盖上一轮结果。仓库内的 `examples/rta-1/baseline-6.json` 提供六个独立 Node.js 修复任务作为 T0 基线，`examples/rta-1/long-run-12.json` 提供十二任务长跑清单。
 
 `--model-adapter` 可省略。省略时，任务沿用 `agent run` 的 `YI_AGENT_PROVIDER`、`YI_AGENT_API_KEY`、`YI_AGENT_API_BASE_URL` 和 `YI_AGENT_MODEL` 配置，适合接入真实模型或本地 API 桥；指定时则使用受校验的进程模型配置，适合离线复现实验。
 

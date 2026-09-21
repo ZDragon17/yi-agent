@@ -4,6 +4,8 @@
 
 `baseline-6.json` 是阶段 2 的六任务基线。六个任务各自创建独立仓库，覆盖加法、乘法、奇偶判断、范围限制、布尔解析和平均值计算。它们共享同一执行边界，但不共享文件、Lab、记忆或补丁日志，因此适合先测 T0：每个任务都从空白上下文开始。
 
+`long-run-12.json` 在这六项之后增加数组求和、字符串反转、元音统计、华氏转摄氏、最大值和严格正数判断。它用于阶段 3 的连续运行测试；对应 E2E 会在 3 个已提交任务边界强杀 benchmark，再用 `--resume` 接续到 12/12。
+
 运行时可以使用符合 `yi-agent` 进程模型协议的模型适配器配置：
 
 ```powershell
@@ -22,6 +24,15 @@ yi-agent repo benchmark `
 yi-agent repo benchmark `
   --manifest $PWD\examples\rta-1\baseline-6.json `
   --output $PWD\rta-1-baseline-001 `
+  --json
+```
+
+运行十二任务长跑：
+
+```powershell
+yi-agent repo benchmark `
+  --manifest $PWD\examples\rta-1\long-run-12.json `
+  --output $PWD\rta-1-long-run-001 `
   --json
 ```
 

@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 1,
+  "type": "repo-benchmark",
+  "tasks": [
+    {
+      "id": "add-two-numbers",
+      "goal": "Find the failing addition test, repair the implementation, and verify it.",
+      "seed": "rta-1-add-two-numbers-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-add-two-numbers\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function add(left, right) { return left - right; }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { add } from '../src/math.mjs';\n\ntest('add returns the sum', () => assert.equal(add(2, 3), 5));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function add(left, right) { return left + right; }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "multiply-two-numbers",
+      "goal": "Find the failing multiplication test, repair the implementation, and verify it.",
+      "seed": "rta-1-multiply-two-numbers-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-multiply-two-numbers\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function multiply(left, right) { return left / right; }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { multiply } from '../src/math.mjs';\n\ntest('multiply returns the product', () => assert.equal(multiply(2, 3), 6));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function multiply(left, right) { return left * right; }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "even-check",
+      "goal": "Find the failing even-number test, repair the implementation, and verify it.",
+      "seed": "rta-1-even-check-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-even-check\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function isEven(value) { return value % 2 === 1; }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { isEven } from '../src/math.mjs';\n\ntest('isEven recognizes an even number', () => assert.equal(isEven(4), true));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function isEven(value) { return value % 2 === 0; }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "clamp-value",
+      "goal": "Find the failing clamp test, repair the implementation, and verify it.",
+      "seed": "rta-1-clamp-value-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-clamp-value\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function clamp(value, minimum, maximum) { return Math.max(maximum, Math.min(minimum, value)); }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { clamp } from '../src/math.mjs';\n\ntest('clamp limits a value to the upper bound', () => assert.equal(clamp(12, 0, 10), 10));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function clamp(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, value)); }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "parse-boolean",
+      "goal": "Find the failing boolean parsing test, repair the implementation, and verify it.",
+      "seed": "rta-1-parse-boolean-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-parse-boolean\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function parseBoolean(value) { return String(value).toLowerCase() === 'false'; }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { parseBoolean } from '../src/math.mjs';\n\ntest('parseBoolean accepts case-insensitive true', () => assert.equal(parseBoolean('TRUE'), true));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function parseBoolean(value) { return String(value).toLowerCase() === 'true'; }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "average-two-numbers",
+      "goal": "Find the failing average test, repair the implementation, and verify it.",
+      "seed": "rta-1-average-two-numbers-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-average-two-numbers\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function average(left, right) { return (left + right) * 2; }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { average } from '../src/math.mjs';\n\ntest('average returns the arithmetic mean', () => assert.equal(average(2, 4), 3));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function average(left, right) { return (left + right) / 2; }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "sum-array",
+      "goal": "Find the failing array sum test, repair the implementation, and verify it.",
+      "seed": "rta-1-sum-array-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-sum-array\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function sum(values) { return values.reduce((total, value) => total - value, 0); }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { sum } from '../src/math.mjs';\n\ntest('sum adds every value', () => assert.equal(sum([2, 3, 4]), 9));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function sum(values) { return values.reduce((total, value) => total + value, 0); }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "reverse-string",
+      "goal": "Find the failing string reversal test, repair the implementation, and verify it.",
+      "seed": "rta-1-reverse-string-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-reverse-string\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function reverse(value) { return value.split('').join(''); }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { reverse } from '../src/math.mjs';\n\ntest('reverse changes character order', () => assert.equal(reverse('abc'), 'cba'));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function reverse(value) { return value.split('').reverse().join(''); }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "count-vowels",
+      "goal": "Find the failing vowel count test, repair the implementation, and verify it.",
+      "seed": "rta-1-count-vowels-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-count-vowels\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function countVowels(value) { return (value.match(/[^aeiou]/gi) ?? []).length; }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { countVowels } from '../src/math.mjs';\n\ntest('countVowels counts vowels case-insensitively', () => assert.equal(countVowels('Education'), 5));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function countVowels(value) { return (value.match(/[aeiou]/gi) ?? []).length; }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "to-celsius",
+      "goal": "Find the failing Celsius conversion test, repair the implementation, and verify it.",
+      "seed": "rta-1-to-celsius-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-to-celsius\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function toCelsius(fahrenheit) { return (fahrenheit + 32) * 5 / 9; }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { toCelsius } from '../src/math.mjs';\n\ntest('toCelsius converts the freezing point', () => assert.equal(toCelsius(32), 0));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function toCelsius(fahrenheit) { return (fahrenheit - 32) * 5 / 9; }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "maximum-number",
+      "goal": "Find the failing maximum test, repair the implementation, and verify it.",
+      "seed": "rta-1-maximum-number-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-maximum-number\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function maximum(left, right) { return Math.min(left, right); }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { maximum } from '../src/math.mjs';\n\ntest('maximum returns the larger value', () => assert.equal(maximum(8, 3), 8));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function maximum(left, right) { return Math.max(left, right); }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    },
+    {
+      "id": "strict-positive",
+      "goal": "Find the failing positive-number test, repair the implementation, and verify it.",
+      "seed": "rta-1-strict-positive-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-strict-positive\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/math.mjs", "content": "export function isPositive(value) { return value >= 0; }\n" },
+        { "path": "test/math.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { isPositive } from '../src/math.mjs';\n\ntest('isPositive excludes zero', () => assert.equal(isPositive(0), false));\n" }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": { "allowedPaths": ["src/math.mjs"] },
+      "expected": { "files": { "src/math.mjs": "export function isPositive(value) { return value > 0; }\n" }, "lastTestStatus": "PASS" },
+      "steps": 5,
+      "maxTests": 4
+    }
+  ]
+}
