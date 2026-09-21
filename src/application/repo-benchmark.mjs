@@ -87,6 +87,7 @@ export async function runRepoBenchmark(input) {
     status: selectedTasks.every((task) => resultById.get(task.id)?.status === 'PASS') ? 'PASS' : 'FAIL',
     manifestDigest,
     learningProfile,
+    summary: summarizeBenchmark(report.taskResults),
     ...(experience === null ? {} : { experience }),
     taskResults: report.taskResults,
   };
@@ -95,6 +96,7 @@ export async function runRepoBenchmark(input) {
 }
 
 async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
+  const startedAt = Date.now();
   const repositoryPath = path.join(taskRoot, 'repository');
   const labPath = path.join(taskRoot, 'lab');
   const adapterConfigPath = path.join(taskRoot, 'adapter.json');
@@ -220,7 +222,40 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
       context: error?.context ?? {},
     };
   }
+  result.durationMs = Math.max(0, Date.now() - startedAt);
   return result;
+}
+
+function summarizeBenchmark(taskResults) {
+  const failureTypes = {};
+  let passedTasks = 0;
+  let testExecutions = 0;
+  let kernelSteps = 0;
+  let operatorInterventions = 0;
+  let durationMs = 0;
+  for (const result of taskResults) {
+    if (result.status === 'PASS') passedTasks += 1;
+    else {
+      const code = result.failure?.code ?? 'UNKNOWN';
+      failureTypes[code] = (failureTypes[code] ?? 0) + 1;
+    }
+    testExecutions += Number.isSafeInteger(result.metrics?.testExecutions) ? result.metrics.testExecutions : 0;
+    kernelSteps += Number.isSafeInteger(result.metrics?.kernelSteps) ? result.metrics.kernelSteps : 0;
+    operatorInterventions += result.metrics?.operatorIntervention === true ? 1 : 0;
+    durationMs += Number.isSafeInteger(result.durationMs) ? result.durationMs : 0;
+  }
+  const taskCount = taskResults.length;
+  return {
+    taskCount,
+    passedTasks,
+    failedTasks: taskCount - passedTasks,
+    successRate: taskCount === 0 ? 0 : passedTasks / taskCount,
+    kernelSteps,
+    testExecutions,
+    operatorInterventions,
+    failureTypes,
+    durationMs,
+  };
 }
 
 function normalizeLearningProfile(value) {

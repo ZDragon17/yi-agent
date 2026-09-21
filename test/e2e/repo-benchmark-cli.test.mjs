@@ -88,6 +88,12 @@ test('RTA-1 T1 experience improves a bounded cross-task workflow against T0', as
     const t1Report = t1.stdout[0].data;
     assert.equal(t0Report.taskResults.filter((task) => task.status === 'PASS').length, 1);
     assert.equal(t1Report.taskResults.filter((task) => task.status === 'PASS').length, 6);
+    assert.equal(t0Report.summary.passedTasks, 1);
+    assert.equal(t0Report.summary.failedTasks, 5);
+    assert.equal(t1Report.summary.passedTasks, 6);
+    assert.equal(t1Report.summary.failedTasks, 0);
+    assert.equal(t1Report.summary.operatorInterventions, 0);
+    assert.ok(t1Report.summary.durationMs >= 0);
     assert.equal(t1Report.experience.entries.length, 6);
     assert.equal(new Set(t1Report.taskResults.map((task) => task.repositoryPath)).size, 6);
     assert.ok(t1Report.experience.entries.every((entry) => entry.replayVerdict === 'CONSISTENT'));
