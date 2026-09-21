@@ -107,6 +107,7 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
     repositoryPath,
     labPath,
     runId: null,
+    runIds: [],
     replayVerdict: null,
     acceptance: { passed: false, files: [], lastTestStatus: null },
     metrics: { kernelSteps: null, testExecutions: null, operatorIntervention: false },
@@ -157,7 +158,11 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
       ];
       const run = await runCli(runArgs);
       lastRun = run;
-      result.runId = run.stdout[0]?.data?.runId ?? result.runId;
+      const runId = run.stdout[0]?.data?.runId ?? null;
+      if (runId !== null) {
+        result.runId = runId;
+        if (!result.runIds.includes(runId)) result.runIds.push(runId);
+      }
       if (run.code !== 0) lastRunFailure = commandFailure('agent run', run);
 
       const inspection = await runCli([
@@ -165,6 +170,11 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
       ]);
       if (inspection.code !== 0) throw commandFailure('inspect', inspection);
       const current = inspection.stdout[0]?.data?.current;
+      const inspectedRunId = current?.lastRunId;
+      if (typeof inspectedRunId === 'string' && !result.runIds.includes(inspectedRunId)) {
+        result.runId = inspectedRunId;
+        result.runIds.push(inspectedRunId);
+      }
       result.acceptance = await evaluateAcceptance(task, repositoryPath, current);
       result.metrics = {
         kernelSteps: Number.isSafeInteger(current?.kernelStep) ? current.kernelStep : null,
@@ -246,12 +256,13 @@ function validateExperience(value) {
 
 async function appendExperience(experience, result) {
   const store = await LabStore.open({ labPath: result.labPath });
-  const run = await store.readRun(result.runId);
+  const runIds = result.runIds.length > 0 ? result.runIds : [result.runId];
+  const runs = await Promise.all(runIds.map((runId) => store.readRun(runId)));
   const capabilityByToken = new Map(store.manifest.tokenMap.entries.map((entry) => [entry.token, entry.capabilityId]));
-  const steps = run.events
+  const steps = runs.flatMap((run) => run.events
     .filter((event) => event.kind === 'STEP')
     .map((event) => capabilityByToken.get(event.payload.choice?.token) ?? null)
-    .filter((capabilityId) => capabilityId !== null)
+    .filter((capabilityId) => capabilityId !== null))
     .slice(0, MAX_EXPERIENCE_STEPS);
   const entry = {
     taskId: result.id,
@@ -268,6 +279,7 @@ async function appendExperience(experience, result) {
 async function verifyCompletedTask(task, result, outputPath) {
   try {
     if (result.taskDigest !== canonicalDigest(task) || result.runId === null || result.replayVerdict !== 'CONSISTENT' ||
+        (result.runIds !== undefined && (!Array.isArray(result.runIds) || result.runIds.length === 0 || result.runIds.at(-1) !== result.runId)) ||
         typeof result.repositoryPath !== 'string' || typeof result.labPath !== 'string') return false;
     const repositoryPath = path.resolve(result.repositoryPath);
     const labPath = path.resolve(result.labPath);

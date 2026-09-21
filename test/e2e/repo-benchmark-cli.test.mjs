@@ -303,7 +303,7 @@ test('repo benchmark continues from a patched but unverified Run', async () => {
     });
     const result = await invoke([
       'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
-      '--model-adapter', modelConfigPath, '--json',
+      '--model-adapter', modelConfigPath, '--learning-profile', 't1', '--json',
     ]);
     assert.equal(result.code, 0, JSON.stringify(result));
     const taskResult = result.stdout[0].data.taskResults[0];
@@ -312,6 +312,9 @@ test('repo benchmark continues from a patched but unverified Run', async () => {
     assert.ok(taskResult.metrics.kernelSteps <= 24);
     assert.ok(taskResult.metrics.testExecutions > 1);
     assert.ok(taskResult.metrics.testExecutions <= task.maxTests);
+    assert.ok(taskResult.runIds.length > 1);
+    assert.equal(taskResult.runIds.at(-1), taskResult.runId);
+    assert.ok(result.stdout[0].data.experience.entries[0].workflow.length > task.steps);
     assert.equal(taskResult.replayVerdict, 'CONSISTENT');
   } finally {
     await rm(root, { recursive: true, force: true });
