@@ -37,6 +37,73 @@ test('repo WorldPort ignores its own runtime directory while scanning a reposito
   }
 });
 
+test('repo WorldPort exposes a bounded file listing only when discovery is enabled', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-discovery-e2e-'));
+  const repository = path.join(root, 'repository');
+  try {
+    await mkdir(path.join(repository, 'src'), { recursive: true });
+    await mkdir(path.join(repository, '.yi-agent'), { recursive: true });
+    await writeFile(path.join(repository, 'README.md'), 'repository source\n');
+    await writeFile(path.join(repository, 'src', 'main.mjs'), 'export default 1;\n');
+    await writeFile(path.join(repository, '.yi-agent', 'runtime.json'), '{}\n');
+
+    const hello = invokeAdapterOnce([
+      ADAPTER,
+      repository,
+      READ_PATH,
+      READ_PATH,
+      '--discover',
+    ], 'hello', {});
+    assert.equal(hello.ok, true, JSON.stringify(hello));
+    assert.deepEqual(hello.result.capabilityIds, [
+      'repo.list-files',
+      'repo.read-file',
+      'repo.run-tests',
+    ]);
+
+    const response = invokeAdapterOnce([
+      ADAPTER,
+      repository,
+      READ_PATH,
+      READ_PATH,
+      '--discover',
+    ], 'transition', {
+      state: invokeAdapterOnce([
+        ADAPTER,
+        repository,
+        READ_PATH,
+        READ_PATH,
+        '--discover',
+      ], 'initialState', {}).result.state,
+      manifest: {
+        tokenMap: {
+          entries: [
+            { schemaVersion: 1, token: 'tok_REPO_LIST_01', capabilityId: 'repo.list-files' },
+            { schemaVersion: 1, token: 'tok_REPO_READ_01', capabilityId: 'repo.read-file' },
+            { schemaVersion: 1, token: 'tok_REPO_TEST_01', capabilityId: 'repo.run-tests' },
+          ],
+        },
+      },
+      request: {
+        token: 'tok_REPO_LIST_01',
+        executionNonce: 'discovery-nonce',
+        basedOnVersion: 'state:repo:0:pending',
+        policyVersion: 'policy-v1',
+        constraintsDigest: 'sha256:discovery',
+      },
+    });
+
+    assert.equal(response.ok, true, JSON.stringify(response));
+    assert.deepEqual(response.result.nextWorldState.filePaths, ['README.md', 'src/main.mjs']);
+    assert.deepEqual(
+      response.result.postObservation.evidence.find((item) => item.kind === 'repo-file-list'),
+      { kind: 'repo-file-list', paths: ['README.md', 'src/main.mjs'], truncated: false },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('repo WorldPort uses the same continuous Run and Replay envelope as a built-in WorldPort', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-matrix-e2e-'));
   const adapterConfig = path.join(root, 'adapter.json');

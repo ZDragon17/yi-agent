@@ -5,7 +5,8 @@ param(
   [string]$ReadPath = 'README.md',
   [string]$TestPath = 'test/agent/model-advisor.test.mjs',
   [string]$PatchSpecPath = '',
-  [string]$NonceJournalPath = ''
+  [string]$NonceJournalPath = '',
+  [switch]$Discover
 )
 
 $nodePath = (& node -p "process.execPath" | Out-String).Trim()
@@ -25,6 +26,9 @@ if (-not [string]::IsNullOrWhiteSpace($PatchSpecPath) -or -not [string]::IsNullO
   $nonceJournal = [System.IO.Path]::GetFullPath($NonceJournalPath)
   $adapterArgs += @($patchSpec, $nonceJournal)
   $adapterId = 'repo-writable-example-v1'
+}
+if ($Discover) {
+  $adapterArgs += '--discover'
 }
 $config = [ordered]@{
   executable = $nodePath

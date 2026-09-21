@@ -45,23 +45,28 @@ const MAX_FAILED_TEST_NAME_BYTES = 256;
 const MAX_NONCE_JOURNAL_BYTES = 2 * 1024 * 1024;
 const BEFORE_DIGEST_MODES = new Set(['fixed', 'current']);
 
-const repositoryRoot = path.resolve(process.argv[2] ?? '.');
-const readPath = process.argv[3] ?? 'README.md';
-const testPath = process.argv[4] ?? 'test/agent/model-advisor.test.mjs';
-const patchSpecPath = process.argv[5] ?? null;
-const nonceJournalPath = process.argv[6] ?? null;
+const positionalArgs = process.argv.slice(2).filter((argument) => !argument.startsWith('--'));
+const repositoryRoot = path.resolve(positionalArgs[0] ?? '.');
+const readPath = positionalArgs[1] ?? 'README.md';
+const testPath = positionalArgs[2] ?? 'test/agent/model-advisor.test.mjs';
+const patchSpecPath = positionalArgs[3] ?? null;
+const nonceJournalPath = positionalArgs[4] ?? null;
 const rootRealPath = realpathSync(repositoryRoot);
 if ((patchSpecPath === null) !== (nonceJournalPath === null)) {
   throw new Error('writable repo mode requires both a patch spec and a nonce journal');
 }
 const patchSpec = patchSpecPath === null ? null : readPatchSpec(patchSpecPath);
+const discoveryEnabled = process.argv.includes('--discover');
 const dropPatchResponse = process.argv.includes('--drop-patch-response');
 if (nonceJournalPath !== null && isInsideRepository(nonceJournalPath)) {
   throw new Error('nonce journal must be outside the scanned repository');
 }
-const CAPABILITY_IDS = patchSpec === null
-  ? ['repo.read-file', 'repo.run-tests']
-  : ['repo.read-file', 'repo.run-tests', 'repo.apply-patch'];
+const CAPABILITY_IDS = [
+  ...(discoveryEnabled ? ['repo.list-files'] : []),
+  'repo.read-file',
+  'repo.run-tests',
+  ...(patchSpec === null ? [] : ['repo.apply-patch']),
+];
 const ADAPTER_ID = patchSpec === null ? READONLY_ADAPTER_ID : WRITABLE_ADAPTER_ID;
 const WORLD_VERSION = patchSpec === null
   ? READONLY_WORLD_VERSION
@@ -144,6 +149,10 @@ function transition(previous, request, manifest) {
     next.lastReadDigest = canonicalDigest({ bytes: content.length, content });
     next.lastReadContent = content.slice(0, MAX_MODEL_READ_CONTENT);
     next.lastReadContentTruncated = content.length > MAX_MODEL_READ_CONTENT;
+  } else if (capabilityId === 'repo.list-files') {
+    const repository = scanRepository();
+    next = makeState(previous.revision + 1, null, request.executionNonce, previous.usedExecutionNonces, testCount);
+    next.filePaths = repository.paths;
   } else if (capabilityId === 'repo.run-tests') {
     const result = runTests();
     testCount += 1;
@@ -161,6 +170,7 @@ function transition(previous, request, manifest) {
   const nextRepository = scanRepository();
   next.rootDigest = nextRepository.rootDigest;
   next.fileCount = nextRepository.fileCount;
+  next.filePaths = nextRepository.paths;
   next.lastAction = capabilityId;
   next.stateVersion = `state:${WORLD_ID}:${next.revision}:${nextRepository.rootDigest.slice(7, 19)}`;
   const response = {
@@ -203,6 +213,7 @@ function makeState(revision, repository, executionNonce = null, previousNonces =
     lastReadDigest: null,
     lastReadContent: null,
     lastReadContentTruncated: false,
+    filePaths: repository?.paths ?? [],
     lastTestStatus: 'NOT_RUN',
     lastTestExitCode: null,
     lastTestOutputDigest: null,
@@ -221,6 +232,11 @@ function observation(state) {
     intervalId: `${WORLD_ID}:interval:${state.revision}`,
     evidence: [
       { kind: 'repo-tree', rootDigest: state.rootDigest, fileCount: state.fileCount },
+      ...(discoveryEnabled ? [{
+        kind: 'repo-file-list',
+        paths: state.filePaths,
+        truncated: false,
+      }] : []),
       {
         kind: 'repo-test-policy',
         testPath: normalizeRelative(testPath),
@@ -271,6 +287,7 @@ function scanRepository() {
   return {
     rootDigest: canonicalDigest(entries),
     fileCount: entries.length,
+    paths: entries.map((entry) => entry.path),
   };
 }
 
