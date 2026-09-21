@@ -1,5 +1,5 @@
 import { canonicalDigest } from '../runtime/schema.mjs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,31 +20,58 @@ export async function runRepoBenchmark(input) {
   const outputPath = requireAbsolutePath(source.outputPath, 'outputPath');
   const modelAdapterPath = requireAbsolutePath(source.modelAdapterPath, 'modelAdapterPath');
   const manifest = await readManifest(manifestPath);
-  if (source.taskId !== undefined && !manifest.tasks.some((task) => task.id === source.taskId)) {
+  const selectedTasks = source.taskId === undefined
+    ? manifest.tasks
+    : manifest.tasks.filter((task) => task.id === source.taskId);
+  if (selectedTasks.length === 0) {
     throw benchmarkError('INVALID_INPUT', 'No benchmark task matched --task.', { field: 'task', taskId: source.taskId });
   }
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await createOutputDirectory(outputPath);
-  await writeJson(path.join(outputPath, 'manifest.json'), manifest);
 
-  const taskResults = [];
-  for (const task of manifest.tasks) {
-    if (source.taskId !== undefined && source.taskId !== task.id) continue;
-    taskResults.push(await runTask({ task, outputPath, modelAdapterPath }));
+  const manifestDigest = canonicalDigest(manifest);
+  const reportPath = path.join(outputPath, 'report.json');
+  let report;
+  if (source.resume === true) {
+    report = await readCheckpoint(outputPath, manifest, manifestDigest);
+  } else {
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await createOutputDirectory(outputPath);
+    await writeJson(path.join(outputPath, 'manifest.json'), manifest);
+    report = {
+      schemaVersion: 1,
+      type: 'repo-benchmark-report',
+      status: 'RUNNING',
+      manifestDigest,
+      taskResults: [],
+    };
+    await writeJson(reportPath, report);
   }
-  const report = {
+
+  for (const task of selectedTasks) {
+    const previous = report.taskResults.find((item) => item.id === task.id);
+    if (previous?.status === 'PASS' && await verifyCompletedTask(task, previous, outputPath)) continue;
+    const taskRoot = await nextTaskRoot(outputPath, task.id);
+    const result = await runTask({ task, taskRoot, modelAdapterPath });
+    report = {
+      ...report,
+      status: 'RUNNING',
+      taskResults: replaceTaskResult(report.taskResults, result),
+    };
+    await writeJson(reportPath, report);
+  }
+
+  const resultById = new Map(report.taskResults.map((item) => [item.id, item]));
+  const finalReport = {
     schemaVersion: 1,
     type: 'repo-benchmark-report',
-    status: taskResults.every((task) => task.status === 'PASS') ? 'PASS' : 'FAIL',
-    manifestDigest: canonicalDigest(manifest),
-    taskResults,
+    status: selectedTasks.every((task) => resultById.get(task.id)?.status === 'PASS') ? 'PASS' : 'FAIL',
+    manifestDigest,
+    taskResults: report.taskResults,
   };
-  await writeJson(path.join(outputPath, 'report.json'), report);
-  return report;
+  await writeJson(reportPath, finalReport);
+  return finalReport;
 }
 
-async function runTask({ task, outputPath, modelAdapterPath }) {
-  const taskRoot = path.join(outputPath, 'tasks', task.id);
+async function runTask({ task, taskRoot, modelAdapterPath }) {
   const repositoryPath = path.join(taskRoot, 'repository');
   const labPath = path.join(taskRoot, 'lab');
   const adapterConfigPath = path.join(taskRoot, 'adapter.json');
@@ -52,6 +79,7 @@ async function runTask({ task, outputPath, modelAdapterPath }) {
   const nonceJournalPath = path.join(taskRoot, 'patch-nonces.json');
   const result = {
     id: task.id,
+    taskDigest: canonicalDigest(task),
     status: 'FAIL',
     repositoryPath,
     labPath,
@@ -130,6 +158,79 @@ async function runTask({ task, outputPath, modelAdapterPath }) {
     };
   }
   return result;
+}
+
+async function verifyCompletedTask(task, result, outputPath) {
+  try {
+    if (result.taskDigest !== canonicalDigest(task) || result.runId === null || result.replayVerdict !== 'CONSISTENT' ||
+        typeof result.repositoryPath !== 'string' || typeof result.labPath !== 'string') return false;
+    const repositoryPath = path.resolve(result.repositoryPath);
+    const labPath = path.resolve(result.labPath);
+    assertInside(outputPath, repositoryPath, 'checkpoint repository');
+    assertInside(outputPath, labPath, 'checkpoint lab');
+    const taskRoot = path.dirname(repositoryPath);
+    const adapterConfigPath = path.join(taskRoot, 'adapter.json');
+    const inspection = await runCli(['inspect', '--lab', labPath, '--adapter', adapterConfigPath, '--json']);
+    if (inspection.code !== 0) return false;
+    const acceptance = await evaluateAcceptance(task, repositoryPath, inspection.stdout[0]?.data?.current);
+    if (!acceptance.passed) return false;
+    const replay = await runCli([
+      'replay', '--lab', labPath, '--run', result.runId,
+      '--adapter', adapterConfigPath, '--json',
+    ]);
+    return replay.code === 0 && replay.stdout[0]?.data?.verdict === 'CONSISTENT';
+  } catch {
+    return false;
+  }
+}
+
+async function nextTaskRoot(outputPath, taskId) {
+  const base = path.join(outputPath, 'tasks', taskId);
+  if (!await pathExists(base)) return base;
+  for (let attempt = 2; attempt <= 64; attempt += 1) {
+    const candidate = path.join(outputPath, 'tasks', `${taskId}-attempt-${attempt}`);
+    if (!await pathExists(candidate)) return candidate;
+  }
+  throw benchmarkError('CONFLICT', 'Benchmark task exceeded the bounded attempt count.', { taskId });
+}
+
+function replaceTaskResult(results, result) {
+  const next = results.filter((item) => item.id !== result.id);
+  next.push(result);
+  return next;
+}
+
+async function readCheckpoint(outputPath, manifest, manifestDigest) {
+  const outputStatus = await stat(outputPath).catch(() => null);
+  if (outputStatus === null || !outputStatus.isDirectory()) {
+    throw benchmarkError('NOT_FOUND', 'Benchmark output directory does not exist for --resume.', { outputPath });
+  }
+  const storedManifest = await readManifest(path.join(outputPath, 'manifest.json'));
+  if (canonicalDigest(storedManifest) !== manifestDigest) {
+    throw benchmarkError('CONFLICT', 'Benchmark resume manifest does not match the requested manifest.', { outputPath });
+  }
+  let report;
+  try {
+    report = JSON.parse(await readFile(path.join(outputPath, 'report.json'), 'utf8'));
+  } catch (error) {
+    throw benchmarkError(error?.code ?? 'INVALID_INPUT', 'Benchmark checkpoint report could not be read.', { outputPath });
+  }
+  requireRecord(report, 'benchmark checkpoint report');
+  if (report.schemaVersion !== 1 || report.type !== 'repo-benchmark-report' || report.manifestDigest !== manifestDigest ||
+      !['RUNNING', 'FAIL', 'PASS'].includes(report.status) || !Array.isArray(report.taskResults)) {
+    throw benchmarkError('CONFLICT', 'Benchmark checkpoint report is incompatible with the requested manifest.', { outputPath });
+  }
+  return report;
+}
+
+async function pathExists(filePath) {
+  try {
+    await stat(filePath);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 async function evaluateAcceptance(task, repositoryPath, current) {

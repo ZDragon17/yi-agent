@@ -415,9 +415,19 @@ yi-agent repo benchmark `
   --json
 ```
 
+上一轮被中断时可以复用检查点：
+
+```powershell
+yi-agent repo benchmark `
+  --manifest C:\bench\repo-tasks.json `
+  --output C:\bench\run-001 `
+  --model-adapter C:\bench\model-adapter.json `
+  --resume --json
+```
+
 清单使用 `schemaVersion: 1`、`type: "repo-benchmark"`。每个任务声明 `id`、`goal`、`seed`、初始 `files`、`readPath`、`testPath`、`patch.allowedPaths`、`expected.files`、`expected.lastTestStatus` 和 `steps`。路径必须是相对路径，补丁目标必须来自任务文件集合，任务和文件数量、文本大小都有上限。输出目录必须是新目录；这样一次 Benchmark 的证据不会覆盖上一轮结果。
 
-每个任务按 `init → agent run → inspect → replay` 执行。验收会比较声明的文件内容和最终测试状态，并要求 Replay 返回 `CONSISTENT`。`report.json` 保存任务状态、repository/Lab 路径、Run ID、Replay 结果、验收明细和失败原因。任务失败会继续执行同一清单中的其他任务，命令最终返回非零退出码；清单本身无效则在创建输出目录前拒绝。
+每个任务按 `init → agent run → inspect → replay` 执行。验收会比较声明的文件内容和最终测试状态，并要求 Replay 返回 `CONSISTENT`。每个任务完成后都会更新 `report.json`；恢复时会重新检查已通过任务的文件和 Replay，未完成任务进入新的 `attempt-N` 目录，旧证据不会被覆盖。报告保存任务状态、repository/Lab 路径、Run ID、Replay 结果、验收明细和失败原因。任务失败会继续执行同一清单中的其他任务，命令最终返回非零退出码；清单本身无效则在创建输出目录前拒绝。
 
 这个命令解决的是实验可重复性和任务间隔离，不等于模型已经具备长期自主规划能力。真实模型适配器仍需由外部配置提供，任务验收也必须由人选择可信的文件和测试条件。
 

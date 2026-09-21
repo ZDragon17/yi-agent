@@ -80,6 +80,53 @@ test('repo benchmark rejects a path escape before creating output', async () => 
   }
 });
 
+test('repo benchmark resumes from task checkpoints without overwriting prior evidence', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-resume-e2e-'));
+  const manifestPath = path.join(root, 'benchmark.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  const tasks = [
+    createTask('add-task', 'task:add', 'export function add(left, right) { return left - right; }\n', 'export function add(left, right) { return left + right; }\n'),
+    createTask('multiply-task', 'task:multiply', 'export function multiply(left, right) { return left / right; }\n', 'export function multiply(left, right) { return left * right; }\n'),
+  ];
+  tasks[1].steps = 1;
+  tasks[1].expected.lastTestStatus = 'NOT_RUN';
+  try {
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, type: 'repo-benchmark', tasks }), 'utf8');
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, {
+      'task:add': tasks[0].expected.files['src/math.mjs'],
+    }, 'task:multiply');
+    const interrupted = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ]);
+    assert.equal(interrupted.code, 2, JSON.stringify(interrupted));
+    const checkpoint = interrupted.stdout[0].data;
+    assert.equal(checkpoint.status, 'FAIL');
+    assert.equal(checkpoint.taskResults.find((task) => task.id === 'add-task').status, 'PASS');
+    assert.equal(checkpoint.taskResults.find((task) => task.id === 'multiply-task').status, 'FAIL');
+
+    await writeModelConfig(modelConfigPath, modelPath, Object.fromEntries(
+      tasks.map((task) => [task.goal, task.expected.files['src/math.mjs']]),
+    ), 'task:multiply');
+    const resumed = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--resume', '--json',
+    ]);
+    assert.equal(resumed.code, 0, JSON.stringify(resumed));
+    const report = resumed.stdout[0].data;
+    assert.equal(report.status, 'PASS');
+    assert.deepEqual(report.taskResults.map((task) => task.status), ['PASS', 'PASS']);
+    assert.equal(report.taskResults[0].repositoryPath, checkpoint.taskResults[0].repositoryPath);
+    assert.match(report.taskResults[1].repositoryPath, /attempt-2[\\/]repository$/u);
+    assert.notEqual(report.taskResults[1].repositoryPath, checkpoint.taskResults[1].repositoryPath);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function createTask(id, goal, buggySource, fixedSource) {
   return {
     id,
@@ -118,12 +165,14 @@ function modelSource() {
   return [
     "import readline from 'node:readline';",
     'const replacements = JSON.parse(process.argv[2]);',
-    'const sequence = [\'repo.list-files\', \'repo.read-file\', \'repo.run-tests\', \'repo.apply-patch\', \'repo.run-tests\'];',
+    'const defaultSequence = [\'repo.list-files\', \'repo.read-file\', \'repo.run-tests\', \'repo.apply-patch\', \'repo.run-tests\'];',
+    'const fastGoal = process.argv[3] ?? null;',
     'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
     'rl.on(\'line\', (line) => {',
     '  const request = JSON.parse(line);',
     '  const prompt = request.payload?.prompt ?? \'\';',
     '  const context = JSON.parse(prompt.split(\'\\n\').at(-1));',
+    '  const sequence = context.goal === fastGoal ? [\'repo.apply-patch\'] : defaultSequence;',
     '  const capabilityId = sequence[context.step] ?? sequence.at(-1);',
     '  const capability = context.capabilities.find((item) => item.capabilityId === capabilityId);',
     '  const proposal = capabilityId === \'repo.read-file\' ? { path: \'src/math.mjs\' }',
@@ -137,6 +186,15 @@ function modelSource() {
     '    result: { model: \'repo-benchmark-fixture\', content: JSON.stringify({ token: capability.token, ...(proposal === undefined ? {} : { proposal }) }) } }) + \'\\n\');',
     '});',
   ].join('\n');
+}
+
+async function writeModelConfig(filePath, modelPath, replacements, fastGoal = undefined) {
+  await writeFile(filePath, JSON.stringify({
+    executable: process.execPath,
+    args: [modelPath, JSON.stringify(replacements), ...(fastGoal === undefined ? [] : [fastGoal])],
+    model: 'repo-benchmark-fixture',
+    timeoutMs: 30000,
+  }), 'utf8');
 }
 
 function invoke(args) {

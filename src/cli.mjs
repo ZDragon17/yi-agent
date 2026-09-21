@@ -85,6 +85,7 @@ async function dispatch(command, options) {
       manifestPath: requiredAbsolute(options, 'manifest'),
       outputPath: requiredAbsolute(options, 'output'),
       modelAdapterPath: requiredAbsolute(options, 'model-adapter'),
+      resume: options.resume === true,
       ...(options.task === undefined ? {} : { taskId: options.task }),
     });
   }
@@ -523,7 +524,7 @@ function parseArguments(argv) {
     agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'require-recovery', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'policy', 'goal', 'goal-plan', 'randomized-trial', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     api: ['apiOperation'],
     adapter: ['adapterOperation', 'adapter', 'require-recovery'],
-    repo: ['repoOperation', 'manifest', 'output', 'model-adapter', 'task'],
+    repo: ['repoOperation', 'manifest', 'output', 'model-adapter', 'task', 'resume'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
     run: ['lab', 'run-id', 'steps', 'scenario', 'adapter', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
@@ -815,7 +816,7 @@ function helpText() {
     'API:',
     '  yi-agent api test [--json]',
     '  yi-agent adapter test --adapter CONFIG [--require-recovery] [--json]     只探针外部 WorldPort，不创建实验室',
-    '  yi-agent repo benchmark --manifest PATH --output DIR --model-adapter CONFIG [--task ID] [--json]   隔离运行一组 repo 任务并验收 Replay',
+    '  yi-agent repo benchmark --manifest PATH --output DIR --model-adapter CONFIG [--task ID] [--resume] [--json]   隔离运行一组 repo 任务并验收 Replay',
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',
