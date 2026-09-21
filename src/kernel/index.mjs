@@ -159,7 +159,15 @@ const ACTION_MODEL_KEYS = [
   'uncertainty',
   'modelAge',
 ];
-const REJECTION_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'rejected', 'relationKey', 'proposalDigest', 'modelAge'];
+const REJECTION_MODEL_KEYS = [
+  'schemaVersion',
+  'sampleCount',
+  'rejected',
+  'relationKey',
+  'proposalDigest',
+  'rejectionReason',
+  'modelAge',
+];
 const CAPABILITY_KEYS = [
   'schemaVersion',
   'token',
@@ -598,6 +606,7 @@ export function learn(input) {
         true,
         intent.expectation.relationKey,
         proposalDigest,
+        source.receipt.rejectionReason,
         `learnOutput.nextMemory.rejectionModels.${token}`,
         rejectionModelAge,
       );
@@ -2188,6 +2197,12 @@ function normalizeRejectionModels(value, field, dimensions) {
               ? null
               : assertProposalDigest(modelSource.proposalDigest, `${field}.${token}.proposalDigest`),
           }),
+      ...(modelSource.rejectionReason === undefined ? {} : {
+        rejectionReason: assertNonEmptyString(
+          modelSource.rejectionReason,
+          `${field}.${token}.rejectionReason`,
+        ),
+      }),
       ...(modelSource.modelAge === undefined ? {} : {
         modelAge: assertNonNegativeInteger(modelSource.modelAge, `${field}.${token}.modelAge`),
       }),
@@ -2344,7 +2359,7 @@ function updateBeliefModel(current, actualDelta, dimensions, field, modelAge) {
   };
 }
 
-function updateRejectionModel(current, rejected, relationKey, proposalDigest, field, modelAge) {
+function updateRejectionModel(current, rejected, relationKey, proposalDigest, rejectionReason, field, modelAge) {
   const sampleCount = current?.sampleCount ?? 0;
   if (rejected && sampleCount === Number.MAX_SAFE_INTEGER) {
     contractViolation('kernel rejection-model sample count cannot be incremented safely', {
@@ -2357,6 +2372,7 @@ function updateRejectionModel(current, rejected, relationKey, proposalDigest, fi
     rejected,
     ...(relationKey === undefined ? {} : { relationKey }),
     ...(rejected && proposalDigest !== undefined ? { proposalDigest } : {}),
+    ...(rejectionReason === undefined ? {} : { rejectionReason }),
     ...(current?.modelAge === undefined && modelAge === undefined
       ? {}
       : { modelAge: modelAge ?? current?.modelAge }),
@@ -2449,6 +2465,7 @@ function recordActionEvidence(memory, {
       memory.rejectionModels[token],
       false,
       relationKey,
+      undefined,
       undefined,
       `${field}.rejectionModels.${token}`,
       modelAgeFor(
@@ -4128,6 +4145,7 @@ function cloneMemory(
         rejected: model.rejected,
         ...(model.relationKey === undefined ? {} : { relationKey: model.relationKey }),
         ...(model.proposalDigest === undefined ? {} : { proposalDigest: model.proposalDigest }),
+        ...(model.rejectionReason === undefined ? {} : { rejectionReason: model.rejectionReason }),
         ...(model.modelAge === undefined ? {} : { modelAge: model.modelAge }),
       }]),
     );

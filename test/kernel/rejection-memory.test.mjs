@@ -52,6 +52,10 @@ test('rejected action feedback is retained and prevents a same-context repeat', 
   assert.equal(update.status, 'REJECTION_RECORDED');
   assert.equal(update.nextMemory.rejectionModels[TOKEN_REJECTED].rejected, true);
   assert.equal(update.nextMemory.rejectionModels[TOKEN_REJECTED].sampleCount, 1);
+  assert.equal(
+    update.nextMemory.rejectionModels[TOKEN_REJECTED].rejectionReason,
+    'TEMPORARY_CONSTRAINT',
+  );
   assert.equal(step({ ...BASE_INPUT, memory: update.nextMemory }).choice.token, TOKEN_ALTERNATIVE);
 });
 

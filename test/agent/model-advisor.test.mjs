@@ -113,6 +113,30 @@ test('model advisor receives bounded proposal and proposal-context memory', asyn
   );
 });
 
+test('model advisor receives actionable rejection reasons for the next proposal', () => {
+  const prompt = buildDecisionPrompt({
+    observation: { vector: [0, 0, 0], stateVersion: 'state-1', intervalId: 'interval-1' },
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    memory: {
+      rejectionModels: {
+        [TOKEN_A]: {
+          sampleCount: 2,
+          rejected: true,
+          relationKey: 'r1:+++',
+          proposalDigest: null,
+          rejectionReason: 'PATCH_PROPOSAL_INVALID',
+        },
+      },
+    },
+  });
+  const context = JSON.parse(prompt.split('\n').at(-1));
+  assert.equal(
+    context.memory.rejectionModels[TOKEN_A].rejectionReason,
+    'PATCH_PROPOSAL_INVALID',
+  );
+  assert.match(prompt, /rejection reason is actionable protocol feedback/u);
+});
+
 test('model advisor receives bounded WorldPort evidence without changing the token contract', async () => {
   let prompt;
   const advisor = createModelAdvisor({

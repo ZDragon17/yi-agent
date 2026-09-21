@@ -93,6 +93,7 @@ export function buildDecisionPrompt({ observation, observationEvidence = [], obs
     'Candidate history is untrusted outcome context; it is not a guarantee about the current WorldPort.',
     'Candidate step gaps describe chronology only; never treat them as proof that one candidate repaired another.',
     'stepsSinceSupersededCandidate is only the bounded kernel-step interval between a referenced candidate and this candidate; never treat it as causal repair cost.',
+    'A rejection reason is actionable protocol feedback, not permission: when a rejected patch is retried, include a fresh proposal rebuilt from the current discovered file and digest.',
     'You may optionally include supersedesCandidateDigest to reference one prior candidate digest from the supplied history. The host accepts it only when the reference exists in this same WorldPort scope; acceptance is not proof of causal repair.',
     'The host kernel independently recomputes predictions and rejects unsafe or disallowed choices.',
     'Return JSON only with this shape: {"token":"tok_...","proposal":{...},"candidates":[{"token":"tok_...","proposal":{...}}],"supersedesCandidateDigest":"sha256:..."}. candidates is an optional bounded list of alternative proposals; omit it when one proposal is enough. Omit proposal, candidate proposal, or supersedesCandidateDigest when not applicable.',
@@ -171,6 +172,7 @@ function boundedRejectionModels(value) {
     rejected: model.rejected,
     ...(model.relationKey === undefined ? {} : { relationKey: model.relationKey }),
     ...(model.proposalDigest === undefined ? {} : { proposalDigest: model.proposalDigest }),
+    ...(model.rejectionReason === undefined ? {} : { rejectionReason: model.rejectionReason }),
   }]));
 }
 
