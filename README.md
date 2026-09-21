@@ -630,6 +630,24 @@ $env:YI_AGENT_MODEL = "你的模型名"
 
 也可以用 `YI_AGENT_API_TIMEOUT_MS` 覆盖超时，范围为 1000–300000 毫秒，默认 60000 毫秒。
 
+如果要把本地进程模型适配器接到 OpenAI 兼容接口，可以运行 `scripts/http-model-adapter.mjs`。它使用 JSONL 与 yi-agent 通信，再把请求转发到 `YI_AGENT_API_BASE_URL`；API Key 只从适配器进程的环境变量读取，不写入配置文件或标准输出。适配器配置中的 `timeoutMs` 支持 100–300000 毫秒，真实模型可使用 `persistent-jsonl` 减少进程反复启动：
+
+```json
+{
+  "executable": "C:\\Path\\to\\node.exe",
+  "args": ["E:\\demo\\yi-agent\\scripts\\http-model-adapter.mjs"],
+  "model": "your-model",
+  "timeoutMs": 300000,
+  "transport": "persistent-jsonl",
+  "env": [
+    "YI_AGENT_API_BASE_URL",
+    "YI_AGENT_API_KEY",
+    "YI_AGENT_MODEL",
+    "YI_AGENT_ADAPTER_HTTP_TIMEOUT_MS"
+  ]
+}
+```
+
 如果使用智谱 GLM Coding Plan，使用它的专用 Coding 端点：
 
 ```powershell
