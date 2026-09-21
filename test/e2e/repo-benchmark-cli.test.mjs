@@ -36,6 +36,42 @@ test('RTA-1 canonical Node repository completes the first autonomous repair task
   }
 });
 
+test('RTA-1 six-task baseline keeps each repository isolated and replayable', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-baseline-e2e-'));
+  const manifestPath = path.resolve('examples/rta-1/baseline-6.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, Object.fromEntries(
+      manifest.tasks.map((task) => [task.goal, task.expected.files['src/math.mjs']]),
+    ));
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    const report = result.stdout[0].data;
+    assert.equal(report.status, 'PASS');
+    assert.deepEqual(report.taskResults.map((task) => task.status), Array(6).fill('PASS'));
+    assert.deepEqual(report.taskResults.map((task) => task.replayVerdict), Array(6).fill('CONSISTENT'));
+    assert.deepEqual(report.taskResults.map((task) => task.metrics.testExecutions), Array(6).fill(2));
+    assert.deepEqual(report.taskResults.map((task) => task.metrics.operatorIntervention), Array(6).fill(false));
+    assert.equal(new Set(report.taskResults.map((task) => task.repositoryPath)).size, 6);
+    for (const task of manifest.tasks) {
+      const resultForTask = report.taskResults.find((item) => item.id === task.id);
+      assert.equal(
+        await readFile(path.join(resultForTask.repositoryPath, 'src/math.mjs'), 'utf8'),
+        task.expected.files['src/math.mjs'],
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('RTA-1 benchmark rejects decision and test budgets above the fixed limits', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-budget-boundary-e2e-'));
   const sourceManifest = JSON.parse(await readFile(path.resolve('examples/rta-1/manifest.json'), 'utf8'));

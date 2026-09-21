@@ -425,11 +425,11 @@ yi-agent repo benchmark `
   --resume --json
 ```
 
-清单使用 `schemaVersion: 1`、`type: "repo-benchmark"`。每个任务声明 `id`、`goal`、`seed`、初始 `files`、`readPath`、`testPath`、`patch.allowedPaths`、`expected.files`、`expected.lastTestStatus`、`steps` 和 `maxTests`。`steps` 不能超过 24，`maxTests` 不能超过 4；adapter 会在第 5 次测试前拒绝请求。路径必须是相对路径，补丁目标必须来自任务文件集合，任务和文件数量、文本大小都有上限。输出目录必须是新目录；这样一次 Benchmark 的证据不会覆盖上一轮结果。
+清单使用 `schemaVersion: 1`、`type: "repo-benchmark"`。每个任务声明 `id`、`goal`、`seed`、初始 `files`、`readPath`、`testPath`、`patch.allowedPaths`、`expected.files`、`expected.lastTestStatus`、`steps` 和 `maxTests`。`steps` 不能超过 24，`maxTests` 不能超过 4；adapter 会在第 5 次测试前拒绝请求。路径必须是相对路径，补丁目标必须来自任务文件集合，任务和文件数量、文本大小都有上限。输出目录必须是新目录；这样一次 Benchmark 的证据不会覆盖上一轮结果。仓库内的 `examples/rta-1/baseline-6.json` 提供六个独立 Node.js 修复任务，作为 T0 基线的固定入口。
 
 `--model-adapter` 可省略。省略时，任务沿用 `agent run` 的 `YI_AGENT_PROVIDER`、`YI_AGENT_API_KEY`、`YI_AGENT_API_BASE_URL` 和 `YI_AGENT_MODEL` 配置，适合接入真实模型或本地 API 桥；指定时则使用受校验的进程模型配置，适合离线复现实验。
 
-每个任务按 `init → agent run → inspect → replay` 执行。验收会比较声明的文件内容和最终测试状态，并要求 Replay 返回 `CONSISTENT`。每个任务完成后都会更新 `report.json`；恢复时会重新检查已通过任务的文件和 Replay，未完成任务进入新的 `attempt-N` 目录，旧证据不会被覆盖。报告保存任务状态、repository/Lab 路径、Run ID、Replay 结果、验收明细和失败原因。任务失败会继续执行同一清单中的其他任务，命令最终返回非零退出码；清单本身无效则在创建输出目录前拒绝。
+每个任务按 `init → agent run → inspect → replay` 执行。验收会比较声明的文件内容和最终测试状态，并要求 Replay 返回 `CONSISTENT`。每个任务完成后都会更新 `report.json`；恢复时会重新检查已通过任务的文件和 Replay，未完成任务进入新的 `attempt-N` 目录，旧证据不会被覆盖。报告保存任务状态、repository/Lab 路径、Run ID、Replay 结果、验收明细、失败原因和运行指标（实际 kernel steps、测试执行次数、人工介入标记）。任务失败会继续执行同一清单中的其他任务，命令最终返回非零退出码；清单本身无效则在创建输出目录前拒绝。
 
 这个命令解决的是实验可重复性和任务间隔离，不等于模型已经具备长期自主规划能力。真实模型适配器仍需由外部配置提供，任务验收也必须由人选择可信的文件和测试条件。
 

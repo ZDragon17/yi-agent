@@ -89,6 +89,7 @@ async function runTask({ task, taskRoot, modelAdapterPath }) {
     runId: null,
     replayVerdict: null,
     acceptance: { passed: false, files: [], lastTestStatus: null },
+    metrics: { kernelSteps: null, testExecutions: null, operatorIntervention: false },
     failure: null,
   };
   try {
@@ -133,7 +134,13 @@ async function runTask({ task, taskRoot, modelAdapterPath }) {
       'inspect', '--lab', labPath, '--adapter', adapterConfigPath, '--json',
     ]);
     if (inspection.code === 0) {
-      result.acceptance = await evaluateAcceptance(task, repositoryPath, inspection.stdout[0]?.data?.current);
+      const current = inspection.stdout[0]?.data?.current;
+      result.acceptance = await evaluateAcceptance(task, repositoryPath, current);
+      result.metrics = {
+        kernelSteps: Number.isSafeInteger(current?.kernelStep) ? current.kernelStep : null,
+        testExecutions: Number.isSafeInteger(current?.worldState?.testCount) ? current.worldState.testCount : null,
+        operatorIntervention: false,
+      };
     }
     if (result.runId !== null) {
       const replay = await runCli([
