@@ -96,6 +96,34 @@ test('RTA-1 T1 experience improves a bounded cross-task workflow against T0', as
   }
 });
 
+test('RTA-1 T1 long-run corpus meets the fixed eight-task floor', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-t1-long-run-e2e-'));
+  const manifestPath = path.resolve('examples/rta-1/long-run-12.json');
+  const modelPath = path.join(root, 'experience-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    await writeFile(modelPath, experienceAwareModelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, Object.fromEntries(
+      manifest.tasks.map((task) => [task.goal, task.expected.files['src/math.mjs']]),
+    ));
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--learning-profile', 't1', '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    const report = result.stdout[0].data;
+    const passed = report.taskResults.filter((task) => task.status === 'PASS');
+    assert.ok(passed.length >= 8, `T1 completed ${passed.length}/12 tasks`);
+    assert.equal(passed.length, 12);
+    assert.equal(report.experience.entries.length, 12);
+    assert.ok(passed.every((task) => task.replayVerdict === 'CONSISTENT'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('RTA-1 six-task baseline keeps each repository isolated and replayable', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-baseline-e2e-'));
   const manifestPath = path.resolve('examples/rta-1/baseline-6.json');
