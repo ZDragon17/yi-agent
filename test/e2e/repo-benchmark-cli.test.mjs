@@ -204,7 +204,7 @@ test('RTA-1 twelve-task benchmark resumes after three forced process kills', asy
     ), undefined, undefined, 150);
     const benchmarkArgs = [
       'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
-      '--model-adapter', modelConfigPath, '--json',
+      '--model-adapter', modelConfigPath, '--learning-profile', 't1', '--json',
     ];
 
     activeChild = spawnBenchmarkProcess(benchmarkArgs);
@@ -229,6 +229,7 @@ test('RTA-1 twelve-task benchmark resumes after three forced process kills', asy
     assert.equal(report.status, 'PASS');
     assert.deepEqual(report.taskResults.map((task) => task.status), Array(12).fill('PASS'));
     assert.deepEqual(report.taskResults.map((task) => task.replayVerdict), Array(12).fill('CONSISTENT'));
+    assert.equal(report.experience.entries.length, 12);
   } finally {
     if (activeChild !== null && activeChild.exitCode === null) await killProcessTree(activeChild);
     await rm(root, { recursive: true, force: true });
