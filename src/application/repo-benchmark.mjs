@@ -28,6 +28,7 @@ const EXPERIENCE_FAILURE_CLASSES = new Set([
 const EXPERIENCE_TEST_STATUSES = new Set(['PASS', 'FAIL', null]);
 const CLI = fileURLToPath(new URL('../../bin/yi-agent.mjs', import.meta.url));
 const REPO_ADAPTER = fileURLToPath(new URL('../../examples/repo-world/adapter.mjs', import.meta.url));
+const ACCEPTANCE_MODES = new Set(['exact', 'behavior']);
 
 export async function runRepoBenchmark(input) {
   const source = requireRecord(input, 'repo benchmark input');
@@ -199,7 +200,10 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
       const filesMatch = result.acceptance.files.length > 0 &&
         result.acceptance.files.every((file) => file.matches);
       const stopReason = run.stdout[0]?.data?.stopReason ?? null;
-      const canContinue = run.code !== 0 || filesMatch || stopReason === 'EXECUTION_REJECTED';
+      const hasUnpatchedTestFailure = result.acceptance.lastTestStatus === 'FAIL' &&
+        !filesMatch && current?.worldState?.lastPatchPath === null;
+      const canContinue = run.code !== 0 || filesMatch || stopReason === 'EXECUTION_REJECTED' ||
+        hasUnpatchedTestFailure;
       const kernelStep = result.metrics.kernelSteps ?? 0;
       if (!canContinue || kernelStep <= previousKernelStep) break;
       previousKernelStep = kernelStep;
@@ -473,7 +477,7 @@ async function evaluateAcceptance(task, repositoryPath, current) {
     const actual = await readFile(path.join(repositoryPath, relativePath), 'utf8').catch(() => null);
     const matches = actual === expected;
     fileResults.push({ path: relativePath, matches });
-    passed = passed && matches;
+    if (task.expected.fileMatch === 'exact') passed = passed && matches;
   }
   const lastTestStatus = current?.worldState?.lastTestStatus ?? null;
   if (task.expected.lastTestStatus !== undefined) passed = passed && lastTestStatus === task.expected.lastTestStatus;
@@ -507,7 +511,18 @@ async function readManifest(manifestPath) {
 }
 
 function normalizeManifest(value) {
-  requireKeys(value, ['schemaVersion', 'type', 'tasks'], 'manifest');
+  requireRecord(value, 'manifest');
+  const manifestKeys = new Set(['schemaVersion', 'type', 'tasks', 'acceptanceMode']);
+  if (Object.keys(value).some((key) => !manifestKeys.has(key))) {
+    throw benchmarkError('INVALID_INPUT', 'manifest contains an unsupported field.', { field: 'manifest' });
+  }
+  for (const key of ['schemaVersion', 'type', 'tasks']) {
+    if (!Object.hasOwn(value, key)) throw benchmarkError('INVALID_INPUT', 'manifest is missing a required field.', { field: `manifest.${key}` });
+  }
+  const acceptanceMode = value.acceptanceMode ?? 'exact';
+  if (!ACCEPTANCE_MODES.has(acceptanceMode)) {
+    throw benchmarkError('INVALID_INPUT', 'manifest.acceptanceMode is invalid.', { field: 'manifest.acceptanceMode' });
+  }
   if (value.schemaVersion !== 1 || value.type !== 'repo-benchmark' || !Array.isArray(value.tasks) ||
       value.tasks.length === 0 || value.tasks.length > MAX_TASKS) {
     throw benchmarkError('INVALID_INPUT', 'Benchmark manifest envelope is invalid.', {});
@@ -550,12 +565,12 @@ function normalizeManifest(value) {
       readPath,
       testPath,
       patch: { allowedPaths },
-      expected: { files: expectedFiles, lastTestStatus: task.expected.lastTestStatus },
+      expected: { files: expectedFiles, lastTestStatus: task.expected.lastTestStatus, fileMatch: acceptanceMode },
       steps,
       maxTests,
     };
   });
-  return { schemaVersion: 1, type: 'repo-benchmark', tasks };
+  return { schemaVersion: 1, type: 'repo-benchmark', acceptanceMode, tasks };
 }
 
 function normalizeFiles(value, taskIndex) {

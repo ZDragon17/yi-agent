@@ -51,3 +51,5 @@ yi-agent repo benchmark `
 输出目录包含隔离仓库、Lab、nonce 日志和 `report.json`；T1 还会生成 `experience.json`。删除输出目录即可重新从同一清单开始；运行中断后使用同样的参数追加 `--resume`，不能更换 learning profile。
 
 当前可复现夹具结果：同一六任务清单下，T0 完成 1/6，T1 完成 6/6；T1 在十二任务清单下完成 12/12，完成项 Replay 均为 `CONSISTENT`。夹具模型会在没有经验时重复错误工作流，在看到前序账本后复用已验证工作流。这验证的是经验传递、隔离和验收契约，不代表真实模型在开放任务上的泛化能力。
+
+`baseline-6.json` 和 `long-run-12.json` 使用 `acceptanceMode: "behavior"`。这种模式把声明的测试和最后一次测试状态作为行为验收，`expected.files` 仍会写入报告，供人检查模型实际改了什么；它不会要求模型生成字节级相同的源码。省略该字段时默认使用 `"exact"`，文件必须与 `expected.files` 完全一致。两种模式都要求 Replay 为 `CONSISTENT`。

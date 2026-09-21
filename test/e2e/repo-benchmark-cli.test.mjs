@@ -329,6 +329,65 @@ test('repo benchmark retains a passing test after a later observation step', asy
   }
 });
 
+test('repo benchmark accepts an equivalent implementation under behavioral acceptance', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-behavioral-acceptance-e2e-'));
+  const sourceManifest = JSON.parse(await readFile(path.resolve('examples/rta-1/manifest.json'), 'utf8'));
+  const manifestPath = path.join(root, 'manifest.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    sourceManifest.acceptanceMode = 'behavior';
+    const task = sourceManifest.tasks[0];
+    const equivalentSource = 'export function add(left, right) {\n  return left + right;\n}\n';
+    await writeFile(manifestPath, JSON.stringify(sourceManifest), 'utf8');
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, { [task.goal]: equivalentSource });
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    const taskResult = result.stdout[0].data.taskResults[0];
+    assert.equal(taskResult.status, 'PASS');
+    assert.equal(taskResult.acceptance.files[0].matches, false);
+    assert.equal(taskResult.acceptance.lastTestStatus, 'PASS');
+    assert.equal(taskResult.replayVerdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('repo benchmark continues after a failed test in a completed Run', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-failed-test-continuation-e2e-'));
+  const sourceManifest = JSON.parse(await readFile(path.resolve('examples/rta-1/manifest.json'), 'utf8'));
+  const manifestPath = path.join(root, 'manifest.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    const task = sourceManifest.tasks[0];
+    task.steps = 3;
+    await writeFile(manifestPath, JSON.stringify(sourceManifest), 'utf8');
+    await writeFile(modelPath, failedTestContinuationModelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, {
+      [task.goal]: task.expected.files['src/math.mjs'],
+    });
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    const taskResult = result.stdout[0].data.taskResults[0];
+    assert.equal(taskResult.status, 'PASS');
+    assert.ok(taskResult.runIds.length > 1);
+    assert.ok(taskResult.metrics.kernelSteps > task.steps);
+    assert.equal(taskResult.replayVerdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('repo benchmark continues from a patched but unverified Run', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-continuation-e2e-'));
   const sourceManifest = JSON.parse(await readFile(path.resolve('examples/rta-1/manifest.json'), 'utf8'));
@@ -640,6 +699,38 @@ function modelSource() {
     '    result: { model: \'repo-benchmark-fixture\', content: JSON.stringify({ token: capability.token, ...(proposal === undefined ? {} : { proposal }) }) } }) + \'\\n\';',
     '  if (delayMs > 0) setTimeout(() => process.stdout.write(response), delayMs);',
     '  else process.stdout.write(response);',
+    '});',
+  ].join('\n');
+}
+
+function failedTestContinuationModelSource() {
+  return [
+    "import readline from 'node:readline';",
+    'const replacements = JSON.parse(process.argv[2]);',
+    'const sequence = [\'repo.list-files\', \'repo.read-file\', \'repo.run-tests\'];',
+    'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
+    'rl.on(\'line\', (line) => {',
+    '  const request = JSON.parse(line);',
+    '  const prompt = request.payload?.prompt ?? \'\';',
+    '  const context = JSON.parse(prompt.split(\'\\n\').at(-1));',
+    '  const actionEvidence = context.observationEvidence.find((item) => item.kind === \'repo-action\');',
+    '  const readPolicy = context.observationEvidence.find((item) => item.kind === \'repo-read-policy\');',
+    '  const patchPolicy = context.observationEvidence.find((item) => item.kind === \'repo-patch-policy\');',
+    '  const targetPath = actionEvidence?.readPath ?? readPolicy?.defaultPath ?? \'src/math.mjs\';',
+    '  const allowedTarget = patchPolicy?.allowedPaths?.find((item) => item.path === targetPath);',
+    '  const expectedBeforeDigest = actionEvidence?.readFileDigest ?? allowedTarget?.expectedBeforeDigest ?? patchPolicy?.expectedBeforeDigest;',
+    '  const continuation = actionEvidence?.testStatus === \'FAIL\';',
+    '  const runSequence = continuation ? [\'repo.apply-patch\', \'repo.run-tests\'] : sequence;',
+    '  const capabilityId = continuation',
+    '    ? (actionEvidence?.action === \'repo.apply-patch\' ? \'repo.run-tests\' : \'repo.apply-patch\')',
+    '    : runSequence[context.step] ?? runSequence.at(-1);',
+    '  const capability = context.capabilities.find((item) => item.capabilityId === capabilityId);',
+    '  const proposal = capabilityId === \'repo.read-file\' ? { path: targetPath }',
+    '    : capabilityId === \'repo.run-tests\' ? { path: context.observationEvidence.find((item) => item.kind === \'repo-test-policy\')?.testPath ?? \'test/math.test.mjs\' }',
+    '      : capabilityId === \'repo.apply-patch\' ? { schemaVersion: 1, targetPath, expectedBeforeDigest, replacement: replacements[context.goal] } : undefined;',
+    '  const response = JSON.stringify({ protocol: \'yi-model-cli\', version: 1, id: request.id, ok: true,',
+    '    result: { model: \'repo-benchmark-failed-test-continuation\', content: JSON.stringify({ token: capability.token, ...(proposal === undefined ? {} : { proposal }) }) } }) + \'\\n\';',
+    '  process.stdout.write(response);',
     '});',
   ].join('\n');
 }

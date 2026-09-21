@@ -180,6 +180,8 @@ test('model advisor explains how bounded workflow evidence may guide the next ac
   assert.match(prompt, /current observable prefix matches a workflow/u);
   assert.match(prompt, /experience outcomes or candidate quality summaries/u);
   assert.match(prompt, /Never copy a historical proposal/u);
+  assert.match(prompt, /passing existing tests is only one observation/u);
+  assert.match(prompt, /Preserve the existing source formatting/u);
 });
 
 test('model advisor receives only a bounded candidate history', async () => {

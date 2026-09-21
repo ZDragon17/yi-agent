@@ -213,6 +213,11 @@ function transition(previous, request, manifest) {
     next.lastTestOutputDigest = previous.lastTestOutputDigest;
     next.lastTestDiagnostic = previous.lastTestDiagnostic;
   }
+  if (capabilityId !== 'repo.apply-patch') {
+    next.lastPatchPath = previous.lastPatchPath;
+    next.lastPatchBeforeDigest = previous.lastPatchBeforeDigest;
+    next.lastPatchAfterDigest = previous.lastPatchAfterDigest;
+  }
   const nextRepository = scanRepository();
   next.rootDigest = nextRepository.rootDigest;
   next.fileCount = nextRepository.fileCount;

@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "type": "repo-benchmark",
+  "acceptanceMode": "behavior",
   "tasks": [
     {
       "id": "add-two-numbers",
@@ -101,7 +102,7 @@
         },
         {
           "path": "test/math.test.mjs",
-          "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { clamp } from '../src/math.mjs';\n\ntest('clamp limits a value to the upper bound', () => assert.equal(clamp(12, 0, 10), 10));\n"
+          "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { clamp } from '../src/math.mjs';\n\ntest('clamp limits values to both bounds', () => {\n  assert.equal(clamp(12, 0, 10), 10);\n  assert.equal(clamp(-2, 0, 10), 0);\n  assert.equal(clamp(4, 0, 10), 4);\n});\n"
         }
       ],
       "readPath": "src/math.mjs",

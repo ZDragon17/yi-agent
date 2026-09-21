@@ -429,7 +429,7 @@ yi-agent repo benchmark `
 
 `--model-adapter` 可省略。省略时，任务沿用 `agent run` 的 `YI_AGENT_PROVIDER`、`YI_AGENT_API_KEY`、`YI_AGENT_API_BASE_URL` 和 `YI_AGENT_MODEL` 配置，适合接入真实模型或本地 API 桥；指定时则使用受校验的进程模型配置，适合离线复现实验。
 
-每个任务先 `init`，再运行一个或多个受限 Run。单次 Run 使用任务声明的 `steps` 步；如果文件已经达到预期但测试还没完成，或本次 Run 可检查但返回失败，编排层会从同一个 Lab 继续运行，累计 Kernel 步数不超过 24，测试执行次数不超过 4。最终验收会比较声明的文件内容和测试状态，并要求整条 Run 链 Replay 返回 `CONSISTENT`。每个任务完成后都会更新 `report.json`；恢复时会重新检查已通过任务的文件和 Replay，未完成任务进入新的 `attempt-N` 目录，旧证据不会被覆盖。报告保存任务状态、repository/Lab 路径、有序 `runIds`、Replay 结果、验收明细、失败原因和运行指标（实际 kernel steps、测试执行次数、人工介入标记）。T1 经验从任务的全部已落账 Run 汇总 workflow；任务失败会继续执行同一清单中的其他任务，命令最终返回非零退出码；清单本身无效则在创建输出目录前拒绝。
+每个任务先 `init`，再运行一个或多个受限 Run。单次 Run 使用任务声明的 `steps` 步；如果文件已经达到预期但测试还没完成，或 Run 在尚未产生补丁时以失败测试结束，编排层会从同一个 Lab 继续运行，累计 Kernel 步数不超过 24，测试执行次数不超过 4。错误补丁后的失败会保留为失败证据，不会无条件重复运行。最终验收按 `acceptanceMode` 检查文件和测试状态，并要求整条 Run 链 Replay 返回 `CONSISTENT`。每个任务完成后都会更新 `report.json`；恢复时会重新检查已通过任务的文件和 Replay，未完成任务进入新的 `attempt-N` 目录，旧证据不会被覆盖。报告保存任务状态、repository/Lab 路径、有序 `runIds`、Replay 结果、验收明细、失败原因和运行指标（实际 kernel steps、测试执行次数、人工介入标记）。T1 经验从任务的全部已落账 Run 汇总 workflow；任务失败会继续执行同一清单中的其他任务，命令最终返回非零退出码；清单本身无效则在创建输出目录前拒绝。
 
 最终报告的 `summary` 汇总任务数、通过/失败数、成功率、总 Kernel 步数、测试执行次数、失败类型、人工介入次数和耗时，便于把 T0 与 T1 的结果放在同一口径下比较。
 
