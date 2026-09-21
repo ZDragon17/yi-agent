@@ -337,6 +337,116 @@ test('read-only repo WorldPort completes the shared loop without writing the rep
   }
 });
 
+test('discovery-enabled repo WorldPort lets the model select a listed file through the CLI', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-discovery-cli-e2e-'));
+  const repository = path.join(root, 'repository');
+  const requests = [];
+  let modelCalls = 0;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    requests.push(context);
+
+    const capability = context.capabilities.find((item) => item.capabilityId === (
+      modelCalls === 0 ? 'repo.list-files' : 'repo.read-file'
+    ));
+    assert.ok(capability, `model context is missing discovery step ${modelCalls}`);
+    if (modelCalls === 1) {
+      const fileList = context.observationEvidence.find((item) => item.kind === 'repo-file-list');
+      assert.deepEqual(fileList, {
+        kind: 'repo-file-list',
+        paths: ['README.md', 'src/main.mjs'],
+        truncated: false,
+      });
+      assert.deepEqual(
+        context.observationEvidence.find((item) => item.kind === 'repo-read-policy'),
+        {
+          kind: 'repo-read-policy',
+          defaultPath: READ_PATH,
+          proposalSchema: {
+            schemaVersion: 1,
+            fields: ['path'],
+            maxPathBytes: 4096,
+          },
+        },
+      );
+    }
+    modelCalls += 1;
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'repo-discovery-chat',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({
+        token: capability.token,
+        ...(modelCalls === 2 ? { proposal: { path: 'src/main.mjs' } } : {}),
+      }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'repo-discovery-local-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'repo-discovery-local-model',
+  };
+  const adapterConfig = path.join(root, 'adapter.json');
+  const lab = path.join(root, 'lab');
+  try {
+    await mkdir(path.join(repository, 'src'), { recursive: true });
+    await writeFile(path.join(repository, 'README.md'), 'repository readme\n');
+    await writeFile(path.join(repository, 'src', 'main.mjs'), 'export const selected = true;\n');
+    await writeFile(adapterConfig, JSON.stringify({
+      executable: process.execPath,
+      args: [ADAPTER, repository, READ_PATH, TEST_PATH, '--discover'],
+      adapterId: 'repo-readonly-example-v1',
+      worldId: 'repo',
+      timeoutMs: 30000,
+    }));
+
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'repo', '--seed', 'repo-discovery-seed',
+      '--adapter', adapterConfig, '--json',
+    ], process.env);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const run = await invoke([
+      'agent', 'run', '--lab', lab, '--steps', '2', '--scenario', 'working-tree',
+      '--adapter', adapterConfig, '--goal', '先发现文件，再读取模型选择的文件', '--json',
+    ], env);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    assert.equal(modelCalls, 2);
+    assert.equal(requests[0].observationEvidence.some((item) => item.kind === 'repo-file-list'), true);
+    assert.equal(requests[1].observationEvidence.some((item) => item.kind === 'repo-file-list'), true);
+
+    const runId = run.stdout[0].data.runId;
+    const store = await LabStore.open({ labPath: lab });
+    const events = (await store.readRun(runId)).events;
+    const stepEvents = events.filter((event) => event.kind === 'STEP');
+    assert.equal(stepEvents.length, 2);
+    assert.deepEqual(
+      stepEvents.map((event) => event.payload.afterState.worldState.lastAction),
+      ['repo.list-files', 'repo.read-file'],
+    );
+    assert.equal(stepEvents[1].payload.afterState.worldState.lastReadPath, 'src/main.mjs');
+    assert.equal(stepEvents[1].payload.afterState.worldState.lastReadContent, 'export const selected = true;\n');
+
+    const replay = await invoke([
+      'replay', '--lab', lab, '--run', runId, '--adapter', adapterConfig, '--json',
+    ], process.env);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal(modelCalls, 2, 'replay must not call the model again');
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('writable repo WorldPort applies a digest-bound patch and verifies the retained fix', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-write-e2e-'));
   const repository = path.join(root, 'repository');
