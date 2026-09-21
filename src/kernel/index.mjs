@@ -159,7 +159,7 @@ const ACTION_MODEL_KEYS = [
   'uncertainty',
   'modelAge',
 ];
-const REJECTION_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'rejected', 'relationKey', 'modelAge'];
+const REJECTION_MODEL_KEYS = ['schemaVersion', 'sampleCount', 'rejected', 'relationKey', 'proposalDigest', 'modelAge'];
 const CAPABILITY_KEYS = [
   'schemaVersion',
   'token',
@@ -564,6 +564,9 @@ export function learn(input) {
   if (!verification.learnable || verification.attribution !== 'ACTION') {
     if (verification.attribution === 'EXECUTION_REJECTED' && source.receipt.status === 'REJECTED') {
       const token = intent.choice.token;
+      const proposalDigest = intent.choice.proposal === undefined
+        ? null
+        : candidateDigest({ token, proposal: intent.choice.proposal });
       const rejectionModels = nextMemory.rejectionModels ?? {};
       let existingRejection = rejectionModels[token];
       let rejectionModelCount = existingRejection === undefined
@@ -594,6 +597,7 @@ export function learn(input) {
         existingRejection,
         true,
         intent.expectation.relationKey,
+        proposalDigest,
         `learnOutput.nextMemory.rejectionModels.${token}`,
         rejectionModelAge,
       );
@@ -2177,6 +2181,13 @@ function normalizeRejectionModels(value, field, dimensions) {
       sampleCount: assertNonNegativeInteger(modelSource.sampleCount, `${field}.${token}.sampleCount`),
       rejected: assertBoolean(modelSource.rejected, `${field}.${token}.rejected`),
       ...(relationKey === undefined ? {} : { relationKey }),
+      ...(modelSource.proposalDigest === undefined
+        ? {}
+        : {
+            proposalDigest: modelSource.proposalDigest === null
+              ? null
+              : assertProposalDigest(modelSource.proposalDigest, `${field}.${token}.proposalDigest`),
+          }),
       ...(modelSource.modelAge === undefined ? {} : {
         modelAge: assertNonNegativeInteger(modelSource.modelAge, `${field}.${token}.modelAge`),
       }),
@@ -2333,7 +2344,7 @@ function updateBeliefModel(current, actualDelta, dimensions, field, modelAge) {
   };
 }
 
-function updateRejectionModel(current, rejected, relationKey, field, modelAge) {
+function updateRejectionModel(current, rejected, relationKey, proposalDigest, field, modelAge) {
   const sampleCount = current?.sampleCount ?? 0;
   if (rejected && sampleCount === Number.MAX_SAFE_INTEGER) {
     contractViolation('kernel rejection-model sample count cannot be incremented safely', {
@@ -2345,6 +2356,7 @@ function updateRejectionModel(current, rejected, relationKey, field, modelAge) {
     sampleCount: rejected ? sampleCount + 1 : sampleCount,
     rejected,
     ...(relationKey === undefined ? {} : { relationKey }),
+    ...(rejected && proposalDigest !== undefined ? { proposalDigest } : {}),
     ...(current?.modelAge === undefined && modelAge === undefined
       ? {}
       : { modelAge: modelAge ?? current?.modelAge }),
@@ -2437,6 +2449,7 @@ function recordActionEvidence(memory, {
       memory.rejectionModels[token],
       false,
       relationKey,
+      undefined,
       `${field}.rejectionModels.${token}`,
       modelAgeFor(
         memory,
@@ -3217,8 +3230,12 @@ function buildPredictions(input, preference = null) {
       ? undefined
       : relationKeyFor(input.observation.vector, input.valueSpec);
     const rejectionModel = input.memory.rejectionModels?.[capability.token];
+    const candidateDigestForRejection = preference?.token === capability.token && preference.proposal !== undefined
+      ? candidateDigest({ token: capability.token, proposal: preference.proposal })
+      : null;
     const rejectedRecently = rejectionModel?.rejected === true &&
-      rejectionModel.relationKey === relationKey;
+      rejectionModel.relationKey === relationKey &&
+      (rejectionModel.proposalDigest === undefined || rejectionModel.proposalDigest === candidateDigestForRejection);
     const proposalDigest = preference?.token === capability.token && preference.proposal !== undefined
       ? candidateDigest({ token: capability.token, proposal: preference.proposal })
       : undefined;
@@ -4110,6 +4127,7 @@ function cloneMemory(
         sampleCount: model.sampleCount,
         rejected: model.rejected,
         ...(model.relationKey === undefined ? {} : { relationKey: model.relationKey }),
+        ...(model.proposalDigest === undefined ? {} : { proposalDigest: model.proposalDigest }),
         ...(model.modelAge === undefined ? {} : { modelAge: model.modelAge }),
       }]),
     );
@@ -4789,6 +4807,13 @@ function assertBoundedString(value, field, maximum) {
     });
   }
 
+  return value;
+}
+
+function assertProposalDigest(value, field) {
+  if (typeof value !== 'string' || !PROPOSAL_DIGEST_PATTERN.test(value)) {
+    contractViolation('kernel proposal digest is invalid', { field });
+  }
   return value;
 }
 

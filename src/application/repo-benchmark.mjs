@@ -198,7 +198,8 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
 
       const filesMatch = result.acceptance.files.length > 0 &&
         result.acceptance.files.every((file) => file.matches);
-      const canContinue = run.code !== 0 || filesMatch;
+      const stopReason = run.stdout[0]?.data?.stopReason ?? null;
+      const canContinue = run.code !== 0 || filesMatch || stopReason === 'EXECUTION_REJECTED';
       const kernelStep = result.metrics.kernelSteps ?? 0;
       if (!canContinue || kernelStep <= previousKernelStep) break;
       previousKernelStep = kernelStep;

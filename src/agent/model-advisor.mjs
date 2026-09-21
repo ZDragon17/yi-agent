@@ -115,11 +115,12 @@ function memorySummary(memory) {
     }]));
   const proposalModels = boundedProposalModels(memory?.proposalModels);
   const proposalContextModels = boundedProposalContextModels(memory?.proposalContextModels);
+  const rejectionModels = boundedRejectionModels(memory?.rejectionModels);
   const relationModels = memory?.relationModels;
   const relationContexts = relationModels === null || typeof relationModels !== 'object' || Array.isArray(relationModels)
     ? {}
     : Object.fromEntries(Object.entries(relationModels).slice(0, MAX_MEMORY_MODELS).map(([token, relations]) => [token, relations]));
-  return { actionModels, proposalModels, proposalContextModels, relationContexts };
+  return { actionModels, proposalModels, proposalContextModels, rejectionModels, relationContexts };
 }
 
 function modelSummary(model) {
@@ -161,6 +162,16 @@ function boundedProposalContextModels(value) {
     if (Object.keys(boundedProposals).length > 0) result[token] = boundedProposals;
   }
   return result;
+}
+
+function boundedRejectionModels(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).slice(0, MAX_MEMORY_MODELS).map(([token, model]) => [token, {
+    sampleCount: model.sampleCount,
+    rejected: model.rejected,
+    ...(model.relationKey === undefined ? {} : { relationKey: model.relationKey }),
+    ...(model.proposalDigest === undefined ? {} : { proposalDigest: model.proposalDigest }),
+  }]));
 }
 
 function candidateHistorySummary(history) {

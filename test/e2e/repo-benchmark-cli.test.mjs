@@ -364,6 +364,36 @@ test('repo benchmark continues from a patched but unverified Run', async () => {
   }
 });
 
+test('repo benchmark turns a rejected patch proposal into bounded retry feedback', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-rejected-patch-e2e-'));
+  const manifestPath = path.resolve('examples/rta-1/manifest.json');
+  const modelPath = path.join(root, 'retry-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const task = manifest.tasks[0];
+    await writeFile(modelPath, retryAfterRejectedModelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, {
+      [task.goal]: task.expected.files['src/math.mjs'],
+    });
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--learning-profile', 't1', '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    const report = result.stdout[0].data;
+    const taskResult = report.taskResults[0];
+    assert.equal(taskResult.status, 'PASS');
+    assert.equal(taskResult.replayVerdict, 'CONSISTENT');
+    assert.ok(taskResult.runIds.length > 1);
+    assert.ok(taskResult.metrics.kernelSteps > task.steps);
+    assert.equal(taskResult.acceptance.lastTestStatus, 'PASS');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('repo benchmark selects a discovered patch target from an authorized candidate set', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-dynamic-target-e2e-'));
   const manifestPath = path.join(root, 'manifest.json');
@@ -610,6 +640,41 @@ function modelSource() {
     '    result: { model: \'repo-benchmark-fixture\', content: JSON.stringify({ token: capability.token, ...(proposal === undefined ? {} : { proposal }) }) } }) + \'\\n\';',
     '  if (delayMs > 0) setTimeout(() => process.stdout.write(response), delayMs);',
     '  else process.stdout.write(response);',
+    '});',
+  ].join('\n');
+}
+
+function retryAfterRejectedModelSource() {
+  return [
+    "import readline from 'node:readline';",
+    'const replacements = JSON.parse(process.argv[2]);',
+    'const sequence = [\'repo.list-files\', \'repo.read-file\', \'repo.run-tests\', \'repo.apply-patch\', \'repo.run-tests\'];',
+    'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
+    'rl.on(\'line\', (line) => {',
+    '  const request = JSON.parse(line);',
+    '  const prompt = request.payload?.prompt ?? \'\';',
+    '  const context = JSON.parse(prompt.split(\'\\n\').at(-1));',
+    '  const readPolicy = context.observationEvidence.find((item) => item.kind === \'repo-read-policy\');',
+    '  const actionEvidence = context.observationEvidence.find((item) => item.kind === \'repo-action\');',
+    '  const patchPolicy = context.observationEvidence.find((item) => item.kind === \'repo-patch-policy\');',
+    '  const targetPath = actionEvidence?.lastReadPath ?? readPolicy?.defaultPath ?? \'src/math.mjs\';',
+    '  const testPolicy = context.observationEvidence.find((item) => item.kind === \'repo-test-policy\');',
+    '  const selectedTestPath = testPolicy?.testPath ?? \'test/math.test.mjs\';',
+    '  const allowedTarget = patchPolicy?.allowedPaths?.find((item) => item.path === targetPath);',
+    '  const expectedBeforeDigest = allowedTarget?.expectedBeforeDigest ?? patchPolicy?.expectedBeforeDigest;',
+    '  const rejected = Object.values(context.memory?.rejectionModels ?? {}).some((item) => item?.rejected === true);',
+    '  const capabilityId = rejected ? \'repo.apply-patch\' : (sequence[context.step] ?? sequence.at(-1));',
+    '  const capability = context.capabilities.find((item) => item.capabilityId === capabilityId);',
+    '  const proposal = capabilityId === \'repo.read-file\' ? { path: targetPath }',
+    '    : capabilityId === \'repo.run-tests\' ? { path: selectedTestPath }',
+    '      : capabilityId === \'repo.apply-patch\' ? {',
+    '          schemaVersion: 1, targetPath,',
+    '          expectedBeforeDigest: rejected ? expectedBeforeDigest : `sha256:${\'0\'.repeat(64)}`,',
+    '          replacement: replacements[context.goal],',
+    '        } : undefined;',
+    '  const response = JSON.stringify({ protocol: \'yi-model-cli\', version: 1, id: request.id, ok: true,',
+    '    result: { model: \'repo-benchmark-retry-fixture\', content: JSON.stringify({ token: capability.token, ...(proposal === undefined ? {} : { proposal }) }) } }) + \'\\n\';',
+    '  process.stdout.write(response);',
     '});',
   ].join('\n');
 }

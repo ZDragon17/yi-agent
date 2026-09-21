@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { learn, step, verify } from '../../src/kernel/index.mjs';
+import { learn, step, stepWithPreference, verify } from '../../src/kernel/index.mjs';
+import { candidateDigest } from '../../src/runtime/schema.mjs';
 
 const TOKEN_REJECTED = 'tok_8MW7Q5V2FJ9C4RX6P1KD0ZAN3B';
 const TOKEN_ALTERNATIVE = 'tok_2PZ6KV9RAQ4M1XN8D0FC7J5YHB';
@@ -81,4 +82,53 @@ test('rejection feedback is contextual and does not permanently ban an action af
     memory: update.nextMemory,
   };
   assert.equal(step(changedRelation).choice.token, TOKEN_REJECTED);
+});
+
+test('proposal rejection does not suppress a different candidate for the same action', () => {
+  const badProposal = { mode: 'stale' };
+  const goodProposal = { mode: 'current' };
+  const input = {
+    ...BASE_INPUT,
+    capabilities: BASE_INPUT.capabilities,
+  };
+  const first = stepWithPreference(input, {
+    schemaVersion: 1,
+    token: TOKEN_REJECTED,
+    proposal: badProposal,
+    required: true,
+  });
+  const receipt = {
+    schemaVersion: 1,
+    status: 'REJECTED',
+    token: TOKEN_REJECTED,
+    basedOnVersion: first.expectation.predictedObservation.stateVersion,
+    policyVersion: 'policy:counter:1',
+    constraintsDigest: 'sha256:counter-constraints',
+    executionNonce: 'execution:proposal-rejection',
+    effectDigest: 'sha256:rejected-state',
+    rejectionReason: 'PATCH_EXPECTED_BEFORE_DIGEST_MISMATCH',
+    attributionWindowComplete: true,
+    confounderCount: 0,
+  };
+  const verification = verify({ intent: first, receipt, postObservation: input.observation });
+  const update = learn({
+    memory: input.memory,
+    intent: first,
+    receipt,
+    postObservation: input.observation,
+    verification,
+  });
+  assert.equal(
+    update.nextMemory.rejectionModels[TOKEN_REJECTED].proposalDigest,
+    candidateDigest({ token: TOKEN_REJECTED, proposal: badProposal }),
+  );
+
+  const retry = stepWithPreference({ ...input, memory: update.nextMemory }, {
+    schemaVersion: 1,
+    token: TOKEN_REJECTED,
+    proposal: goodProposal,
+    required: true,
+  });
+  assert.equal(retry.choice.token, TOKEN_REJECTED);
+  assert.deepEqual(retry.choice.proposal, goodProposal);
 });

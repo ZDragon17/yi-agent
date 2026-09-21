@@ -62,6 +62,14 @@ const EXPERIENCE_FAILURE_CLASSES = new Set([
 const EXPERIENCE_TEST_STATUSES = new Set(['PASS', 'FAIL', null]);
 const BEFORE_DIGEST_MODES = new Set(['fixed', 'current']);
 
+class PatchProposalRejectedError extends Error {
+  constructor(reason) {
+    super(reason);
+    this.name = 'PatchProposalRejectedError';
+    this.reason = reason;
+  }
+}
+
 const positionalArgs = collectPositionalArgs(process.argv.slice(2));
 const repositoryRoot = path.resolve(positionalArgs[0] ?? '.');
 const readPath = positionalArgs[1] ?? 'README.md';
@@ -158,9 +166,15 @@ function transition(previous, request, manifest) {
   if (!CAPABILITY_IDS.includes(capabilityId)) throw new Error('transition token is not a repo capability');
 
   let testCount = previous.testCount;
-  const preparedPatch = capabilityId === 'repo.apply-patch'
-    ? prepareOrResumePatch(request)
-    : null;
+  let preparedPatch = null;
+  if (capabilityId === 'repo.apply-patch') {
+    try {
+      preparedPatch = prepareOrResumePatch(request);
+    } catch (error) {
+      if (!(error instanceof PatchProposalRejectedError)) throw error;
+      return rejectedPatchTransition(previous, request, error.reason);
+    }
+  }
   if (preparedPatch?.kind === 'COMMITTED') return preparedPatch.result;
   const patchResult = preparedPatch;
   let next;
@@ -225,6 +239,27 @@ function transition(previous, request, manifest) {
   if (patchResult !== null) persistAppliedPatch(request, response);
   if (patchResult !== null && dropPatchResponse) process.exit(17);
   return response;
+}
+
+function rejectedPatchTransition(previous, request, reason) {
+  const nextWorldState = previous;
+  return {
+    nextWorldState,
+    receipt: {
+      schemaVersion: VERSION,
+      status: 'REJECTED',
+      token: request.token,
+      basedOnVersion: request.basedOnVersion,
+      policyVersion: request.policyVersion,
+      constraintsDigest: request.constraintsDigest,
+      executionNonce: request.executionNonce,
+      effectDigest: canonicalDigest(nextWorldState),
+      rejectionReason: reason,
+      attributionWindowComplete: true,
+      confounderCount: 0,
+    },
+    postObservation: observation(previous),
+  };
 }
 
 function makeState(revision, repository, executionNonce = null, previousNonces = [], testCount = 0) {
@@ -642,7 +677,18 @@ function patchPolicyEntries() {
 
 function prepareOrResumePatch(request) {
   if (patchSpec === null || nonceJournalPath === null) throw new Error('repo.apply-patch is not enabled');
-  const proposal = readPatchProposal(request.proposal);
+  let proposal;
+  try {
+    proposal = readPatchProposal(request.proposal);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'repo.apply-patch proposal is invalid') {
+      throw new PatchProposalRejectedError('PATCH_PROPOSAL_INVALID');
+    }
+    if (error instanceof Error && error.message === 'repo.apply-patch proposal is not authorized by the patch policy') {
+      throw new PatchProposalRejectedError('PATCH_TARGET_NOT_AUTHORIZED');
+    }
+    throw error;
+  }
   const proposalDigest = canonicalDigest(proposal);
   const requestDigest = canonicalDigest(request);
   const records = readNonceJournal();
@@ -663,7 +709,7 @@ function prepareOrResumePatch(request) {
     ? expectedBeforeDigestForTarget(proposal.targetPath)
     : expectedBeforeDigestForPolicy();
   if (proposal.expectedBeforeDigest !== authorizedBeforeDigest || beforeDigest !== authorizedBeforeDigest) {
-    throw new Error('patch target does not match its expected before digest');
+    throw new PatchProposalRejectedError('PATCH_EXPECTED_BEFORE_DIGEST_MISMATCH');
   }
   const prepared = {
     schemaVersion: VERSION,
