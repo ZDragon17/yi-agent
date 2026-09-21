@@ -318,6 +318,61 @@ test('repo benchmark continues from a patched but unverified Run', async () => {
   }
 });
 
+test('repo benchmark selects a discovered patch target from an authorized candidate set', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-dynamic-target-e2e-'));
+  const manifestPath = path.join(root, 'manifest.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  const buggySource = 'export function target(left, right) { return left - right; }\n';
+  const fixedSource = 'export function target(left, right) { return left + right; }\n';
+  const decoySource = 'export function decoy() { return "untouched"; }\n';
+  const task = {
+    id: 'dynamic-target-task',
+    goal: 'Find the failing target test, repair the discovered implementation, and verify it.',
+    seed: 'dynamic-target-seed',
+    files: [
+      { path: 'package.json', content: '{"name":"dynamic-target-task","private":true,"type":"module"}\n' },
+      { path: 'src/target.mjs', content: buggySource },
+      { path: 'src/decoy.mjs', content: decoySource },
+      {
+        path: 'test/target.test.mjs',
+        content: [
+          "import assert from 'node:assert/strict';",
+          "import { test } from 'node:test';",
+          "import { target } from '../src/target.mjs';",
+          '',
+          "test('target returns the sum', () => assert.equal(target(2, 3), 5));",
+          '',
+        ].join('\n'),
+      },
+    ],
+    readPath: 'src/target.mjs',
+    testPath: 'test/target.test.mjs',
+    patch: { allowedPaths: ['src/decoy.mjs', 'src/target.mjs'] },
+    expected: { files: { 'src/target.mjs': fixedSource }, lastTestStatus: 'PASS' },
+    steps: 5,
+    maxTests: 4,
+  };
+  try {
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, type: 'repo-benchmark', tasks: [task] }), 'utf8');
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, { [task.goal]: fixedSource });
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    const taskResult = result.stdout[0].data.taskResults[0];
+    assert.equal(taskResult.status, 'PASS');
+    assert.equal(taskResult.replayVerdict, 'CONSISTENT');
+    assert.equal(await readFile(path.join(taskResult.repositoryPath, 'src/target.mjs'), 'utf8'), fixedSource);
+    assert.equal(await readFile(path.join(taskResult.repositoryPath, 'src/decoy.mjs'), 'utf8'), decoySource);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('repo benchmark runs isolated tasks through the public agent and replay boundary', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-e2e-'));
   const manifestPath = path.join(root, 'benchmark.json');
@@ -486,15 +541,23 @@ function modelSource() {
     '  const request = JSON.parse(line);',
     '  const prompt = request.payload?.prompt ?? \'\';',
     '  const context = JSON.parse(prompt.split(\'\\n\').at(-1));',
+    '  const readPolicy = context.observationEvidence.find((item) => item.kind === \'repo-read-policy\');',
+    '  const actionEvidence = context.observationEvidence.find((item) => item.kind === \'repo-action\');',
+    '  const patchPolicy = context.observationEvidence.find((item) => item.kind === \'repo-patch-policy\');',
+    '  const targetPath = actionEvidence?.lastReadPath ?? readPolicy?.defaultPath ?? \'src/math.mjs\';',
+    '  const testPolicy = context.observationEvidence.find((item) => item.kind === \'repo-test-policy\');',
+    '  const selectedTestPath = testPolicy?.testPath ?? \'test/math.test.mjs\';',
+    '  const allowedTarget = patchPolicy?.allowedPaths?.find((item) => item.path === targetPath);',
+    '  const expectedBeforeDigest = allowedTarget?.expectedBeforeDigest ?? patchPolicy?.expectedBeforeDigest;',
     '  const sequence = context.goal === fastGoal ? [\'repo.apply-patch\']',
     '    : context.goal === trailingGoal ? [...defaultSequence, \'repo.read-file\'] : defaultSequence;',
     '  const capabilityId = sequence[context.step] ?? sequence.at(-1);',
     '  const capability = context.capabilities.find((item) => item.capabilityId === capabilityId);',
-    '  const proposal = capabilityId === \'repo.read-file\' ? { path: \'src/math.mjs\' }',
-    '    : capabilityId === \'repo.run-tests\' ? { path: \'test/math.test.mjs\' }',
+    '  const proposal = capabilityId === \'repo.read-file\' ? { path: targetPath }',
+    '    : capabilityId === \'repo.run-tests\' ? { path: selectedTestPath }',
     '      : capabilityId === \'repo.apply-patch\' ? {',
-    '          schemaVersion: 1, targetPath: \'src/math.mjs\',',
-    '          expectedBeforeDigest: context.observationEvidence.find((item) => item.kind === \'repo-patch-policy\').allowedPaths[0].expectedBeforeDigest,',
+    '          schemaVersion: 1, targetPath,',
+    '          expectedBeforeDigest,',
     '          replacement: replacements[context.goal],',
     '        } : undefined;',
     '  const response = JSON.stringify({ protocol: \'yi-model-cli\', version: 1, id: request.id, ok: true,',
@@ -515,17 +578,25 @@ function experienceAwareModelSource() {
     '  const request = JSON.parse(line);',
     '  const prompt = request.payload?.prompt ?? \'\';',
     '  const context = JSON.parse(prompt.split(\'\\n\').at(-1));',
+    '  const readPolicy = context.observationEvidence.find((item) => item.kind === \'repo-read-policy\');',
+    '  const actionEvidence = context.observationEvidence.find((item) => item.kind === \'repo-action\');',
+    '  const patchPolicy = context.observationEvidence.find((item) => item.kind === \'repo-patch-policy\');',
+    '  const targetPath = actionEvidence?.lastReadPath ?? readPolicy?.defaultPath ?? \'src/math.mjs\';',
+    '  const testPolicy = context.observationEvidence.find((item) => item.kind === \'repo-test-policy\');',
+    '  const selectedTestPath = testPolicy?.testPath ?? \'test/math.test.mjs\';',
+    '  const allowedTarget = patchPolicy?.allowedPaths?.find((item) => item.path === targetPath);',
+    '  const expectedBeforeDigest = allowedTarget?.expectedBeforeDigest ?? patchPolicy?.expectedBeforeDigest;',
     '  const experience = context.observationEvidence.find((item) => item.kind === \'repo-experience\');',
     '  const hasPriorExperience = (experience?.entries?.length ?? 0) > 0;',
     '  const canUseWorkflow = hasPriorExperience || context.goal.includes(\'addition\');',
     '  const sequence = canUseWorkflow ? defaultSequence : [\'repo.read-file\'];',
     '  const capabilityId = sequence[context.step] ?? sequence.at(-1);',
     '  const capability = context.capabilities.find((item) => item.capabilityId === capabilityId);',
-    '  const proposal = capabilityId === \'repo.read-file\' ? { path: \'src/math.mjs\' }',
-    '    : capabilityId === \'repo.run-tests\' ? { path: \'test/math.test.mjs\' }',
+    '  const proposal = capabilityId === \'repo.read-file\' ? { path: targetPath }',
+    '    : capabilityId === \'repo.run-tests\' ? { path: selectedTestPath }',
     '      : capabilityId === \'repo.apply-patch\' ? {',
-    '          schemaVersion: 1, targetPath: \'src/math.mjs\',',
-    '          expectedBeforeDigest: context.observationEvidence.find((item) => item.kind === \'repo-patch-policy\').allowedPaths[0].expectedBeforeDigest,',
+    '          schemaVersion: 1, targetPath,',
+    '          expectedBeforeDigest,',
     '          replacement: replacements[context.goal],',
     '        } : undefined;',
     '  const response = JSON.stringify({ protocol: \'yi-model-cli\', version: 1, id: request.id, ok: true,',
