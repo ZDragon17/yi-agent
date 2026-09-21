@@ -10,6 +10,7 @@ const MAX_STDOUT_BYTES = 256 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const MAX_PROMPT_BYTES = 128 * 1024;
 const MAX_CONTENT_BYTES = 64 * 1024;
+const MAX_MODEL_ADAPTER_TIMEOUT_MS = 300_000;
 
 export class ModelAdapterError extends Error {
   constructor(code, message, context = {}, options = {}) {
@@ -429,8 +430,8 @@ function normalizeConfig(value, { checkExecutable = true } = {}) {
     throw new ModelAdapterError('INVALID_INPUT', 'Model adapter model is invalid.', { field: 'model-adapter.model' });
   }
   const timeoutMs = value.timeoutMs ?? 5000;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
-    throw new ModelAdapterError('INVALID_INPUT', 'Model adapter timeoutMs must be between 100 and 30000.', { field: 'model-adapter.timeoutMs' });
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > MAX_MODEL_ADAPTER_TIMEOUT_MS) {
+    throw new ModelAdapterError('INVALID_INPUT', 'Model adapter timeoutMs must be between 100 and 300000.', { field: 'model-adapter.timeoutMs' });
   }
   if (value.env !== undefined && (!Array.isArray(value.env) || value.env.length > 64 || value.env.some((name) => typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)))) {
     throw new ModelAdapterError('INVALID_INPUT', 'Model adapter env must be a bounded environment-name array.', { field: 'model-adapter.env' });

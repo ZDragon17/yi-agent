@@ -23,6 +23,21 @@ test('process model client accepts one bounded JSONL response', async () => {
   });
 });
 
+test('process model client accepts the bounded long-running model timeout', () => {
+  const client = createProcessModelClient({
+    executable: process.execPath,
+    args: [],
+    model: 'fixture-model',
+    timeoutMs: 300_000,
+  });
+
+  assert.equal(typeof client.chat, 'function');
+  assert.throws(
+    () => createProcessModelClient({ executable: process.execPath, args: [], timeoutMs: 300_001 }),
+    { code: 'INVALID_INPUT' },
+  );
+});
+
 test('process model client preserves UTF-8 content split across stdout chunks', async () => {
   const client = createProcessModelClient({
     executable: process.execPath,
