@@ -36,6 +36,66 @@ test('RTA-1 canonical Node repository completes the first autonomous repair task
   }
 });
 
+test('RTA-1 T1 profile persists bounded cross-task experience without sharing repositories', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-t1-experience-e2e-'));
+  const manifestPath = path.resolve('examples/rta-1/manifest.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const task = manifest.tasks[0];
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, {
+      [task.goal]: task.expected.files['src/math.mjs'],
+    });
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--learning-profile', 't1', '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    const report = result.stdout[0].data;
+    assert.equal(report.learningProfile, 't1');
+    assert.equal(report.experience.entries.length, 1);
+    assert.equal(report.experience.entries[0].taskId, task.id);
+    assert.equal(new Set(report.taskResults.map((item) => item.repositoryPath)).size, 1);
+    assert.deepEqual(JSON.parse(await readFile(path.join(outputPath, 'experience.json'), 'utf8')), report.experience);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('RTA-1 T1 experience improves a bounded cross-task workflow against T0', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-t0-t1-e2e-'));
+  const manifestPath = path.resolve('examples/rta-1/baseline-6.json');
+  const modelPath = path.join(root, 'experience-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    await writeFile(modelPath, experienceAwareModelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, Object.fromEntries(
+      manifest.tasks.map((task) => [task.goal, task.expected.files['src/math.mjs']]),
+    ));
+    const runProfile = (profile) => invoke([
+      'repo', 'benchmark', '--manifest', manifestPath,
+      '--output', path.join(root, profile), '--model-adapter', modelConfigPath,
+      '--learning-profile', profile, '--json',
+    ]);
+    const [t0, t1] = await Promise.all([runProfile('t0'), runProfile('t1')]);
+    assert.equal(t0.code, 2, JSON.stringify(t0));
+    assert.equal(t1.code, 0, JSON.stringify(t1));
+    const t0Report = t0.stdout[0].data;
+    const t1Report = t1.stdout[0].data;
+    assert.equal(t0Report.taskResults.filter((task) => task.status === 'PASS').length, 1);
+    assert.equal(t1Report.taskResults.filter((task) => task.status === 'PASS').length, 6);
+    assert.equal(t1Report.experience.entries.length, 6);
+    assert.equal(new Set(t1Report.taskResults.map((task) => task.repositoryPath)).size, 6);
+    assert.ok(t1Report.experience.entries.every((entry) => entry.replayVerdict === 'CONSISTENT'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('RTA-1 six-task baseline keeps each repository isolated and replayable', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-baseline-e2e-'));
   const manifestPath = path.resolve('examples/rta-1/baseline-6.json');
@@ -380,6 +440,36 @@ function modelSource() {
     '    result: { model: \'repo-benchmark-fixture\', content: JSON.stringify({ token: capability.token, ...(proposal === undefined ? {} : { proposal }) }) } }) + \'\\n\';',
     '  if (delayMs > 0) setTimeout(() => process.stdout.write(response), delayMs);',
     '  else process.stdout.write(response);',
+    '});',
+  ].join('\n');
+}
+
+function experienceAwareModelSource() {
+  return [
+    "import readline from 'node:readline';",
+    'const replacements = JSON.parse(process.argv[2]);',
+    'const defaultSequence = [\'repo.list-files\', \'repo.read-file\', \'repo.run-tests\', \'repo.apply-patch\', \'repo.run-tests\'];',
+    'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
+    'rl.on(\'line\', (line) => {',
+    '  const request = JSON.parse(line);',
+    '  const prompt = request.payload?.prompt ?? \'\';',
+    '  const context = JSON.parse(prompt.split(\'\\n\').at(-1));',
+    '  const experience = context.observationEvidence.find((item) => item.kind === \'repo-experience\');',
+    '  const hasPriorExperience = (experience?.entries?.length ?? 0) > 0;',
+    '  const canUseWorkflow = hasPriorExperience || context.goal.includes(\'addition\');',
+    '  const sequence = canUseWorkflow ? defaultSequence : [\'repo.read-file\'];',
+    '  const capabilityId = sequence[context.step] ?? sequence.at(-1);',
+    '  const capability = context.capabilities.find((item) => item.capabilityId === capabilityId);',
+    '  const proposal = capabilityId === \'repo.read-file\' ? { path: \'src/math.mjs\' }',
+    '    : capabilityId === \'repo.run-tests\' ? { path: \'test/math.test.mjs\' }',
+    '      : capabilityId === \'repo.apply-patch\' ? {',
+    '          schemaVersion: 1, targetPath: \'src/math.mjs\',',
+    '          expectedBeforeDigest: context.observationEvidence.find((item) => item.kind === \'repo-patch-policy\').allowedPaths[0].expectedBeforeDigest,',
+    '          replacement: replacements[context.goal],',
+    '        } : undefined;',
+    '  const response = JSON.stringify({ protocol: \'yi-model-cli\', version: 1, id: request.id, ok: true,',
+    '    result: { model: \'repo-benchmark-experience-fixture\', content: JSON.stringify({ token: capability.token, ...(proposal === undefined ? {} : { proposal }) }) } }) + \'\\n\';',
+    '  process.stdout.write(response);',
     '});',
   ].join('\n');
 }

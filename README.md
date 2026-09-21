@@ -431,6 +431,8 @@ yi-agent repo benchmark `
 
 每个任务按 `init → agent run → inspect → replay` 执行。验收会比较声明的文件内容和最终测试状态，并要求 Replay 返回 `CONSISTENT`。每个任务完成后都会更新 `report.json`；恢复时会重新检查已通过任务的文件和 Replay，未完成任务进入新的 `attempt-N` 目录，旧证据不会被覆盖。报告保存任务状态、repository/Lab 路径、Run ID、Replay 结果、验收明细、失败原因和运行指标（实际 kernel steps、测试执行次数、人工介入标记）。任务失败会继续执行同一清单中的其他任务，命令最终返回非零退出码；清单本身无效则在创建输出目录前拒绝。
 
+`--learning-profile t0` 是无跨任务经验的基线；`--learning-profile t1` 会把已经完成任务的账本压缩成有界 `experience.json`，并在下一个独立 repository 的 WorldPort observation 中提供 capability 工作流、测试次数和 Replay 结论。T1 不共享源码、补丁、目标答案或 Lab 状态，也不把经验当成事实或权限；模型仍必须通过同一 Kernel、WorldPort、独立测试和 Replay。经验来自已完成 Run 的账本，而不是模型自报结果。两种 profile 不能在同一输出目录间切换，避免把两组实验的证据混在一起。
+
 这个命令解决的是实验可重复性和任务间隔离，不等于模型已经具备长期自主规划能力。真实模型适配器仍需由外部配置提供，任务验收也必须由人选择可信的文件和测试条件。
 
 每个模型候选还会由宿主按 `{token, proposal}` 生成稳定的 `candidateDigest`，并写入 policy evidence；账本和 Replay 会校验摘要确实对应候选内容。它只解决“同一个动作下不同候选不能互相混淆”的身份问题，不代表候选已经正确，也不代表 Kernel 已经学会跨候选泛化。

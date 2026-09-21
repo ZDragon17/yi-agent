@@ -6,6 +6,8 @@
 
 `long-run-12.json` 在这六项之后增加数组求和、字符串反转、元音统计、华氏转摄氏、最大值和严格正数判断。它用于阶段 3 的连续运行测试；对应 E2E 会在 3 个已提交任务边界强杀 benchmark，再用 `--resume` 接续到 12/12。
 
+`--learning-profile t0`（默认）不向任务注入跨任务经验；`--learning-profile t1` 会在每个独立任务启动前读取上一个已完成 Lab 的账本，只提取 capability 工作流、测试次数和 Replay 结论，写入有界的 `experience.json`。它不共享仓库文件、补丁内容、目标答案或 Lab 状态。T1 的经验仍是模型可见的非权威 observation evidence，不能绕过 Kernel、WorldPort 或测试验收。
+
 运行时可以使用符合 `yi-agent` 进程模型协议的模型适配器配置：
 
 ```powershell
@@ -36,4 +38,14 @@ yi-agent repo benchmark `
   --json
 ```
 
-输出目录包含隔离仓库、Lab、nonce 日志和 `report.json`。删除输出目录即可重新从同一清单开始；运行中断后使用同样的参数追加 `--resume`。
+运行 T1 长跑并保留跨任务经验：
+
+```powershell
+yi-agent repo benchmark `
+  --manifest $PWD\examples\rta-1\long-run-12.json `
+  --output $PWD\rta-1-t1-001 `
+  --learning-profile t1 `
+  --json
+```
+
+输出目录包含隔离仓库、Lab、nonce 日志和 `report.json`；T1 还会生成 `experience.json`。删除输出目录即可重新从同一清单开始；运行中断后使用同样的参数追加 `--resume`，不能更换 learning profile。

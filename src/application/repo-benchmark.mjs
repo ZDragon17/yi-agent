@@ -1,4 +1,5 @@
 import { canonicalDigest } from '../runtime/schema.mjs';
+import { LabStore } from '../runtime/lab-store.mjs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -12,6 +13,8 @@ const MAX_TEXT_LENGTH = 16 * 1024;
 const MAX_ID_LENGTH = 64;
 const MAX_STEPS = 24;
 const MAX_TEST_EXECUTIONS = 4;
+const MAX_EXPERIENCE_ENTRIES = 32;
+const MAX_EXPERIENCE_STEPS = 24;
 const CLI = fileURLToPath(new URL('../../bin/yi-agent.mjs', import.meta.url));
 const REPO_ADAPTER = fileURLToPath(new URL('../../examples/repo-world/adapter.mjs', import.meta.url));
 
@@ -22,6 +25,7 @@ export async function runRepoBenchmark(input) {
   const modelAdapterPath = source.modelAdapterPath === undefined || source.modelAdapterPath === null
     ? null
     : requireAbsolutePath(source.modelAdapterPath, 'modelAdapterPath');
+  const learningProfile = normalizeLearningProfile(source.learningProfile ?? 't0');
   const manifest = await readManifest(manifestPath);
   const selectedTasks = source.taskId === undefined
     ? manifest.tasks
@@ -32,9 +36,15 @@ export async function runRepoBenchmark(input) {
 
   const manifestDigest = canonicalDigest(manifest);
   const reportPath = path.join(outputPath, 'report.json');
+  const experiencePath = path.join(outputPath, 'experience.json');
   let report;
+  let experience = learningProfile === 't1'
+    ? emptyExperience()
+    : null;
   if (source.resume === true) {
-    report = await readCheckpoint(outputPath, manifest, manifestDigest);
+    report = await readCheckpoint(outputPath, manifest, manifestDigest, learningProfile);
+    experience = report.experience ?? (learningProfile === 't1' ? emptyExperience() : null);
+    if (experience !== null) await writeJson(experiencePath, experience);
   } else {
     await mkdir(path.dirname(outputPath), { recursive: true });
     await createOutputDirectory(outputPath);
@@ -44,19 +54,27 @@ export async function runRepoBenchmark(input) {
       type: 'repo-benchmark-report',
       status: 'RUNNING',
       manifestDigest,
+      learningProfile,
+      ...(experience === null ? {} : { experience }),
       taskResults: [],
     };
     await writeJson(reportPath, report);
+    if (experience !== null) await writeJson(experiencePath, experience);
   }
 
   for (const task of selectedTasks) {
     const previous = report.taskResults.find((item) => item.id === task.id);
     if (previous?.status === 'PASS' && await verifyCompletedTask(task, previous, outputPath)) continue;
     const taskRoot = await nextTaskRoot(outputPath, task.id);
-    const result = await runTask({ task, taskRoot, modelAdapterPath });
+    const result = await runTask({ task, taskRoot, modelAdapterPath, experiencePath: experience === null ? null : experiencePath });
+    if (result.status === 'PASS' && experience !== null) {
+      experience = await appendExperience(experience, result);
+      await writeJson(experiencePath, experience);
+    }
     report = {
       ...report,
       status: 'RUNNING',
+      ...(experience === null ? {} : { experience }),
       taskResults: replaceTaskResult(report.taskResults, result),
     };
     await writeJson(reportPath, report);
@@ -68,13 +86,15 @@ export async function runRepoBenchmark(input) {
     type: 'repo-benchmark-report',
     status: selectedTasks.every((task) => resultById.get(task.id)?.status === 'PASS') ? 'PASS' : 'FAIL',
     manifestDigest,
+    learningProfile,
+    ...(experience === null ? {} : { experience }),
     taskResults: report.taskResults,
   };
   await writeJson(reportPath, finalReport);
   return finalReport;
 }
 
-async function runTask({ task, taskRoot, modelAdapterPath }) {
+async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
   const repositoryPath = path.join(taskRoot, 'repository');
   const labPath = path.join(taskRoot, 'lab');
   const adapterConfigPath = path.join(taskRoot, 'adapter.json');
@@ -110,6 +130,7 @@ async function runTask({ task, taskRoot, modelAdapterPath }) {
         '--discover',
         '--max-tests',
         String(task.maxTests),
+        ...(experiencePath === null ? [] : ['--experience-ledger', experiencePath]),
       ],
       adapterId: 'repo-writable-example-v1',
       worldId: 'repo',
@@ -174,6 +195,58 @@ async function runTask({ task, taskRoot, modelAdapterPath }) {
   return result;
 }
 
+function normalizeLearningProfile(value) {
+  if (value !== 't0' && value !== 't1') {
+    throw benchmarkError('INVALID_INPUT', 'learningProfile must be t0 or t1.', { field: 'learningProfile' });
+  }
+  return value;
+}
+
+function emptyExperience() {
+  return { schemaVersion: 1, type: 'repo-experience', entries: [] };
+}
+
+function validateExperience(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== 1 || value.type !== 'repo-experience' ||
+      !Array.isArray(value.entries) || value.entries.length > MAX_EXPERIENCE_ENTRIES) {
+    throw benchmarkError('CONFLICT', 'Benchmark experience checkpoint is invalid.', { field: 'experience' });
+  }
+  for (const entry of value.entries) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry) ||
+        Object.keys(entry).some((key) => !['taskId', 'workflow', 'testExecutions', 'replayVerdict'].includes(key)) ||
+        typeof entry.taskId !== 'string' || entry.taskId.length === 0 || entry.taskId.length > MAX_ID_LENGTH ||
+        !Array.isArray(entry.workflow) || entry.workflow.length > MAX_EXPERIENCE_STEPS ||
+        entry.workflow.some((capabilityId) => typeof capabilityId !== 'string' || capabilityId.length === 0 || capabilityId.length > 128) ||
+        !Number.isSafeInteger(entry.testExecutions) || entry.testExecutions < 0 || entry.testExecutions > MAX_TEST_EXECUTIONS ||
+        entry.replayVerdict !== 'CONSISTENT') {
+      throw benchmarkError('CONFLICT', 'Benchmark experience checkpoint is invalid.', { field: 'experience.entries' });
+    }
+  }
+  return value;
+}
+
+async function appendExperience(experience, result) {
+  const store = await LabStore.open({ labPath: result.labPath });
+  const run = await store.readRun(result.runId);
+  const capabilityByToken = new Map(store.manifest.tokenMap.entries.map((entry) => [entry.token, entry.capabilityId]));
+  const steps = run.events
+    .filter((event) => event.kind === 'STEP')
+    .map((event) => capabilityByToken.get(event.payload.choice?.token) ?? null)
+    .filter((capabilityId) => capabilityId !== null)
+    .slice(0, MAX_EXPERIENCE_STEPS);
+  const entry = {
+    taskId: result.id,
+    workflow: steps,
+    testExecutions: result.metrics.testExecutions,
+    replayVerdict: result.replayVerdict,
+  };
+  return {
+    ...experience,
+    entries: [...experience.entries, entry].slice(-MAX_EXPERIENCE_ENTRIES),
+  };
+}
+
 async function verifyCompletedTask(task, result, outputPath) {
   try {
     if (result.taskDigest !== canonicalDigest(task) || result.runId === null || result.replayVerdict !== 'CONSISTENT' ||
@@ -214,7 +287,7 @@ function replaceTaskResult(results, result) {
   return next;
 }
 
-async function readCheckpoint(outputPath, manifest, manifestDigest) {
+async function readCheckpoint(outputPath, manifest, manifestDigest, learningProfile) {
   const outputStatus = await stat(outputPath).catch(() => null);
   if (outputStatus === null || !outputStatus.isDirectory()) {
     throw benchmarkError('NOT_FOUND', 'Benchmark output directory does not exist for --resume.', { outputPath });
@@ -231,9 +304,11 @@ async function readCheckpoint(outputPath, manifest, manifestDigest) {
   }
   requireRecord(report, 'benchmark checkpoint report');
   if (report.schemaVersion !== 1 || report.type !== 'repo-benchmark-report' || report.manifestDigest !== manifestDigest ||
+      (report.learningProfile ?? 't0') !== learningProfile ||
       !['RUNNING', 'FAIL', 'PASS'].includes(report.status) || !Array.isArray(report.taskResults)) {
     throw benchmarkError('CONFLICT', 'Benchmark checkpoint report is incompatible with the requested manifest.', { outputPath });
   }
+  if (learningProfile === 't1') validateExperience(report.experience);
   return report;
 }
 

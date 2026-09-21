@@ -46,6 +46,9 @@ const MAX_MODEL_READ_CONTENT = 2 * 1024;
 const MAX_FAILED_TESTS = 8;
 const MAX_FAILED_TEST_NAME_BYTES = 256;
 const MAX_NONCE_JOURNAL_BYTES = 2 * 1024 * 1024;
+const MAX_EXPERIENCE_BYTES = 64 * 1024;
+const MAX_EXPERIENCE_ENTRIES = 32;
+const MAX_EXPERIENCE_STEPS = 24;
 const BEFORE_DIGEST_MODES = new Set(['fixed', 'current']);
 
 const positionalArgs = collectPositionalArgs(process.argv.slice(2));
@@ -62,6 +65,7 @@ const patchSpec = patchSpecPath === null ? null : readPatchSpec(patchSpecPath);
 const discoveryEnabled = process.argv.includes('--discover');
 const dropPatchResponse = process.argv.includes('--drop-patch-response');
 const maxTestExecutions = readOptionalBoundedOption('--max-tests', 1, 4);
+const experienceLedgerPath = readOptionalAbsolutePathOption('--experience-ledger');
 if (patchSpec?.targetPath === null && !discoveryEnabled) {
   throw new Error('dynamic patch policy requires discovery mode');
 }
@@ -310,6 +314,10 @@ function observation(state) {
         kind: 'repo-test-result',
         ...state.lastTestDiagnostic,
       }]),
+      ...(experienceLedgerPath === null ? [] : [{
+        kind: 'repo-experience',
+        ...readExperienceLedger(),
+      }]),
     ],
   };
 }
@@ -421,11 +429,63 @@ function readOptionalBoundedOption(name, minimum, maximum) {
   return parsed;
 }
 
+function readOptionalAbsolutePathOption(name) {
+  const index = process.argv.indexOf(name);
+  if (index === -1) return null;
+  const value = process.argv[index + 1];
+  if (typeof value !== 'string' || value.length === 0 || value.startsWith('--') || !path.isAbsolute(value)) {
+    throw new Error(`${name} requires an absolute path`);
+  }
+  const normalized = path.normalize(value);
+  const status = lstatSync(normalized);
+  if (!status.isFile() || status.isSymbolicLink()) throw new Error(`${name} must reference a regular file`);
+  return normalized;
+}
+
+function readExperienceLedger() {
+  const bytes = readFileSync(experienceLedgerPath);
+  if (bytes.length > MAX_EXPERIENCE_BYTES) throw new Error('experience ledger exceeds the example limit');
+  let value;
+  try {
+    value = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new Error('experience ledger is not valid JSON');
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      value.schemaVersion !== VERSION || value.type !== 'repo-experience' ||
+      !Array.isArray(value.entries) || value.entries.length > MAX_EXPERIENCE_ENTRIES) {
+    throw new Error('experience ledger is invalid');
+  }
+  const entries = value.entries.map((entry) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry) ||
+        Object.keys(entry).some((key) => !['taskId', 'workflow', 'testExecutions', 'replayVerdict'].includes(key)) ||
+        typeof entry.taskId !== 'string' || entry.taskId.length === 0 ||
+        entry.taskId.length > 64 ||
+        !Array.isArray(entry.workflow) || entry.workflow.length > MAX_EXPERIENCE_STEPS ||
+        entry.workflow.some((capabilityId) => typeof capabilityId !== 'string' || capabilityId.length === 0 || capabilityId.length > 128) ||
+        !Number.isSafeInteger(entry.testExecutions) || entry.testExecutions < 0 || entry.testExecutions > 4 ||
+        entry.replayVerdict !== 'CONSISTENT') {
+      throw new Error('experience ledger entry is invalid');
+    }
+    return {
+      taskId: entry.taskId,
+      workflow: [...entry.workflow],
+      testExecutions: entry.testExecutions,
+      replayVerdict: entry.replayVerdict,
+    };
+  });
+  return { schemaVersion: VERSION, type: 'repo-experience', entries };
+}
+
 function collectPositionalArgs(args) {
   const positional = [];
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === '--max-tests') {
+      index += 1;
+      continue;
+    }
+    if (argument === '--experience-ledger') {
       index += 1;
       continue;
     }
