@@ -40,6 +40,7 @@ const TEST_TIMEOUT_MS = 30_000;
 const MAX_MODEL_READ_PATH_BYTES = 4 * 1024;
 const MAX_MODEL_TEST_PATH_BYTES = 4 * 1024;
 const MAX_PATCH_BYTES = 128 * 1024;
+const MAX_PATCH_PATHS = 64;
 const MAX_PROPOSAL_BYTES = 64 * 1024;
 const MAX_MODEL_READ_CONTENT = 2 * 1024;
 const MAX_FAILED_TESTS = 8;
@@ -60,6 +61,9 @@ if ((patchSpecPath === null) !== (nonceJournalPath === null)) {
 const patchSpec = patchSpecPath === null ? null : readPatchSpec(patchSpecPath);
 const discoveryEnabled = process.argv.includes('--discover');
 const dropPatchResponse = process.argv.includes('--drop-patch-response');
+if (patchSpec?.targetPath === null && !discoveryEnabled) {
+  throw new Error('dynamic patch policy requires discovery mode');
+}
 if (nonceJournalPath !== null && isInsideRepository(nonceJournalPath)) {
   throw new Error('nonce journal must be outside the scanned repository');
 }
@@ -166,7 +170,7 @@ function transition(previous, request, manifest) {
     next.lastTestDiagnostic = result.diagnostic;
   } else {
     next = makeState(previous.revision + 1, null, request.executionNonce, previous.usedExecutionNonces, testCount);
-    next.lastPatchPath = patchSpec.targetPath;
+    next.lastPatchPath = patchResult.targetPath;
     next.lastPatchBeforeDigest = patchResult.beforeDigest;
     next.lastPatchAfterDigest = patchResult.afterDigest;
   }
@@ -277,8 +281,12 @@ function observation(state) {
       },
       ...(patchSpec === null ? [] : [{
         kind: 'repo-patch-policy',
-        targetPath: patchSpec.targetPath,
-        expectedBeforeDigest: expectedBeforeDigestForPolicy(),
+        ...(patchSpec.targetPath === null
+          ? { allowedPaths: patchPolicyEntries() }
+          : {
+              targetPath: patchSpec.targetPath,
+              expectedBeforeDigest: expectedBeforeDigestForPolicy(),
+            }),
         ...(patchSpec.beforeDigestMode === undefined ? {} : { beforeDigestMode: patchSpec.beforeDigestMode }),
         proposalSchema: {
           schemaVersion: VERSION,
@@ -441,20 +449,32 @@ function readPatchSpec(filePath) {
   } catch {
     throw new Error('patch spec is not valid JSON');
   }
+  const fixedTarget = typeof source?.targetPath === 'string';
+  const dynamicTargets = Array.isArray(source?.allowedPaths);
   if (source === null || typeof source !== 'object' || Array.isArray(source) ||
-      source.schemaVersion !== VERSION ||
-      typeof source.targetPath !== 'string' || source.targetPath.length === 0 || source.targetPath.length > 4096 ||
-       typeof source.expectedBeforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(source.expectedBeforeDigest) ||
-       (source.beforeDigestMode !== undefined && !BEFORE_DIGEST_MODES.has(source.beforeDigestMode))) {
+      source.schemaVersion !== VERSION || fixedTarget === dynamicTargets ||
+      (fixedTarget && (source.targetPath.length === 0 || source.targetPath.length > 4096 ||
+        typeof source.expectedBeforeDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(source.expectedBeforeDigest))) ||
+      (dynamicTargets && (source.allowedPaths.length === 0 || source.allowedPaths.length > MAX_PATCH_PATHS ||
+        source.allowedPaths.some((item) => typeof item !== 'string' || item.length === 0 || item.length > 4096))) ||
+      (source.beforeDigestMode !== undefined && !BEFORE_DIGEST_MODES.has(source.beforeDigestMode)) ||
+      (dynamicTargets && source.beforeDigestMode !== undefined && source.beforeDigestMode !== 'current')) {
     throw new Error('patch spec is invalid');
   }
   const normalized = {
     schemaVersion: VERSION,
-    targetPath: normalizeRelative(source.targetPath),
-    expectedBeforeDigest: source.expectedBeforeDigest,
-    ...(source.beforeDigestMode === undefined ? {} : { beforeDigestMode: source.beforeDigestMode }),
+    targetPath: fixedTarget ? normalizeRelative(source.targetPath) : null,
+    ...(fixedTarget ? { expectedBeforeDigest: source.expectedBeforeDigest } : {
+      allowedPaths: [...new Set(source.allowedPaths.map((item) => normalizeRelative(item)))].sort(),
+      beforeDigestMode: 'current',
+    }),
+    ...(fixedTarget && source.beforeDigestMode === undefined ? {} :
+      fixedTarget ? { beforeDigestMode: source.beforeDigestMode } : {}),
   };
-  if (normalized.targetPath.includes('\0') || path.isAbsolute(normalized.targetPath)) {
+  if (normalized.targetPath !== null && (normalized.targetPath.includes('\0') || path.isAbsolute(normalized.targetPath))) {
+    throw new Error('patch target must be a relative path');
+  }
+  if (normalized.allowedPaths?.some((item) => item.includes('\0') || path.isAbsolute(item))) {
     throw new Error('patch target must be a relative path');
   }
   return Object.freeze({
@@ -464,11 +484,28 @@ function readPatchSpec(filePath) {
 }
 
 function expectedBeforeDigestForPolicy() {
+  if (patchSpec.targetPath === null) throw new Error('dynamic patch policy requires a selected target');
   if (patchSpec.beforeDigestMode !== 'current') return patchSpec.expectedBeforeDigest;
-  const target = resolveRepositoryPath(patchSpec.targetPath);
+  return expectedBeforeDigestForTarget(patchSpec.targetPath);
+}
+
+function expectedBeforeDigestForTarget(targetPath) {
+  const target = resolveRepositoryPath(targetPath);
   const status = lstatSync(target);
   if (!status.isFile() || status.isSymbolicLink()) throw new Error('patch target must remain a regular file');
   return contentDigest(readFileSync(target, 'utf8'));
+}
+
+function patchPolicyEntries() {
+  if (patchSpec.targetPath !== null) return undefined;
+  const listedPaths = new Set(scanRepository().paths);
+  return patchSpec.allowedPaths.map((targetPath) => {
+    if (!listedPaths.has(targetPath)) throw new Error('dynamic patch target is not in the discovery listing');
+    return {
+      path: targetPath,
+      expectedBeforeDigest: expectedBeforeDigestForTarget(targetPath),
+    };
+  });
 }
 
 function prepareOrResumePatch(request) {
@@ -487,10 +524,12 @@ function prepareOrResumePatch(request) {
     return completePreparedPatch(existing, proposal);
   }
 
-  const target = resolveRepositoryPath(patchSpec.targetPath);
+  const target = resolveRepositoryPath(proposal.targetPath);
   const before = readFileSync(target, 'utf8');
   const beforeDigest = contentDigest(before);
-  const authorizedBeforeDigest = expectedBeforeDigestForPolicy();
+  const authorizedBeforeDigest = patchSpec.targetPath === null
+    ? expectedBeforeDigestForTarget(proposal.targetPath)
+    : expectedBeforeDigestForPolicy();
   if (proposal.expectedBeforeDigest !== authorizedBeforeDigest || beforeDigest !== authorizedBeforeDigest) {
     throw new Error('patch target does not match its expected before digest');
   }
@@ -500,7 +539,7 @@ function prepareOrResumePatch(request) {
     executionNonce: request.executionNonce,
     requestDigest,
     patchDigest: proposalDigest,
-    targetPath: patchSpec.targetPath,
+    targetPath: proposal.targetPath,
     beforeDigest,
     afterDigest: contentDigest(proposal.replacement),
   };
@@ -515,7 +554,11 @@ function completePreparedPatch(prepared, proposal) {
   const current = readFileSync(target, 'utf8');
   const currentDigest = contentDigest(current);
   if (currentDigest === prepared.afterDigest && current === proposal.replacement) {
-    return { beforeDigest: prepared.beforeDigest, afterDigest: prepared.afterDigest };
+    return {
+      targetPath: prepared.targetPath,
+      beforeDigest: prepared.beforeDigest,
+      afterDigest: prepared.afterDigest,
+    };
   }
   if (currentDigest !== prepared.beforeDigest) {
     throw new Error('patch target changed after the prepared write boundary');
@@ -526,7 +569,11 @@ function completePreparedPatch(prepared, proposal) {
   if (after !== proposal.replacement || afterDigest !== prepared.afterDigest) {
     throw new Error('patch target did not reach its expected after content');
   }
-  return { beforeDigest: prepared.beforeDigest, afterDigest };
+  return {
+    targetPath: prepared.targetPath,
+    beforeDigest: prepared.beforeDigest,
+    afterDigest,
+  };
 }
 
 function persistAppliedPatch(request, result) {
@@ -560,8 +607,10 @@ function readPatchProposal(value) {
     expectedBeforeDigest: value.expectedBeforeDigest,
     replacement: value.replacement,
   };
-  if (normalized.targetPath !== patchSpec.targetPath ||
-      normalized.targetPath.includes('\0') || path.isAbsolute(normalized.targetPath)) {
+  const authorized = patchSpec.targetPath === null
+    ? patchSpec.allowedPaths.includes(normalized.targetPath)
+    : normalized.targetPath === patchSpec.targetPath;
+  if (!authorized || normalized.targetPath.includes('\0') || path.isAbsolute(normalized.targetPath)) {
     throw new Error('repo.apply-patch proposal is not authorized by the patch policy');
   }
   return normalized;

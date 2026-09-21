@@ -604,6 +604,126 @@ test('discovery-enabled repo WorldPort lets the model select a bounded test path
   }
 });
 
+test('discovery-enabled writable repo WorldPort applies a patch only to an authorized listed file', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-discovery-write-e2e-'));
+  const repository = path.join(root, 'repository');
+  const sourcePath = path.join(repository, 'src', 'math.mjs');
+  const testPath = path.join(repository, 'test', 'math.test.mjs');
+  const patchSpecPath = path.join(root, 'patch.json');
+  const nonceJournalPath = path.join(root, 'patch-nonces.json');
+  const adapterConfig = path.join(root, 'adapter.json');
+  const lab = path.join(root, 'lab');
+  const buggySource = 'export function add(left, right) { return left - right; }\n';
+  const fixedSource = 'export function add(left, right) { return left + right; }\n';
+  await mkdir(path.dirname(sourcePath), { recursive: true });
+  await mkdir(path.dirname(testPath), { recursive: true });
+  await writeFile(sourcePath, buggySource, 'utf8');
+  await writeFile(testPath, [
+    "import assert from 'node:assert/strict';",
+    "import { test } from 'node:test';",
+    "import { add } from '../src/math.mjs';",
+    "test('add returns the sum', () => assert.equal(add(2, 3), 5));",
+    '',
+  ].join('\n'), 'utf8');
+  await writeFile(patchSpecPath, JSON.stringify({
+    schemaVersion: 1,
+    allowedPaths: ['src/math.mjs'],
+  }), 'utf8');
+
+  let modelCalls = 0;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    const capabilityId = [
+      'repo.list-files', 'repo.read-file', 'repo.run-tests', 'repo.apply-patch', 'repo.run-tests',
+    ][modelCalls];
+    const capability = context.capabilities.find((item) => item.capabilityId === capabilityId);
+    assert.ok(capability, `model context is missing dynamic write step ${modelCalls}`);
+    const patchPolicy = context.observationEvidence.find((item) => item.kind === 'repo-patch-policy');
+    const expectedPolicySource = modelCalls >= 4 ? fixedSource : buggySource;
+    assert.deepEqual(patchPolicy?.allowedPaths, [{
+      path: 'src/math.mjs',
+      expectedBeforeDigest: canonicalDigest({ content: expectedPolicySource }),
+    }]);
+    const proposal = capabilityId === 'repo.read-file'
+      ? { path: 'src/math.mjs' }
+      : capabilityId === 'repo.run-tests'
+        ? { path: 'test/math.test.mjs' }
+        : capabilityId === 'repo.apply-patch'
+          ? {
+              schemaVersion: 1,
+              targetPath: 'src/math.mjs',
+              expectedBeforeDigest: patchPolicy.allowedPaths[0].expectedBeforeDigest,
+              replacement: fixedSource,
+            }
+          : undefined;
+    modelCalls += 1;
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'repo-discovery-write-chat',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({
+        token: capability.token,
+        ...(proposal === undefined ? {} : { proposal }),
+      }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const environment = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'repo-discovery-write-local-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'repo-discovery-write-local-model',
+  };
+  await writeFile(adapterConfig, JSON.stringify({
+    executable: process.execPath,
+    args: [ADAPTER, repository, 'README.md', 'test/math.test.mjs', patchSpecPath, nonceJournalPath, '--discover'],
+    adapterId: 'repo-writable-example-v1',
+    worldId: 'repo',
+    timeoutMs: 30000,
+  }), 'utf8');
+
+  try {
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'repo', '--seed', 'repo-discovery-write-seed',
+      '--adapter', adapterConfig, '--json',
+    ], environment);
+    assert.equal(init.code, 0, JSON.stringify(init));
+    const run = await invoke([
+      'agent', 'run', '--lab', lab, '--steps', '5', '--scenario', 'working-tree',
+      '--adapter', adapterConfig, '--goal', '发现源码、定位失败测试、修复并重新验证', '--json',
+    ], environment);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    assert.equal(modelCalls, 5);
+    assert.equal(await readFile(sourcePath, 'utf8'), fixedSource);
+
+    const store = await LabStore.open({ labPath: lab });
+    const events = (await store.readRun(run.stdout[0].data.runId)).events;
+    const steps = events.filter((event) => event.kind === 'STEP');
+    assert.deepEqual(steps.map((event) => event.payload.afterState.worldState.lastAction), [
+      'repo.list-files', 'repo.read-file', 'repo.run-tests', 'repo.apply-patch', 'repo.run-tests',
+    ]);
+    assert.equal(steps[4].payload.afterState.worldState.lastTestStatus, 'PASS');
+    assert.equal(steps[3].payload.afterState.worldState.lastPatchPath, 'src/math.mjs');
+
+    const replay = await invoke([
+      'replay', '--lab', lab, '--run', run.stdout[0].data.runId,
+      '--adapter', adapterConfig, '--json',
+    ], environment);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal(modelCalls, 5, 'replay must not call the model again');
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('writable repo WorldPort applies a digest-bound patch and verifies the retained fix', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-write-e2e-'));
   const repository = path.join(root, 'repository');
@@ -1001,6 +1121,62 @@ test('writable repo WorldPort rejects invalid proposals before journaling or wri
       assert.equal(response.ok, false, JSON.stringify(response));
       assert.match(response.error, item.message);
     }
+    assert.equal(await readFile(sourcePath, 'utf8'), buggySource);
+    await assert.rejects(access(nonceJournalPath));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('discovery-enabled writable repo WorldPort rejects a patch outside the authorized path set', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-discovery-write-boundary-e2e-'));
+  const repository = path.join(root, 'repository');
+  const sourcePath = path.join(repository, 'src', 'math.mjs');
+  const patchSpecPath = path.join(root, 'patch.json');
+  const nonceJournalPath = path.join(root, 'patch-nonces.json');
+  const buggySource = 'export const value = 1;\n';
+  await mkdir(path.dirname(sourcePath), { recursive: true });
+  await writeFile(sourcePath, buggySource, 'utf8');
+  await writeFile(patchSpecPath, JSON.stringify({
+    schemaVersion: 1,
+    allowedPaths: ['src/math.mjs'],
+  }), 'utf8');
+  const adapterArgs = [
+    ADAPTER, repository, 'README.md', 'test/math.test.mjs', patchSpecPath, nonceJournalPath, '--discover',
+  ];
+  const initial = invokeAdapterOnce(adapterArgs, 'initialState', {});
+  assert.equal(initial.ok, true, JSON.stringify(initial));
+  const manifest = {
+    tokenMap: {
+      entries: [
+        { schemaVersion: 1, token: 'tok_REPO_LIST_01', capabilityId: 'repo.list-files' },
+        { schemaVersion: 1, token: 'tok_REPO_READ_01', capabilityId: 'repo.read-file' },
+        { schemaVersion: 1, token: 'tok_REPO_TEST_01', capabilityId: 'repo.run-tests' },
+        { schemaVersion: 1, token: 'tok_REPO_APPLY_01', capabilityId: 'repo.apply-patch' },
+      ],
+    },
+  };
+  const response = invokeAdapterOnce(adapterArgs, 'transition', {
+    manifest,
+    state: initial.result.state,
+    request: {
+      schemaVersion: 1,
+      token: 'tok_REPO_APPLY_01',
+      basedOnVersion: initial.result.state.stateVersion,
+      policyVersion: 'policy-1',
+      constraintsDigest: 'sha256:' + 'a'.repeat(64),
+      executionNonce: 'execution:dynamic-invalid-target',
+      proposal: {
+        schemaVersion: 1,
+        targetPath: 'README.md',
+        expectedBeforeDigest: canonicalDigest({ content: buggySource }),
+        replacement: 'export const value = 2;\n',
+      },
+    },
+  });
+  try {
+    assert.equal(response.ok, false, JSON.stringify(response));
+    assert.match(response.error, /not authorized/u);
     assert.equal(await readFile(sourcePath, 'utf8'), buggySource);
     await assert.rejects(access(nonceJournalPath));
   } finally {
