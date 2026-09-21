@@ -38,6 +38,7 @@ const MAX_TREE_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 16 * 1024;
 const TEST_TIMEOUT_MS = 30_000;
 const MAX_MODEL_READ_PATH_BYTES = 4 * 1024;
+const MAX_MODEL_TEST_PATH_BYTES = 4 * 1024;
 const MAX_PATCH_BYTES = 128 * 1024;
 const MAX_PROPOSAL_BYTES = 64 * 1024;
 const MAX_MODEL_READ_CONTENT = 2 * 1024;
@@ -156,7 +157,7 @@ function transition(previous, request, manifest) {
     next = makeState(previous.revision + 1, null, request.executionNonce, previous.usedExecutionNonces, testCount);
     next.filePaths = repository.paths;
   } else if (capabilityId === 'repo.run-tests') {
-    const result = runTests();
+    const result = runTests(testPathForRequest(request));
     testCount += 1;
     next = makeState(previous.revision + 1, null, request.executionNonce, previous.usedExecutionNonces, testCount);
     next.lastTestStatus = result.status;
@@ -251,6 +252,14 @@ function observation(state) {
       {
         kind: 'repo-test-policy',
         testPath: normalizeRelative(testPath),
+        ...(discoveryEnabled ? {
+          allowedPaths: testPathsForPolicy(),
+          proposalSchema: {
+            schemaVersion: VERSION,
+            fields: ['path'],
+            maxPathBytes: MAX_MODEL_TEST_PATH_BYTES,
+          },
+        } : {}),
         timeoutMs: TEST_TIMEOUT_MS,
         maxOutputBytes: MAX_OUTPUT_BYTES,
       },
@@ -356,8 +365,33 @@ function readPathForRequest(request) {
   return normalized;
 }
 
-function runTests() {
-  const target = resolveRepositoryPath(testPath);
+function testPathForRequest(request) {
+  if (!discoveryEnabled || request.proposal === undefined) return testPath;
+  if (request.proposal === null || typeof request.proposal !== 'object' || Array.isArray(request.proposal)) {
+    throw new Error('repo test proposal must be an object');
+  }
+  const proposedPath = request.proposal.path;
+  if (typeof proposedPath !== 'string' || proposedPath.length === 0) {
+    throw new Error('repo test proposal path must be a non-empty string');
+  }
+  if (Buffer.byteLength(proposedPath, 'utf8') > MAX_MODEL_TEST_PATH_BYTES) {
+    throw new Error('repo test proposal path exceeds the example limit');
+  }
+  const normalized = normalizeRelative(proposedPath);
+  if (!testPathsForPolicy().includes(normalized)) {
+    throw new Error('repo test proposal path is not in the test policy');
+  }
+  return normalized;
+}
+
+function testPathsForPolicy() {
+  return scanRepository().paths.filter((candidate) => (
+    /^(?:test|tests)\/.*(?:\.test|\.spec)\.(?:mjs|cjs|js)$/u.test(candidate)
+  ));
+}
+
+function runTests(selectedTestPath = testPath) {
+  const target = resolveRepositoryPath(selectedTestPath);
   const status = lstatSync(target);
   if (!status.isFile() || status.isSymbolicLink()) throw new Error('run-tests only permits a regular test file');
   const relativeTestPath = path.relative(rootRealPath, target);

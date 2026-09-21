@@ -174,6 +174,47 @@ test('discovery-enabled repo WorldPort reads only a proposed path from its listi
   }
 });
 
+test('discovery-enabled repo WorldPort rejects a test path outside its test policy', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-discovery-test-boundary-e2e-'));
+  const repository = path.join(root, 'repository');
+  const adapterArgs = [ADAPTER, repository, READ_PATH, READ_PATH, '--discover'];
+  const manifest = {
+    tokenMap: {
+      entries: [
+        { schemaVersion: 1, token: 'tok_REPO_LIST_01', capabilityId: 'repo.list-files' },
+        { schemaVersion: 1, token: 'tok_REPO_READ_01', capabilityId: 'repo.read-file' },
+        { schemaVersion: 1, token: 'tok_REPO_TEST_01', capabilityId: 'repo.run-tests' },
+      ],
+    },
+  };
+  try {
+    await mkdir(path.join(repository, 'test'), { recursive: true });
+    await mkdir(path.join(repository, 'src'), { recursive: true });
+    await writeFile(path.join(repository, 'README.md'), 'repository readme\n');
+    await writeFile(path.join(repository, 'test', 'selected.test.mjs'), "import 'node:test';\n");
+    await writeFile(path.join(repository, 'src', 'not-a-test.mjs'), 'export const source = true;\n');
+
+    const initial = invokeAdapterOnce(adapterArgs, 'initialState', {});
+    assert.equal(initial.ok, true, JSON.stringify(initial));
+    const denied = invokeAdapterOnce(adapterArgs, 'transition', {
+      state: initial.result.state,
+      manifest,
+      request: {
+        token: 'tok_REPO_TEST_01',
+        executionNonce: 'discovery-test-denied',
+        basedOnVersion: initial.result.state.stateVersion,
+        policyVersion: 'policy-v1',
+        constraintsDigest: 'sha256:discovery-test-denied',
+        proposal: { path: 'src/not-a-test.mjs' },
+      },
+    });
+    assert.equal(denied.ok, false, JSON.stringify(denied));
+    assert.match(denied.error, /not in the test policy/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('repo WorldPort uses the same continuous Run and Replay envelope as a built-in WorldPort', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-matrix-e2e-'));
   const adapterConfig = path.join(root, 'adapter.json');
@@ -440,6 +481,122 @@ test('discovery-enabled repo WorldPort lets the model select a listed file throu
     assert.equal(replay.code, 0, JSON.stringify(replay));
     assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
     assert.equal(modelCalls, 2, 'replay must not call the model again');
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('discovery-enabled repo WorldPort lets the model select a bounded test path through the CLI', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-discovery-test-e2e-'));
+  const repository = path.join(root, 'repository');
+  const requests = [];
+  let modelCalls = 0;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const context = JSON.parse(body.messages[0].content.split('\n').at(-1));
+    requests.push(context);
+    const capabilityId = ['repo.list-files', 'repo.read-file', 'repo.run-tests'][modelCalls];
+    const capability = context.capabilities.find((item) => item.capabilityId === capabilityId);
+    assert.ok(capability, `model context is missing test-selection step ${modelCalls}`);
+    if (modelCalls === 2) {
+      assert.deepEqual(
+        context.observationEvidence.find((item) => item.kind === 'repo-test-policy'),
+        {
+          kind: 'repo-test-policy',
+          testPath: TEST_PATH,
+          allowedPaths: ['test/selected.test.mjs'],
+          timeoutMs: 30000,
+          maxOutputBytes: 16 * 1024,
+          proposalSchema: {
+            schemaVersion: 1,
+            fields: ['path'],
+            maxPathBytes: 4096,
+          },
+        },
+      );
+    }
+    modelCalls += 1;
+    const proposal = modelCalls === 2
+      ? { path: 'src/main.mjs' }
+      : modelCalls === 3
+        ? { path: 'test/selected.test.mjs' }
+        : undefined;
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({
+      id: 'repo-discovery-test-chat',
+      model: body.model,
+      choices: [{ message: { content: JSON.stringify({
+        token: capability.token,
+        ...(proposal === undefined ? {} : { proposal }),
+      }) } }],
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const env = {
+    ...process.env,
+    YI_AGENT_API_KEY: 'repo-discovery-test-local-secret',
+    YI_AGENT_API_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    YI_AGENT_MODEL: 'repo-discovery-test-local-model',
+  };
+  const adapterConfig = path.join(root, 'adapter.json');
+  const lab = path.join(root, 'lab');
+  try {
+    await mkdir(path.join(repository, 'src'), { recursive: true });
+    await mkdir(path.join(repository, 'test'), { recursive: true });
+    await writeFile(path.join(repository, 'README.md'), 'repository readme\n');
+    await writeFile(path.join(repository, 'src', 'main.mjs'), 'export const selected = true;\n');
+    await writeFile(path.join(repository, 'test', 'selected.test.mjs'), [
+      "import assert from 'node:assert/strict';",
+      "import { test } from 'node:test';",
+      "test('selected test passes', () => assert.equal(2 + 2, 4));",
+      '',
+    ].join('\n'));
+    await writeFile(adapterConfig, JSON.stringify({
+      executable: process.execPath,
+      args: [ADAPTER, repository, READ_PATH, TEST_PATH, '--discover'],
+      adapterId: 'repo-readonly-example-v1',
+      worldId: 'repo',
+      timeoutMs: 30000,
+    }));
+
+    const init = await invoke([
+      'init', '--lab', lab, '--world', 'repo', '--seed', 'repo-discovery-test-seed',
+      '--adapter', adapterConfig, '--json',
+    ], process.env);
+    assert.equal(init.code, 0, JSON.stringify(init));
+
+    const run = await invoke([
+      'agent', 'run', '--lab', lab, '--steps', '3', '--scenario', 'working-tree',
+      '--adapter', adapterConfig, '--goal', '发现文件、读取源码并选择测试验证', '--json',
+    ], env);
+    assert.equal(run.code, 0, JSON.stringify(run));
+    assert.equal(run.stdout[0].data.status, 'COMPLETED');
+    assert.equal(modelCalls, 3);
+    assert.equal(requests[2].observationEvidence.some((item) => item.kind === 'repo-test-policy'), true);
+
+    const runId = run.stdout[0].data.runId;
+    const store = await LabStore.open({ labPath: lab });
+    const events = (await store.readRun(runId)).events;
+    const stepEvents = events.filter((event) => event.kind === 'STEP');
+    assert.equal(stepEvents.length, 3);
+    assert.deepEqual(
+      stepEvents.map((event) => event.payload.afterState.worldState.lastAction),
+      ['repo.list-files', 'repo.read-file', 'repo.run-tests'],
+    );
+    assert.equal(stepEvents[1].payload.afterState.worldState.lastReadPath, 'src/main.mjs');
+    assert.equal(stepEvents[2].payload.afterState.worldState.lastTestStatus, 'PASS');
+
+    const replay = await invoke([
+      'replay', '--lab', lab, '--run', runId, '--adapter', adapterConfig, '--json',
+    ], process.env);
+    assert.equal(replay.code, 0, JSON.stringify(replay));
+    assert.equal(replay.stdout[0].data.verdict, 'CONSISTENT');
+    assert.equal(modelCalls, 3, 'replay must not call the model again');
   } finally {
     server.closeAllConnections?.();
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
