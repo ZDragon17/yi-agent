@@ -48,7 +48,7 @@ const MAX_FAILED_TEST_NAME_BYTES = 256;
 const MAX_NONCE_JOURNAL_BYTES = 2 * 1024 * 1024;
 const BEFORE_DIGEST_MODES = new Set(['fixed', 'current']);
 
-const positionalArgs = process.argv.slice(2).filter((argument) => !argument.startsWith('--'));
+const positionalArgs = collectPositionalArgs(process.argv.slice(2));
 const repositoryRoot = path.resolve(positionalArgs[0] ?? '.');
 const readPath = positionalArgs[1] ?? 'README.md';
 const testPath = positionalArgs[2] ?? 'test/agent/model-advisor.test.mjs';
@@ -61,6 +61,7 @@ if ((patchSpecPath === null) !== (nonceJournalPath === null)) {
 const patchSpec = patchSpecPath === null ? null : readPatchSpec(patchSpecPath);
 const discoveryEnabled = process.argv.includes('--discover');
 const dropPatchResponse = process.argv.includes('--drop-patch-response');
+const maxTestExecutions = readOptionalBoundedOption('--max-tests', 1, 4);
 if (patchSpec?.targetPath === null && !discoveryEnabled) {
   throw new Error('dynamic patch policy requires discovery mode');
 }
@@ -161,6 +162,9 @@ function transition(previous, request, manifest) {
     next = makeState(previous.revision + 1, null, request.executionNonce, previous.usedExecutionNonces, testCount);
     next.filePaths = repository.paths;
   } else if (capabilityId === 'repo.run-tests') {
+    if (maxTestExecutions !== null && testCount >= maxTestExecutions) {
+      throw new Error('repo.run-tests execution budget exhausted');
+    }
     const result = runTests(testPathForRequest(request));
     testCount += 1;
     next = makeState(previous.revision + 1, null, request.executionNonce, previous.usedExecutionNonces, testCount);
@@ -266,6 +270,7 @@ function observation(state) {
         } : {}),
         timeoutMs: TEST_TIMEOUT_MS,
         maxOutputBytes: MAX_OUTPUT_BYTES,
+        ...(maxTestExecutions === null ? {} : { maxExecutions: maxTestExecutions }),
       },
       {
         kind: 'repo-action',
@@ -396,6 +401,31 @@ function testPathsForPolicy() {
   return scanRepository().paths.filter((candidate) => (
     /^(?:test|tests)\/.*(?:\.test|\.spec)\.(?:mjs|cjs|js)$/u.test(candidate)
   ));
+}
+
+function readOptionalBoundedOption(name, minimum, maximum) {
+  const index = process.argv.indexOf(name);
+  if (index === -1) return null;
+  const value = process.argv[index + 1];
+  if (!/^\d+$/u.test(value ?? '')) throw new Error(`${name} requires an integer value`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be between ${minimum} and ${maximum}`);
+  }
+  return parsed;
+}
+
+function collectPositionalArgs(args) {
+  const positional = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === '--max-tests') {
+      index += 1;
+      continue;
+    }
+    if (!argument.startsWith('--')) positional.push(argument);
+  }
+  return positional;
 }
 
 function runTests(selectedTestPath = testPath) {

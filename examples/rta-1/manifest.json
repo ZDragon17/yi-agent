@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "type": "repo-benchmark",
+  "tasks": [
+    {
+      "id": "add-two-numbers",
+      "goal": "Find the failing addition test, repair the implementation, and verify it.",
+      "seed": "rta-1-add-two-numbers-001",
+      "files": [
+        {
+          "path": "package.json",
+          "content": "{\n  \"name\": \"rta-1-add-two-numbers\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n"
+        },
+        {
+          "path": "src/math.mjs",
+          "content": "export function add(left, right) { return left - right; }\n"
+        },
+        {
+          "path": "test/math.test.mjs",
+          "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { add } from '../src/math.mjs';\n\ntest('add returns the sum', () => assert.equal(add(2, 3), 5));\n"
+        }
+      ],
+      "readPath": "src/math.mjs",
+      "testPath": "test/math.test.mjs",
+      "patch": {
+        "allowedPaths": ["src/math.mjs"]
+      },
+      "expected": {
+        "files": {
+          "src/math.mjs": "export function add(left, right) { return left + right; }\n"
+        },
+        "lastTestStatus": "PASS"
+      },
+      "steps": 5,
+      "maxTests": 4
+    }
+  ]
+}

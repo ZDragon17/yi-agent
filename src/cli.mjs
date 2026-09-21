@@ -84,7 +84,9 @@ async function dispatch(command, options) {
     return runRepoBenchmark({
       manifestPath: requiredAbsolute(options, 'manifest'),
       outputPath: requiredAbsolute(options, 'output'),
-      modelAdapterPath: requiredAbsolute(options, 'model-adapter'),
+      ...(options['model-adapter'] === undefined
+        ? {}
+        : { modelAdapterPath: requiredAbsolute(options, 'model-adapter') }),
       resume: options.resume === true,
       ...(options.task === undefined ? {} : { taskId: options.task }),
     });

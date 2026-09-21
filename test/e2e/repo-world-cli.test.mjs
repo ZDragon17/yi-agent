@@ -37,6 +37,57 @@ test('repo WorldPort ignores its own runtime directory while scanning a reposito
   }
 });
 
+test('repo WorldPort rejects a fifth test execution when a bounded test budget is configured', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-test-budget-e2e-'));
+  const repository = path.join(root, 'repository');
+  const adapterArgs = [ADAPTER, repository, 'README.md', 'test/budget.test.mjs', '--discover', '--max-tests', '1'];
+  const manifest = {
+    tokenMap: {
+      entries: [
+        { schemaVersion: 1, token: 'tok_REPO_LIST_01', capabilityId: 'repo.list-files' },
+        { schemaVersion: 1, token: 'tok_REPO_READ_01', capabilityId: 'repo.read-file' },
+        { schemaVersion: 1, token: 'tok_REPO_TEST_01', capabilityId: 'repo.run-tests' },
+      ],
+    },
+  };
+  try {
+    await mkdir(path.join(repository, 'test'), { recursive: true });
+    await writeFile(path.join(repository, 'README.md'), 'budget fixture\n');
+    await writeFile(path.join(repository, 'test', 'budget.test.mjs'), "import { test } from 'node:test';\ntest('budget fixture', () => {});\n");
+    const initial = invokeAdapterOnce(adapterArgs, 'initialState', {});
+    assert.equal(initial.ok, true, JSON.stringify(initial));
+    const first = invokeAdapterOnce(adapterArgs, 'transition', {
+      state: initial.result.state,
+      manifest,
+      request: {
+        token: 'tok_REPO_TEST_01',
+        executionNonce: 'budget-test-1',
+        basedOnVersion: initial.result.state.stateVersion,
+        policyVersion: 'policy-v1',
+        constraintsDigest: 'sha256:budget',
+        proposal: { path: 'test/budget.test.mjs' },
+      },
+    });
+    assert.equal(first.ok, true, JSON.stringify(first));
+    const second = invokeAdapterOnce(adapterArgs, 'transition', {
+      state: first.result.nextWorldState,
+      manifest,
+      request: {
+        token: 'tok_REPO_TEST_01',
+        executionNonce: 'budget-test-2',
+        basedOnVersion: first.result.nextWorldState.stateVersion,
+        policyVersion: 'policy-v1',
+        constraintsDigest: 'sha256:budget',
+        proposal: { path: 'test/budget.test.mjs' },
+      },
+    });
+    assert.equal(second.ok, false, JSON.stringify(second));
+    assert.match(second.error, /execution budget exhausted/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('repo WorldPort exposes a bounded file listing only when discovery is enabled', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-discovery-e2e-'));
   const repository = path.join(root, 'repository');

@@ -10,7 +10,8 @@ const MAX_FILE_BYTES = 512 * 1024;
 const MAX_TASK_BYTES = 2 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 16 * 1024;
 const MAX_ID_LENGTH = 64;
-const MAX_STEPS = 64;
+const MAX_STEPS = 24;
+const MAX_TEST_EXECUTIONS = 4;
 const CLI = fileURLToPath(new URL('../../bin/yi-agent.mjs', import.meta.url));
 const REPO_ADAPTER = fileURLToPath(new URL('../../examples/repo-world/adapter.mjs', import.meta.url));
 
@@ -18,7 +19,9 @@ export async function runRepoBenchmark(input) {
   const source = requireRecord(input, 'repo benchmark input');
   const manifestPath = requireAbsolutePath(source.manifestPath, 'manifestPath');
   const outputPath = requireAbsolutePath(source.outputPath, 'outputPath');
-  const modelAdapterPath = requireAbsolutePath(source.modelAdapterPath, 'modelAdapterPath');
+  const modelAdapterPath = source.modelAdapterPath === undefined || source.modelAdapterPath === null
+    ? null
+    : requireAbsolutePath(source.modelAdapterPath, 'modelAdapterPath');
   const manifest = await readManifest(manifestPath);
   const selectedTasks = source.taskId === undefined
     ? manifest.tasks
@@ -104,6 +107,8 @@ async function runTask({ task, taskRoot, modelAdapterPath }) {
         patchSpecPath,
         nonceJournalPath,
         '--discover',
+        '--max-tests',
+        String(task.maxTests),
       ],
       adapterId: 'repo-writable-example-v1',
       worldId: 'repo',
@@ -116,11 +121,13 @@ async function runTask({ task, taskRoot, modelAdapterPath }) {
     ]);
     if (init.code !== 0) throw commandFailure('init', init);
 
-    const run = await runCli([
+    const runArgs = [
       'agent', 'run', '--lab', labPath, '--steps', String(task.steps),
       '--scenario', 'working-tree', '--adapter', adapterConfigPath,
-      '--model-adapter', modelAdapterPath, '--goal', task.goal, '--json',
-    ]);
+      ...(modelAdapterPath === null ? [] : ['--model-adapter', modelAdapterPath]),
+      '--goal', task.goal, '--json',
+    ];
+    const run = await runCli(runArgs);
     result.runId = run.stdout[0]?.data?.runId ?? null;
     const inspection = await runCli([
       'inspect', '--lab', labPath, '--adapter', adapterConfigPath, '--json',
@@ -281,7 +288,7 @@ function normalizeManifest(value) {
   }
   const ids = new Set();
   const tasks = value.tasks.map((task, index) => {
-    requireKeys(task, ['id', 'goal', 'seed', 'files', 'readPath', 'testPath', 'patch', 'expected', 'steps'], `tasks[${index}]`);
+    requireKeys(task, ['id', 'goal', 'seed', 'files', 'readPath', 'testPath', 'patch', 'expected', 'steps', 'maxTests'], `tasks[${index}]`);
     const id = boundedId(task.id, `tasks[${index}].id`);
     if (ids.has(id)) throw benchmarkError('INVALID_INPUT', 'Benchmark task ids must be unique.', { field: 'tasks', id });
     ids.add(id);
@@ -306,6 +313,7 @@ function normalizeManifest(value) {
       throw benchmarkError('INVALID_INPUT', 'expected.lastTestStatus is invalid.', { field: `tasks[${index}].expected.lastTestStatus` });
     }
     const steps = boundedInteger(task.steps, 1, MAX_STEPS, `tasks[${index}].steps`);
+    const maxTests = boundedInteger(task.maxTests, 1, MAX_TEST_EXECUTIONS, `tasks[${index}].maxTests`);
     const seed = boundedText(task.seed, `tasks[${index}].seed`);
     const goal = boundedText(task.goal, `tasks[${index}].goal`);
     return {
@@ -318,6 +326,7 @@ function normalizeManifest(value) {
       patch: { allowedPaths },
       expected: { files: expectedFiles, lastTestStatus: task.expected.lastTestStatus },
       steps,
+      maxTests,
     };
   });
   return { schemaVersion: 1, type: 'repo-benchmark', tasks };

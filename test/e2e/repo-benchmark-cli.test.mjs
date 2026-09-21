@@ -7,6 +7,58 @@ import { test } from 'node:test';
 
 const CLI = path.resolve('bin/yi-agent.mjs');
 
+test('RTA-1 canonical Node repository completes the first autonomous repair task', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-single-task-e2e-'));
+  const manifestPath = path.resolve('examples/rta-1/manifest.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const task = manifest.tasks[0];
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, {
+      [task.goal]: task.expected.files['src/math.mjs'],
+    });
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    assert.equal(result.stdout[0].data.status, 'PASS', JSON.stringify(result));
+    assert.equal(result.stdout[0].data.taskResults[0].replayVerdict, 'CONSISTENT');
+    assert.equal(
+      await readFile(path.join(result.stdout[0].data.taskResults[0].repositoryPath, 'src/math.mjs'), 'utf8'),
+      task.expected.files['src/math.mjs'],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('RTA-1 benchmark rejects decision and test budgets above the fixed limits', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-budget-boundary-e2e-'));
+  const sourceManifest = JSON.parse(await readFile(path.resolve('examples/rta-1/manifest.json'), 'utf8'));
+  const manifestPath = path.join(root, 'manifest.json');
+  try {
+    for (const [field, value] of [['steps', 25], ['maxTests', 5]]) {
+      const manifest = structuredClone(sourceManifest);
+      manifest.tasks[0][field] = value;
+      await writeFile(manifestPath, JSON.stringify(manifest), 'utf8');
+      const outputPath = path.join(root, `output-${field}`);
+      const result = await invoke([
+        'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+        '--model-adapter', path.join(root, 'missing-model.json'), '--json',
+      ]);
+      assert.equal(result.code, 64, JSON.stringify(result));
+      assert.equal(result.stdout[0].error.code, 'INVALID_INPUT');
+      await assert.rejects(() => readFile(path.join(outputPath, 'report.json')));
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('repo benchmark runs isolated tasks through the public agent and replay boundary', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-e2e-'));
   const manifestPath = path.join(root, 'benchmark.json');
@@ -157,6 +209,7 @@ function createTask(id, goal, buggySource, fixedSource) {
     testPath: 'test/math.test.mjs',
     patch: { allowedPaths: ['src/math.mjs'] },
     expected: { files: { 'src/math.mjs': fixedSource }, lastTestStatus: 'PASS' },
+    maxTests: 4,
     steps: 5,
   };
 }
