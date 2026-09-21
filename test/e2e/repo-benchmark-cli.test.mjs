@@ -95,6 +95,33 @@ test('RTA-1 benchmark rejects decision and test budgets above the fixed limits',
   }
 });
 
+test('repo benchmark retains a passing test after a later observation step', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-test-retention-e2e-'));
+  const sourceManifest = JSON.parse(await readFile(path.resolve('examples/rta-1/manifest.json'), 'utf8'));
+  const manifestPath = path.join(root, 'manifest.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    const task = sourceManifest.tasks[0];
+    task.steps = 6;
+    await writeFile(manifestPath, JSON.stringify(sourceManifest), 'utf8');
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, {
+      [task.goal]: task.expected.files['src/math.mjs'],
+    }, undefined, task.goal);
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    assert.equal(result.stdout[0].data.taskResults[0].acceptance.lastTestStatus, 'PASS');
+    assert.equal(result.stdout[0].data.taskResults[0].metrics.testExecutions, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('repo benchmark runs isolated tasks through the public agent and replay boundary', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-e2e-'));
   const manifestPath = path.join(root, 'benchmark.json');
@@ -255,13 +282,15 @@ function modelSource() {
     "import readline from 'node:readline';",
     'const replacements = JSON.parse(process.argv[2]);',
     'const defaultSequence = [\'repo.list-files\', \'repo.read-file\', \'repo.run-tests\', \'repo.apply-patch\', \'repo.run-tests\'];',
-    'const fastGoal = process.argv[3] ?? null;',
+    'const fastGoal = process.argv[3] || null;',
+    'const trailingGoal = process.argv[4] || null;',
     'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
     'rl.on(\'line\', (line) => {',
     '  const request = JSON.parse(line);',
     '  const prompt = request.payload?.prompt ?? \'\';',
     '  const context = JSON.parse(prompt.split(\'\\n\').at(-1));',
-    '  const sequence = context.goal === fastGoal ? [\'repo.apply-patch\'] : defaultSequence;',
+    '  const sequence = context.goal === fastGoal ? [\'repo.apply-patch\']',
+    '    : context.goal === trailingGoal ? [...defaultSequence, \'repo.read-file\'] : defaultSequence;',
     '  const capabilityId = sequence[context.step] ?? sequence.at(-1);',
     '  const capability = context.capabilities.find((item) => item.capabilityId === capabilityId);',
     '  const proposal = capabilityId === \'repo.read-file\' ? { path: \'src/math.mjs\' }',
@@ -277,10 +306,10 @@ function modelSource() {
   ].join('\n');
 }
 
-async function writeModelConfig(filePath, modelPath, replacements, fastGoal = undefined) {
+async function writeModelConfig(filePath, modelPath, replacements, fastGoal = undefined, trailingGoal = undefined) {
   await writeFile(filePath, JSON.stringify({
     executable: process.execPath,
-    args: [modelPath, JSON.stringify(replacements), ...(fastGoal === undefined ? [] : [fastGoal])],
+    args: [modelPath, JSON.stringify(replacements), fastGoal ?? '', trailingGoal ?? ''],
     model: 'repo-benchmark-fixture',
     timeoutMs: 30000,
   }), 'utf8');

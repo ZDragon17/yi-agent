@@ -178,6 +178,12 @@ function transition(previous, request, manifest) {
     next.lastPatchBeforeDigest = patchResult.beforeDigest;
     next.lastPatchAfterDigest = patchResult.afterDigest;
   }
+  if (capabilityId !== 'repo.run-tests') {
+    next.lastTestStatus = previous.lastTestStatus;
+    next.lastTestExitCode = previous.lastTestExitCode;
+    next.lastTestOutputDigest = previous.lastTestOutputDigest;
+    next.lastTestDiagnostic = previous.lastTestDiagnostic;
+  }
   const nextRepository = scanRepository();
   next.rootDigest = nextRepository.rootDigest;
   next.fileCount = nextRepository.fileCount;
