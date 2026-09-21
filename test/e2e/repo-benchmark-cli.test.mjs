@@ -286,6 +286,38 @@ test('repo benchmark retains a passing test after a later observation step', asy
   }
 });
 
+test('repo benchmark continues from a patched but unverified Run', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-continuation-e2e-'));
+  const sourceManifest = JSON.parse(await readFile(path.resolve('examples/rta-1/manifest.json'), 'utf8'));
+  const manifestPath = path.join(root, 'manifest.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    const task = sourceManifest.tasks[0];
+    task.steps = 4;
+    await writeFile(manifestPath, JSON.stringify(sourceManifest), 'utf8');
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, {
+      [task.goal]: task.expected.files['src/math.mjs'],
+    });
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    const taskResult = result.stdout[0].data.taskResults[0];
+    assert.equal(taskResult.status, 'PASS');
+    assert.ok(taskResult.metrics.kernelSteps > task.steps);
+    assert.ok(taskResult.metrics.kernelSteps <= 24);
+    assert.ok(taskResult.metrics.testExecutions > 1);
+    assert.ok(taskResult.metrics.testExecutions <= task.maxTests);
+    assert.equal(taskResult.replayVerdict, 'CONSISTENT');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('repo benchmark runs isolated tasks through the public agent and replay boundary', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-e2e-'));
   const manifestPath = path.join(root, 'benchmark.json');

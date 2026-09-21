@@ -143,18 +143,27 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
     ]);
     if (init.code !== 0) throw commandFailure('init', init);
 
-    const runArgs = [
-      'agent', 'run', '--lab', labPath, '--steps', String(task.steps),
-      '--scenario', 'working-tree', '--adapter', adapterConfigPath,
-      ...(modelAdapterPath === null ? [] : ['--model-adapter', modelAdapterPath]),
-      '--goal', task.goal, '--json',
-    ];
-    const run = await runCli(runArgs);
-    result.runId = run.stdout[0]?.data?.runId ?? null;
-    const inspection = await runCli([
-      'inspect', '--lab', labPath, '--adapter', adapterConfigPath, '--json',
-    ]);
-    if (inspection.code === 0) {
+    let previousKernelStep = -1;
+    let lastRunFailure = null;
+    let lastRun = null;
+    for (let attempt = 0; attempt < MAX_STEPS; attempt += 1) {
+      const remainingSteps = MAX_STEPS - Math.max(0, result.metrics.kernelSteps ?? 0);
+      if (remainingSteps === 0) break;
+      const runArgs = [
+        'agent', 'run', '--lab', labPath, '--steps', String(Math.min(task.steps, remainingSteps)),
+        '--scenario', 'working-tree', '--adapter', adapterConfigPath,
+        ...(modelAdapterPath === null ? [] : ['--model-adapter', modelAdapterPath]),
+        '--goal', task.goal, '--json',
+      ];
+      const run = await runCli(runArgs);
+      lastRun = run;
+      result.runId = run.stdout[0]?.data?.runId ?? result.runId;
+      if (run.code !== 0) lastRunFailure = commandFailure('agent run', run);
+
+      const inspection = await runCli([
+        'inspect', '--lab', labPath, '--adapter', adapterConfigPath, '--json',
+      ]);
+      if (inspection.code !== 0) throw commandFailure('inspect', inspection);
       const current = inspection.stdout[0]?.data?.current;
       result.acceptance = await evaluateAcceptance(task, repositoryPath, current);
       result.metrics = {
@@ -162,16 +171,25 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
         testExecutions: Number.isSafeInteger(current?.worldState?.testCount) ? current.worldState.testCount : null,
         operatorIntervention: false,
       };
+      if (result.acceptance.passed) break;
+
+      const filesMatch = result.acceptance.files.length > 0 &&
+        result.acceptance.files.every((file) => file.matches);
+      const canContinue = run.code !== 0 || filesMatch;
+      const kernelStep = result.metrics.kernelSteps ?? 0;
+      if (!canContinue || kernelStep <= previousKernelStep) break;
+      previousKernelStep = kernelStep;
     }
     if (result.runId !== null) {
       const replay = await runCli([
-        'replay', '--lab', labPath, '--run', result.runId,
+        'replay', '--lab', labPath, '--chain',
         '--adapter', adapterConfigPath, '--json',
       ]);
       result.replayVerdict = replay.stdout[0]?.data?.verdict ?? null;
       if (replay.code !== 0) throw commandFailure('replay', replay);
     }
-    if (run.code !== 0) throw commandFailure('agent run', run);
+    if (lastRun === null) throw benchmarkError('BENCHMARK_FAILED', 'Task did not create a Run.', { taskId: task.id });
+    if (!result.acceptance.passed && lastRun.code !== 0 && lastRunFailure !== null) throw lastRunFailure;
     if (!result.acceptance.passed) {
       throw benchmarkError('BENCHMARK_FAILED', 'Task acceptance did not pass.', {
         taskId: task.id,
@@ -262,8 +280,7 @@ async function verifyCompletedTask(task, result, outputPath) {
     const acceptance = await evaluateAcceptance(task, repositoryPath, inspection.stdout[0]?.data?.current);
     if (!acceptance.passed) return false;
     const replay = await runCli([
-      'replay', '--lab', labPath, '--run', result.runId,
-      '--adapter', adapterConfigPath, '--json',
+      'replay', '--lab', labPath, '--chain', '--adapter', adapterConfigPath, '--json',
     ]);
     return replay.code === 0 && replay.stdout[0]?.data?.verdict === 'CONSISTENT';
   } catch {

@@ -429,7 +429,7 @@ yi-agent repo benchmark `
 
 `--model-adapter` 可省略。省略时，任务沿用 `agent run` 的 `YI_AGENT_PROVIDER`、`YI_AGENT_API_KEY`、`YI_AGENT_API_BASE_URL` 和 `YI_AGENT_MODEL` 配置，适合接入真实模型或本地 API 桥；指定时则使用受校验的进程模型配置，适合离线复现实验。
 
-每个任务按 `init → agent run → inspect → replay` 执行。验收会比较声明的文件内容和最终测试状态，并要求 Replay 返回 `CONSISTENT`。每个任务完成后都会更新 `report.json`；恢复时会重新检查已通过任务的文件和 Replay，未完成任务进入新的 `attempt-N` 目录，旧证据不会被覆盖。报告保存任务状态、repository/Lab 路径、Run ID、Replay 结果、验收明细、失败原因和运行指标（实际 kernel steps、测试执行次数、人工介入标记）。任务失败会继续执行同一清单中的其他任务，命令最终返回非零退出码；清单本身无效则在创建输出目录前拒绝。
+每个任务先 `init`，再运行一个或多个受限 Run。单次 Run 使用任务声明的 `steps` 步；如果文件已经达到预期但测试还没完成，或本次 Run 可检查但返回失败，编排层会从同一个 Lab 继续运行，累计 Kernel 步数不超过 24，测试执行次数不超过 4。最终验收会比较声明的文件内容和测试状态，并要求整条 Run 链 Replay 返回 `CONSISTENT`。每个任务完成后都会更新 `report.json`；恢复时会重新检查已通过任务的文件和 Replay，未完成任务进入新的 `attempt-N` 目录，旧证据不会被覆盖。报告保存任务状态、repository/Lab 路径、Run ID、Replay 结果、验收明细、失败原因和运行指标（实际 kernel steps、测试执行次数、人工介入标记）。任务失败会继续执行同一清单中的其他任务，命令最终返回非零退出码；清单本身无效则在创建输出目录前拒绝。
 
 `--learning-profile t0` 是无跨任务经验的基线；`--learning-profile t1` 会把已经完成任务的账本压缩成有界 `experience.json`，并在下一个独立 repository 的 WorldPort observation 中提供 capability 工作流、测试次数和 Replay 结论。T1 不共享源码、补丁、目标答案或 Lab 状态，也不把经验当成事实或权限；模型仍必须通过同一 Kernel、WorldPort、独立测试和 Replay。经验来自已完成 Run 的账本，而不是模型自报结果。两种 profile 不能在同一输出目录间切换，避免把两组实验的证据混在一起。
 
