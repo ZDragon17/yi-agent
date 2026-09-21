@@ -135,6 +135,26 @@ test('model advisor receives bounded WorldPort evidence without changing the tok
   assert.match(result.observationDigest, /^sha256:[0-9a-f]{64}$/u);
 });
 
+test('model advisor explains how bounded workflow evidence may guide the next action', () => {
+  const prompt = buildDecisionPrompt({
+    observation: { vector: [1], stateVersion: 'state-1', intervalId: 'interval-1' },
+    observationEvidence: [{
+      kind: 'repo-experience',
+      entries: [{
+        taskId: 'prior-task',
+        workflow: ['repo.run-tests', 'repo.read-file', 'repo.apply-patch'],
+        testExecutions: 2,
+        replayVerdict: 'CONSISTENT',
+      }],
+    }],
+    capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
+    memory: {},
+  });
+  assert.match(prompt, /completed workflows/u);
+  assert.match(prompt, /current observable prefix matches a workflow/u);
+  assert.match(prompt, /Never copy a historical proposal/u);
+});
+
 test('model advisor receives only a bounded candidate history', async () => {
   let prompt;
   const advisor = createModelAdvisor({
