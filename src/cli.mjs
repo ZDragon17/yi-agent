@@ -23,6 +23,7 @@ import {
   evaluateLabsCounterfactualSet,
 } from './application/counterfactual-service.mjs';
 import { runExperimentCompare } from './application/experiment-compare-service.mjs';
+import { runRepoBenchmark } from './application/repo-benchmark.mjs';
 
 export async function main(argv, io = defaultIo()) {
   const json = argv.includes('--json');
@@ -34,7 +35,7 @@ export async function main(argv, io = defaultIo()) {
     const { command, options } = parseArguments(argv);
     if (command === 'ui') return await dispatchUi(options, io, json);
     const data = await dispatch(command, options);
-    const exitCode = data?.status === 'HALTED' || data?.verdict === 'FALSIFIED' ? 2 :
+    const exitCode = data?.status === 'HALTED' || data?.status === 'FAIL' || data?.verdict === 'FALSIFIED' ? 2 :
       data?.verdict === 'INCONSISTENT' ? 3 : 0;
     writeSuccess(io, data, json);
     return exitCode;
@@ -76,6 +77,17 @@ async function dispatch(command, options) {
   if (command === 'agent') return dispatchAgent(options);
   if (command === 'api') return dispatchApi(options);
   if (command === 'adapter') return dispatchAdapter(options);
+  if (command === 'repo') {
+    if (options.repoOperation !== 'benchmark') {
+      throw cliError('INVALID_INPUT', `Unsupported repo operation: ${options.repoOperation ?? '(missing)'}`, {}, 64);
+    }
+    return runRepoBenchmark({
+      manifestPath: requiredAbsolute(options, 'manifest'),
+      outputPath: requiredAbsolute(options, 'output'),
+      modelAdapterPath: requiredAbsolute(options, 'model-adapter'),
+      ...(options.task === undefined ? {} : { taskId: options.task }),
+    });
+  }
   if (command === 'ask') return askApi(options);
   if (command === 'effect') return dispatchEffect(options);
   if (command === 'experiment') {
@@ -470,6 +482,13 @@ function parseArguments(argv) {
     }
     options.adapterOperation = operation;
   }
+  if (command === 'repo') {
+    const operation = args.shift();
+    if (operation !== 'benchmark') {
+      throw cliError('INVALID_INPUT', `Unsupported repo operation: ${operation ?? '(missing)'}`, {}, 64);
+    }
+    options.repoOperation = operation;
+  }
   if (command === 'agent') {
     const operation = args.shift();
     if (!['run', 'loop'].includes(operation)) {
@@ -504,6 +523,7 @@ function parseArguments(argv) {
     agent: ['agentOperation', 'lab', 'steps', 'runs', 'forever', 'resume', 'auto-recover', 'require-recovery', 'auto-plan', 'kernel-only', 'run-id', 'scenario', 'adapter', 'model-adapter', 'policy', 'goal', 'goal-plan', 'randomized-trial', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
     api: ['apiOperation'],
     adapter: ['adapterOperation', 'adapter', 'require-recovery'],
+    repo: ['repoOperation', 'manifest', 'output', 'model-adapter', 'task'],
     ask: ['prompt', 'prompt-file'],
     init: ['lab', 'lab-id', 'world', 'seed', 'adapter'],
     run: ['lab', 'run-id', 'steps', 'scenario', 'adapter', 'max-cycles', 'stagnation-limit', 'planning-horizon'],
@@ -795,6 +815,7 @@ function helpText() {
     'API:',
     '  yi-agent api test [--json]',
     '  yi-agent adapter test --adapter CONFIG [--require-recovery] [--json]     只探针外部 WorldPort，不创建实验室',
+    '  yi-agent repo benchmark --manifest PATH --output DIR --model-adapter CONFIG [--task ID] [--json]   隔离运行一组 repo 任务并验收 Replay',
     '  yi-agent ask --prompt TEXT [--json]',
     '  yi-agent ask --prompt - [--json]              从 stdin 读取',
     '  yi-agent ask --prompt-file PATH [--json]',

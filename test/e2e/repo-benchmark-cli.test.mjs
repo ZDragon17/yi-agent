@@ -1,0 +1,156 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+
+const CLI = path.resolve('bin/yi-agent.mjs');
+
+test('repo benchmark runs isolated tasks through the public agent and replay boundary', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-e2e-'));
+  const manifestPath = path.join(root, 'benchmark.json');
+  const modelPath = path.join(root, 'benchmark-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  const tasks = [
+    createTask('add-task', 'task:add', 'export function add(left, right) { return left - right; }\n', 'export function add(left, right) { return left + right; }\n'),
+    createTask('multiply-task', 'task:multiply', 'export function multiply(left, right) { return left / right; }\n', 'export function multiply(left, right) { return left * right; }\n'),
+  ];
+  try {
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, type: 'repo-benchmark', tasks }), 'utf8');
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeFile(modelConfigPath, JSON.stringify({
+      executable: process.execPath,
+      args: [modelPath, JSON.stringify(Object.fromEntries(tasks.map((task) => [task.goal, task.expected.files['src/math.mjs']])) )],
+      model: 'repo-benchmark-fixture',
+      timeoutMs: 30000,
+    }), 'utf8');
+
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--json',
+    ]);
+    assert.equal(result.code, 0, JSON.stringify(result));
+    assert.equal(result.stdout.length, 1);
+    assert.equal(result.stdout[0].ok, true, JSON.stringify(result));
+    const report = result.stdout[0].data;
+    assert.equal(report.status, 'PASS');
+    assert.equal(report.taskResults.length, 2);
+    assert.deepEqual(report.taskResults.map((task) => task.status), ['PASS', 'PASS']);
+    assert.deepEqual(report.taskResults.map((task) => task.replayVerdict), ['CONSISTENT', 'CONSISTENT']);
+    assert.notEqual(report.taskResults[0].repositoryPath, report.taskResults[1].repositoryPath);
+    assert.equal(await readFile(path.join(report.taskResults[0].repositoryPath, 'src/math.mjs'), 'utf8'), tasks[0].expected.files['src/math.mjs']);
+    assert.equal(await readFile(path.join(report.taskResults[1].repositoryPath, 'src/math.mjs'), 'utf8'), tasks[1].expected.files['src/math.mjs']);
+    assert.deepEqual(JSON.parse(await readFile(path.join(outputPath, 'report.json'), 'utf8')), report);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('repo benchmark rejects a path escape before creating output', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-benchmark-invalid-e2e-'));
+  const manifestPath = path.join(root, 'benchmark.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    await writeFile(manifestPath, JSON.stringify({
+      schemaVersion: 1,
+      type: 'repo-benchmark',
+      tasks: [{
+        id: 'escape',
+        goal: 'task:escape',
+        seed: 'escape-seed',
+        files: [{ path: '../outside.mjs', content: 'export default 1;\n' }],
+        readPath: '../outside.mjs',
+        testPath: 'test/math.test.mjs',
+        patch: { allowedPaths: ['../outside.mjs'] },
+        expected: { files: {} },
+      }],
+    }), 'utf8');
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', path.join(root, 'missing-model.json'), '--json',
+    ]);
+    assert.equal(result.code, 64, JSON.stringify(result));
+    assert.equal(result.stdout[0].ok, false);
+    assert.equal(result.stdout[0].error.code, 'INVALID_INPUT');
+    await assert.rejects(() => readFile(path.join(outputPath, 'report.json')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function createTask(id, goal, buggySource, fixedSource) {
+  return {
+    id,
+    goal,
+    seed: `${id}-seed`,
+    files: [
+      { path: 'src/math.mjs', content: buggySource },
+      {
+        path: 'test/math.test.mjs',
+        content: id.startsWith('add')
+          ? [
+              "import assert from 'node:assert/strict';",
+              "import { test } from 'node:test';",
+              "import { add } from '../src/math.mjs';",
+              "test('add returns the sum', () => assert.equal(add(2, 3), 5));",
+              '',
+            ].join('\n')
+          : [
+              "import assert from 'node:assert/strict';",
+              "import { test } from 'node:test';",
+              "import { multiply } from '../src/math.mjs';",
+              "test('multiply returns the product', () => assert.equal(multiply(2, 3), 6));",
+              '',
+            ].join('\n'),
+      },
+    ],
+    readPath: 'src/math.mjs',
+    testPath: 'test/math.test.mjs',
+    patch: { allowedPaths: ['src/math.mjs'] },
+    expected: { files: { 'src/math.mjs': fixedSource }, lastTestStatus: 'PASS' },
+    steps: 5,
+  };
+}
+
+function modelSource() {
+  return [
+    "import readline from 'node:readline';",
+    'const replacements = JSON.parse(process.argv[2]);',
+    'const sequence = [\'repo.list-files\', \'repo.read-file\', \'repo.run-tests\', \'repo.apply-patch\', \'repo.run-tests\'];',
+    'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
+    'rl.on(\'line\', (line) => {',
+    '  const request = JSON.parse(line);',
+    '  const prompt = request.payload?.prompt ?? \'\';',
+    '  const context = JSON.parse(prompt.split(\'\\n\').at(-1));',
+    '  const capabilityId = sequence[context.step] ?? sequence.at(-1);',
+    '  const capability = context.capabilities.find((item) => item.capabilityId === capabilityId);',
+    '  const proposal = capabilityId === \'repo.read-file\' ? { path: \'src/math.mjs\' }',
+    '    : capabilityId === \'repo.run-tests\' ? { path: \'test/math.test.mjs\' }',
+    '      : capabilityId === \'repo.apply-patch\' ? {',
+    '          schemaVersion: 1, targetPath: \'src/math.mjs\',',
+    '          expectedBeforeDigest: context.observationEvidence.find((item) => item.kind === \'repo-patch-policy\').allowedPaths[0].expectedBeforeDigest,',
+    '          replacement: replacements[context.goal],',
+    '        } : undefined;',
+    '  process.stdout.write(JSON.stringify({ protocol: \'yi-model-cli\', version: 1, id: request.id, ok: true,',
+    '    result: { model: \'repo-benchmark-fixture\', content: JSON.stringify({ token: capability.token, ...(proposal === undefined ? {} : { proposal }) }) } }) + \'\\n\');',
+    '});',
+  ].join('\n');
+}
+
+function invoke(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({
+      code,
+      stdout: stdout.trim().length === 0 ? [] : stdout.trim().split(/\r?\n/u).map((line) => JSON.parse(line)),
+      stderr,
+    }));
+  });
+}

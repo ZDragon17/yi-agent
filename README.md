@@ -403,6 +403,24 @@ powershell -ExecutionPolicy Bypass `
 
 repo 补丁策略默认是 `fixed`：修改前摘要固定，外部文件漂移或下一次修改都会被拒绝。实验性 `beforeDigestMode: current` 必须由 patch spec 显式声明，此时每次 transition 都重新读取当前普通文件的 before 摘要，并保持 adapter descriptor/worldVersion 不变；它只解决“同一受控目标的连续候选修改”这一 WorldPort 状态演化问题，不扩大目标路径或写入权限。
 
+### Repo Benchmark：把一次实验变成可重复任务
+
+单个 repo Lab 适合验证协议边界，但不适合比较多个任务。`repo benchmark` 用一份 JSON 清单描述一组小型仓库任务，并为每个任务创建独立的 repository、Lab、patch nonce 日志和结果记录。它仍调用公开 CLI，不绕过 Kernel、WorldPort、账本或 Replay。
+
+```powershell
+yi-agent repo benchmark `
+  --manifest C:\bench\repo-tasks.json `
+  --output C:\bench\run-001 `
+  --model-adapter C:\bench\model-adapter.json `
+  --json
+```
+
+清单使用 `schemaVersion: 1`、`type: "repo-benchmark"`。每个任务声明 `id`、`goal`、`seed`、初始 `files`、`readPath`、`testPath`、`patch.allowedPaths`、`expected.files`、`expected.lastTestStatus` 和 `steps`。路径必须是相对路径，补丁目标必须来自任务文件集合，任务和文件数量、文本大小都有上限。输出目录必须是新目录；这样一次 Benchmark 的证据不会覆盖上一轮结果。
+
+每个任务按 `init → agent run → inspect → replay` 执行。验收会比较声明的文件内容和最终测试状态，并要求 Replay 返回 `CONSISTENT`。`report.json` 保存任务状态、repository/Lab 路径、Run ID、Replay 结果、验收明细和失败原因。任务失败会继续执行同一清单中的其他任务，命令最终返回非零退出码；清单本身无效则在创建输出目录前拒绝。
+
+这个命令解决的是实验可重复性和任务间隔离，不等于模型已经具备长期自主规划能力。真实模型适配器仍需由外部配置提供，任务验收也必须由人选择可信的文件和测试条件。
+
 每个模型候选还会由宿主按 `{token, proposal}` 生成稳定的 `candidateDigest`，并写入 policy evidence；账本和 Replay 会校验摘要确实对应候选内容。它只解决“同一个动作下不同候选不能互相混淆”的身份问题，不代表候选已经正确，也不代表 Kernel 已经学会跨候选泛化。
 
 当候选进入 STEP 后，账本还会记录 `candidateOutcome`：候选是否被采用、WorldPort 回执状态，以及验证的误差、归因、置信度和是否可学习。Replay 会重新计算该结果；这为后续的候选历史和修复成本实验提供共同证据，但当前仍不会把它自动写入 Kernel 的动作模型。
