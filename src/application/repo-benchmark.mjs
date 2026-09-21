@@ -16,6 +16,16 @@ const MAX_TEST_EXECUTIONS = 4;
 const MAX_EXPERIENCE_ENTRIES = 32;
 const MAX_EXPERIENCE_STEPS = 24;
 const MAX_CANDIDATE_SUMMARY_REVIEWS = 24;
+const EXPERIENCE_OUTCOME_STATUSES = new Set(['PASS', 'FAIL']);
+const EXPERIENCE_FAILURE_CLASSES = new Set([
+  'NONE',
+  'RUN_FAILURE',
+  'TEST_FAILURE',
+  'ACCEPTANCE_MISMATCH',
+  'REPLAY_FAILURE',
+  'UNKNOWN',
+]);
+const EXPERIENCE_TEST_STATUSES = new Set(['PASS', 'FAIL', null]);
 const CLI = fileURLToPath(new URL('../../bin/yi-agent.mjs', import.meta.url));
 const REPO_ADAPTER = fileURLToPath(new URL('../../examples/repo-world/adapter.mjs', import.meta.url));
 
@@ -68,7 +78,7 @@ export async function runRepoBenchmark(input) {
     if (previous?.status === 'PASS' && await verifyCompletedTask(task, previous, outputPath)) continue;
     const taskRoot = await nextTaskRoot(outputPath, task.id);
     const result = await runTask({ task, taskRoot, modelAdapterPath, experiencePath: experience === null ? null : experiencePath });
-    if (result.status === 'PASS' && experience !== null) {
+    if (result.replayVerdict === 'CONSISTENT' && experience !== null) {
       experience = await appendExperience(experience, result);
       await writeJson(experiencePath, experience);
     }
@@ -278,12 +288,13 @@ function validateExperience(value) {
   }
   for (const entry of value.entries) {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry) ||
-        Object.keys(entry).some((key) => !['taskId', 'workflow', 'testExecutions', 'replayVerdict', 'candidateSummary'].includes(key)) ||
+        Object.keys(entry).some((key) => !['taskId', 'workflow', 'testExecutions', 'replayVerdict', 'outcome', 'candidateSummary'].includes(key)) ||
         typeof entry.taskId !== 'string' || entry.taskId.length === 0 || entry.taskId.length > MAX_ID_LENGTH ||
         !Array.isArray(entry.workflow) || entry.workflow.length > MAX_EXPERIENCE_STEPS ||
         entry.workflow.some((capabilityId) => typeof capabilityId !== 'string' || capabilityId.length === 0 || capabilityId.length > 128) ||
         !Number.isSafeInteger(entry.testExecutions) || entry.testExecutions < 0 || entry.testExecutions > MAX_TEST_EXECUTIONS ||
         entry.replayVerdict !== 'CONSISTENT' ||
+        (entry.outcome !== undefined && !isValidExperienceOutcome(entry.outcome)) ||
         (entry.candidateSummary !== undefined && !isValidCandidateSummary(entry.candidateSummary))) {
       throw benchmarkError('CONFLICT', 'Benchmark experience checkpoint is invalid.', { field: 'experience.entries' });
     }
@@ -293,7 +304,9 @@ function validateExperience(value) {
 
 async function appendExperience(experience, result) {
   const store = await LabStore.open({ labPath: result.labPath });
-  const runIds = result.runIds.length > 0 ? result.runIds : [result.runId];
+  const runIds = result.runIds.length > 0
+    ? result.runIds
+    : result.runId === null ? [] : [result.runId];
   const runs = await Promise.all(runIds.map((runId) => store.readRun(runId)));
   const capabilityByToken = new Map(store.manifest.tokenMap.entries.map((entry) => [entry.token, entry.capabilityId]));
   const steps = runs.flatMap((run) => run.events
@@ -302,22 +315,50 @@ async function appendExperience(experience, result) {
     .filter((capabilityId) => capabilityId !== null))
     .slice(0, MAX_EXPERIENCE_STEPS);
   const runIdSet = new Set(runIds);
-  const candidateSummary = summarizeCandidateOutcomes(
-    (await store.readCandidateOutcomes(MAX_CANDIDATE_SUMMARY_REVIEWS))
+  const candidateSummary = summarizeCandidateOutcomes(runIds.length === 0
+    ? []
+    : (await store.readCandidateOutcomes(MAX_CANDIDATE_SUMMARY_REVIEWS))
       .filter((entry) => runIdSet.has(entry.runId))
-      .map((entry) => entry.candidateOutcome),
-  );
+      .map((entry) => entry.candidateOutcome));
   const entry = {
     taskId: result.id,
     workflow: steps,
     testExecutions: result.metrics.testExecutions,
     replayVerdict: result.replayVerdict,
+    outcome: experienceOutcome(result),
     candidateSummary,
   };
   return {
     ...experience,
     entries: [...experience.entries, entry].slice(-MAX_EXPERIENCE_ENTRIES),
   };
+}
+
+function experienceOutcome(result) {
+  return {
+    status: result.status,
+    failureClass: result.status === 'PASS' ? 'NONE' : classifyFailure(result),
+    lastTestStatus: result.acceptance.lastTestStatus,
+  };
+}
+
+function classifyFailure(result) {
+  if (result.replayVerdict !== 'CONSISTENT') return 'REPLAY_FAILURE';
+  if (result.failure?.context?.command === 'agent run') return 'RUN_FAILURE';
+  if (result.acceptance.lastTestStatus === 'FAIL') return 'TEST_FAILURE';
+  if (result.acceptance.passed === false) return 'ACCEPTANCE_MISMATCH';
+  return 'UNKNOWN';
+}
+
+function isValidExperienceOutcome(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).every((key) => ['status', 'failureClass', 'lastTestStatus'].includes(key)) &&
+    EXPERIENCE_OUTCOME_STATUSES.has(value.status) &&
+    EXPERIENCE_FAILURE_CLASSES.has(value.failureClass) &&
+    EXPERIENCE_TEST_STATUSES.has(value.lastTestStatus) &&
+    (value.status === 'PASS'
+      ? value.failureClass === 'NONE'
+      : value.failureClass !== 'NONE');
 }
 
 function summarizeCandidateOutcomes(outcomes) {

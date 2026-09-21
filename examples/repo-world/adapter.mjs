@@ -50,6 +50,16 @@ const MAX_EXPERIENCE_BYTES = 64 * 1024;
 const MAX_EXPERIENCE_ENTRIES = 32;
 const MAX_EXPERIENCE_STEPS = 24;
 const MAX_CANDIDATE_SUMMARY_REVIEWS = 24;
+const EXPERIENCE_OUTCOME_STATUSES = new Set(['PASS', 'FAIL']);
+const EXPERIENCE_FAILURE_CLASSES = new Set([
+  'NONE',
+  'RUN_FAILURE',
+  'TEST_FAILURE',
+  'ACCEPTANCE_MISMATCH',
+  'REPLAY_FAILURE',
+  'UNKNOWN',
+]);
+const EXPERIENCE_TEST_STATUSES = new Set(['PASS', 'FAIL', null]);
 const BEFORE_DIGEST_MODES = new Set(['fixed', 'current']);
 
 const positionalArgs = collectPositionalArgs(process.argv.slice(2));
@@ -459,13 +469,14 @@ function readExperienceLedger() {
   }
   const entries = value.entries.map((entry) => {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry) ||
-        Object.keys(entry).some((key) => !['taskId', 'workflow', 'testExecutions', 'replayVerdict', 'candidateSummary'].includes(key)) ||
+        Object.keys(entry).some((key) => !['taskId', 'workflow', 'testExecutions', 'replayVerdict', 'outcome', 'candidateSummary'].includes(key)) ||
         typeof entry.taskId !== 'string' || entry.taskId.length === 0 ||
         entry.taskId.length > 64 ||
         !Array.isArray(entry.workflow) || entry.workflow.length > MAX_EXPERIENCE_STEPS ||
         entry.workflow.some((capabilityId) => typeof capabilityId !== 'string' || capabilityId.length === 0 || capabilityId.length > 128) ||
         !Number.isSafeInteger(entry.testExecutions) || entry.testExecutions < 0 || entry.testExecutions > 4 ||
         entry.replayVerdict !== 'CONSISTENT' ||
+        (entry.outcome !== undefined && !isValidExperienceOutcome(entry.outcome)) ||
         (entry.candidateSummary !== undefined && !isValidCandidateSummary(entry.candidateSummary))) {
       throw new Error('experience ledger entry is invalid');
     }
@@ -474,10 +485,22 @@ function readExperienceLedger() {
       workflow: [...entry.workflow],
       testExecutions: entry.testExecutions,
       replayVerdict: entry.replayVerdict,
+      ...(entry.outcome === undefined ? {} : { outcome: { ...entry.outcome } }),
       ...(entry.candidateSummary === undefined ? {} : { candidateSummary: { ...entry.candidateSummary } }),
     };
   });
   return { schemaVersion: VERSION, type: 'repo-experience', entries };
+}
+
+function isValidExperienceOutcome(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).every((key) => ['status', 'failureClass', 'lastTestStatus'].includes(key)) &&
+    EXPERIENCE_OUTCOME_STATUSES.has(value.status) &&
+    EXPERIENCE_FAILURE_CLASSES.has(value.failureClass) &&
+    EXPERIENCE_TEST_STATUSES.has(value.lastTestStatus) &&
+    (value.status === 'PASS'
+      ? value.failureClass === 'NONE'
+      : value.failureClass !== 'NONE');
 }
 
 function isValidCandidateSummary(value) {

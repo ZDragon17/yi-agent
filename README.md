@@ -433,7 +433,7 @@ yi-agent repo benchmark `
 
 最终报告的 `summary` 汇总任务数、通过/失败数、成功率、总 Kernel 步数、测试执行次数、失败类型、人工介入次数和耗时，便于把 T0 与 T1 的结果放在同一口径下比较。
 
-`--learning-profile t0` 是无跨任务经验的基线；`--learning-profile t1` 会把已经完成任务的账本压缩成有界 `experience.json`，并在下一个独立 repository 的 WorldPort observation 中提供 capability 工作流、测试次数、Replay 结论和候选质量摘要（已审阅、已采用、可学习数量、平均验证置信度及最近一次未采用原因）。T1 不共享源码、补丁、目标答案或 Lab 状态，也不把经验当成事实或权限；模型仍必须通过同一 Kernel、WorldPort、独立测试和 Replay。经验来自已完成 Run 的账本，而不是模型自报结果。两种 profile 不能在同一输出目录间切换，避免把两组实验的证据混在一起。
+`--learning-profile t0` 是无跨任务经验的基线；`--learning-profile t1` 会把已经完成任务的账本压缩成有界 `experience.json`，并在下一个独立 repository 的 WorldPort observation 中提供 capability 工作流、测试次数、Replay 结论、任务结果摘要和候选质量摘要（已审阅、已采用、可学习数量、平均验证置信度及最近一次未采用原因）。只要任务的 Replay 为 `CONSISTENT`，即使验收失败，也会记录有限的失败类别和最后测试状态，供后续任务复盘。T1 不共享源码、补丁、目标答案或 Lab 状态，也不把经验当成事实或权限；模型仍必须通过同一 Kernel、WorldPort、独立测试和 Replay。经验来自账本证据，而不是模型自报结果。两种 profile 不能在同一输出目录间切换，避免把两组实验的证据混在一起。
 
 这个命令解决的是实验可重复性和任务间隔离，不等于模型已经具备长期自主规划能力。真实模型适配器仍需由外部配置提供，任务验收也必须由人选择可信的文件和测试条件。
 

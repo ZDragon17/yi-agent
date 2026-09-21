@@ -58,10 +58,43 @@ test('RTA-1 T1 profile persists bounded cross-task experience without sharing re
     assert.equal(report.learningProfile, 't1');
     assert.equal(report.experience.entries.length, 1);
     assert.equal(report.experience.entries[0].taskId, task.id);
+    assert.equal(report.experience.entries[0].outcome.status, 'PASS');
+    assert.equal(report.experience.entries[0].outcome.failureClass, 'NONE');
     assert.ok(report.experience.entries[0].candidateSummary.reviewed > 0);
     assert.ok(report.experience.entries[0].candidateSummary.applied > 0);
     assert.equal(new Set(report.taskResults.map((item) => item.repositoryPath)).size, 1);
     assert.deepEqual(JSON.parse(await readFile(path.join(outputPath, 'experience.json'), 'utf8')), report.experience);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('RTA-1 T1 keeps replayable failure evidence for later tasks', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-rta-1-t1-failure-evidence-e2e-'));
+  const manifestPath = path.resolve('examples/rta-1/baseline-6.json');
+  const modelPath = path.join(root, 'failure-model.mjs');
+  const modelConfigPath = path.join(root, 'model.json');
+  const outputPath = path.join(root, 'output');
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const task = manifest.tasks[0];
+    await writeFile(modelPath, modelSource(), 'utf8');
+    await writeModelConfig(modelConfigPath, modelPath, {
+      [task.goal]: 'export function add(left, right) { return left - right; }\n',
+    });
+    const result = await invoke([
+      'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
+      '--model-adapter', modelConfigPath, '--learning-profile', 't1', '--task', task.id, '--json',
+    ]);
+    assert.equal(result.code, 2, JSON.stringify(result));
+    const report = result.stdout[0].data;
+    assert.equal(report.taskResults[0].status, 'FAIL');
+    assert.equal(report.taskResults[0].replayVerdict, 'CONSISTENT');
+    assert.deepEqual(report.experience.entries[0].outcome, {
+      status: 'FAIL',
+      failureClass: 'TEST_FAILURE',
+      lastTestStatus: 'FAIL',
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -99,6 +132,7 @@ test('RTA-1 T1 experience improves a bounded cross-task workflow against T0', as
     assert.equal(t1Report.experience.entries.length, 6);
     assert.equal(new Set(t1Report.taskResults.map((task) => task.repositoryPath)).size, 6);
     assert.ok(t1Report.experience.entries.every((entry) => entry.replayVerdict === 'CONSISTENT'));
+    assert.ok(t1Report.experience.entries.every((entry) => entry.outcome.status === 'PASS'));
     assert.ok(t1Report.experience.entries.every((entry) => entry.candidateSummary.reviewed > 0));
   } finally {
     await rm(root, { recursive: true, force: true });
