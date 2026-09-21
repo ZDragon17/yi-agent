@@ -145,6 +145,8 @@ test('model advisor explains how bounded workflow evidence may guide the next ac
         workflow: ['repo.run-tests', 'repo.read-file', 'repo.apply-patch'],
         testExecutions: 2,
         replayVerdict: 'CONSISTENT',
+        outcome: { status: 'FAIL', failureClass: 'TEST_FAILURE', lastTestStatus: 'FAIL' },
+        candidateSummary: { reviewed: 3, applied: 2, learnable: 1, meanConfidence: 0.5, lastNonAppliedReason: 'TEST_FAILED' },
       }],
     }],
     capabilities: [{ token: TOKEN_A, cost: 1, allowed: true, safe: true }],
@@ -152,6 +154,7 @@ test('model advisor explains how bounded workflow evidence may guide the next ac
   });
   assert.match(prompt, /completed workflows/u);
   assert.match(prompt, /current observable prefix matches a workflow/u);
+  assert.match(prompt, /experience outcomes or candidate quality summaries/u);
   assert.match(prompt, /Never copy a historical proposal/u);
 });
 
