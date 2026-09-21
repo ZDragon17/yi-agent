@@ -37,6 +37,7 @@ const MAX_FILE_BYTES = 512 * 1024;
 const MAX_TREE_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 16 * 1024;
 const TEST_TIMEOUT_MS = 30_000;
+const MAX_MODEL_READ_PATH_BYTES = 4 * 1024;
 const MAX_PATCH_BYTES = 128 * 1024;
 const MAX_PROPOSAL_BYTES = 64 * 1024;
 const MAX_MODEL_READ_CONTENT = 2 * 1024;
@@ -143,9 +144,10 @@ function transition(previous, request, manifest) {
   const patchResult = preparedPatch;
   let next;
   if (capabilityId === 'repo.read-file') {
-    const content = readRepositoryFile(readPath);
+    const selectedReadPath = readPathForRequest(request);
+    const content = readRepositoryFile(selectedReadPath);
     next = makeState(previous.revision + 1, null, request.executionNonce, previous.usedExecutionNonces, testCount);
-    next.lastReadPath = normalizeRelative(readPath);
+    next.lastReadPath = normalizeRelative(selectedReadPath);
     next.lastReadDigest = canonicalDigest({ bytes: content.length, content });
     next.lastReadContent = content.slice(0, MAX_MODEL_READ_CONTENT);
     next.lastReadContentTruncated = content.length > MAX_MODEL_READ_CONTENT;
@@ -170,7 +172,7 @@ function transition(previous, request, manifest) {
   const nextRepository = scanRepository();
   next.rootDigest = nextRepository.rootDigest;
   next.fileCount = nextRepository.fileCount;
-  next.filePaths = nextRepository.paths;
+  next.filePaths = discoveryEnabled ? nextRepository.paths : [];
   next.lastAction = capabilityId;
   next.stateVersion = `state:${WORLD_ID}:${next.revision}:${nextRepository.rootDigest.slice(7, 19)}`;
   const response = {
@@ -213,7 +215,7 @@ function makeState(revision, repository, executionNonce = null, previousNonces =
     lastReadDigest: null,
     lastReadContent: null,
     lastReadContentTruncated: false,
-    filePaths: repository?.paths ?? [],
+    filePaths: discoveryEnabled ? repository?.paths ?? [] : [],
     lastTestStatus: 'NOT_RUN',
     lastTestExitCode: null,
     lastTestOutputDigest: null,
@@ -236,6 +238,15 @@ function observation(state) {
         kind: 'repo-file-list',
         paths: state.filePaths,
         truncated: false,
+      }] : []),
+      ...(discoveryEnabled ? [{
+        kind: 'repo-read-policy',
+        defaultPath: normalizeRelative(readPath),
+        proposalSchema: {
+          schemaVersion: VERSION,
+          fields: ['path'],
+          maxPathBytes: MAX_MODEL_READ_PATH_BYTES,
+        },
       }] : []),
       {
         kind: 'repo-test-policy',
@@ -324,6 +335,25 @@ function readRepositoryFile(relativePath) {
   const content = readFileSync(target, 'utf8');
   if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) throw new Error('read-file exceeds the example limit');
   return content;
+}
+
+function readPathForRequest(request) {
+  if (!discoveryEnabled || request.proposal === undefined) return readPath;
+  if (request.proposal === null || typeof request.proposal !== 'object' || Array.isArray(request.proposal)) {
+    throw new Error('repo read proposal must be an object');
+  }
+  const proposedPath = request.proposal.path;
+  if (typeof proposedPath !== 'string' || proposedPath.length === 0) {
+    throw new Error('repo read proposal path must be a non-empty string');
+  }
+  if (Buffer.byteLength(proposedPath, 'utf8') > MAX_MODEL_READ_PATH_BYTES) {
+    throw new Error('repo read proposal path exceeds the example limit');
+  }
+  const normalized = normalizeRelative(proposedPath);
+  if (!scanRepository().paths.includes(normalized)) {
+    throw new Error('repo read proposal path is not in the discovery listing');
+  }
+  return normalized;
 }
 
 function runTests() {

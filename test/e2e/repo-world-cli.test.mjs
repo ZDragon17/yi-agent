@@ -99,6 +99,76 @@ test('repo WorldPort exposes a bounded file listing only when discovery is enabl
       response.result.postObservation.evidence.find((item) => item.kind === 'repo-file-list'),
       { kind: 'repo-file-list', paths: ['README.md', 'src/main.mjs'], truncated: false },
     );
+    assert.deepEqual(
+      response.result.postObservation.evidence.find((item) => item.kind === 'repo-read-policy'),
+      {
+        kind: 'repo-read-policy',
+        defaultPath: READ_PATH,
+        proposalSchema: {
+          schemaVersion: 1,
+          fields: ['path'],
+          maxPathBytes: 4096,
+        },
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('discovery-enabled repo WorldPort reads only a proposed path from its listing', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'yi-agent-repo-discovery-read-e2e-'));
+  const repository = path.join(root, 'repository');
+  const adapterArgs = [ADAPTER, repository, READ_PATH, READ_PATH, '--discover'];
+  const manifest = {
+    tokenMap: {
+      entries: [
+        { schemaVersion: 1, token: 'tok_REPO_LIST_01', capabilityId: 'repo.list-files' },
+        { schemaVersion: 1, token: 'tok_REPO_READ_01', capabilityId: 'repo.read-file' },
+        { schemaVersion: 1, token: 'tok_REPO_TEST_01', capabilityId: 'repo.run-tests' },
+      ],
+    },
+  };
+  try {
+    await mkdir(path.join(repository, 'src'), { recursive: true });
+    await mkdir(path.join(repository, '.git'), { recursive: true });
+    await writeFile(path.join(repository, 'README.md'), 'readme\n');
+    await writeFile(path.join(repository, 'src', 'main.mjs'), 'export const selected = true;\n');
+    await writeFile(path.join(repository, '.git', 'config'), 'secret\n');
+
+    const initial = invokeAdapterOnce(adapterArgs, 'initialState', {});
+    assert.equal(initial.ok, true, JSON.stringify(initial));
+    const baseRequest = {
+      executionNonce: 'discovery-read-nonce',
+      basedOnVersion: initial.result.state.stateVersion,
+      policyVersion: 'policy-v1',
+      constraintsDigest: 'sha256:discovery-read',
+    };
+    const selected = invokeAdapterOnce(adapterArgs, 'transition', {
+      state: initial.result.state,
+      manifest,
+      request: {
+        ...baseRequest,
+        token: 'tok_REPO_READ_01',
+        proposal: { path: 'src/main.mjs' },
+      },
+    });
+    assert.equal(selected.ok, true, JSON.stringify(selected));
+    assert.equal(selected.result.nextWorldState.lastReadPath, 'src/main.mjs');
+    assert.equal(selected.result.nextWorldState.lastReadContent, 'export const selected = true;\n');
+
+    const denied = invokeAdapterOnce(adapterArgs, 'transition', {
+      state: initial.result.state,
+      manifest,
+      request: {
+        ...baseRequest,
+        executionNonce: 'discovery-read-denied',
+        token: 'tok_REPO_READ_01',
+        proposal: { path: '.git/config' },
+      },
+    });
+    assert.equal(denied.ok, false, JSON.stringify(denied));
+    assert.match(denied.error, /not in the discovery listing/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
