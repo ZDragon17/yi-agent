@@ -49,6 +49,7 @@ const MAX_NONCE_JOURNAL_BYTES = 2 * 1024 * 1024;
 const MAX_EXPERIENCE_BYTES = 64 * 1024;
 const MAX_EXPERIENCE_ENTRIES = 32;
 const MAX_EXPERIENCE_STEPS = 24;
+const MAX_CANDIDATE_SUMMARY_REVIEWS = 24;
 const BEFORE_DIGEST_MODES = new Set(['fixed', 'current']);
 
 const positionalArgs = collectPositionalArgs(process.argv.slice(2));
@@ -458,13 +459,14 @@ function readExperienceLedger() {
   }
   const entries = value.entries.map((entry) => {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry) ||
-        Object.keys(entry).some((key) => !['taskId', 'workflow', 'testExecutions', 'replayVerdict'].includes(key)) ||
+        Object.keys(entry).some((key) => !['taskId', 'workflow', 'testExecutions', 'replayVerdict', 'candidateSummary'].includes(key)) ||
         typeof entry.taskId !== 'string' || entry.taskId.length === 0 ||
         entry.taskId.length > 64 ||
         !Array.isArray(entry.workflow) || entry.workflow.length > MAX_EXPERIENCE_STEPS ||
         entry.workflow.some((capabilityId) => typeof capabilityId !== 'string' || capabilityId.length === 0 || capabilityId.length > 128) ||
         !Number.isSafeInteger(entry.testExecutions) || entry.testExecutions < 0 || entry.testExecutions > 4 ||
-        entry.replayVerdict !== 'CONSISTENT') {
+        entry.replayVerdict !== 'CONSISTENT' ||
+        (entry.candidateSummary !== undefined && !isValidCandidateSummary(entry.candidateSummary))) {
       throw new Error('experience ledger entry is invalid');
     }
     return {
@@ -472,9 +474,20 @@ function readExperienceLedger() {
       workflow: [...entry.workflow],
       testExecutions: entry.testExecutions,
       replayVerdict: entry.replayVerdict,
+      ...(entry.candidateSummary === undefined ? {} : { candidateSummary: { ...entry.candidateSummary } }),
     };
   });
   return { schemaVersion: VERSION, type: 'repo-experience', entries };
+}
+
+function isValidCandidateSummary(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).every((key) => ['reviewed', 'applied', 'learnable', 'meanConfidence', 'lastNonAppliedReason'].includes(key)) &&
+    Number.isSafeInteger(value.reviewed) && value.reviewed >= 0 && value.reviewed <= MAX_CANDIDATE_SUMMARY_REVIEWS &&
+    Number.isSafeInteger(value.applied) && value.applied >= 0 && value.applied <= value.reviewed &&
+    Number.isSafeInteger(value.learnable) && value.learnable >= 0 && value.learnable <= value.applied &&
+    (value.meanConfidence === null || (Number.isFinite(value.meanConfidence) && value.meanConfidence >= 0 && value.meanConfidence <= 1)) &&
+    (value.lastNonAppliedReason === null || (typeof value.lastNonAppliedReason === 'string' && value.lastNonAppliedReason.length <= 256));
 }
 
 function collectPositionalArgs(args) {

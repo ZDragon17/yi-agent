@@ -15,6 +15,7 @@ const MAX_STEPS = 24;
 const MAX_TEST_EXECUTIONS = 4;
 const MAX_EXPERIENCE_ENTRIES = 32;
 const MAX_EXPERIENCE_STEPS = 24;
+const MAX_CANDIDATE_SUMMARY_REVIEWS = 24;
 const CLI = fileURLToPath(new URL('../../bin/yi-agent.mjs', import.meta.url));
 const REPO_ADAPTER = fileURLToPath(new URL('../../examples/repo-world/adapter.mjs', import.meta.url));
 
@@ -277,12 +278,13 @@ function validateExperience(value) {
   }
   for (const entry of value.entries) {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry) ||
-        Object.keys(entry).some((key) => !['taskId', 'workflow', 'testExecutions', 'replayVerdict'].includes(key)) ||
+        Object.keys(entry).some((key) => !['taskId', 'workflow', 'testExecutions', 'replayVerdict', 'candidateSummary'].includes(key)) ||
         typeof entry.taskId !== 'string' || entry.taskId.length === 0 || entry.taskId.length > MAX_ID_LENGTH ||
         !Array.isArray(entry.workflow) || entry.workflow.length > MAX_EXPERIENCE_STEPS ||
         entry.workflow.some((capabilityId) => typeof capabilityId !== 'string' || capabilityId.length === 0 || capabilityId.length > 128) ||
         !Number.isSafeInteger(entry.testExecutions) || entry.testExecutions < 0 || entry.testExecutions > MAX_TEST_EXECUTIONS ||
-        entry.replayVerdict !== 'CONSISTENT') {
+        entry.replayVerdict !== 'CONSISTENT' ||
+        (entry.candidateSummary !== undefined && !isValidCandidateSummary(entry.candidateSummary))) {
       throw benchmarkError('CONFLICT', 'Benchmark experience checkpoint is invalid.', { field: 'experience.entries' });
     }
   }
@@ -299,16 +301,52 @@ async function appendExperience(experience, result) {
     .map((event) => capabilityByToken.get(event.payload.choice?.token) ?? null)
     .filter((capabilityId) => capabilityId !== null))
     .slice(0, MAX_EXPERIENCE_STEPS);
+  const runIdSet = new Set(runIds);
+  const candidateSummary = summarizeCandidateOutcomes(
+    (await store.readCandidateOutcomes(MAX_CANDIDATE_SUMMARY_REVIEWS))
+      .filter((entry) => runIdSet.has(entry.runId))
+      .map((entry) => entry.candidateOutcome),
+  );
   const entry = {
     taskId: result.id,
     workflow: steps,
     testExecutions: result.metrics.testExecutions,
     replayVerdict: result.replayVerdict,
+    candidateSummary,
   };
   return {
     ...experience,
     entries: [...experience.entries, entry].slice(-MAX_EXPERIENCE_ENTRIES),
   };
+}
+
+function summarizeCandidateOutcomes(outcomes) {
+  const reviewed = outcomes.length;
+  const applied = outcomes.filter((outcome) => outcome.status === 'APPLIED').length;
+  const learnable = outcomes.filter((outcome) => outcome.verification?.learnable === true).length;
+  const confidences = outcomes
+    .map((outcome) => outcome.verification?.confidence)
+    .filter((confidence) => Number.isFinite(confidence));
+  const lastNonApplied = [...outcomes].reverse().find((outcome) => outcome.status === 'NOT_APPLIED');
+  return {
+    reviewed,
+    applied,
+    learnable,
+    meanConfidence: confidences.length === 0
+      ? null
+      : confidences.reduce((total, confidence) => total + confidence, 0) / confidences.length,
+    lastNonAppliedReason: lastNonApplied?.reason ?? null,
+  };
+}
+
+function isValidCandidateSummary(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).every((key) => ['reviewed', 'applied', 'learnable', 'meanConfidence', 'lastNonAppliedReason'].includes(key)) &&
+    Number.isSafeInteger(value.reviewed) && value.reviewed >= 0 && value.reviewed <= MAX_CANDIDATE_SUMMARY_REVIEWS &&
+    Number.isSafeInteger(value.applied) && value.applied >= 0 && value.applied <= value.reviewed &&
+    Number.isSafeInteger(value.learnable) && value.learnable >= 0 && value.learnable <= value.applied &&
+    (value.meanConfidence === null || (Number.isFinite(value.meanConfidence) && value.meanConfidence >= 0 && value.meanConfidence <= 1)) &&
+    (value.lastNonAppliedReason === null || (typeof value.lastNonAppliedReason === 'string' && value.lastNonAppliedReason.length <= 256));
 }
 
 async function verifyCompletedTask(task, result, outputPath) {
