@@ -548,7 +548,18 @@ function normalizeManifest(value) {
     if (allowedPaths.some((item) => !filePaths.has(item))) {
       throw benchmarkError('INVALID_INPUT', 'patch.allowedPaths must reference declared files.', { field: `tasks[${index}].patch.allowedPaths` });
     }
-    requireKeys(task.expected, ['files', 'lastTestStatus'], `tasks[${index}].expected`);
+    if (Object.keys(task.expected).some((key) => !['files', 'lastTestStatus', 'fileMatch'].includes(key))) {
+      throw benchmarkError('INVALID_INPUT', 'tasks expected contains an unsupported field.', { field: `tasks[${index}].expected` });
+    }
+    for (const key of ['files', 'lastTestStatus']) {
+      if (!Object.hasOwn(task.expected, key)) {
+        throw benchmarkError('INVALID_INPUT', 'tasks expected is missing a required field.', { field: `tasks[${index}].expected.${key}` });
+      }
+    }
+    const fileMatch = task.expected.fileMatch ?? acceptanceMode;
+    if (fileMatch !== acceptanceMode) {
+      throw benchmarkError('INVALID_INPUT', 'tasks expected.fileMatch must match manifest.acceptanceMode.', { field: `tasks[${index}].expected.fileMatch` });
+    }
     const expectedFiles = normalizeExpectedFiles(task.expected.files, filePaths, index);
     if (!['PASS', 'FAIL', 'NOT_RUN'].includes(task.expected.lastTestStatus)) {
       throw benchmarkError('INVALID_INPUT', 'expected.lastTestStatus is invalid.', { field: `tasks[${index}].expected.lastTestStatus` });
@@ -565,7 +576,7 @@ function normalizeManifest(value) {
       readPath,
       testPath,
       patch: { allowedPaths },
-      expected: { files: expectedFiles, lastTestStatus: task.expected.lastTestStatus, fileMatch: acceptanceMode },
+      expected: { files: expectedFiles, lastTestStatus: task.expected.lastTestStatus, fileMatch },
       steps,
       maxTests,
     };
