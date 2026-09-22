@@ -855,6 +855,16 @@ test('writable repo WorldPort applies a digest-bound patch and verifies the reta
       assert.equal(context.observationEvidence.find((item) => item.kind === 'repo-workflow-state').phase, 'repair');
       assert.equal(context.observationEvidence.find((item) => item.kind === 'repo-workflow-state').preferredCapabilityId, 'repo.apply-patch');
     }
+    if (modelCalls === 3) {
+      assert.deepEqual(context.observationEvidence.find((item) => item.kind === 'repo-workflow-state'), {
+        kind: 'repo-workflow-state',
+        phase: 'verify-after-patch',
+        preferredCapabilityId: 'repo.run-tests',
+        lastAction: 'repo.apply-patch',
+        testStatus: 'FAIL',
+        patchApplied: true,
+      });
+    }
     modelCalls += 1;
     response.setHeader('Content-Type', 'application/json');
     const patchPolicy = context.observationEvidence.find((item) => item.kind === 'repo-patch-policy');
