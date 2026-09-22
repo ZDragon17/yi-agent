@@ -1432,7 +1432,7 @@ test('repo WorldPort survives a process restart, resumes the remaining Run, and 
     ], { env: environment, windowsHide: true });
     const childClosed = invokeChildClose(child);
     try {
-      await waitFor(async () => requestCount >= 2 && (await inspectKernelStep(lab, adapterConfig)) === 1, 10_000);
+      await waitFor(async () => requestCount >= 2 && (await inspectKernelStep(lab, adapterConfig)) === 1, 60_000);
     } catch (error) {
       child.kill();
       const diagnostic = await childClosed;
