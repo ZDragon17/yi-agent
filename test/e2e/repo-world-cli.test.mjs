@@ -452,6 +452,14 @@ test('discovery-enabled repo WorldPort lets the model select a listed file throu
         paths: ['README.md', 'src/main.mjs'],
         truncated: false,
       });
+      assert.deepEqual(context.observationEvidence.find((item) => item.kind === 'repo-workflow-state'), {
+        kind: 'repo-workflow-state',
+        phase: 'inspect',
+        preferredCapabilityId: 'repo.read-file',
+        lastAction: 'repo.list-files',
+        testStatus: 'NOT_RUN',
+        patchApplied: false,
+      });
       assert.deepEqual(
         context.observationEvidence.find((item) => item.kind === 'repo-read-policy'),
         {
@@ -823,6 +831,14 @@ test('writable repo WorldPort applies a digest-bound patch and verifies the reta
       const actionEvidence = context.observationEvidence.find((item) => item.kind === 'repo-action');
       assert.equal(actionEvidence.readFileContent, buggySource);
       assert.equal(actionEvidence.readFileDigest, canonicalDigest({ bytes: buggySource.length, content: buggySource }));
+      assert.deepEqual(context.observationEvidence.find((item) => item.kind === 'repo-workflow-state'), {
+        kind: 'repo-workflow-state',
+        phase: 'verify',
+        preferredCapabilityId: 'repo.run-tests',
+        lastAction: 'repo.read-file',
+        testStatus: 'NOT_RUN',
+        patchApplied: false,
+      });
     }
     if (modelCalls === 2) {
       assert.deepEqual(
@@ -836,6 +852,8 @@ test('writable repo WorldPort applies a digest-bound patch and verifies the reta
           failedTests: ['add returns the sum'],
         },
       );
+      assert.equal(context.observationEvidence.find((item) => item.kind === 'repo-workflow-state').phase, 'repair');
+      assert.equal(context.observationEvidence.find((item) => item.kind === 'repo-workflow-state').preferredCapabilityId, 'repo.apply-patch');
     }
     modelCalls += 1;
     response.setHeader('Content-Type', 'application/json');

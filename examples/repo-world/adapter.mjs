@@ -346,6 +346,7 @@ function observation(state) {
         patchBeforeDigest: state.lastPatchBeforeDigest,
         patchAfterDigest: state.lastPatchAfterDigest,
       },
+      repoWorkflowEvidence(state),
       ...(discoveryEnabled && state.lastReadPath !== null && state.lastReadContent !== null ? [{
         kind: 'repo-related-files',
         sourcePath: state.lastReadPath,
@@ -376,6 +377,43 @@ function observation(state) {
         ...readExperienceLedger(),
       }]),
     ],
+  };
+}
+
+function repoWorkflowEvidence(state) {
+  let phase = 'inspect';
+  let preferredCapabilityId = 'repo.read-file';
+  if (state.lastTestStatus === 'FAIL') {
+    if (state.lastAction === 'repo.apply-patch') {
+      phase = 'verify-after-patch';
+      preferredCapabilityId = 'repo.run-tests';
+    } else if (state.lastPatchPath !== null && state.lastAction === 'repo.run-tests') {
+      phase = 'inspect-after-failed-patch';
+      preferredCapabilityId = 'repo.read-file';
+    } else {
+      phase = 'repair';
+      preferredCapabilityId = 'repo.apply-patch';
+    }
+  } else if (state.lastAction === 'repo.apply-patch') {
+    phase = 'verify-after-patch';
+    preferredCapabilityId = 'repo.run-tests';
+  } else if (state.lastAction === 'repo.list-files') {
+    phase = 'inspect';
+    preferredCapabilityId = 'repo.read-file';
+  } else if (state.lastAction === 'repo.read-file') {
+    phase = 'verify';
+    preferredCapabilityId = 'repo.run-tests';
+  } else if (state.lastTestStatus === 'PASS') {
+    phase = state.lastPatchPath === null ? 'review' : 'complete';
+    preferredCapabilityId = 'repo.read-file';
+  }
+  return {
+    kind: 'repo-workflow-state',
+    phase,
+    preferredCapabilityId,
+    lastAction: state.lastAction,
+    testStatus: state.lastTestStatus,
+    patchApplied: state.lastPatchPath !== null,
   };
 }
 

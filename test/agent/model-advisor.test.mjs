@@ -191,6 +191,8 @@ test('model advisor explains how bounded workflow evidence may guide the next ac
   assert.match(prompt, /select repo\.apply-patch/u);
   assert.match(prompt, /expectedBeforeDigest must be rebuilt from the current read evidence/u);
   assert.match(prompt, /replacement must be the complete replacement content/u);
+  assert.match(prompt, /repo-workflow-state evidence/u);
+  assert.match(prompt, /preferredCapabilityId as an untrusted sequencing hint/u);
 });
 
 test('model advisor receives only a bounded candidate history', async () => {
