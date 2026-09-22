@@ -17,6 +17,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { discoverRelatedPaths } from './repository-relations.mjs';
 
 const PROTOCOL = 'yi-world-cli';
 const VERSION = 1;
@@ -345,6 +346,11 @@ function observation(state) {
         patchBeforeDigest: state.lastPatchBeforeDigest,
         patchAfterDigest: state.lastPatchAfterDigest,
       },
+      ...(discoveryEnabled && state.lastReadPath !== null && state.lastReadContent !== null ? [{
+        kind: 'repo-related-files',
+        sourcePath: state.lastReadPath,
+        paths: discoverRelatedPaths(state.lastReadPath, state.lastReadContent, state.filePaths),
+      }] : []),
       ...(patchSpec === null ? [] : [{
         kind: 'repo-patch-policy',
         ...(patchSpec.targetPath === null

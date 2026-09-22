@@ -185,6 +185,7 @@ test('model advisor explains how bounded workflow evidence may guide the next ac
   assert.match(prompt, /passing existing tests is only one observation/u);
   assert.match(prompt, /Preserve the existing source formatting/u);
   assert.match(prompt, /do not read the same default path again/u);
+  assert.match(prompt, /repo-related-files evidence lists related paths/u);
   assert.match(prompt, /imports, delegates to, or names a related file/u);
 });
 
