@@ -178,10 +178,14 @@ test('model advisor explains how bounded workflow evidence may guide the next ac
   });
   assert.match(prompt, /completed workflows/u);
   assert.match(prompt, /current observable prefix matches a workflow/u);
+  assert.match(prompt, /An empty prefix at a fresh WorldPort is not a match/u);
+  assert.match(prompt, /run the configured tests first/u);
   assert.match(prompt, /experience outcomes or candidate quality summaries/u);
   assert.match(prompt, /Never copy a historical proposal/u);
   assert.match(prompt, /passing existing tests is only one observation/u);
   assert.match(prompt, /Preserve the existing source formatting/u);
+  assert.match(prompt, /do not read the same default path again/u);
+  assert.match(prompt, /imports, delegates to, or names a related file/u);
 });
 
 test('model advisor receives only a bounded candidate history', async () => {

@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "type": "repo-benchmark",
+  "acceptanceMode": "exact",
+  "tasks": [
+    {
+      "id": "normalize-display-name",
+      "goal": "Repair the failing public display-name behavior while preserving the repository's module boundaries, then verify it.",
+      "seed": "rta-1-adaptive-normalize-display-name-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-adaptive-normalize-display-name\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/display-name.mjs", "content": "import { normalizeName } from './text-normalizer.mjs';\n\nexport function displayName(value) {\n  return normalizeName(value).toUpperCase();\n}\n" },
+        { "path": "src/text-normalizer.mjs", "content": "export function normalizeName(value) {\n  return value.trim().replace(/\\s+/g, '-');\n}\n" },
+        { "path": "test/display-name.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { displayName } from '../src/display-name.mjs';\n\ntest('displayName normalizes whitespace before uppercasing', () => {\n  assert.equal(displayName('  Ada   Lovelace  '), 'ADA LOVELACE');\n});\n" }
+      ],
+      "readPath": "src/display-name.mjs",
+      "testPath": "test/display-name.test.mjs",
+      "patch": { "allowedPaths": ["src/display-name.mjs", "src/text-normalizer.mjs"] },
+      "expected": { "files": { "src/text-normalizer.mjs": "export function normalizeName(value) {\n  return value.trim().replace(/\\s+/g, ' ');\n}\n" }, "lastTestStatus": "PASS" },
+      "steps": 8,
+      "maxTests": 4
+    },
+    {
+      "id": "parse-integer-record",
+      "goal": "Repair the failing public record-parsing behavior while preserving the repository's module boundaries, then verify it.",
+      "seed": "rta-1-adaptive-parse-integer-record-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-adaptive-parse-integer-record\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/record-parser.mjs", "content": "import { toInteger } from './value-coercion.mjs';\n\nexport function parseRecord(input) {\n  return { id: toInteger(input.id), label: String(input.label).trim() };\n}\n" },
+        { "path": "src/value-coercion.mjs", "content": "export function toInteger(value) {\n  return Number.parseFloat(value);\n}\n" },
+        { "path": "test/record-parser.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { parseRecord } from '../src/record-parser.mjs';\n\ntest('parseRecord truncates a numeric identifier to an integer', () => {\n  assert.deepEqual(parseRecord({ id: '42.9', label: '  sample  ' }), { id: 42, label: 'sample' });\n});\n" }
+      ],
+      "readPath": "src/record-parser.mjs",
+      "testPath": "test/record-parser.test.mjs",
+      "patch": { "allowedPaths": ["src/record-parser.mjs", "src/value-coercion.mjs"] },
+      "expected": { "files": { "src/value-coercion.mjs": "export function toInteger(value) {\n  return Number.parseInt(value, 10);\n}\n" }, "lastTestStatus": "PASS" },
+      "steps": 8,
+      "maxTests": 4
+    },
+    {
+      "id": "safe-ratio-report",
+      "goal": "Repair the failing public ratio behavior while preserving the repository's module boundaries, then verify it.",
+      "seed": "rta-1-adaptive-safe-ratio-report-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-adaptive-safe-ratio-report\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/report.mjs", "content": "import { divide } from './arithmetic.mjs';\n\nexport function ratioReport(numerator, denominator) {\n  return { ratio: divide(numerator, denominator) };\n}\n" },
+        { "path": "src/arithmetic.mjs", "content": "export function divide(numerator, denominator) {\n  return numerator / (denominator - 1);\n}\n" },
+        { "path": "test/report.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { ratioReport } from '../src/report.mjs';\n\ntest('ratioReport returns the numerator divided by the denominator', () => {\n  assert.deepEqual(ratioReport(6, 3), { ratio: 2 });\n});\n" }
+      ],
+      "readPath": "src/report.mjs",
+      "testPath": "test/report.test.mjs",
+      "patch": { "allowedPaths": ["src/report.mjs", "src/arithmetic.mjs"] },
+      "expected": { "files": { "src/arithmetic.mjs": "export function divide(numerator, denominator) {\n  return numerator / denominator;\n}\n" }, "lastTestStatus": "PASS" },
+      "steps": 8,
+      "maxTests": 4
+    },
+    {
+      "id": "priority-queue-order",
+      "goal": "Repair the failing public priority ordering behavior while preserving the repository's module boundaries, then verify it.",
+      "seed": "rta-1-adaptive-priority-queue-order-001",
+      "files": [
+        { "path": "package.json", "content": "{\n  \"name\": \"rta-1-adaptive-priority-queue-order\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n" },
+        { "path": "src/priority-queue.mjs", "content": "import { orderByPriority } from './priority-order.mjs';\n\nexport function nextItems(items) {\n  return orderByPriority(items).map((item) => item.name);\n}\n" },
+        { "path": "src/priority-order.mjs", "content": "export function orderByPriority(items) {\n  return [...items].sort((left, right) => left.priority - right.priority);\n}\n" },
+        { "path": "test/priority-queue.test.mjs", "content": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { nextItems } from '../src/priority-queue.mjs';\n\ntest('nextItems returns the highest priority item first', () => {\n  assert.deepEqual(nextItems([\n    { name: 'low', priority: 1 },\n    { name: 'high', priority: 10 },\n    { name: 'mid', priority: 5 },\n  ]), ['high', 'mid', 'low']);\n});\n" }
+      ],
+      "readPath": "src/priority-queue.mjs",
+      "testPath": "test/priority-queue.test.mjs",
+      "patch": { "allowedPaths": ["src/priority-queue.mjs", "src/priority-order.mjs"] },
+      "expected": { "files": { "src/priority-order.mjs": "export function orderByPriority(items) {\n  return [...items].sort((left, right) => right.priority - left.priority);\n}\n" }, "lastTestStatus": "PASS" },
+      "steps": 8,
+      "maxTests": 4
+    }
+  ]
+}
