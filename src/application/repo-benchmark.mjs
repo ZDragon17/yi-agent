@@ -278,7 +278,7 @@ function summarizeBenchmark(taskResults) {
   for (const result of taskResults) {
     if (result.status === 'PASS') passedTasks += 1;
     else {
-      const code = result.failure?.code ?? 'UNKNOWN';
+      const code = result.rootCauseAnalysisRequired?.failureClass ?? classifyFailure(result);
       failureTypes[code] = (failureTypes[code] ?? 0) + 1;
     }
     testExecutions += Number.isSafeInteger(result.metrics?.testExecutions) ? result.metrics.testExecutions : 0;

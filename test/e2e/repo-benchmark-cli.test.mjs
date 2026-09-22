@@ -93,6 +93,7 @@ test('RTA-1 T1 keeps replayable failure evidence for later tasks', async () => {
     assert.equal(report.taskResults[0].rootCauseAnalysisRequired.failureClass, 'RUN_FAILURE');
     assert.equal(report.taskResults[0].rootCauseAnalysisRequired.consecutiveFailures, 2);
     assert.ok(report.taskResults[0].rootCauseAnalysisRequired.kernelStep > 0);
+    assert.deepEqual(report.summary.failureTypes, { RUN_FAILURE: 1 });
     assert.deepEqual(report.experience.entries[0].outcome, {
       status: 'FAIL',
       failureClass: 'TEST_FAILURE',
