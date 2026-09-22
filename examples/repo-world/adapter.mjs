@@ -688,18 +688,7 @@ function patchPolicyEntries() {
 
 function prepareOrResumePatch(request) {
   if (patchSpec === null || nonceJournalPath === null) throw new Error('repo.apply-patch is not enabled');
-  let proposal;
-  try {
-    proposal = readPatchProposal(request.proposal);
-  } catch (error) {
-    if (error instanceof Error && error.message === 'repo.apply-patch proposal is invalid') {
-      throw new PatchProposalRejectedError('PATCH_PROPOSAL_INVALID');
-    }
-    if (error instanceof Error && error.message === 'repo.apply-patch proposal is not authorized by the patch policy') {
-      throw new PatchProposalRejectedError('PATCH_TARGET_NOT_AUTHORIZED');
-    }
-    throw error;
-  }
+  const proposal = readPatchProposal(request.proposal);
   const proposalDigest = canonicalDigest(proposal);
   const requestDigest = canonicalDigest(request);
   const records = readNonceJournal();
