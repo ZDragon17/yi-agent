@@ -125,7 +125,6 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
     replayVerdict: null,
     acceptance: { passed: false, files: [], lastTestStatus: null },
     metrics: { kernelSteps: null, testExecutions: null, operatorIntervention: false },
-    rootCauseAnalysisRequired: null,
     failure: null,
   };
   try {
@@ -237,7 +236,7 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
       if (replay.code !== 0) throw commandFailure('replay', replay);
     }
     if (lastRun === null) throw benchmarkError('BENCHMARK_FAILED', 'Task did not create a Run.', { taskId: task.id });
-    if (!result.acceptance.passed && result.rootCauseAnalysisRequired !== null) {
+    if (!result.acceptance.passed && result.rootCauseAnalysisRequired !== undefined) {
       throw benchmarkError('BENCHMARK_FAILED', 'Task requires root-cause analysis after repeated same-class failures.', {
         taskId: task.id,
         acceptance: result.acceptance,
