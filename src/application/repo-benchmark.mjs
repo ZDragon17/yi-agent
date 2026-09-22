@@ -125,6 +125,7 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
     replayVerdict: null,
     acceptance: { passed: false, files: [], lastTestStatus: null },
     metrics: { kernelSteps: null, testExecutions: null, operatorIntervention: false },
+    rootCauseAnalysisRequired: null,
     failure: null,
   };
   try {
@@ -161,6 +162,8 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
     let previousKernelStep = -1;
     let lastRunFailure = null;
     let lastRun = null;
+    let failureStreakClass = null;
+    let failureStreakCount = 0;
     for (let attempt = 0; attempt < MAX_STEPS; attempt += 1) {
       const remainingSteps = MAX_STEPS - Math.max(0, result.metrics.kernelSteps ?? 0);
       if (remainingSteps === 0) break;
@@ -197,6 +200,23 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
       };
       if (result.acceptance.passed) break;
 
+      const attemptFailureClass = classifyAttemptFailure(run, result.acceptance);
+      if (attemptFailureClass === failureStreakClass) failureStreakCount += 1;
+      else {
+        failureStreakClass = attemptFailureClass;
+        failureStreakCount = 1;
+      }
+      if (failureStreakCount >= 2) {
+        result.rootCauseAnalysisRequired = {
+          schemaVersion: 1,
+          status: 'REQUIRED',
+          failureClass: failureStreakClass,
+          consecutiveFailures: failureStreakCount,
+          kernelStep: result.metrics.kernelSteps,
+        };
+        break;
+      }
+
       const filesMatch = result.acceptance.files.length > 0 &&
         result.acceptance.files.every((file) => file.matches);
       const stopReason = run.stdout[0]?.data?.stopReason ?? null;
@@ -217,6 +237,13 @@ async function runTask({ task, taskRoot, modelAdapterPath, experiencePath }) {
       if (replay.code !== 0) throw commandFailure('replay', replay);
     }
     if (lastRun === null) throw benchmarkError('BENCHMARK_FAILED', 'Task did not create a Run.', { taskId: task.id });
+    if (!result.acceptance.passed && result.rootCauseAnalysisRequired !== null) {
+      throw benchmarkError('BENCHMARK_FAILED', 'Task requires root-cause analysis after repeated same-class failures.', {
+        taskId: task.id,
+        acceptance: result.acceptance,
+        rootCauseAnalysis: result.rootCauseAnalysisRequired,
+      });
+    }
     if (!result.acceptance.passed && lastRun.code !== 0 && lastRunFailure !== null) throw lastRunFailure;
     if (!result.acceptance.passed) {
       throw benchmarkError('BENCHMARK_FAILED', 'Task acceptance did not pass.', {
@@ -352,6 +379,13 @@ function classifyFailure(result) {
   if (result.failure?.context?.command === 'agent run') return 'RUN_FAILURE';
   if (result.acceptance.lastTestStatus === 'FAIL') return 'TEST_FAILURE';
   if (result.acceptance.passed === false) return 'ACCEPTANCE_MISMATCH';
+  return 'UNKNOWN';
+}
+
+function classifyAttemptFailure(run, acceptance) {
+  if (run.code !== 0) return 'RUN_FAILURE';
+  if (acceptance.lastTestStatus === 'FAIL') return 'TEST_FAILURE';
+  if (acceptance.passed === false) return 'ACCEPTANCE_MISMATCH';
   return 'UNKNOWN';
 }
 

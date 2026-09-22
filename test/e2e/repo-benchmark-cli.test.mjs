@@ -79,9 +79,7 @@ test('RTA-1 T1 keeps replayable failure evidence for later tasks', async () => {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     const task = manifest.tasks[0];
     await writeFile(modelPath, modelSource(), 'utf8');
-    await writeModelConfig(modelConfigPath, modelPath, {
-      [task.goal]: 'export function add(left, right) { return left - right; }\n',
-    });
+    await writeModelConfig(modelConfigPath, modelPath, {});
     const result = await invoke([
       'repo', 'benchmark', '--manifest', manifestPath, '--output', outputPath,
       '--model-adapter', modelConfigPath, '--learning-profile', 't1', '--task', task.id, '--json',
@@ -90,6 +88,11 @@ test('RTA-1 T1 keeps replayable failure evidence for later tasks', async () => {
     const report = result.stdout[0].data;
     assert.equal(report.taskResults[0].status, 'FAIL');
     assert.equal(report.taskResults[0].replayVerdict, 'CONSISTENT');
+    assert.equal(report.taskResults[0].rootCauseAnalysisRequired.schemaVersion, 1);
+    assert.equal(report.taskResults[0].rootCauseAnalysisRequired.status, 'REQUIRED');
+    assert.equal(report.taskResults[0].rootCauseAnalysisRequired.failureClass, 'RUN_FAILURE');
+    assert.equal(report.taskResults[0].rootCauseAnalysisRequired.consecutiveFailures, 2);
+    assert.ok(report.taskResults[0].rootCauseAnalysisRequired.kernelStep > 0);
     assert.deepEqual(report.experience.entries[0].outcome, {
       status: 'FAIL',
       failureClass: 'TEST_FAILURE',
