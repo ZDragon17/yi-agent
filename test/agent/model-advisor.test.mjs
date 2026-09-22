@@ -187,6 +187,10 @@ test('model advisor explains how bounded workflow evidence may guide the next ac
   assert.match(prompt, /do not read the same default path again/u);
   assert.match(prompt, /repo-related-files evidence lists related paths/u);
   assert.match(prompt, /imports, delegates to, or names a related file/u);
+  assert.match(prompt, /use this bounded phase order/u);
+  assert.match(prompt, /select repo\.apply-patch/u);
+  assert.match(prompt, /expectedBeforeDigest must be rebuilt from the current read evidence/u);
+  assert.match(prompt, /replacement must be the complete replacement content/u);
 });
 
 test('model advisor receives only a bounded candidate history', async () => {
